@@ -1,0 +1,12 @@
+# Generated requirements based on imports and pip_reqs.txt
+
+pandas==2.2.3
+numpy==1.26.4
+dask
+distributed
+pandas_market_calendars
+colorama
+pyarrow==19.0.1
+
+# Detected from imports but not verified in environment list:
+# stay-awake  # Check if this is a local file or PyPI package 'stay-awake'
