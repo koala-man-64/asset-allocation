@@ -5,8 +5,8 @@ import warnings
 import datetime
 # Try to import local modules, handled gracefully if dependencies missing for placeholders
 try:
-    from scripts.market_analysis import core as a500lb
-    from scripts.market_analysis import main as aaa_500_main
+    from scripts.market_data import core as a500lb
+    from scripts.market_data import main as aaa_500_main
 except ImportError as e:
     print(f"Warning: Could not import aaa_500 modules: {e}")
 

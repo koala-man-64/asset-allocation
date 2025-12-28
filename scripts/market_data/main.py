@@ -10,7 +10,7 @@ import warnings
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from scripts.common import playwright_lib as pl
-from scripts.market_analysis import market_analysis_lib as malib
+from scripts.market_data import core as malib
 
 # Suppress warnings
 warnings.filterwarnings('ignore')

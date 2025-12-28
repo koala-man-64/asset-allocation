@@ -92,7 +92,7 @@ def extract_quarter_date(s):
 async def download_yahoo_price_data_async(
     page: AsyncPage,
     url: str,
-    timeout: int = 30_000,          # ms
+    timeout: int = 10000,          # ms
     max_attempts: int = 3,
     delay_between_attempts: float = 1.0,
 ) -> Path:
@@ -134,7 +134,7 @@ async def download_yahoo_price_data_async(
             delete_newer_duplicates(str(target))
             return target
 
-        except PlaywrightTimeoutError:
+        except PlaywrightTimeoutError as pe:
             # Download didn’t start in time—retry
             if attempt < max_attempts:
                 await asyncio.sleep(delay_between_attempts)

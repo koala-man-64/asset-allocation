@@ -11,4 +11,4 @@ scripts/common/nasdaq_key.txt
 
 # Logs
 *.log
-scripts/common/
+scripts/common/Yahoo/

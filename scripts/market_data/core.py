@@ -20,10 +20,17 @@ import warnings
 import pandas as pd
 import numpy as np
 
+# Add project root to sys.path to ensure absolute imports work
+# This allows the file to be run directly or imported without the root in pythonpath
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 # Local imports
 from scripts.common import playwright_lib as pl
-from scripts.market_analysis import ta_lib
-from scripts.market_analysis import config as cfg
+from scripts.market_data import ta_lib
+from scripts.market_data import config as cfg
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -71,10 +78,32 @@ def go_to_sleep(range_low = 5, range_high = 20):
     write_line(f'Sleeping for {sleep_time} seconds...')
     time.sleep(random.randint(range_low, range_high))
 
-def add_line_to_file(file_path, text_line):
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    with open(file_path, 'a') as file:
-        file.write(text_line + '\n')
+def update_csv_set(file_path, ticker):
+    """
+    Adds a ticker to a CSV file if it doesn't exist, ensuring uniqueness and sorting.
+    """
+    try:
+        file_path = str(file_path) # ensure string
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        df = pd.DataFrame(columns=['Symbol'])
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            try:
+                df = pd.read_csv(file_path)
+                if 'Symbol' not in df.columns:
+                     # Fallback if no header
+                     df = pd.read_csv(file_path, header=None, names=['Symbol'])
+            except:
+                pass # Start with empty if corrupt
+
+        if ticker not in df['Symbol'].values:
+            new_row = pd.DataFrame([{'Symbol': ticker}])
+            df = pd.concat([df, new_row], ignore_index=True)
+            df = df.sort_values('Symbol').reset_index(drop=True)
+            df.to_csv(file_path, index=False)
+            write_line(f"Added {ticker} to {os.path.basename(file_path)}")
+    except Exception as e:
+        write_line(f"Error updating {file_path}: {e}")
 
 def store_csv(obj: pd.DataFrame, file_path):
     target = Path(file_path).expanduser().resolve()
@@ -171,6 +200,39 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page) -> tup
 
 async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1):
     black_path = str(pl.COMMON_DIR / 'blacklist.csv')
+    white_path = str(pl.COMMON_DIR / 'whitelist.csv')
+
+    # check if ticker exists in whitelist
+    df_whitelist = load_csv(white_path)
+    if df_whitelist is not None and not df_whitelist.empty:
+        if ticker in df_whitelist['Symbol'].values:
+            write_line(f'{ticker} is in whitelist, skipping validation')
+            pass # proceed to download
+        else:
+             # Check if ticker exists in blacklist
+             df_blacklist = load_csv(black_path)
+             if df_blacklist is not None and not df_blacklist.empty:
+                 if ticker in df_blacklist['Symbol'].values:
+                     write_line(f'{ticker} is in blacklist, skipping')
+                     return None, None
+     
+             # Check if ticker exists in Yahoo
+             try:
+                 quote_url = f'https://finance.yahoo.com/quote/{ticker}/'
+                 await page.goto(quote_url)
+                 # Check the response. BLK is the response if the ticker exists
+                 # https://finance.yahoo.com/quote/BLKBADTICKER/ is the response if the ticker does not exist
+                 
+                 # We check title or URL to determine existence
+                 page_title = await page.title()
+                 if "Symbol Lookup" in page_title or "Lookup" in page_title:
+                      write_line(f"Ticker {ticker} not found on Yahoo (redirected to lookup). Blacklisting.")
+                      update_csv_set(black_path, ticker)
+                      return None, None
+                      
+             except Exception as e:
+                 write_line(f"Error checking ticker {ticker}: {e}")
+
     try:
         url = f'https://query1.finance.yahoo.com/v7/finance/download/{ticker.replace(".", "-")}?period1={period1}&period2={cfg.YAHOO_MAX_PERIOD}&interval=1d&events=history'
         download_path = await pl.download_yahoo_price_data_async(page, url)
@@ -208,82 +270,20 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 df_ticker = df_ticker.drop(columns=[col for col in columns_to_drop if col in df_ticker.columns])
 
                 store_csv(df_ticker, ticker_file_path)
+                
+                # Auto-whitelist on success
+                update_csv_set(white_path, ticker)
+                
                 return df_ticker.reset_index(drop=True), ticker_file_path 
         else:
-            add_line_to_file(black_path, ticker)
+            update_csv_set(black_path, ticker)
             return None, ticker_file_path
         
     except Exception as e:
         e_str = str(e).lower()
-        if '404' in e_str or 'list index out of range' in e_str:
+        if '404' in e_str or 'list index out of range' in e_str or 'waiting for download from' in e_str:
             write_line(f'Skipping {ticker} because no data was found')
-            add_line_to_file(black_path, ticker)
-        elif '401' in e_str:
-            write_line(f'ERROR: {ticker} - Unauthorized.')
-            go_to_sleep(30, 60)
-        elif '429' in e_str:
-            write_line(f'Sleeping due to excessive requests for {ticker}')
-            go_to_sleep(30, 60)
-        elif 'remote' in e_str or 'failed' in e_str or 'http' in e_str:
-            write_line(f'ERROR: {ticker} - {e}')
-            go_to_sleep(15, 30)
-        elif 'system cannot find the file specified:' in e_str:
-            write_line(f'ERROR: File not found. {ticker} - {e}')
-            go_to_sleep(15, 30)
-        else:
-            write_line(f'Uknown error: {ticker} - {e}')
-            go_to_sleep(30, 60)
-        return None, ticker_file_path
-
-async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1):
-    black_path = str(pl.COMMON_DIR / 'blacklist.csv')
-    try:
-        url = f'https://query1.finance.yahoo.com/v7/finance/download/{ticker.replace(".", "-")}?period1={period1}&period2={cfg.YAHOO_MAX_PERIOD}&interval=1d&events=history'
-        download_path = await pl.download_yahoo_price_data_async(page, url)
-        
-        path = download_path
-        if os.path.exists(download_path):
-                df_response = pd.read_csv(path)
-                delete_files_with_string('C:/Users/rdpro/Downloads', ticker, 'csv')
-                if "Adj Close" in df_response.columns:
-                    df_response = df_response.drop('Adj Close', axis=1)
-                df_response['Date'] = pd.to_datetime(df_response['Date'])
-                df_response['Symbol'] = ticker
-
-                df_ticker = pd.concat([df_ticker, df_response], ignore_index=True)
-                df_ticker = df_ticker.sort_values(by=['Date', 'Symbol', 'Volume'], ascending=[True, True, False])
-                df_ticker = df_ticker.drop_duplicates(subset=['Date', 'Symbol'], keep='first')
-                
-                df_ticker['index'] = range(0, len(df_ticker))       
-                df_ticker['Symbol'] = ticker                        
-                df_ticker = df_ticker.astype({
-                    'Open': float,
-                    'High': float,
-                    'Low': float,
-                    'Close': float,
-                    'Volume': float,
-                })
-                if df_ticker['Date'].dtype != 'datetime64[ns]':
-                    df_ticker['Date'] = pd.to_datetime(df_ticker['Date'])
-                
-                columns_to_limit = ['Open', 'High', 'Low', 'Close']
-                for col in columns_to_limit:
-                    df_ticker[col] = df_ticker[col].round(2).astype(float)
-                    
-                columns_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
-                df_ticker = df_ticker.drop(columns=[col for col in columns_to_drop if col in df_ticker.columns])
-
-                store_csv(df_ticker, ticker_file_path)
-                return df_ticker.reset_index(drop=True), ticker_file_path 
-        else:
-            add_line_to_file(black_path, ticker)
-            return None, ticker_file_path
-        
-    except Exception as e:
-        e_str = str(e).lower()
-        if '404' in e_str or 'list index out of range' in e_str:
-            write_line(f'Skipping {ticker} because no data was found')
-            add_line_to_file(black_path, ticker)
+            update_csv_set(black_path, ticker)
         elif '401' in e_str:
             write_line(f'ERROR: {ticker} - Unauthorized.')
             go_to_sleep(30, 60)
@@ -335,10 +335,17 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     if not skip_reload:
         write_line('Retrieving historical data...')
         df_symbols = df_symbols.dropna(subset=['Symbol'])
+        black_path = pl.COMMON_DIR / 'blacklist.csv'
+        blacklist_financial_path = pl.COMMON_DIR / 'blacklist_financial.csv'
+        
+        symbols_to_remove = set()
+        symbols_to_remove.update(load_ticker_list(black_path))
+        symbols_to_remove.update(load_ticker_list(blacklist_financial_path))
+
         symbols = [
             row['Symbol'] 
             for _, row in df_symbols.iterrows() 
-            if '.' not in row['Symbol']
+            if '.' not in row['Symbol'] and row['Symbol'] not in symbols_to_remove
         ]
 
         historical_path     = pl.COMMON_DIR / 'get_historical_data_output.csv'
@@ -350,7 +357,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
             print(f"✅  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
         else:
             print("♻️  Cache missing or stale → downloading fresh historical data…")
-            semaphore = asyncio.Semaphore(1)
+            semaphore = asyncio.Semaphore(3)
             async def fetch(symbol):
                 async with semaphore:
                     page = await context.new_page()

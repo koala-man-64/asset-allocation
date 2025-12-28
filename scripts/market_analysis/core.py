@@ -20,6 +20,13 @@ import warnings
 import pandas as pd
 import numpy as np
 
+# Add project root to sys.path to ensure absolute imports work
+# This allows the file to be run directly or imported without the root in pythonpath
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 # Local imports
 from scripts.common import playwright_lib as pl
 from scripts.market_analysis import ta_lib
@@ -73,7 +80,13 @@ def go_to_sleep(range_low = 5, range_high = 20):
 
 def add_line_to_file(file_path, text_line):
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    file_exists = os.path.exists(file_path)
+    file_empty = file_exists and os.path.getsize(file_path) == 0
+    
     with open(file_path, 'a') as file:
+        if not file_exists or file_empty:
+            file.write("Symbol\n")
         file.write(text_line + '\n')
 
 def store_csv(obj: pd.DataFrame, file_path):
@@ -171,6 +184,31 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page) -> tup
 
 async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1):
     black_path = str(pl.COMMON_DIR / 'blacklist.csv')
+
+    # check if ticker exists in blacklist
+    df_blacklist = load_csv(black_path)
+    if df_blacklist is not None and not df_blacklist.empty:
+        if ticker in df_blacklist['Symbol'].values:
+            write_line(f'{ticker} is in blacklist, skipping')
+            return None, None
+
+    # Check if ticker exists in Yahoo
+    try:
+        quote_url = f'https://finance.yahoo.com/quote/{ticker}/'
+        await page.goto(quote_url)
+        # Check the response. BLK is the response if the ticker exists
+        # https://finance.yahoo.com/quote/BLKBADTICKER/ is the response if the ticker does not exist
+        
+        # We check title or URL to determine existence
+        page_title = await page.title()
+        if "Symbol Lookup" in page_title or "Lookup" in page_title:
+             write_line(f"Ticker {ticker} not found on Yahoo (redirected to lookup). Blacklisting.")
+             add_line_to_file(black_path, ticker)
+             return None, None
+             
+    except Exception as e:
+        write_line(f"Error checking ticker {ticker}: {e}")
+
     try:
         url = f'https://query1.finance.yahoo.com/v7/finance/download/{ticker.replace(".", "-")}?period1={period1}&period2={cfg.YAHOO_MAX_PERIOD}&interval=1d&events=history'
         download_path = await pl.download_yahoo_price_data_async(page, url)
@@ -269,10 +307,17 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     if not skip_reload:
         write_line('Retrieving historical data...')
         df_symbols = df_symbols.dropna(subset=['Symbol'])
+        black_path = pl.COMMON_DIR / 'blacklist.csv'
+        blacklist_financial_path = pl.COMMON_DIR / 'blacklist_financial.csv'
+        
+        symbols_to_remove = set()
+        symbols_to_remove.update(load_ticker_list(black_path))
+        symbols_to_remove.update(load_ticker_list(blacklist_financial_path))
+
         symbols = [
             row['Symbol'] 
             for _, row in df_symbols.iterrows() 
-            if '.' not in row['Symbol']
+            if '.' not in row['Symbol'] and row['Symbol'] not in symbols_to_remove
         ]
 
         historical_path     = pl.COMMON_DIR / 'get_historical_data_output.csv'
@@ -284,7 +329,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
             print(f"✅  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
         else:
             print("♻️  Cache missing or stale → downloading fresh historical data…")
-            semaphore = asyncio.Semaphore(1)
+            semaphore = asyncio.Semaphore(3)
             async def fetch(symbol):
                 async with semaphore:
                     page = await context.new_page()
