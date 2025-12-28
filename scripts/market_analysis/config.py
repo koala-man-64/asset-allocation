@@ -188,3 +188,6 @@ COLUMNS_TO_REMOVE_TA = [
     'volatility_kcw',
     'volume_vwap'     
 ]
+
+YAHOO_MAX_PERIOD = 99999999999
+DATA_FRESHNESS_SECONDS = 4 * 60 * 60

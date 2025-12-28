@@ -5,8 +5,8 @@ import warnings
 import datetime
 # Try to import local modules, handled gracefully if dependencies missing for placeholders
 try:
-    from scripts.aaa_500 import aaa_500_lib as a500lb
-    from scripts.aaa_500 import aaa_500_main
+    from scripts.market_analysis import core as a500lb
+    from scripts.market_analysis import main as aaa_500_main
 except ImportError as e:
     print(f"Warning: Could not import aaa_500 modules: {e}")
 
@@ -38,7 +38,7 @@ def run_aaa_500():
         # Replicating logic from aaa_500_main.py __main__ block
         # Assuming a500lb and aaa_500_main are available
         df_symbols = a500lb.get_symbols()
-        asyncio.run(aaa_500_main.main_async(df_symbols))
+        asyncio.run(aaa_500_main.main_async())
         write_line("AAA 500 Main Script execution completed.")
     except Exception as e:
         write_line(f"AAA 500 Main Script execution failed: {e}")
