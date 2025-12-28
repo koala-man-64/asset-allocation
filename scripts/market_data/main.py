@@ -2,8 +2,6 @@ import os
 import sys
 import asyncio
 from playwright.async_api import async_playwright
-import pandas as pd
-from datetime import datetime
 import warnings
 
 # Add project root to sys.path to ensure absolute imports work

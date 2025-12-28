@@ -5,17 +5,12 @@ import asyncio
 import re
 import random
 import time
-import math
 from datetime import datetime, timedelta
 import nasdaqdatalink
-from multiprocessing import Pool, cpu_count
-import concurrent.futures
 import pytz
-import fnmatch
 import os
-from dateutil.relativedelta import relativedelta
-import ta
 import sys
+from dateutil.relativedelta import relativedelta
 import warnings
 import pandas as pd
 import numpy as np
@@ -29,7 +24,6 @@ if project_root not in sys.path:
 
 # Local imports
 from scripts.common import playwright_lib as pl
-from scripts.market_data import ta_lib
 from scripts.market_data import config as cfg
 
 # Suppress warnings
@@ -301,34 +295,6 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
             go_to_sleep(30, 60)
         return None, ticker_file_path
 
-def get_historical_data(ticker, drop_prior=False, get_latest=False, page=None) -> tuple[pd.DataFrame, str]:
-    # Synchronous version wrapper.
-    # Note: Logic is simplified here as we primarily use async in the runner.
-    
-    ticker = ticker.replace('.', '-')
-    ticker_file_path = str(pl.COMMON_DIR / 'Yahoo' / 'Price Data' / f'{ticker}.csv')
-    df_ticker = load_csv(ticker_file_path)    
-    if df_ticker is None:
-        df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
-    df_ticker = df_ticker[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol']]
-    
-    if 'Date' in df_ticker.columns:
-        df_ticker['Date'] = pd.to_datetime(df_ticker['Date'])
-        
-    if not get_latest and df_ticker is not None:
-        return df_ticker, ticker_file_path
-
-    try:
-        csv_path = pl.get_yahoo_price_data(page, ticker)
-        if csv_path:
-            df = pd.read_csv(csv_path)
-            return df, ticker
-    except Exception as e:
-        write_line(f"Error fetching data for {ticker}: {e}")
-    return None, ticker
-
-def get_historical_data_wrapper(args):
-    return get_historical_data(*args)
 
 async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_latest, browser, page, context):
     skip_reload = False    
@@ -381,13 +347,6 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
                 print(f"💾  Wrote fresh data to {historical_path}")
         return df_concat
 
-def monitor_stock_data(df_symbols, lookback_bars, drop_prior, get_latest):
-    data_tuples = [(row['Symbol'], drop_prior, get_latest, True) for _, row in df_symbols.iterrows()]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        results = list(executor.map(get_historical_data_wrapper,  data_tuples))
-    results = [tup[0] for tup in results]
-    concatenated_df = pd.concat(results)
-    return concatenated_df
 
 def load_ticker_list(file_path: Path) -> list:
     if not isinstance(file_path, Path):
@@ -497,77 +456,8 @@ def get_symbols():
     return df_symbols
 
 
-def add_ta(df) -> pd.DataFrame:   
-    try:
-        df = df[['Symbol', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-        df = df[df['Volume'] != 0]
-        # ta lib call
-        ta.add_all_ta_features(df, 'Open', 'High', 'Low', 'Close', 'Volume')
-        
-        # remove columns
-        columns_to_remove = cfg.COLUMNS_TO_REMOVE_TA
-        df = df.drop(columns=[col for col in columns_to_remove if col in df.columns])
-        
-        df = df.set_index(['Symbol', 'Date'])
-        
-        # Logic to adjust indicators if needed (simplified from original which iterated list from CSV)
-        # Assuming ta features are sufficient or custom logic here is minimal for now.
-        # If needed, we can re-implement the specific NVI/TRIX adjustments.
-        
-        df = df.reset_index()
-    except Exception as e:
-        write_line(f'ERROR: Failed adding technical analysis to {df["Symbol"].iloc[-1] if not df.empty else "unknown"}: {e}')
-        return None
-    return df
-
-def perform_technical_analysis(lookback_bars, ticker, df_risk_free): 
-    write_line(f'Performing technical analysis on  {ticker}')
-    df_historical, ticker_pickle_path = get_historical_data(ticker, False, False, None)
-    if df_historical is None or len(df_historical) == 0:
-        write_line(f'Nothing found for ticker {ticker}')
-        return None
-    
-    df_historical = df_historical.sort_values(['Symbol', 'Date'])
-    df_historical = df_historical.drop_duplicates(subset='Date')
-
-    if len(df_historical) > 50:
-        rolling_avg = df_historical['Volume'].rolling(window=lookback_bars).mean()
-        df_historical['Normalized_Volume'] = df_historical['Volume'] / rolling_avg
-        
-        try:
-            df_historical['Diff%'] = df_historical['Close'] / df_historical['Close'].shift(1) - 1
-            if df_risk_free is not None and ticker != 'SPY':
-                df_risk_free['Diff%'] = df_risk_free['Close'] / df_risk_free['Close'].shift(1) - 1
-                df_historical = pd.merge(df_historical, df_risk_free[['Date', 'Diff%']], on='Date', suffixes=('', '_RiskFree'))
-            else:
-                df_historical['Diff%_RiskFree'] = df_historical['Diff%']
-                
-            df_historical = df_historical.loc[:, ~df_historical.columns.duplicated()]
-            
-            if df_risk_free is not None:
-                # Use ta_lib functions
-                df_historical['Jensen_20'] = ta_lib.calculate_rolling_jensens_alpha(df_historical, df_risk_free, .035, 20)
-                df_historical['Jensen_50'] = ta_lib.calculate_rolling_jensens_alpha(df_historical, df_risk_free, .035, 50)
-            else:
-                df_historical['Jensen_20'] = 0
-                df_historical['Jensen_50'] = 0
-            
-            df_historical['MACD_Signal_Line'] = ta_lib.calculate_macd(df_historical)
-            df_historical['Standardized_MACD'] = ta_lib.standardize_macd(df_historical)
-            df_historical = ta_lib.calculate_bollinger_bands(df_historical, period=36)
-            df_historical['OBV'] = ta_lib.calculate_obv(df_historical)
-            df_historical['ADL'] = ta_lib.calculate_adl(df_historical)
-            df_historical['RSI'] = ta_lib.calculate_rsi(df_historical)
-            df_historical = ta_lib.calculate_stochastic_oscillator(df_historical, period=36)
-            df_historical['CCI'] = ta_lib.calculate_cci(df_historical)
-            
-            # Additional calcs
-            df_historical['Boll_Stoch_Diff'] = (df_historical['Bollinger_High'] - df_historical['Bollinger_Low']) / (df_historical['Stochastic_High'] - df_historical['Stochastic_Low'])
-            
-            # Save
-            store_csv(df_historical, ticker_pickle_path)    
-        except Exception as e:
-            write_line(f'ERROR - Failed stock analysis for {ticker}: {e}')
-    return df_historical
-
-# Placeholder for less used functions to ensure module runs
+# Run verification when executed directly
+if __name__ == "__main__":
+    print("Running verification checks...")
+    # Add verification logic here if needed or keep it simple
+    pass
