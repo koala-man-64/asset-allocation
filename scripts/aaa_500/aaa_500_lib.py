@@ -327,11 +327,43 @@ class Trade:
     def __repr__(self):
         return f'Date: {self.Date}, Action: {self.Action}, Symbol: {self.Symbol}, Price: {self.Price}, Quantity: {self.Quantity}, ProfitLoss: {self.ProfitLoss}'
 
-# def process_row(row):
-#     # extract ticker
-#     ticker = row['Symbol']
-#     write_line(f'Getting historical data for {ticker}')
-#     get_historical_data(ticker)
+def load_ticker_list(file_path: Path) -> list:
+    """
+    Robustly loads a list of tickers from a CSV file.
+    Handles empty files, missing files, and optional 'Ticker' header.
+    """
+    if not isinstance(file_path, Path):
+        file_path = Path(file_path)
+
+    if not file_path.exists():
+        return []
+    
+    try:
+        # Check for empty file
+        if file_path.stat().st_size == 0:
+            return []
+
+        # Peek to see if there's a header
+        df_peek = pd.read_csv(file_path, nrows=1, header=None)
+        if df_peek.empty:
+            return []
+            
+        first_val = str(df_peek.iloc[0, 0])
+        
+        # If header looks like "Ticker" or "Symbol", treat as having header
+        if first_val.strip().lower() in ['ticker', 'symbol']:
+            df = pd.read_csv(file_path)
+            col_name = 'Ticker' if 'Ticker' in df.columns else 'Symbol'
+            if col_name in df.columns:
+                return df[col_name].dropna().unique().tolist()
+        
+        # Otherwise assume headerless single column
+        df = pd.read_csv(file_path, header=None)
+        return df.iloc[:, 0].dropna().unique().tolist()
+
+    except Exception as e:
+        write_line(f"Warning: Failed to load ticker list from {file_path}: {e}")
+        return []
 
 def add_line_to_file(file_path, text_line):
     """
@@ -531,26 +563,33 @@ def standardize_bollinger_band_width(dataframe, period=20, num_of_std=2):
     return dataframe
 
 
-def check_black_white_list(black_path: str, white_path: str, ticker: str):
-    df_blacklist = pd.DataFrame(columns=['Ticker'])
-    df_whitelist = pd.DataFrame(columns=['Ticker'])
-    
-    if os.path.exists(black_path):
-        df_blacklist = pd.read_csv(black_path, header=None)
-        df_blacklist.columns = ['Ticker']
-    if os.path.exists(white_path):
-        df_whitelist = pd.read_csv(white_path, header=None)
-        df_whitelist.columns = ['Ticker']
-        
-    if len(df_blacklist) > 0 and ticker in df_blacklist['Ticker'].tolist():
-        return False, df_blacklist, df_whitelist
-    elif len(df_whitelist) > 0 and ticker in df_whitelist['Ticker'].tolist():
-        return True, df_blacklist, df_whitelist
-    else:
-        return None, df_blacklist, df_whitelist
 
 def perform_ta_wrapper(args):
     return perform_technical_analysis(*args)
+
+def get_historical_data(symbol, drop_prior=False, get_latest=False, page=None):
+    try:
+        csv_path = pl.get_yahoo_price_data(page, symbol)
+        if csv_path:
+            df = pd.read_csv(csv_path)
+            return df, symbol
+    except Exception as e:
+        write_line(f"Error fetching data for {symbol}: {e}")
+    return None, symbol
+
+async def get_historical_data_async(symbol, drop_prior=False, get_latest=False, page=None):
+    try:
+        url = f"https://finance.yahoo.com/quote/{symbol}/history?p={symbol}"
+        # Use simple period1/period2 params if needed, or default to max history which yahoo web usually provides
+        # Actually pl.download_yahoo_price_data_async just downloads what's there.
+        csv_path = await pl.download_yahoo_price_data_async(page, url)
+        if csv_path:
+             df = pd.read_csv(csv_path)
+             return df, symbol
+    except Exception as e:
+         print(f"Error fetching data for {symbol}: {e}")
+    return None, symbol
+
 def get_historical_data_wrapper(args):
     return get_historical_data(*args)
 
@@ -627,7 +666,7 @@ def process_chunk(chunk):
 
 def get_bail_trend(bar_count):
     # Load DataFrame
-    df = pd.read_pickle('G:/My Drive/Python/AAA_500/Data/Stocks/^VIX.pickle')
+    df = pd.read_pickle(pl.COMMON_DIR / 'Stocks/^VIX.pickle')
 
     # Ensure the date column is in datetime format
     df['Date'] = pd.to_datetime(df['Date'])
@@ -729,117 +768,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
             print(f"💾  Wrote fresh data to {historical_path}")
         return
    
-async def refresh_stock_data2(df_symbols, lookback_bars, drop_prior, get_latest, page):
-    # refresh df_combined
-    skip_reload = False    
-    if not skip_reload:
-        write_line('Retrieving historical data...')
 
-        # 1. Build the list of parameter tuples
-        df_symbols = df_symbols.dropna(subset=['Symbol'])
-
-        # 2. Build data tuples combn
-        data_tuples = [
-            (row['Symbol'], drop_prior, get_latest, page)
-            for _, row in df_symbols.iterrows()
-            if '.' not in row['Symbol']          # skip weird ticker formats
-        ]
-
-        # 2. Pull historical data sequentially
-        # ------------------------------------------------------------------
-        # 1. House-keeping
-        historical_path      = pl.COMMON_DIR / 'get_historical_data_output.csv'
-        freshness_threshold  = 24 * 60 * 60        # 24 h in seconds
-        df_concat = pd.DataFrame()
-        
-        # ------------------------------------------------------------------
-        # 2. Re-use cached file if it’s fresh enough
-        if historical_path.exists() and (time.time() - historical_path.stat().st_mtime) < freshness_threshold:
-            ts  = datetime.fromtimestamp(historical_path.stat().st_mtime)
-            print(f"✅  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
-            df_concat = pd.read_csv(historical_path)
-
-        # ------------------------------------------------------------------
-        # 3. Otherwise, pull the data the long way and save a new cache
-        else:
-            print("♻️  Cache missing or stale → downloading fresh historical data…")
-            print("♻️  Cache missing or stale → downloading fresh historical data…")
-            # results = [get_historical_data_wrapper(params)[0] for params in data_tuples]
-            tasks = [get_historical_data_async(params[0], params[1], params[2], params[3]) for params in data_tuples]
-            results_tuples = await asyncio.gather(*tasks)
-            results = [res[0] for res in results_tuples]
-            df_concat = pd.concat(results, ignore_index=True)
-
-            # make sure the folder exists, then write
-            historical_path.parent.mkdir(parents=True, exist_ok=True)
-            df_concat.to_csv(historical_path, index=False)
-            print(f"💾  Wrote fresh data to {historical_path}")
-
-        # Get data tuples for analysis
-        data_tuples = []
-        ma_tickers = list(df_symbols[(df_symbols['Sector'] == 'Market Analysis') & (df_symbols['Industry'] == 'Index') & ~(df_symbols['Symbol'].isin(['^VIX', 'UST']))]['Symbol']) # indexes minus vix
-        df_ust = (await get_historical_data_async('UST', drop_prior, get_latest, page))[0]
-        df_spy = (await get_historical_data_async('SPY', drop_prior, get_latest, page))[0]
-
-        # ------------------------------------------------------------------
-        #    Decide whether you really need deep copies
-        #    If the risk-free DF is treated as *read-only* downstream,
-        #    set NEED_DEEP_COPY = False and you’ll save even more time/RAM.
-        NEED_DEEP_COPY = True   # flip to False if safe
-
-        # Cache the (possibly deep-copied) DataFrames just once
-        risk_free_cache = {
-            True:  copy.deepcopy(df_ust) if NEED_DEEP_COPY else df_ust,
-            False: copy.deepcopy(df_spy) if NEED_DEEP_COPY else df_spy,
-        }
-
-        # ------------------------------------------------------------------
-        #    Build `data_tuples`
-        data_tuples = [
-            (
-                lookback_bars,
-                row.Symbol,
-                risk_free_cache[row.Symbol in ma_tickers],
-            )
-            for row in df_symbols.itertuples(index=False)
-        ]
-        
-        # Run technical analysis on all symbols
-        results = []       
-        n_cores = int(max(1,cpu_count()*.75))
-        write_line('Performing technical analysis on historical data...')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=n_cores) as executor:
-            results = list(executor.map(perform_ta_wrapper, data_tuples))            
-        concatenated_df = pd.concat(results)
-        
-        # Grab all Jensen value columns and smooth them with a rolling average
-        # df_market_analysis = pd.read_csv('Data/market_analysis_tickers.csv')
-        # concatenated_df.drop(columns=[col for col in concatenated_df.columns.values if 'Industry' in col], inplace=True)
-        # concatenated_df = pd.merge(concatenated_df, df_market_analysis[['Symbol', 'Industry']], on='Symbol', how='inner')    
-        # concatenated_df['Date'] = pd.to_datetime(concatenated_df['Date'])
-        
-        # end_date = concatenated_df['Date'].max()#datetime(year=2023, month=9, day=30)
-        # start_date = end_date - timedelta(days=90)
-        # concatenated_df = concatenated_df[(start_date <= concatenated_df['Date']) & (concatenated_df['Date'] <= end_date)]
-        
-        # If VIX  spikes <-- volatility
-        # If JD < 0 <-- essentially a trailing stop loss
-        # If SPY < UST <-- market shift
-        # If VIX > SPY <--volatility
-        
-        
-        
-        
-        # plot_dual_axis_line_chart(concatenated_df[concatenated_df['Symbol'].isin(df_market_analysis['Symbol'])], 
-        #                             ['Jensen_20', 'Jensen_50'], 
-        #                             ['Close'], 
-        #                             'Price', 
-        #                             '20 and 50 Day Jensen Ratios',
-        #                             ['Jensen_20'], 
-        #                             'Jensen_50')
-        # plt.show()
-        # input("Enter to exit...")
-        return concatenated_df
     
 def monitor_stock_data(df_symbols, lookback_bars, drop_prior, get_latest):
     data_tuples = [(row['Symbol'], drop_prior, get_latest, True) for _, row in df_symbols.iterrows()]
@@ -917,7 +846,7 @@ def apply_strategy_filter(df_combined: pd.DataFrame, strat: Strategy):
     # store_csv(df_combined, 'Data/df_combined')
     
     # # write df_combined to csv for analysis elsewhere
-    df_combined.to_csv('Data/df_combined.csv')
+    df_combined.to_csv(pl.COMMON_DIR / 'df_combined.csv')
 
     return df_combined
 
@@ -1713,22 +1642,18 @@ def get_symbols():
                         }
                     ]
     # 2. Load the two other files that contain symbols you want to remove
-    blacklist_path = str(pl.COMMON_DIR / 'blacklist.csv')
-    blacklist_financial_path = str(pl.COMMON_DIR / 'blacklist_financial.csv')
-    if os.path.exists(blacklist_path):
-        df_remove1 = pd.read_csv(blacklist_path)        
-        df_symbols = df_symbols[~df_symbols['Symbol'].isin(df_remove1['Ticker'])]
-    if os.path.exists(blacklist_financial_path):
-        df_remove2 = pd.read_csv(blacklist_financial_path)
-        df_symbols = df_symbols[~df_symbols['Symbol'].isin(df_remove2['Ticker'])]
-
-
-    # # 3. Extract unique symbols from each “remove” DataFrame
-    # symbols_to_remove = set(df_remove1['Ticker'].unique()) \
-    #                 | set(df_remove2['Ticker'].unique())
-
-    # # 4. Filter your main df to exclude those symbols
-    # df_symbols = df_symbols[~df_symbols['Symbol'].isin(symbols_to_remove)]
+    # 2. Load the two other files that contain symbols you want to remove
+    blacklist_path = pl.COMMON_DIR / 'blacklist.csv'
+    blacklist_financial_path = pl.COMMON_DIR / 'blacklist_financial.csv'
+    
+    symbols_to_remove = set()
+    symbols_to_remove.update(load_ticker_list(blacklist_path))
+    symbols_to_remove.update(load_ticker_list(blacklist_financial_path))
+    
+    # 3. Filter your main df to exclude those symbols
+    if symbols_to_remove:
+        write_line(f"Excluding {len(symbols_to_remove)} blacklisted symbols.")
+        df_symbols = df_symbols[~df_symbols['Symbol'].isin(symbols_to_remove)]
 
     # 5. (Optional) Reset the index if you like a clean 0…N index
     df_symbols = df_symbols.reset_index(drop=True)
@@ -1749,7 +1674,7 @@ def load_df_combined(symbols):
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         # Results will contain the result of process_row applied to each row
-        results = list(executor.map(load_csv, ['G:\My Drive\Python\Common\Yahoo\Price Data/'+symbol+'.csv' for symbol in symbols]))
+        results = list(executor.map(load_csv, [pl.COMMON_DIR / 'Yahoo/Price Data' / f'{symbol}.csv' for symbol in symbols]))
     df_combined = pd.DataFrame()
     if len([df for df in results if df is not None]) > 0:
         write_line(f'Combining results of {len(symbols)}')
@@ -1826,7 +1751,7 @@ def rank_indicators(df, indicators, clear=False) -> pd.DataFrame:
     df = df[~df.index.duplicated(keep='first')]
     # have to set the direction to sort/rank each indicator so pull it from a manually created csv
     # clicked on whatever link ta library had in its documentation
-    indicator_directions = pd.read_csv('Data/indicators.csv')
+    indicator_directions = pd.read_csv(pl.COMMON_DIR / 'indicators.csv')
     for i_index, indicator in enumerate(indicators):
         write_inline(f'Processing {indicator} ({i_index}/{len(indicators)})')
         

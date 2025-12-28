@@ -7,23 +7,18 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from scripts.aaa_500 import aaa_500_lib as a500lb
 from scripts.common import playwright_lib as pl
 
-import time
-import pandas as pd
+import asyncio
+import pytz
+import dask.dataframe as dd
 import warnings
 from datetime import datetime, timedelta
-import ta as ta
-import matplotlib.pyplot as plt
-import itertools
-import multiprocessing as mp
-import concurrent.futures 
-from multiprocessing import Pool, cpu_count
-import dask.dataframe as dd
-import pytz
-import tempfile
-import asyncio
-import numpy as np
-import copy 
-import pandas.api.types as ptypes
+import pandas as pd
+import numpy as np # Used in main_async? Let's check. 
+# It seems np is not used in main_async (only in commented out sync code), wait line 108 used np.inf, but that's commented out.
+# wait, line 167 'assume_missing=True' handles float conversion.
+# Let's keep numpy just in case or check deeper. 
+# actually line 108/109 are commented out.
+
 
 warnings.filterwarnings('ignore')
 
@@ -178,109 +173,4 @@ if __name__ == "__main__":
     df_symbols = a500lb.get_symbols()
     asyncio.run(main_async(df_symbols))
     exit()
-    
-    # Get mode
-    a500lb.write_line('Modes: refresh/1, run_test/2, evaluate_current/3, find_short_term/4, refresh+find_short_term/5')    
-    mode = 'refresh'#'evaluate_current'
-    
-    if len(mode) > 0:
-        
-        # load symbols and df_combined (contains all stockd data)
-        
-
-        # async:
-        # playwright, browser, context, page = await get_playwright_browser(headless=True, use_async=True)
-
-        # refresh stock data
-        if mode == 'run_test' or mode == '2':
-            
-            df_combined = a500lb.load_df_combined(df_symbols)
-            
-            # init backtest result
-            backtest_result = a500lb.BacktestResult()
-            backtest_result.StartDate = datetime(year=2022, month=1, day=1)
-            backtest_result.EndDate = min(datetime.today(), df_combined['Date'].max())
-
-            # init strategy
-            strat = a500lb.Strategy()
-            strat.LookbackBars = 45
-            strat.RiskFreeTicker = 'SPY'
-            strat.TopNPerGroup = 3
-            strat.TopNSectors = 5
-            strat.YearRangeThreshold = .25
-            strat.VolumeThreshold = 100000
-            strat.PositionsToMaintain = 3
-            strat.ReallocateThreshold = 5
-            strat.StopLossThreshold = .05
-            strat.TakeProfitThreshold = -1 # -1 effectively disables takeprofit
-            strat.StopLossThreshold = 1 # 1 effectively disables stoploss
-            
-            backtest_result.Strategy = strat
-            backtest_result = a500lb.run_test(df_symbols, df_combined, backtest_result)
-            
-        # evaluate most recent data
-        elif mode == 'evaluate_current' or mode == '3':
-            
-            # init strat
-            strat = a500lb.Strategy()
-            strat.LookbackBars = 30
-            strat.RiskFreeTicker = 'SPY'
-            strat.TopNPerGroup = 5
-            strat.TopNSectors = 20
-            strat.ReturnThreshold = .01
-            strat.YearRangeThreshold = .95
-            strat.VolumeThreshold = 50000
-            strat.PositionsToMaintain = 4
-            df_combined = a500lb.load_df_combined(df_symbols)
-            a500lb.evaluate_current(df_symbols, df_combined, strat, True)
-            
-        elif mode == 'find_short_term' or mode == '4':
-            # init strat
-            strat = a500lb.Strategy()
-            strat.YearRangeThreshold = .9
-            strat.PriceThreshold = 1
-            strat.VolumeThreshold = 100000
-            df_combined = a500lb.load_df_combined(df_symbols)
-            a500lb.find_short_term(df_symbols, df_combined, strat)
-        
-        elif mode == '5':
-            est = pytz.timezone('US/Eastern')
-            current_time_est = datetime.now(est)
-            
-            pre_market = True # 
-            market_open = False
-            post_market = False
-            if not(
-                (current_time_est.hour > 16 or (current_time_est.hour == 16 and current_time_est.minute > 0)) or 
-                (current_time_est.hour < 9 or (current_time_est.hour == 9 and current_time_est.minute < 30))
-                ):
-                market_open = False
-            drop_prior = input('Drop yesterday\'s price (y/[n])? ')
-            if drop_prior != 'n':
-                drop_prior = False
-            else:
-                drop_prior = True
-            get_latest = input('Get latest([y]/n)? ')
-            if get_latest != 'n':
-                get_latest = True
-            else:
-                get_latest = False
-            
-            
-            # init strat
-            strat = a500lb.Strategy()
-            strat.YearRangeThreshold = .5
-            strat.VolumeThreshold = 50000
-            strat.ReturnThreshold = -1
-            while True:
-                df_combined = a500lb.refresh_stock_data2(df_symbols, 30, drop_prior, get_latest)
-                df_combined = a500lb.load_df_combined(df_symbols)
-                a500lb.find_short_term(df_symbols, df_combined, strat)
-                a500lb.go_to_sleep(30, 60)
-        else:
-            a500lb.write_line("Invalid mode entered")
-    else:
-        print("No mode provided")
-
-    #input("Press enter to exit...")
-    exit()
+    # Unreachable code removed
