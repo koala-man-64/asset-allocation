@@ -36,6 +36,7 @@ import itertools
 import warnings
 # sys.path.append(os.path.abspath('G:\My Drive\Python\SchwabCrawler'))
 from scripts.common import playwright_lib as pl
+from scripts.common import core as mdc
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
@@ -1531,59 +1532,8 @@ def evaluate_current(df_symbols: pd.DataFrame, df_combined: pd.DataFrame, strat:
     return df
 
 def get_active_tickers():
-    selected_columns = [
-        "ticker",  # Symbol
-        "comp_name",  # Name
-        "comp_name_2", 
-        "sic_4_desc",  # Description
-        "zacks_x_sector_desc",  # Sector
-        "zacks_x_ind_desc",  # Industry
-        "zacks_m_ind_desc",  # Industry_2
-        "optionable_flag",  # Optionable
-        "country_name",  # Country
-        "active_ticker_flag",
-        "ticker_type"
-    ]
-
-    rename_mapping = {
-        "ticker": "Symbol",
-        "comp_name": "Name",
-        "sic_4_desc": "Description",
-        "zacks_x_sector_desc": "Sector",
-        "zacks_x_ind_desc": "Industry",
-        "zacks_m_ind_desc": "Industry_2",
-        "optionable_flag": "Optionable",
-        "country_name": "Country"
-    }
-
-    # Fetch data with only selected columns and active tickers
-    nasdaqdatalink.ApiConfig.verify_ssl = False
-    
-    nasdaqdatalink.read_key(filename="G:\My Drive\Python\AAA_500\Data/nasdaq_key.txt")
-    df = nasdaqdatalink.get_table(
-        "ZACKS/MT",
-        paginate=True,
-        qopts={"columns": selected_columns}
-    )
-    
-    df = df[df['active_ticker_flag'] == "Y"]
-    df = df[df['ticker_type'] == "S"]
-    df = df[df['ticker_type'] == "S"]
-
-    # Merge 'comp_name' with 'comp_name_2' if missing
-    df["comp_name"] = np.where(
-        (df["comp_name"].isnull()) | (df["comp_name"].str.strip() == ""),
-        df["comp_name_2"],
-        df["comp_name"]
-    )
-
-    # Drop comp_name_2 since we already merged it
-    df.drop(columns=["comp_name_2", "active_ticker_flag", "ticker_type"], inplace=True)
-
-    # Rename columns
-    df.rename(columns=rename_mapping, inplace=True)
-
-    return df
+    """Delegate to common core implementation."""
+    return mdc.get_active_tickers()
 
 def get_symbols():
     

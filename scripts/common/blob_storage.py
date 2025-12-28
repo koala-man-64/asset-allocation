@@ -120,3 +120,31 @@ class BlobStorageClient:
         except Exception as e:
             logger.error(f"Error getting properties for {remote_path}: {e}")
             return None
+
+    def upload_data(self, remote_path: str, data: bytes, overwrite: bool = True):
+        """
+        Uploads bytes data to a blob.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            blob_client.upload_blob(data, overwrite=overwrite)
+            logger.info(f"Uploaded data to {remote_path}")
+        except Exception as e:
+            logger.error(f"Error uploading data to {remote_path}: {e}")
+            raise
+
+    def download_data(self, remote_path: str) -> bytes:
+        """
+        Downloads bytes data from a blob.
+        Returns None if blob doesn't exist.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            if not blob_client.exists():
+                return None
+            
+            return blob_client.download_blob().readall()
+        except Exception as e:
+            logger.error(f"Error downloading data from {remote_path}: {e}")
+            return None
+

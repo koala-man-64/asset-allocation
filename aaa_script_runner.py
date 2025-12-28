@@ -6,12 +6,12 @@ import datetime
 # Try to import local modules, handled gracefully if dependencies missing for placeholders
 try:
     from scripts.market_data import core as a500lb
-    from scripts.market_data import main as aaa_500_main
+    from scripts.market_data import scraper as aaa_500_main
 except ImportError as e:
     print(f"Warning: Could not import aaa_500 modules: {e}")
 
 # Placeholder imports for when other scripts are populated
-# from scripts.schwab_crawler import yahoo_crawler 
+# from scripts.finance_data import scraper as finance_data_scraper 
 # from scripts.price_target_analysis import price_target_exploration
 # from scripts.schwab_crawler import earnings_scraper
 # from scripts.schwab_crawler import fundamentals_analyzer
@@ -49,8 +49,8 @@ def run_placeholder(script_name):
     # This function handles scripts that are still placeholders or not yet modularized
     import subprocess
     script_path = None
-    if script_name == 'yahoo_crawler':
-         script_path = os.path.join('scripts', 'schwab_crawler', 'yahoo_crawler.py')
+    if script_name == 'finance_data_scraper':
+         script_path = os.path.join('scripts', 'finance_data', 'scraper.py')
     elif script_name == 'price_target_exploration':
          script_path = os.path.join('scripts', 'price_target_analysis', 'price_target_exploration.py')
     elif script_name == 'earnings_scraper':
@@ -75,10 +75,10 @@ def main():
     if approval != 'n':
         run_aaa_500()
 
-    # 2. Yahoo Crawler
-    approval = input('Process yahoo_crawler ([y]|n)? ')
+    # 2. Finance Data Scraper
+    approval = input('Process finance_data_scraper ([y]|n)? ')
     if approval != 'n':
-        run_placeholder('yahoo_crawler')
+        run_placeholder('finance_data_scraper')
 
     # 3. Price Target Exploration
     approval = input('Process price_target_exploration ([y]|n)? ')

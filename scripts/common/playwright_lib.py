@@ -1097,6 +1097,91 @@ def pw_login_to_yahoo(page, context):
         time.sleep(10)
     else:
         write_line("Clicking OK failed. Continuing.")
+
+async def pw_login_to_yahoo_async(page: AsyncPage, context: AsyncBrowserContext):
+    
+    # Load Yahoo login URL    
+    write_line("Loading yahoo login url...")
+    yahoo_login_url = (
+        "https://yahoo.com/finance"
+    )
+    await load_url_async(page, yahoo_login_url)
+    write_line("Loaded yahoo login url")
+    
+    if await is_yahoo_logged_in_async(page):
+        write_line("Already logged into Yahoo from saved cookies.")
+    else:
+        
+        # Select username from list
+        if await page_has_text_async(page, "Select an account to sign in"):
+            selectors = [
+                {"property_name": "name", "property_value": 'username'}
+            ]
+            await pw_click_by_selectors_async(page, selectors)
+            
+        # Enter username
+        else:
+            write_line("Entering username...")
+            selectors = [
+                {"property_name": "id", "property_value": 'login-username'}
+            ]
+            result = await pw_fill_by_selectors_async(page, selectors, 'rdprokes@gmail.com')
+            if result: # text entered successfully
+                write_line("Username entered")
+            else:
+                write_line("Username entry failed after retries. Must manually enter manually and proceed...")
+                # input("Press enter to continue...") # Cannot input in async headless usually, rely on timeouts or logs
+        
+            # Click submit button
+            write_line("Clicking submit button...")
+            selectors = [
+                {"property_name": "id", "property_value": 'login-signin', "property_type": "input"},
+                {"property_name": "id", "property_value": 'tpa-google-button', "property_type": "button"}
+            ]
+            result = await pw_click_by_selectors_async(page, selectors)
+            if result: # text entered successfully
+                write_line("Clicked submit button")
+                await asyncio.sleep(2)
+            else:
+                write_line("Clicking submit failed. Must perform manually and proceed...")
+
+        
+        # Enter the password
+        write_line("Entering password...")
+        selectors = [
+            {"property_name": 'name', "property_value": 'password'},
+            {"property_name": 'id', "property_value": 'login-passwd'}
+        ]
+        result = await pw_fill_by_selectors_async(page, selectors, 'IRoll24Deep#1988')
+        if result: # text entered successfully
+            write_line("Password entered")
+        else:
+            write_line("Password entry failed. Must manually enter and proceed...")
+            # input("Press enter to continue...")
+        
+        # Click submit button
+        write_line("Clicking submit button...")
+        selectors = [
+            {"property_name": "id", "property_value": 'login-signin', "property_type": "button"},
+            {"property_name": "id", "property_value": 'tpa-google-button', "property_type": "button"}
+        ]
+        result = await pw_click_by_selectors_async(page, selectors)
+        if result: # text entered successfully
+            write_line("Clicked submit button")
+            await asyncio.sleep(10)
+        else:
+            write_line("Clicking submit failed. Must perform manually and proceed...")
+           
+    # Click ok button for theme selector 
+    selectors = [
+        {"property_name": "aria-label", "property_value": 'OK', "property_type": "button"}
+    ]
+    result = await pw_click_by_selectors_async(page, selectors)
+    if result: # text entered successfully
+        write_line("Clicked OK button")
+        await asyncio.sleep(10)
+    else:
+        write_line("Clicking OK failed. Continuing.")
         
 def is_yahoo_logged_in(page: Page, timeout: int = 5_000) -> bool:
     """
