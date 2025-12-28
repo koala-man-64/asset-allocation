@@ -1,3 +1,13 @@
 Data/
 .vscode/
 __pycache__/
+.venv/
+
+# Secrets
+nasdaq_key.txt
+.env
+pw_cookies.json
+scripts/common/nasdaq_key.txt
+
+# Logs
+*.log

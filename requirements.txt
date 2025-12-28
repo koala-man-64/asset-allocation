@@ -1,0 +1,16 @@
+# Generated requirements based on imports and pip_reqs.txt
+
+pandas==2.2.3
+numpy==1.26.4
+dask
+distributed
+beautifulsoup4
+pandas_market_calendars
+colorama
+pyarrow==19.0.1
+ta
+matplotlib
+nasdaq-data-link
+playwright
+filelock
+pytz

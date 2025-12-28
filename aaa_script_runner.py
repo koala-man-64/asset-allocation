@@ -1,22 +1,24 @@
-import subprocess
-import os
-import os.path as path
-import warnings
-import pandas as pd
 import sys
-import numpy as np
+import os
+import asyncio
+import warnings
 import datetime
+# Try to import local modules, handled gracefully if dependencies missing for placeholders
+try:
+    from scripts.aaa_500 import aaa_500_lib as a500lb
+    from scripts.aaa_500 import aaa_500_main
+except ImportError as e:
+    print(f"Warning: Could not import aaa_500 modules: {e}")
+
+# Placeholder imports for when other scripts are populated
+# from scripts.schwab_crawler import yahoo_crawler 
+# from scripts.price_target_analysis import price_target_exploration
+# from scripts.schwab_crawler import earnings_scraper
+# from scripts.schwab_crawler import fundamentals_analyzer
+# from scripts.feature_importance import pca_analysis_code
+# from scripts.schwab_crawler import asset_allocation_analysis
+
 warnings.filterwarnings('ignore')
-
-"""
-    Order of execution
-        1. G:/My Drive/Python/AAA_500/aaa_500_main.py
-        2. G:/My Drive/Python/SchwabCrawler/yahoo_crawler.py
-        3. G:/My Drive/Python/FeatureImportance/pca_analysis_code.py
-        4. G:/My Drive/Python/SchwabCrawler/fundamentals_analyzer.py
-        5. G:/My Drive/Python/SchwabCrawler/asset_allocation_analysis.py
-
-"""
 
 def write_line(msg):
     '''
@@ -30,53 +32,70 @@ def write_line(msg):
     ct = ct.strftime('%Y-%m-%d %H:%M:%S')
     print('{}: {}'.format(ct, msg))
 
-
-# Resolve duplicate columns
-
-
-# Function to merge two DataFrames with forward filling
-
-
-
-
-
-
-
-
-# Paths to the Python scripts you want to execute
-paths_to_scripts = [
-    'G:/My Drive/Python/AAA_500/aaa_500_main.py', # gathers price data; G:\My Drive\Python\AAA_500\Data\df_combined.csv
-    'G:/My Drive/Python/SchwabCrawler/yahoo_crawler.py', # gathers financial data; G:\My Drive\Python\SchwabCrawler\Data\df_analysis_results_ranked.csv
-    'G:\My Drive\Python\PriceTargetAnalysis\price_target_exploration.py', # retrieves price target data; G:\My Drive\Python\PriceTargetAnalysis\Data\df_price_targets.csv
-    'G:\My Drive\Python\SchwabCrawler\earnings_scraper.py', # retrieves earnings data; G:\My Drive\Python\EarningsScraper\Data\df_earnings.csv    
-    'G:/My Drive/Python/SchwabCrawler/fundamentals_analyzer.py', # performs technical analysis on financial data; G:\My Drive\Python\AssetAllocation\Data\df_analysis_results.csv
-    # 'G:/My Drive/Python/FeatureImportance/pca_analysis_code.py', # performs technical analysis on price data; G:\My Drive\Python\FeatureImportance\Data\df_with_indicators.csv
-    # 'G:/My Drive/Python/SchwabCrawler/asset_allocation_analysis.py' # aggregate price and financial data, rank and write to csv as single dataframe for ingestion by power bi
-]
-
-# Store the original working directoryb
-original_cwd = os.getcwd()
-
-# Iterate through each script path
-for script_path in paths_to_scripts:
-    # Get the directory and name of the script
-    script_dir = path.dirname(script_path)
-    script_name = path.basename(script_path)
-
-    approval = input(f'Process {script_name} ([y]|n)?')
-
-    if approval == 'n':
-        continue
-
-    # Change the current working directory to the script's directory
-    os.chdir(script_dir)
-    write_line(f"Executing {script_name}")
+def run_aaa_500():
+    write_line("Starting AAA 500 Main Script")
     try:
-        # Execute the script
-        result = subprocess.run(['python', script_path])#, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        write_line(f"Execution of {script_name} succeeded, output:\n{result.stdout}")
-    except subprocess.CalledProcessError as e:
-        write_line(f"Execution of {script_name} failed: {e}")
+        # Replicating logic from aaa_500_main.py __main__ block
+        # Assuming a500lb and aaa_500_main are available
+        df_symbols = a500lb.get_symbols()
+        asyncio.run(aaa_500_main.main_async(df_symbols))
+        write_line("AAA 500 Main Script execution completed.")
+    except Exception as e:
+        write_line(f"AAA 500 Main Script execution failed: {e}")
+        import traceback
+        traceback.print_exc()
 
-    # Change back to the original working directory
-    os.chdir(original_cwd)
+def run_placeholder(script_name):
+    # This function handles scripts that are still placeholders or not yet modularized
+    import subprocess
+    script_path = None
+    if script_name == 'yahoo_crawler':
+         script_path = os.path.join('scripts', 'schwab_crawler', 'yahoo_crawler.py')
+    elif script_name == 'price_target_exploration':
+         script_path = os.path.join('scripts', 'price_target_analysis', 'price_target_exploration.py')
+    elif script_name == 'earnings_scraper':
+         script_path = os.path.join('scripts', 'schwab_crawler', 'earnings_scraper.py')
+    elif script_name == 'fundamentals_analyzer':
+         script_path = os.path.join('scripts', 'schwab_crawler', 'fundamentals_analyzer.py')
+    
+    if script_path and os.path.exists(script_path):
+        write_line(f"Executing placeholder script: {script_name}")
+        try:
+             subprocess.run([sys.executable, script_path])
+        except Exception as e:
+             write_line(f"Error running {script_name}: {e}")
+    else:
+        write_line(f"Script {script_name} not found or not mapped.")
+
+def main():
+    write_line("Starting Asset Allocation Script Runner")
+    
+    # 1. AAA 500 Main
+    approval = input('Process aaa_500_main ([y]|n)? ')
+    if approval != 'n':
+        run_aaa_500()
+
+    # 2. Yahoo Crawler
+    approval = input('Process yahoo_crawler ([y]|n)? ')
+    if approval != 'n':
+        run_placeholder('yahoo_crawler')
+
+    # 3. Price Target Exploration
+    approval = input('Process price_target_exploration ([y]|n)? ')
+    if approval != 'n':
+        run_placeholder('price_target_exploration')
+
+    # 4. Earnings Scraper
+    approval = input('Process earnings_scraper ([y]|n)? ')
+    if approval != 'n':
+        run_placeholder('earnings_scraper')
+
+    # 5. Fundamentals Analyzer
+    approval = input('Process fundamentals_analyzer ([y]|n)? ')
+    if approval != 'n':
+        run_placeholder('fundamentals_analyzer')
+
+    write_line("All scripts processed.")
+
+if __name__ == "__main__":
+    main()
