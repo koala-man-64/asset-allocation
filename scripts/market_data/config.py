@@ -1,3 +1,17 @@
+import os
+from collections import namedtuple
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Azure Configuration
+AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
+AZURE_CONTAINER_NAME = os.environ.get('AZURE_CONTAINER_NAME', 'market-data')
+
+# Internal Project Config
+Config = namedtuple('Config', ['PROJECT_ROOT'])
+
 TICKERS_TO_ADD = [
     {
     'Symbol': 'SPY',
