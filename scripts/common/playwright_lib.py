@@ -123,8 +123,10 @@ async def download_yahoo_price_data_async(
                     # Stock has no price data
                     if 'ERR_ABORTED' in str(e) and 'query1' in str(e):
                         pass
-                    else:
-                        raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
+                    else:                        
+                        go_to_sleep(1,1)
+                        if not("Download is starting" in str(e)):
+                            raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
 
             dl = await dl_info.value  # playwright.async_api.Download
             target = dl_root / dl.suggested_filename
