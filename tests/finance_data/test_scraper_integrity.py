@@ -17,8 +17,10 @@ def test_scraper_imports():
     try:
         import scripts.finance_data.scraper as yc
         
-        # 2. Check critical dependencies
+        # 2. Check critical dependencies and new functions
         assert yc.pd is not None
+        assert hasattr(yc, 'process_report_cloud'), "Missing process_report_cloud"
+        assert hasattr(yc, 'transpose_dataframe'), "Missing transpose_dataframe"
         
     except ImportError as e:
         pytest.fail(f"Failed to import scraper: {e}")
