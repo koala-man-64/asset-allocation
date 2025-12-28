@@ -9,12 +9,6 @@ try:
 except ImportError as e:
     print(f"Config import failed: {e}")
 
-print("Importing backtest_models...")
-try:
-    from scripts.market_analysis import backtest_models
-    print("Backtest models imported.")
-except ImportError as e:
-    print(f"Backtest models import failed: {e}")
 
 print("Importing ta_lib...")
 try:

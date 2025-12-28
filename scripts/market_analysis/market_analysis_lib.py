@@ -34,8 +34,6 @@ import numpy as np
 # Local imports
 from scripts.common import playwright_lib as pl
 from scripts.market_analysis import ta_lib
-from scripts.market_analysis import backtest_models
-from scripts.market_analysis.backtest_models import Portfolio, Position, Strategy, BacktestResult, MetricsSnapshot, Trade
 from scripts.market_analysis import config as cfg
 
 # Suppress warnings
