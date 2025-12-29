@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import logging
-from asset_allocation import config
+from scripts.common import config
 from asset_allocation.ui import cli
 
 def setup_logging():
