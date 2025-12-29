@@ -1,6 +1,6 @@
 import pytest
 import pandas as pd
-from scripts.market_data import config as cfg
+from scripts.common import config as cfg
 
 @pytest.mark.integration
 def test_01_connection_and_list(azure_client):

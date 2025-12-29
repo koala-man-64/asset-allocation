@@ -18,7 +18,7 @@ if project_root not in sys.path:
 # Local imports
 from scripts.common import core as mdc
 from scripts.common import playwright_lib as pl
-from scripts.market_data import config as cfg
+from scripts.common import config as cfg
 
 warnings.filterwarnings('ignore')
 
@@ -267,6 +267,11 @@ async def main():
     
     if full_blacklist:
         df_symbols = df_symbols[~df_symbols['Symbol'].isin(full_blacklist)]
+
+    # Apply Debug Filter
+    if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
+        mdc.write_line(f"⚠️ DEBUG MODE: Restricting execution to {len(cfg.DEBUG_SYMBOLS)} symbols: {cfg.DEBUG_SYMBOLS}")
+        df_symbols = df_symbols[df_symbols['Symbol'].isin(cfg.DEBUG_SYMBOLS)]        
 
     reports_to_process = []
     

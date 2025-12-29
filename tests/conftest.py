@@ -5,7 +5,7 @@ import sys
 # Add project root to sys.path if not picked up by pythonpath
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.market_data import config as cfg
+from scripts.common import config as cfg
 from scripts.common.blob_storage import BlobStorageClient
 
 @pytest.fixture(scope="session")

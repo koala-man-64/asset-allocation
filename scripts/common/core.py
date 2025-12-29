@@ -16,7 +16,7 @@ import nasdaqdatalink
 
 # Local imports
 from scripts.common.blob_storage import BlobStorageClient
-from scripts.market_data import config as cfg 
+from scripts.common import config as cfg 
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.
@@ -99,9 +99,11 @@ def store_csv(obj: pd.DataFrame, file_path):
     file_path: Remote path or local path (converted).
     """
     remote_path = get_remote_path(file_path)
-            
-    if storage_client:
-        storage_client.write_csv(remote_path, obj)
+    
+    if storage_client is None:
+        raise RuntimeError("Azure Storage Client not initialized. Cannot store CSV.")
+        
+    storage_client.write_csv(remote_path, obj)
     return remote_path
 
 def load_csv(file_path) -> object:
@@ -109,16 +111,13 @@ def load_csv(file_path) -> object:
     Loads a CSV from Azure Blob Storage.
     file_path: Can be a local path (for compatibility, converted to remote) or relative remote path.
     """
-    result = None
-    try:
-        remote_path = get_remote_path(file_path)
-        
-        # Fetch from Azure
-        if storage_client:
-            result = storage_client.read_csv(remote_path)
-    except Exception as e:
-        write_line(f'ERROR loading {file_path}: {e}')
-    return result
+    remote_path = get_remote_path(file_path)
+    
+    if storage_client is None:
+         raise RuntimeError("Azure Storage Client not initialized. Cannot load CSV.")
+
+    # Let errors propagate (File not found, permission denied, etc)
+    return storage_client.read_csv(remote_path)
 
 def update_csv_set(file_path, ticker):
     """
@@ -208,29 +207,25 @@ def load_ticker_list(file_path: Union[str, Path]) -> list:
     Loads a list of tickers from a CSV file in Azure. 
     Assumes file has a header like 'Ticker' or 'Symbol', or is headerless.
     """
-    try:
-        # load_csv handles remote path conversion and Azure loading
-        df = load_csv(file_path)
-        
-        if df is None or df.empty:
-            return []
-            
-        # Standardize column name check
-        col_name = None
-        if 'Ticker' in df.columns:
-            col_name = 'Ticker'
-        elif 'Symbol' in df.columns:
-             col_name = 'Symbol'
-             
-        if col_name:
-            return df[col_name].dropna().unique().tolist()
-            
-        # If no standard header, try first column
-        return df.iloc[:, 0].dropna().unique().tolist()
-
-    except Exception as e:
-        write_line(f"Warning: Failed to load ticker list from cloud {file_path}: {e}")
+    # load_csv handles remote path conversion and Azure loading
+    # It now raises errors if failed, which we propagate.
+    df = load_csv(file_path)
+    
+    if df is None or df.empty:
         return []
+        
+    # Standardize column name check
+    col_name = None
+    if 'Ticker' in df.columns:
+        col_name = 'Ticker'
+    elif 'Symbol' in df.columns:
+            col_name = 'Symbol'
+            
+    if col_name:
+        return df[col_name].dropna().unique().tolist()
+        
+    # If no standard header, try first column
+    return df.iloc[:, 0].dropna().unique().tolist()
 
 # ------------------------------------------------------------------------------
 # Symbol Management

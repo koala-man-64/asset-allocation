@@ -15,7 +15,7 @@ except ImportError as e:
 # from scripts.price_target_analysis import price_target_exploration
 # from scripts.schwab_crawler import earnings_scraper
 # from scripts.schwab_crawler import fundamentals_analyzer
-# from scripts.feature_importance import pca_analysis_code
+# from scripts.factor_analysis import runner
 # from scripts.schwab_crawler import asset_allocation_analysis
 
 warnings.filterwarnings('ignore')

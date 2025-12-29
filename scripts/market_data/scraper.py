@@ -44,6 +44,12 @@ async def main_async():
     # This involves Azure cache check or Nasdaq API call
     df_symbols = malib.get_symbols()
     
+    # Apply Debug Filter
+    from scripts.common import config as cfg
+    if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
+        print(f"⚠️ DEBUG MODE: Restricting execution to {len(cfg.DEBUG_SYMBOLS)} symbols: {cfg.DEBUG_SYMBOLS}")
+        df_symbols = df_symbols[df_symbols['Symbol'].isin(cfg.DEBUG_SYMBOLS)]
+    
     # 4. Refresh Data
     print(f"Starting data refresh for {len(df_symbols)} symbols...")
     # This orchestrates the concurrent download and Azure upload

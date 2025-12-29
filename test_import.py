@@ -10,7 +10,7 @@ try:
     import asset_allocation
     print(f"Loaded package: {asset_allocation}")
     
-    from asset_allocation import config
+    from scripts.common import config
     print(f"Loaded config: {config.BASE_DIR}")
     
     from asset_allocation.core import analysis
