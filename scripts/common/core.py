@@ -147,37 +147,28 @@ def update_csv_set(file_path, ticker):
         write_line(f"Error updating {file_path}: {e}")
 
 def get_file_text(file_path: Union[str, Path]) -> Optional[str]:
-    """Retrieves file content as text from Azure or local fallback."""
-    try:    
-        if storage_client:
-            # Try Azure first
-            # download_blob_as_text is assumed to be a method we add or exists wrapping download_block_blob
-            # Actually, BlobStorageClient usually deals in bytes/streams. Let's check blob_storage.py or use download_data/upload_data and decode.
-            blob_name = get_remote_path(file_path)
-            content_bytes = storage_client.download_data(blob_name)
-            if content_bytes:
-                return content_bytes.decode('utf-8')
-    except Exception as e:
-        pass # Fallback silent
-        # write_line(f"Warning: Azure load failed for {file_path}: {e}")
-
-    # Fallback to local
-    return _load_local_text(file_path)
+    """Retrieves file content as text from Azure. Raises error if failed or missing."""
+    if storage_client:
+        blob_name = get_remote_path(file_path)
+        content_bytes = storage_client.download_data(blob_name)
+        if content_bytes:
+            return content_bytes.decode('utf-8')
+    
+    # If we get here, either no client or no data
+    logger.warning(f"Failed to load {file_path} from cloud.")
+    return None
 
 def save_file_text(content: str, file_path: Union[str, Path]) -> None:
-    """Saves text content to Azure and local."""
-    try:
-        if storage_client:
-            blob_name = get_remote_path(file_path)
-            storage_client.upload_data(blob_name, content.encode('utf-8'), overwrite=True)
-    except Exception as e:
-        write_line(f"Warning: Azure save failed for {file_path}: {e}")
-        
-    _save_local_text(content, file_path)
+    """Saves text content to Azure."""
+    if storage_client:
+        blob_name = get_remote_path(file_path)
+        storage_client.upload_data(blob_name, content.encode('utf-8'), overwrite=True)
+    else:
+         raise RuntimeError(f"Cannot save {file_path}: Azure Client not initialized.")
 
 import json
 def get_json_content(file_path: Union[str, Path]) -> Optional[dict]:
-    """Retrieves JSON content from Azure or local."""
+    """Retrieves JSON content from Azure."""
     text = get_file_text(file_path)
     if text:
         try:
@@ -187,26 +178,9 @@ def get_json_content(file_path: Union[str, Path]) -> Optional[dict]:
     return None
 
 def save_json_content(data: dict, file_path: Union[str, Path]) -> None:
-    """Saves dictionary as JSON to Azure/Local."""
+    """Saves dictionary as JSON to Azure."""
     text = json.dumps(data, indent=2)
     save_file_text(text, file_path)
-
-def _load_local_text(file_path: Union[str, Path]) -> Optional[str]:
-    p = Path(file_path)
-    if p.exists():
-        try:
-            return p.read_text(encoding='utf-8')
-        except Exception as e:
-            write_line(f"Error reading local file {p}: {e}")
-    return None
-
-def _save_local_text(content: str, file_path: Union[str, Path]) -> None:
-    p = Path(file_path)
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding='utf-8')
-    except Exception as e:
-        write_line(f"Error writing local file {p}: {e}")
 
 def delete_files_with_string(folder_path, search_string, extensions=['csv','crdownload']):
     if isinstance(extensions, str):
@@ -229,39 +203,33 @@ def delete_files_with_string(folder_path, search_string, extensions=['csv','crdo
             except OSError as e:
                 print(f"Error deleting file {file}: {e}")
 
-def load_ticker_list(file_path: Path) -> list:
-    if not isinstance(file_path, Path):
-        file_path = Path(file_path)
-        
-    # NOTE: This function logic in original core.py seemed to rely on LOCAL file existence check
-    # using Path.exists(). If we fully migrate to Azure, we should check Azure.
-    # However, existing logic uses local paths for blacklist lookup often. 
-    # For now, we keep the LOCAL check but try to be graceful.
-    
-    if not file_path.exists():
-        return []
-    
+def load_ticker_list(file_path: Union[str, Path]) -> list:
+    """
+    Loads a list of tickers from a CSV file in Azure. 
+    Assumes file has a header like 'Ticker' or 'Symbol', or is headerless.
+    """
     try:
-        if file_path.stat().st_size == 0:
-            return []
-
-        df_peek = pd.read_csv(file_path, nrows=1, header=None)
-        if df_peek.empty:
+        # load_csv handles remote path conversion and Azure loading
+        df = load_csv(file_path)
+        
+        if df is None or df.empty:
             return []
             
-        first_val = str(df_peek.iloc[0, 0])
-        
-        if first_val.strip().lower() in ['ticker', 'symbol']:
-            df = pd.read_csv(file_path)
-            col_name = 'Ticker' if 'Ticker' in df.columns else 'Symbol'
-            if col_name in df.columns:
-                return df[col_name].dropna().unique().tolist()
-        
-        df = pd.read_csv(file_path, header=None)
+        # Standardize column name check
+        col_name = None
+        if 'Ticker' in df.columns:
+            col_name = 'Ticker'
+        elif 'Symbol' in df.columns:
+             col_name = 'Symbol'
+             
+        if col_name:
+            return df[col_name].dropna().unique().tolist()
+            
+        # If no standard header, try first column
         return df.iloc[:, 0].dropna().unique().tolist()
 
     except Exception as e:
-        write_line(f"Warning: Failed to load ticker list from {file_path}: {e}")
+        write_line(f"Warning: Failed to load ticker list from cloud {file_path}: {e}")
         return []
 
 # ------------------------------------------------------------------------------
@@ -291,16 +259,7 @@ def get_active_tickers():
             nasdaqdatalink.ApiConfig.api_key = key_content.strip()
             # write_line("Loaded NASDAQ API key from storage.")
         else:
-            # Fallback to looking in a common location (Legacy Local):
-            key_path = Path('scripts/common/nasdaq_key.txt') # Relative to project root often
-            if not key_path.exists():
-                 # Try absolute fallback based on strict path in original (bad practice but reliable for this user)
-                 key_path = Path("G:/My Drive/Python/AAA_500/Data/nasdaq_key.txt")
-            
-            if key_path.exists():
-                nasdaqdatalink.read_key(filename=str(key_path))
-            else:
-                print(f"Warning: NASDAQ API key not found in Azure or local paths.")
+             print(f"Warning: NASDAQ API key not found in Environment or Azure.")
             
     try:
         df = nasdaqdatalink.get_table("ZACKS/MT", paginate=True, qopts={"columns": selected_columns})
@@ -337,28 +296,12 @@ def get_symbols():
     # Logic note: We assume calling code might want to apply blacklists *after* getting the raw list,
     # OR we apply it here. Original code applied it here.
     
-    # Hardcoded fallback paths for this user environment if needed
-    # But ideally we use relative.
-    blacklist_path = Path('scripts/common/blacklist.csv')
-    blacklist_fin_path = Path('scripts/common/blacklist_financial.csv')
-    
-    # If paths don't exist locally, `load_ticker_list` returns empty list.
-    # Note: `load_ticker_list` is currently Local-File-System only.
-    # If these files are in Azure, we should load them via load_csv and parse.
-    # For refactoring safety, we'll assume they might be local for now, 
-    # but we should probably fetch them from Azure too?
-    # The original core.py used `pl.COMMON_DIR / 'blacklist.csv'` which implies local FS.
-    
-    # Let's trust logic in core.py regarding blacklists for now - it used load_ticker_list
+    blacklist_path = 'scripts/common/blacklist.csv'
+    blacklist_fin_path = 'scripts/common/blacklist_financial.csv'
     
     symbols_to_remove = set()
-    # Check if files exist relative to CWD or absolute
-    if not blacklist_path.exists():
-         # common fallback
-         blacklist_path = Path("c:/Users/rdpro/Projects/AssetAllocation/scripts/common/blacklist.csv")
-    if not blacklist_fin_path.exists():
-         blacklist_fin_path = Path("c:/Users/rdpro/Projects/AssetAllocation/scripts/common/blacklist_financial.csv")
-
+    
+    # Update to use load_ticker_list which we will update to be Cloud-Aware
     symbols_to_remove.update(load_ticker_list(blacklist_path))
     symbols_to_remove.update(load_ticker_list(blacklist_fin_path))
     
