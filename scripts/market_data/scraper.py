@@ -61,7 +61,7 @@ async def main_async():
         print("Data refresh complete (no new data loaded or returned).")
     
     await browser.close()
-    await playwright.close()
+    await playwright.stop()
     
 if __name__ == "__main__":
     asyncio.run(main_async())

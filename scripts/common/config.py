@@ -47,7 +47,7 @@ DATA_FRESHNESS_SECONDS = 4 * 60 * 60
 # Debug Configuration
 # Set to a list of symbols (e.g., ['AAPL', 'MSFT']) to restrict the scraper to only these.
 # Set to [] or None to run on the full universe.
-DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F']
+DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Internal Data Config
 TICKERS_TO_ADD = [

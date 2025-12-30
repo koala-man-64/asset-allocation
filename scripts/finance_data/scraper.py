@@ -159,7 +159,16 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                      # 5. Download
                      download_path = await pl.pw_download_after_click_by_selectors_async(page, selectors_dl, str(temp_dir))
                      
-                     if download_path and os.path.exists(download_path):
+                     # Check for file existence with retries
+                     file_exists = False
+                     for i in range(3):
+                         if download_path and os.path.exists(download_path):
+                             file_exists = True
+                             break
+                         if i < 2:
+                             await asyncio.sleep(3)
+
+                     if file_exists:
                          mdc.write_line(f"Downloaded {report['name']} for {ticker}")
                          
                          # 6. Read & Transpose
@@ -185,8 +194,12 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                     
             except Exception as e:
                 mdc.write_line(f"Error taking snapshot for {ticker}: {e}")
-                # Retry loop continues
-                await asyncio.sleep(1)
+                # Refresh page and wait before retry
+                try:
+                    await page.reload()
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
 
     finally:
         # Cleanup temp
