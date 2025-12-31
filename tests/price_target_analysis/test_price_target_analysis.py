@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock, patch, ANY
-from scripts.price_target_analysis import price_target_exploration as pte
+from scripts.price_target_analysis import price_target_analysis as pta
 
 # --- Test Utilities ---
 
