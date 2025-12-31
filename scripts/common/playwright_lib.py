@@ -64,18 +64,6 @@ DOWNLOADS_PATH = Path.home() / "Downloads"
 USER_DATA_DIR  = Path.home() / ".playwright_userdata"
 COMMON_DIR = Path(__file__).parent.resolve()
 
-stealth_js = """
-Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined
-});
-Object.defineProperty(navigator, 'languages', {
-    get: () => ['en-US', 'en']
-});
-Object.defineProperty(navigator, 'plugins', {
-    get: () => [1, 2, 3, 4, 5]
-});
-"""
-
 def write_line(msg: str):
     """
     Print a line to the console w/ a timestamp
@@ -560,8 +548,18 @@ async def _get_playwright_browser_async(
     write_line("Persistent context launched.")
 
     # Stealth Init Script
-    write_line("Adding stealth init script...")
-
+    write_line("Adding stealth init script2...")
+    stealth_js = """
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+    });
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+    });
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5]
+    });
+    """
     await context.add_init_script(stealth_js)
     write_line("Stealth script added.")
 
