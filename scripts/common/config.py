@@ -15,7 +15,7 @@ load_dotenv()
 # Base Directory (Project Root)
 # scripts/common/config.py -> scripts/common -> scripts -> ProjectRoot
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = BASE_DIR / "Data"
+DATA_DIR = BASE_DIR / "data"
 
 # Ensure Data directory exists
 DATA_DIR.mkdir(parents=True, exist_ok=True)

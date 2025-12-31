@@ -45,7 +45,8 @@ jobs:
           az containerapp job update \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --cron-expression "0 14-22 * * *"
 
       - name: Update Finance Data Job
         run: |
