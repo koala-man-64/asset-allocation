@@ -64,6 +64,18 @@ DOWNLOADS_PATH = Path.home() / "Downloads"
 USER_DATA_DIR  = Path.home() / ".playwright_userdata"
 COMMON_DIR = Path(__file__).parent.resolve()
 
+stealth_js = """
+Object.defineProperty(navigator, 'webdriver', {
+    get: () => undefined
+});
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US', 'en']
+});
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [1, 2, 3, 4, 5]
+});
+"""
+
 def write_line(msg: str):
     """
     Print a line to the console w/ a timestamp
@@ -1138,5 +1150,3 @@ async def element_exists_async(
             return False
         raise
     
-
-     
