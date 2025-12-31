@@ -3,29 +3,47 @@ import io
 import pandas as pd
 from datetime import datetime, timezone
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from azure.identity import DefaultAzureCredential
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Suppress verbose Azure logs (HTTP headers, etc)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.identity").setLevel(logging.WARNING)
+
 class BlobStorageClient:
-    def __init__(self, connection_string=None, container_name='market-data'):
+    def __init__(self, account_name=None, connection_string=None, container_name='market-data'):
+        # 1. Try config/env for Account Name (Preferred)
+        self.account_name = account_name or os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
+        # 2. Try config/env for Connection String (Legacy)
         self.connection_string = connection_string or os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
+        
         self.container_name = container_name
         
-        if not self.connection_string:
-            raise ValueError("AZURE_STORAGE_CONNECTION_STRING is not set.")
+        if self.account_name:
+            # IDENTITY PATH (Preferred)
+            logger.info(f"Initializing BlobStorageClient with Managed Identity for account: {self.account_name}")
+            account_url = f"https://{self.account_name}.blob.core.windows.net"
+            credential = DefaultAzureCredential()
+            self.blob_service_client = BlobServiceClient(account_url, credential=credential)
+        elif self.connection_string:
+            # KEY/STRING PATH (Legacy)
+            logger.warning("Initializing BlobStorageClient with Connection String (Legacy Auth)")
+            self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
+        else:
+            raise ValueError("Authentication failed: Set AZURE_STORAGE_ACCOUNT_NAME (Identity) or AZURE_STORAGE_CONNECTION_STRING.")
             
-        self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
         self.container_client = self.blob_service_client.get_container_client(self.container_name)
         
         # Ensure container exists
-        if not self.container_client.exists():
-            try:
+        try:
+            if not self.container_client.exists():
                 self.container_client.create_container()
                 logger.info(f"Created container: {self.container_name}")
-            except Exception as e:
-                logger.warning(f"Container creation might have raced: {e}")
+        except Exception as e:
+            logger.warning(f"Container creation/check might have failed (permissions/race): {e}")
 
     def file_exists(self, remote_path: str) -> bool:
         blob_client = self.container_client.get_blob_client(remote_path)
@@ -185,4 +203,3 @@ class BlobStorageClient:
         except Exception as e:
             logger.error(f"Error writing to {remote_path}: {e}")
             raise
-

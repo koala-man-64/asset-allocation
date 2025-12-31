@@ -21,6 +21,8 @@ DATA_DIR = BASE_DIR / "Data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Azure Configuration
+# Prioritize Account Name (Identity), allow Connection String as fallback
+AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
 AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
 AZURE_CONTAINER_NAME = os.environ.get('AZURE_CONTAINER_NAME', 'market-data')
 
@@ -48,6 +50,10 @@ DATA_FRESHNESS_SECONDS = 4 * 60 * 60
 # Set to a list of symbols (e.g., ['AAPL', 'MSFT']) to restrict the scraper to only these.
 # Set to [] or None to run on the full universe.
 DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
+
+# Playwright Configuration
+HEADLESS_MODE = True
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Internal Data Config
 TICKERS_TO_ADD = [
