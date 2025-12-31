@@ -20,9 +20,9 @@ warnings.filterwarnings('ignore')
 # Constants for Cloud Storage (Relative paths to Azure Container root)
 CSV_FOLDER = "Price Targets"
 BLACKLIST_FILE = "blacklist_price_targets.csv"
-DF_COMBINED_PATH = "df_combined.csv"
+DF_COMBINED_PATH = "df_combined.parquet"
 NASDAQ_KEY_FILE = "nasdaq_key.txt"
-OUTPUT_FILE = "df_price_targets.csv"
+OUTPUT_FILE = "df_price_targets.parquet"
 
 def setup_nasdaq_key():
     """Attempts to load Nasdaq Data Link key from Environment or Cloud."""
@@ -71,7 +71,7 @@ def fetch_and_save_target_price_data(symbol, cloud_path):
         mdc.write_line(f"    Retrieved {len(target_price_data)} rows for {symbol} from API.")
         
         # Save to Cloud
-        mdc.store_csv(target_price_data, cloud_path)
+        mdc.store_parquet(target_price_data, cloud_path)
         mdc.write_line(f"    Saved target price data for {symbol} to Cloud ({cloud_path}).")
         return target_price_data
     except Exception as e:
@@ -84,7 +84,7 @@ def process_symbol(symbol):
         mdc.write_line(f"Processing symbol: {symbol}")
         
         # Cloud Path
-        price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.csv"
+        price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.parquet"
         
         existing_price_targets = pd.DataFrame(columns=column_names)
         is_fresh = False
@@ -101,7 +101,7 @@ def process_symbol(symbol):
 
         if is_fresh:
             # If fresh, load and return immediately
-            loaded_df = mdc.load_csv(price_target_cloud_path)
+            loaded_df = mdc.load_parquet(price_target_cloud_path)
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
@@ -182,7 +182,7 @@ def process_symbol(symbol):
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
 
         # Save to Cloud
-        mdc.store_csv(updated_earnings, price_target_cloud_path)
+        mdc.store_parquet(updated_earnings, price_target_cloud_path)
         mdc.write_line(f"  Uploaded updated data for {symbol} to {price_target_cloud_path}")
 
         return updated_earnings
@@ -232,7 +232,7 @@ def run_batch_processing():
          updates_df.rename(columns={'ticker': 'Symbol', 'obs_date': 'Date'}, inplace=True)
          updates_df['Date'] = pd.to_datetime(updates_df['Date'])
          
-         mdc.store_csv(updates_df, OUTPUT_FILE)
+         mdc.store_parquet(updates_df, OUTPUT_FILE)
          mdc.write_line(f"Saved aggregated price targets to Cloud: {OUTPUT_FILE}")
     else:
         mdc.write_line("No updates generated.")
@@ -246,7 +246,7 @@ def run_interactive_mode(df=None):
     
     if df is None:
         mdc.write_line("Loading aggregated data from Cloud...")
-        df = mdc.load_csv(OUTPUT_FILE)
+        df = mdc.load_parquet(OUTPUT_FILE)
         if df is not None:
              df['Date'] = pd.to_datetime(df['Date'])
         else:

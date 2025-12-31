@@ -116,7 +116,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
     retry_counter = 0
     
     # Determine cloud path
-    cloud_path = f"Yahoo/{report['folder']}/{ticker}_{report['file_suffix']}.csv"
+    cloud_path = f"Yahoo/{report['folder']}/{ticker}_{report['file_suffix']}.parquet"
     
     # Temp download dir
     temp_dir = Path.home() / "Downloads" / f"temp_{ticker}_{report['period']}"
@@ -177,7 +177,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                              df_clean = transpose_dataframe(df, ticker)
                              
                              # 7. Upload to Azure
-                             mdc.store_csv(df_clean, cloud_path)
+                             mdc.store_parquet(df_clean, cloud_path)
                              mdc.write_line(f"Uploaded {cloud_path}")
                              success = True
                              break 
@@ -304,7 +304,7 @@ async def main():
             report['url'] = report['url_template'].format(ticker=symbol)
             
             # Check Cloud
-            cloud_path = f"Yahoo/{report['folder']}/{symbol}_{report['file_suffix']}.csv"
+            cloud_path = f"Yahoo/{report['folder']}/{symbol}_{report['file_suffix']}.parquet"
             
             should_refresh = True
             if mdc.storage_client:

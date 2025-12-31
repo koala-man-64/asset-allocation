@@ -36,6 +36,8 @@ write_section = mdc.write_section
 go_to_sleep = mdc.go_to_sleep
 store_csv = mdc.store_csv
 load_csv = mdc.load_csv
+store_parquet = mdc.store_parquet
+load_parquet = mdc.load_parquet
 update_csv_set = mdc.update_csv_set
 delete_files_with_string = mdc.delete_files_with_string
 get_symbols = mdc.get_symbols
@@ -47,8 +49,8 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     # Load df_ticker
     ticker = ticker.replace('.', '-')
     # Use unified path construction that load_csv understands
-    ticker_file_path = str(pl.COMMON_DIR / 'Yahoo' / 'Price Data' / f'{ticker}.csv')
-    df_ticker = load_csv(ticker_file_path)    
+    ticker_file_path = str(pl.COMMON_DIR / 'Yahoo' / 'Price Data' / f'{ticker}.parquet')
+    df_ticker = load_parquet(ticker_file_path)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
     
@@ -162,7 +164,7 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 columns_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
                 df_ticker = df_ticker.drop(columns=[col for col in columns_to_drop if col in df_ticker.columns])
 
-                store_csv(df_ticker, ticker_file_path)
+                store_parquet(df_ticker, ticker_file_path)
                 
                 # Auto-whitelist on success
                 update_csv_set(white_path, ticker)
@@ -221,7 +223,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     df_blacklist = load_csv(black_path) # black_path defined above
     
     # Cloud Path for aggregate
-    historical_path_str = 'get_historical_data_output.csv'
+    historical_path_str = 'get_historical_data_output.parquet'
     freshness_threshold = cfg.DATA_FRESHNESS_SECONDS
     df_concat = pd.DataFrame()
     
@@ -246,7 +248,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     if is_fresh:
         print(f"✅  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
         # Load from cloud
-        df_concat = load_csv(historical_path_str)
+        df_concat = load_parquet(historical_path_str)
     else:
         print("♻️  Cache missing or stale → downloading fresh historical data…")
         semaphore = asyncio.Semaphore(3)
@@ -269,7 +271,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
         if valid_frames:
             df_concat = pd.concat(valid_frames, ignore_index=True)
             # Save to cloud
-            store_csv(df_concat, historical_path_str)
+            store_parquet(df_concat, historical_path_str)
             print(f"💾  Wrote fresh data to {historical_path_str}")
     return df_concat
 

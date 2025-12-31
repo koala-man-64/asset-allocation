@@ -44,6 +44,39 @@ def test_02_read_write_blob(azure_client, temp_test_file):
         pytest.fail(f"Read/Write failed: {e}")
 
 @pytest.mark.integration
+def test_02b_read_write_blob_parquet(azure_client, temp_test_file):
+    """
+    Verify read/write operations to Azure Blob Storage using Parquet.
+    """
+    print("\n--- Test 02b: Read/Write Parquet ---")
+    df = pd.DataFrame({'col1': [1, 2], 'col2': ['A', 'B']})
+    file_name = temp_test_file.replace('.csv', '.parquet')
+    
+    try:
+        # Write
+        azure_client.write_parquet(file_name, df)
+        print("✅ Parquet Write successful.")
+        
+        # Existence Check
+        exists = azure_client.file_exists(file_name)
+        assert exists, "Parquet file should exist after write"
+        print("✅ Parquet Existence check passed.")
+
+        # Read
+        df_read = azure_client.read_parquet(file_name)
+        assert df_read is not None, "Parquet Read returned None"
+        assert len(df_read) == 2, "Read dataframe has wrong length"
+        assert 'col1' in df_read.columns, "Column missing"
+        print("✅ Parquet Read successful.")
+        
+        # Cleanup
+        azure_client.delete_file(file_name)
+
+    except Exception as e:
+        pytest.fail(f"Parquet Read/Write failed: {e}")
+
+
+@pytest.mark.integration
 def test_03_delete_blob(azure_client, temp_test_file):
     """
     Verify file deletion.

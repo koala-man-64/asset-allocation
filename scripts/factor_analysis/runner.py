@@ -15,17 +15,17 @@ if project_root not in sys.path:
 
 # Internal module imports (newly modularized)
 from scripts.factor_analysis.processor import add_technical_indicators
-from scripts.common.core import load_csv, store_csv, write_line
+from scripts.common.core import load_parquet, store_csv, write_line
 from scripts.common import config as cfg
 
 def main():
     write_line("Starting PCA Analysis Script (Modularized)...")
     
     # 1. Load Data (Strictly Azure)
-    input_file = 'get_historical_data_output.csv'
+    input_file = 'get_historical_data_output.parquet'
     
     try:
-        df = load_csv(input_file)
+        df = load_parquet(input_file)
     except RuntimeError as e:
         write_line(f"CRITICAL ERROR: {e}")
         return

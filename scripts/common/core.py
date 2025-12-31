@@ -145,6 +145,33 @@ def update_csv_set(file_path, ticker):
     except Exception as e:
         write_line(f"Error updating {file_path}: {e}")
 
+def store_parquet(obj: pd.DataFrame, file_path):
+    """
+    Stores a DataFrame to Azure Blob Storage as Parquet.
+    file_path: Remote path or local path (converted).
+    """
+    remote_path = get_remote_path(file_path)
+    
+    if storage_client is None:
+        raise RuntimeError("Azure Storage Client not initialized. Cannot store Parquet.")
+        
+    storage_client.write_parquet(remote_path, obj)
+    return remote_path
+
+def load_parquet(file_path) -> object:
+    """
+    Loads a Parquet file from Azure Blob Storage.
+    file_path: Can be a local path (for compatibility, converted to remote) or relative remote path.
+    """
+    remote_path = get_remote_path(file_path)
+    
+    if storage_client is None:
+         raise RuntimeError("Azure Storage Client not initialized. Cannot load Parquet.")
+
+    # Let errors propagate (File not found, permission denied, etc)
+    return storage_client.read_parquet(remote_path)
+
+
 def get_file_text(file_path: Union[str, Path]) -> Optional[str]:
     """Retrieves file content as text from Azure. Raises error if failed or missing."""
     if storage_client:

@@ -148,3 +148,41 @@ class BlobStorageClient:
             logger.error(f"Error downloading data from {remote_path}: {e}")
             return None
 
+    def read_parquet(self, remote_path: str) -> pd.DataFrame:
+        """
+        Reads a Parquet file from Azure Blob Storage into a Pandas DataFrame.
+        Returns None if the file does not exist or is empty.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            if not blob_client.exists():
+                logger.debug(f"File not found in blob storage: {remote_path}")
+                return None
+            
+            download_stream = blob_client.download_blob()
+            data = download_stream.readall()
+            
+            if not data:
+                return None
+
+            return pd.read_parquet(io.BytesIO(data))
+        except Exception as e:
+            logger.error(f"Error reading {remote_path}: {e}")
+            return None
+
+    def write_parquet(self, remote_path: str, df: pd.DataFrame):
+        """
+        Writes a Pandas DataFrame to a Parquet file in Azure Blob Storage.
+        """
+        try:
+            output = io.BytesIO()
+            df.to_parquet(output, index=False)
+            data = output.getvalue()
+            
+            blob_client = self.container_client.get_blob_client(remote_path)
+            blob_client.upload_blob(data, overwrite=True)
+            logger.info(f"Successfully wrote to blob: {remote_path}")
+        except Exception as e:
+            logger.error(f"Error writing to {remote_path}: {e}")
+            raise
+
