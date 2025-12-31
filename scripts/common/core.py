@@ -297,7 +297,7 @@ def get_active_tickers():
         return df
     except Exception as e:
         write_line(f"Failed to get active tickers: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['Symbol'])
 
 def get_symbols():
     df_symbols = pd.DataFrame()
@@ -312,6 +312,9 @@ def get_symbols():
         store_csv(df_symbols, file_path)
     else:
         write_line(f"Loaded {len(df_symbols)} symbols from Azure cache.")
+        
+    if 'Symbol' not in df_symbols.columns:
+        df_symbols['Symbol'] = pd.Series(dtype='object')
         
     tickers_to_add = cfg.TICKERS_TO_ADD
     
