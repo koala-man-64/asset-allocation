@@ -100,106 +100,15 @@ class BlobStorageClient:
             logger.error(f"Error uploading {local_path}: {e}")
             raise
 
-    def delete_file(self, remote_path: str):
+    def download_file(self, remote_path: str, local_path: str):
         """
-        Deletes a file from Azure Blob Storage.
-        """
-        try:
-            blob_client = self.container_client.get_blob_client(remote_path)
-            if blob_client.exists():
-                blob_client.delete_blob()
-                logger.info(f"Deleted blob: {remote_path}")
-        except Exception as e:
-            logger.error(f"Error deleting {remote_path}: {e}")
-
-    def list_files(self, prefix: str = None) -> list:
-        """
-        Lists files (blobs) in the container, optionally filtered by prefix.
-        """
-        try:
-            blobs = self.container_client.list_blobs(name_starts_with=prefix)
-            return [blob.name for blob in blobs]
-        except Exception as e:
-            logger.error(f"Error listing files: {e}")
-            return []
-
-    def get_last_modified(self, remote_path: str) -> datetime:
-        """
-        Returns the last modified datetime (UTC aware) of a blob.
-        Returns None if blob doesn't exist.
+        Downloads a file from Azure Blob Storage to local path.
         """
         try:
             blob_client = self.container_client.get_blob_client(remote_path)
-            if not blob_client.exists():
-                return None
-            
-            props = blob_client.get_blob_properties()
-            return props.last_modified
+            with open(local_path, "wb") as download_file:
+                download_file.write(blob_client.download_blob().readall())
+            logger.info(f"Downloaded {remote_path} to {local_path}")
         except Exception as e:
-            logger.error(f"Error getting properties for {remote_path}: {e}")
-            return None
-
-    def upload_data(self, remote_path: str, data: bytes, overwrite: bool = True):
-        """
-        Uploads bytes data to a blob.
-        """
-        try:
-            blob_client = self.container_client.get_blob_client(remote_path)
-            blob_client.upload_blob(data, overwrite=overwrite)
-            logger.info(f"Uploaded data to {remote_path}")
-        except Exception as e:
-            logger.error(f"Error uploading data to {remote_path}: {e}")
-            raise
-
-    def download_data(self, remote_path: str) -> bytes:
-        """
-        Downloads bytes data from a blob.
-        Returns None if blob doesn't exist.
-        """
-        try:
-            blob_client = self.container_client.get_blob_client(remote_path)
-            if not blob_client.exists():
-                return None
-            
-            return blob_client.download_blob().readall()
-        except Exception as e:
-            logger.error(f"Error downloading data from {remote_path}: {e}")
-            return None
-
-    def read_parquet(self, remote_path: str) -> pd.DataFrame:
-        """
-        Reads a Parquet file from Azure Blob Storage into a Pandas DataFrame.
-        Returns None if the file does not exist or is empty.
-        """
-        try:
-            blob_client = self.container_client.get_blob_client(remote_path)
-            if not blob_client.exists():
-                logger.debug(f"File not found in blob storage: {remote_path}")
-                return None
-            
-            download_stream = blob_client.download_blob()
-            data = download_stream.readall()
-            
-            if not data:
-                return None
-
-            return pd.read_parquet(io.BytesIO(data))
-        except Exception as e:
-            logger.error(f"Error reading {remote_path}: {e}")
-            return None
-
-    def write_parquet(self, remote_path: str, df: pd.DataFrame):
-        """
-        Writes a Pandas DataFrame to a Parquet file in Azure Blob Storage.
-        """
-        try:
-            output = io.BytesIO()
-            df.to_parquet(output, index=False)
-            data = output.getvalue()
-            
-            blob_client = self.container_client.get_blob_client(remote_path)
-            blob_client.upload_blob(data, overwrite=True)
-            logger.info(f"Successfully wrote to blob: {remote_path}")
-        except Exception as e:
-            logger.error(f"Error writing to {remote_path}: {e}")
+            logger.error(f"Error downloading {remote_path}: {e}")
             raise
