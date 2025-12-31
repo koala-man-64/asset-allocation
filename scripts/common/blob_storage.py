@@ -6,6 +6,9 @@ from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azure.identity import DefaultAzureCredential
 import logging
 from pathlib import Path
+import requests
+from requests.adapters import HTTPAdapter
+from azure.core.pipeline.transport import RequestsTransport
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +25,23 @@ class BlobStorageClient:
         
         self.container_name = container_name
         
+        # Configure transport with larger connection pool
+        # Default is 10, which causes "Connection pool is full" with many threads
+        session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
+        session.mount('https://', adapter)
+        transport = RequestsTransport(session=session)
+
         if self.account_name:
             # IDENTITY PATH (Preferred)
             logger.info(f"Initializing BlobStorageClient with Managed Identity for account: {self.account_name}")
             account_url = f"https://{self.account_name}.blob.core.windows.net"
             credential = DefaultAzureCredential()
-            self.blob_service_client = BlobServiceClient(account_url, credential=credential)
+            self.blob_service_client = BlobServiceClient(account_url, credential=credential, transport=transport)
         elif self.connection_string:
             # KEY/STRING PATH (Legacy)
             logger.warning("Initializing BlobStorageClient with Connection String (Legacy Auth)")
-            self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
+            self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string, transport=transport)
         else:
             raise ValueError("Authentication failed: Set AZURE_STORAGE_ACCOUNT_NAME (Identity) or AZURE_STORAGE_CONNECTION_STRING.")
             
@@ -100,6 +110,7 @@ class BlobStorageClient:
             logger.error(f"Error uploading {local_path}: {e}")
             raise
 
+
     def download_file(self, remote_path: str, local_path: str):
         """
         Downloads a file from Azure Blob Storage to local path.
@@ -112,3 +123,73 @@ class BlobStorageClient:
         except Exception as e:
             logger.error(f"Error downloading {remote_path}: {e}")
             raise
+
+    def download_data(self, remote_path: str) -> bytes:
+        """
+        Downloads a blob as bytes.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            if not blob_client.exists():
+                return None
+            return blob_client.download_blob().readall()
+        except Exception as e:
+            logger.error(f"Error downloading data {remote_path}: {e}")
+            raise
+
+    def upload_data(self, remote_path: str, data: bytes, overwrite: bool = True):
+        """
+        Uploads bytes to a blob.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            blob_client.upload_blob(data, overwrite=overwrite)
+            logger.info(f"Uploaded data to {remote_path}")
+        except Exception as e:
+            logger.error(f"Error uploading data to {remote_path}: {e}")
+            raise
+
+    def get_last_modified(self, remote_path: str) -> datetime:
+        """
+        Gets the last modified timestamp of a blob. Returns None if check fails/doesn't exist.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            if not blob_client.exists():
+                return None
+            return blob_client.get_blob_properties().last_modified
+        except Exception as e:
+            logger.error(f"Error getting properties for {remote_path}: {e}")
+            return None
+
+    def read_parquet(self, remote_path: str) -> pd.DataFrame:
+        """
+        Reads a Parquet file from Azure Blob Storage into a Pandas DataFrame.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            if not blob_client.exists():
+                return None
+            
+            data = blob_client.download_blob().readall()
+            return pd.read_parquet(io.BytesIO(data))
+        except Exception as e:
+            logger.error(f"Error reading parquet {remote_path}: {e}")
+            return None
+
+    def write_parquet(self, remote_path: str, df: pd.DataFrame):
+        """
+        Writes a Pandas DataFrame to a Parquet file in Azure Blob Storage.
+        """
+        try:
+            output = io.BytesIO()
+            df.to_parquet(output, index=False)
+            data = output.getvalue()
+            
+            blob_client = self.container_client.get_blob_client(remote_path)
+            blob_client.upload_blob(data, overwrite=True)
+            logger.info(f"Successfully wrote parquet to blob: {remote_path}")
+        except Exception as e:
+            logger.error(f"Error writing parquet to {remote_path}: {e}")
+            raise
+

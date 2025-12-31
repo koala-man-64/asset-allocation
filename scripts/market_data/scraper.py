@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 async def main_async():
     # 1. Setup Browser
     print("Initializing Playwright...")
-    playwright, browser, context, page = await pl.get_playwright_browser(headless=False, use_async=True)
+    playwright, browser, context, page = await pl.get_playwright_browser(use_async=True)
     
     # 2. Authenticate
     print("Loading cookies and logging in...")
