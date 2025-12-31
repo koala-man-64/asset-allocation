@@ -55,6 +55,15 @@ DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 HEADLESS_MODE = True
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+# Playwright Paths
+# Defaults to user home for local dev, overridable via env vars for Cloud/Container usage.
+# In Azure Containers, typically set DOWNLOADS_PATH to /tmp/downloads or a mounted volume.
+DEFAULT_DOWNLOADS = Path.home() / "Downloads"
+DEFAULT_USER_DATA = Path.home() / ".playwright_userdata"
+
+DOWNLOADS_PATH = Path(os.environ.get("DOWNLOADS_PATH", DEFAULT_DOWNLOADS))
+USER_DATA_DIR = Path(os.environ.get("PLAYWRIGHT_USER_DATA_DIR", DEFAULT_USER_DATA))
+
 # Internal Data Config
 TICKERS_TO_ADD = [
     {

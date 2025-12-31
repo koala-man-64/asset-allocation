@@ -60,8 +60,8 @@ from scripts.common import config as cfg
 warnings.filterwarnings('ignore')
 
 
-DOWNLOADS_PATH = Path.home() / "Downloads"
-USER_DATA_DIR  = Path.home() / ".playwright_userdata"
+DOWNLOADS_PATH = cfg.DOWNLOADS_PATH
+USER_DATA_DIR  = cfg.USER_DATA_DIR
 COMMON_DIR = Path(__file__).parent.resolve()
 
 def write_line(msg: str):
@@ -111,8 +111,9 @@ async def download_yahoo_price_data_async(
     RuntimeError
         If the download never starts within all attempts.
     """
-    dl_root = Path(DOWNLOADS_PATH or Path.home() / "Downloads")
+    dl_root = DOWNLOADS_PATH
     dl_root.mkdir(parents=True, exist_ok=True)
+    write_line(f"Downloading to: {dl_root}")
 
     for attempt in range(1, max_attempts + 1):
         try:
@@ -132,7 +133,7 @@ async def download_yahoo_price_data_async(
             dl = await dl_info.value  # playwright.async_api.Download
             target = dl_root / dl.suggested_filename
             await dl.save_as(str(target))
-            delete_newer_duplicates(str(target))
+            # delete_newer_duplicates(str(target))
             return target
 
         except PlaywrightTimeoutError as pe:
@@ -372,8 +373,9 @@ def pw_download_after_click_by_selectors(
       RuntimeError if no selector yields a download within all attempts.
     """
     # Resolve downloads_dir (string) into a Path
-    download_path = Path(downloads_dir) if downloads_dir else (Path.home() / "Downloads")
+    download_path = Path(downloads_dir) if downloads_dir else DOWNLOADS_PATH
     download_path.mkdir(parents=True, exist_ok=True)
+    write_line(f"Downloading to: {download_path}")
 
     for attempt in range(1, max_attempts + 1):
         for sel in selectors:
@@ -398,7 +400,7 @@ def pw_download_after_click_by_selectors(
                     download: Download = dl_info.value
                     target = download_path / download.suggested_filename
                     download.save_as(str(target))
-                    delete_newer_duplicates(str(target))
+                    # delete_newer_duplicates(str(target))
                     # go_to_sleep(1,1)
                     return target
             except TimeoutError as te:
@@ -446,8 +448,9 @@ async def pw_download_after_click_by_selectors_async(
       RuntimeError if no selector yields a download within all attempts.
     """
     # Resolve downloads_dir into a Path
-    download_path = Path(downloads_dir).expanduser() if downloads_dir else (Path.home() / "Downloads")
+    download_path = Path(downloads_dir).expanduser() if downloads_dir else DOWNLOADS_PATH
     download_path.mkdir(parents=True, exist_ok=True)
+    write_line(f"Downloading to: {download_path}")
 
     for attempt in range(1, max_attempts + 1):
         for sel in selectors:
@@ -474,11 +477,11 @@ async def pw_download_after_click_by_selectors_async(
                     target = download_path / download.suggested_filename
                     await download.save_as(str(target))
 
-                    # Optional helper in your codebase; ignore if undefined.
-                    try:
-                        delete_newer_duplicates(str(target))  # type: ignore[name-defined]
-                    except Exception:
-                        pass
+                    # # Optional helper in your codebase; ignore if undefined.
+                    # try:
+                    #     delete_newer_duplicates(str(target))  # type: ignore[name-defined]
+                    # except Exception:
+                    #     pass
 
                     return target
 
