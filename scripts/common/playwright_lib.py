@@ -56,6 +56,7 @@ import glob
 import random
 from playwright.sync_api import Error          # generic base class
 from playwright.sync_api import TimeoutError   # subclass for time-outs
+from scripts.common import config as cfg
 warnings.filterwarnings('ignore')
 
 
@@ -615,7 +616,7 @@ async def pw_download_after_click_by_selectors_async(
     raise RuntimeError(f"Download never started after clicking selectors: {selectors!r}")
 
 def get_playwright_browser(
-    headless: bool = False,
+    headless: Optional[bool] = None,
     slow_mo: Optional[int] = None,
     use_async: bool = False,
 ) -> Union[
@@ -629,6 +630,9 @@ def get_playwright_browser(
 
     Returns (playwright, browser, context, page).
     """
+    if headless is None:
+        headless = cfg.HEADLESS_MODE
+
     if use_async:
         return _get_playwright_browser_async(headless, slow_mo)
     else:
@@ -646,6 +650,7 @@ def _get_playwright_browser_sync(
     browser = playwright.chromium.launch(
         headless=headless,
         slow_mo=slow_mo or 0,
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
     )
 
     # 3. Persistent context (incognito-like with user data)
@@ -655,7 +660,18 @@ def _get_playwright_browser_sync(
         slow_mo=slow_mo or 0,
         accept_downloads=True,
         downloads_path=str(DOWNLOADS_PATH),
+        user_agent=cfg.USER_AGENT,
+        viewport={"width": 1920, "height": 1080},
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
     )
+    
+    # Stealth Init Script
+    stealth_js = """
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+    """
+    context.add_init_script(stealth_js)
 
     # 4. Open a new tab
     page = context.new_page()
@@ -674,6 +690,7 @@ async def _get_playwright_browser_async(
     browser = await playwright.chromium.launch(
         headless=headless,
         slow_mo=slow_mo or 0,
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
     )
 
     # 3. Persistent context
@@ -683,7 +700,18 @@ async def _get_playwright_browser_async(
         slow_mo=slow_mo or 0,
         accept_downloads=True,
         downloads_path=str(DOWNLOADS_PATH),
+        user_agent=cfg.USER_AGENT,
+        viewport={"width": 1920, "height": 1080},
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
     )
+
+    # Stealth Init Script
+    stealth_js = """
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+    """
+    await context.add_init_script(stealth_js)
 
     # 4. Open a new tab
     page = await context.new_page()

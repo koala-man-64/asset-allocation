@@ -1,0 +1,12 @@
+.git
+.venv
+.vscode
+__pycache__
+.pytest_cache
+artifacts
+Data
+Symbols
+Tests
+.env
+.github
+*.md

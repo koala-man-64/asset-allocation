@@ -8,6 +8,7 @@ import sys
 import warnings
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
+from typing import List, Optional
 
 # Local imports
 # Adjust path if necessary to find 'scripts' when running directly
@@ -20,9 +21,10 @@ warnings.filterwarnings('ignore')
 # Constants for Cloud Storage (Relative paths to Azure Container root)
 CSV_FOLDER = "Price Targets"
 BLACKLIST_FILE = "blacklist_price_targets.csv"
-DF_COMBINED_PATH = "df_combined.parquet"
 NASDAQ_KEY_FILE = "nasdaq_key.txt"
 OUTPUT_FILE = "df_price_targets.parquet"
+# DF_COMBINED_PATH = "df_combined.parquet" # [Mechanical cleanup] Unused constant
+BATCH_SIZE = 50
 
 def setup_nasdaq_key():
     """Attempts to load Nasdaq Data Link key from Environment or Cloud."""
@@ -37,59 +39,95 @@ def setup_nasdaq_key():
         else:
             mdc.write_line("WARNING: Nasdaq API key not found in Env or Cloud.")
 
-def calculate_null_percentage(df):
-    """Calculates percentage of null/inf values per column."""
-    if df.empty:
-        return pd.Series()
-    
-    total_len = len(df)
-    problematic_mask = df.isna() | (df == np.inf) | (df == -np.inf)
-    null_percentage = (problematic_mask.sum()) / total_len * 100
-    for column, percentage in null_percentage.items():
-        mdc.write_line(f'{column}: {percentage:.2f}%')
-    return null_percentage
+def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing_price_targets: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """
+    Transforms raw API data for a single symbol: sorts, resamples, carries forward, 
+    merges with existing data, and saves to cloud.
+    """
+    column_names = [
+        "ticker", "obs_date", "tp_mean_est", "tp_std_dev_est", 
+        "tp_high_est", "tp_low_est", "tp_cnt_est", 
+        "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
+    ]
+    price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.parquet"
 
-def normalize_column(column):
-    if column.max() == column.min():
-        return column
-    return (column - column.min()) / (column.max() - column.min())
-
-def remove_outliers(df, columns):
-    for col in columns:
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-        df = df[(df[col] >= lower_bound) & (df[col] <= upper_bound)]
-    return df
-
-def fetch_and_save_target_price_data(symbol, cloud_path):
     try:
-        # Fetch data from API
-        target_price_data = nasdaqdatalink.get_table('ZACKS/TP', ticker=symbol)
-        mdc.write_line(f"    Retrieved {len(target_price_data)} rows for {symbol} from API.")
+        # Ensure timestamp
+        target_price_data['obs_date'] = pd.to_datetime(target_price_data['obs_date'])
         
-        # Save to Cloud
-        mdc.store_parquet(target_price_data, cloud_path)
-        mdc.write_line(f"    Saved target price data for {symbol} to Cloud ({cloud_path}).")
-        return target_price_data
+        # Sort
+        target_price_data = target_price_data.sort_values(by='obs_date')
+        
+        # Carry Forward Logic
+        latest_obs_date = target_price_data['obs_date'].max()
+        today = pd.to_datetime("today").normalize()
+
+        # If last observation is old, we might want to carry it forward to today
+        # Only do this if we actually have data
+        if not target_price_data.empty and latest_obs_date < today:
+            all_dates = pd.date_range(start=target_price_data['obs_date'].min(), end=today)
+            df_all_dates = pd.DataFrame({'obs_date': all_dates})
+            target_price_data = df_all_dates.merge(target_price_data, on='obs_date', how='left')
+            target_price_data = target_price_data.ffill()
+        
+        # Ensure columns exist
+        for col in column_names:
+            if col not in target_price_data.columns:
+                 target_price_data[col] = np.nan
+        
+        target_price_data = target_price_data[column_names]
+
+        # Resample to Daily to fill gaps
+        target_price_data.set_index('obs_date', inplace=True)
+        # Handle duplicates if any (though API usually returns unique per date? safety check)
+        target_price_data = target_price_data[~target_price_data.index.duplicated(keep='last')]
+        
+        full_date_range = pd.date_range(start=target_price_data.index.min(), end=target_price_data.index.max(), freq='D')
+        target_price_data = target_price_data.reindex(full_date_range)
+        target_price_data.ffill(inplace=True)
+        target_price_data.reset_index(inplace=True)
+        target_price_data = target_price_data.rename(columns={'index': 'obs_date'})
+        
+        # Restore ticker column if lost during reindex/ffill (it might become nan if first row was not start of range? No, ffill handles it)
+        # But if reindex introduced new rows at START, they are NaN. 
+        # Actually logic above: 'start=target_price_data.index.min()' ensures we start where data starts.
+        # But 'ticker' column needs to be filled.
+        target_price_data['ticker'] = symbol
+
+        # Merge with existing
+        updated_earnings = pd.concat([existing_price_targets, target_price_data], ignore_index=True)
+        updated_earnings = updated_earnings.drop_duplicates(subset=['obs_date', 'ticker'], keep='last')
+        updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
+
+        # Save
+        mdc.store_parquet(updated_earnings, price_target_cloud_path)
+        # mdc.write_line(f"  Uploaded updated data for {symbol}")
+
+        return updated_earnings
+
     except Exception as e:
-        mdc.write_line(f"    Error fetching data for {symbol}: {e}")
-        return pd.DataFrame()
+        mdc.write_line(f"Error transforming data for {symbol}: {e}")
+        return None
 
-def process_symbol(symbol):
-    try:
-        column_names = ["ticker", "obs_date", "tp_mean_est",  "tp_std_dev_est",  "tp_high_est",  "tp_low_est",  "tp_cnt_est"  ,"tp_cnt_est_rev_up",  "tp_cnt_est_rev_down"]
-        mdc.write_line(f"Processing symbol: {symbol}")
-        
-        # Cloud Path
+def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
+    """
+    Processes a batch of symbols. checks freshness, and batches API calls for the rest.
+    """
+    results = []
+    stale_symbols = []
+    existing_data_map = {} # symbol -> existing_df
+    
+    column_names = [
+        "ticker", "obs_date", "tp_mean_est", "tp_std_dev_est", 
+        "tp_high_est", "tp_low_est", "tp_cnt_est", 
+        "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
+    ]
+
+    # 1. Freshness Check
+    for symbol in symbols:
         price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.parquet"
-        
-        existing_price_targets = pd.DataFrame(columns=column_names)
         is_fresh = False
         
-        # Check freshness using Azure Blob metadata
         if mdc.storage_client:
              last_mod = mdc.storage_client.get_last_modified(price_target_cloud_path)
              if last_mod:
@@ -98,99 +136,83 @@ def process_symbol(symbol):
                      last_mod = last_mod.replace(tzinfo=timezone.utc)
                  if now_utc - last_mod < timedelta(days=7):
                      is_fresh = True
-
+        
         if is_fresh:
-            # If fresh, load and return immediately
             loaded_df = mdc.load_parquet(price_target_cloud_path)
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
-                return loaded_df
+                results.append(loaded_df)
         else:
-            # If missing or stale, start with empty DF
-            existing_price_targets = pd.DataFrame(columns=column_names)
-
-        # Start date
-        min_date = date(2020, 1, 1)
-
-        mdc.write_line(f"   Fetching target price data for {symbol} > {min_date}")
-
-        try:
-            target_price_data = nasdaqdatalink.get_table(
-                'ZACKS/TP',
-                ticker=symbol,
-                obs_date={'gte': min_date.strftime('%Y-%m-%d')}
-            )
+            stale_symbols.append(symbol)
+            # Init empty existing df for stale symbols, or try to load what WAS there?
+            # Ideally we want to append new data to old data.
+            # So let's try to load "stale" data to merge with it, rather than starting empty.
+            existing_df = mdc.load_parquet(price_target_cloud_path)
+            if existing_df is None or existing_df.empty:
+                existing_df = pd.DataFrame(columns=column_names)
+            elif 'obs_date' in existing_df.columns:
+                 existing_df['obs_date'] = pd.to_datetime(existing_df['obs_date'])
             
-            if target_price_data.empty:
-                 mdc.write_line(f"    No new data for {symbol}.")
-            else:
-                 target_price_data = target_price_data.sort_values(by='obs_date')
+            existing_data_map[symbol] = existing_df
 
-            # Blacklist check if no data found at all
-            if target_price_data.empty and existing_price_targets.empty:
-                  mdc.write_line(f"Blacklisting {symbol}.")
-                  mdc.update_csv_set(BLACKLIST_FILE, symbol)
-                  return None
-            
-            # If data found
-            if not target_price_data.empty:
-                min_date_found = target_price_data['obs_date'].min()
-                max_date_found = target_price_data['obs_date'].max()
-                mdc.write_line(f"    Retrieved {len(target_price_data)} rows for {symbol} between {min_date_found} and {max_date_found}.")
-                
-                target_price_data['obs_date'] = pd.to_datetime(target_price_data['obs_date'])
-                latest_obs_date = target_price_data['obs_date'].max()
-                
-                # Carry forward logic
-                today = pd.to_datetime("today").normalize()
-                if latest_obs_date < today:
-                    all_dates = pd.date_range(start=target_price_data['obs_date'].min(), end=today)
-                    df_all_dates = pd.DataFrame({'obs_date': all_dates})
-                    
-                    target_price_data = df_all_dates.merge(target_price_data, on='obs_date', how='left')
-                    target_price_data = target_price_data.ffill()
-                    mdc.write_line(f"    Carried forward values for missing dates up to {today.date()}.")
+    if not stale_symbols:
+        return results
 
-        except Exception as e:
-            mdc.write_line(f"    Error fetching data for {symbol}: {e}")
-            return None
-
-        if target_price_data.empty:
-            return existing_price_targets
-
-        # Ensure columns exist
-        for col in column_names:
-            if col not in target_price_data.columns:
-                 target_price_data[col] = np.nan
-                 
-        target_price_data = target_price_data[column_names]
-
-        # Resample logic
-        target_price_data.set_index('obs_date', inplace=True)
-        full_date_range = pd.date_range(start=target_price_data.index.min(), end=target_price_data.index.max(), freq='D')
-        target_price_data = target_price_data.reindex(full_date_range)
-        target_price_data.ffill(inplace=True)
-        target_price_data.reset_index(inplace=True)
-        target_price_data = target_price_data.rename(columns={'index': 'obs_date'})
-        
-        mdc.write_line(f"\nFinished processing {symbol} price target data.")
-
-        # Combine
-        updated_earnings = pd.concat([existing_price_targets, target_price_data], ignore_index=True)
-        updated_earnings = updated_earnings.drop_duplicates(subset=['obs_date', 'ticker'], keep='last')
-        updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
-
-        # Save to Cloud
-        mdc.store_parquet(updated_earnings, price_target_cloud_path)
-        mdc.write_line(f"  Uploaded updated data for {symbol} to {price_target_cloud_path}")
-
-        return updated_earnings
+    # 2. Batch API Call
+    min_date = date(2020, 1, 1) # Or derive from existing data? simpler to just fetch all > 2020 for now.
     
-
+    mdc.write_line(f"Fetching batch of {len(stale_symbols)} symbols from API...")
+    
+    try:
+        # Pass comma-separated string
+        tickers_str = ",".join(stale_symbols)
+        batch_df = nasdaqdatalink.get_table(
+            'ZACKS/TP',
+            ticker=tickers_str,
+            obs_date={'gte': min_date.strftime('%Y-%m-%d')}
+        )
     except Exception as e:
-        mdc.write_line(f"ERROR: Failed in process_symbol({symbol}) {str(e)}")
-        return None
+        mdc.write_line(f"API Batch Error: {e}")
+        # If batch fails, we could fallback to single, but let's just fail this batch for now.
+        return results
+
+    # 3. Process each symbol in batch
+    processed_count = 0
+    
+    # Identify which symbols were returned
+    found_tickers = set()
+    if not batch_df.empty:
+        # Group by ticker
+        # batch_df['ticker'] might be mixed case? API usually returns per request.
+        # Ensure we match `stale_symbols`.
+        
+        # Iterate over unique tickers in response
+        for symbol, group_df in batch_df.groupby('ticker'):
+            symbol = str(symbol) # ensure string
+            if symbol in existing_data_map:
+                processed_df = transform_symbol_data(symbol, group_df.copy(), existing_data_map[symbol])
+                if processed_df is not None:
+                    results.append(processed_df)
+                    processed_count += 1
+                found_tickers.add(symbol)
+    
+    # 4. Handle Missing Symbols (Blacklist)
+    for symbol in stale_symbols:
+        if symbol not in found_tickers:
+            # No data returned for this symbol
+            existing_df = existing_data_map[symbol]
+            if existing_df.empty:
+                mdc.write_line(f"Blacklisting {symbol} (No data).")
+                mdc.update_csv_set(BLACKLIST_FILE, symbol)
+            else:
+                # We have old data but no new data. Just use old.
+                results.append(existing_df)
+
+    if processed_count > 0:
+        mdc.write_line(f"Batch processed {processed_count}/{len(stale_symbols)} stale symbols updated.")
+
+    return results
 
 def run_batch_processing():
     setup_nasdaq_key()
@@ -203,28 +225,41 @@ def run_batch_processing():
     if blacklist_list:
         df_symbols = df_symbols[~df_symbols['Symbol'].isin(blacklist_list)]
         
+    # Apply Debug Symbols Filter
+    if cfg.DEBUG_SYMBOLS:
+        mdc.write_line(f"DEBUG MODE: Filtering for {len(cfg.DEBUG_SYMBOLS)} symbols: {cfg.DEBUG_SYMBOLS}")
+        df_symbols = df_symbols[df_symbols['Symbol'].isin(cfg.DEBUG_SYMBOLS)]
+
     symbols = list(df_symbols['Symbol'].unique())
     mdc.write_line(f"Found {len(symbols)} unique symbols.")
 
     # 2. Worker config
+    
+    # We will submit chunks of symbols to the executor.
+    # Each valid 'task' is now a batch of BATCH_SIZE symbols.
+    
+    chunked_symbols = [symbols[i:i + BATCH_SIZE] for i in range(0, len(symbols), BATCH_SIZE)]
+    
     num_cores = os.cpu_count() or 1
+    # Reduce workers slightly since each worker does more heavy lifting? 
+    # Or keep same. API parallelism is still limited by network/rate limits?
+    # Nasdaq rate limits might be triggered.
     num_workers = max(1, int(num_cores * 0.75))
-    mdc.write_line(f"Using {num_workers} worker threads.")
+    mdc.write_line(f"Using {num_workers} worker threads for {len(chunked_symbols)} batches (Batch Size: {BATCH_SIZE}).")
 
     updated_symbol_dfs = []
 
     # 3. Parallel Execution
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        future_to_symbol = {executor.submit(process_symbol, symbol): symbol for symbol in symbols}
+        future_to_batch = {executor.submit(process_symbols_batch, batch): batch for batch in chunked_symbols}
         
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
+        for future in as_completed(future_to_batch):
             try:
-                res = future.result()
-                if res is not None and not res.empty:
-                    updated_symbol_dfs.append(res)
+                res_list = future.result()
+                if res_list:
+                    updated_symbol_dfs.extend(res_list)
             except Exception as e:
-                mdc.write_line(f"Exception for {symbol}: {e}")
+                mdc.write_line(f"Exception for batch: {e}")
 
     # 4. Save Final Aggregation
     if updated_symbol_dfs:
@@ -272,12 +307,7 @@ def run_interactive_mode(df=None):
         symbol_df = df[df['Symbol'] == user_symbol].sort_values(by='Date').reset_index(drop=True)
         
         if 'Close' not in symbol_df.columns:
-             # Basic implementation implies this field might come from merged data, 
-             # but if this script only produces TP data, 'Close' might be missing 
-             # unless we also merge with price data. 
-             # For now, sticking to logic that exists.
              print("Close price not in dataset (this column requires price history).")
-             # continue # Let user see TP data anyway?
              
         # Fetch fresh TP diff check
         try:
