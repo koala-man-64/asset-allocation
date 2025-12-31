@@ -75,3 +75,4 @@ def test_process_symbols_batch_stale(mock_nasdaq, mock_mdc):
     assert res[0]['ticker'].iloc[0] == 'TEST'
     mock_nasdaq.get_table.assert_called()
 
+
