@@ -650,7 +650,7 @@ def _get_playwright_browser_sync(
     browser = playwright.chromium.launch(
         headless=headless,
         slow_mo=slow_mo or 0,
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
 
     # 3. Persistent context (incognito-like with user data)
@@ -662,7 +662,7 @@ def _get_playwright_browser_sync(
         downloads_path=str(DOWNLOADS_PATH),
         user_agent=cfg.USER_AGENT,
         viewport={"width": 1920, "height": 1080},
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
     
     # Stealth Init Script
@@ -690,7 +690,7 @@ async def _get_playwright_browser_async(
     browser = await playwright.chromium.launch(
         headless=headless,
         slow_mo=slow_mo or 0,
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
 
     # 3. Persistent context
@@ -702,7 +702,7 @@ async def _get_playwright_browser_async(
         downloads_path=str(DOWNLOADS_PATH),
         user_agent=cfg.USER_AGENT,
         viewport={"width": 1920, "height": 1080},
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars"]
+        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
 
     # Stealth Init Script
