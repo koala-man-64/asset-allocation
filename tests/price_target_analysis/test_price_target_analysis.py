@@ -15,7 +15,7 @@ def test_calculate_null_percentage():
     
     # Capture output
     with patch('scripts.common.core.write_line') as mock_write:
-        res = pte.calculate_null_percentage(df)
+        res = pta.calculate_null_percentage(df)
         
         # A: 1/4 = 25%
         # B: 1/4 = 25% (inf)
@@ -27,20 +27,20 @@ def test_calculate_null_percentage():
 
 def test_normalize_column():
     s = pd.Series([10, 20, 30])
-    res = pte.normalize_column(s)
+    res = pta.normalize_column(s)
     # expected: 0.0, 0.5, 1.0
     pd.testing.assert_series_equal(res, pd.Series([0.0, 0.5, 1.0]))
     
     # Test flat case
     s_flat = pd.Series([10, 10, 10])
-    res_flat = pte.normalize_column(s_flat)
+    res_flat = pta.normalize_column(s_flat)
     pd.testing.assert_series_equal(res_flat, s_flat)
 
 def test_remove_outliers():
     df = pd.DataFrame({
         'val': [1, 2, 3, 100] # 100 is outlier
     })
-    cleaned = pte.remove_outliers(df, ['val'])
+    cleaned = pta.remove_outliers(df, ['val'])
     assert len(cleaned) == 3
     assert 100 not in cleaned['val'].values
 
@@ -51,7 +51,7 @@ def test_fetch_and_save_target_price_data(mock_nasdaq, tmp_path):
     mock_nasdaq.get_table.return_value = pd.DataFrame({'obs_date': ['2023-01-01'], 'val': [100]})
     
     csv = tmp_path / "test.csv"
-    res = pte.fetch_and_save_target_price_data('TEST', str(csv))
+    res = pta.fetch_and_save_target_price_data('TEST', str(csv))
     
     assert not res.empty
     assert csv.exists()
@@ -76,7 +76,7 @@ def test_process_symbol_new_data(mock_nasdaq, mock_csv_folder, tmp_path):
     })
     mock_nasdaq.get_table.return_value = mock_df
     
-    res = pte.process_symbol('TEST')
+    res = pta.process_symbol('TEST')
     
     assert res is not None
     assert len(res) == 3
@@ -97,7 +97,7 @@ def test_process_symbol_existing_fresh(mock_csv_folder, tmp_path):
     
     # Should load local and NOT call API
     with patch('scripts.price_target_analysis.price_target_exploration.nasdaqdatalink') as mock_nasdaq:
-        res = pte.process_symbol('TEST')
+        res = pta.process_symbol('TEST')
         mock_nasdaq.get_table.assert_not_called()
         assert not res.empty
 
