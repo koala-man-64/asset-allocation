@@ -151,63 +151,7 @@ async def download_yahoo_price_data_async(
                 continue
             raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
 
-def download_yahoo_price_data(
-    page: str,
-    url: str,
-    timeout: int = 30000,          # ms
-    max_attempts: int = 3,
-    delay_between_attempts: float = 1.0,
-) -> Path:
-    """
-    Navigate to a Yahoo Finance download URL, capture the file, and
-    save it to *downloads_dir* (defaults to ~/Downloads).
 
-    Returns
-    -------
-    Path
-        Location of the saved file.
-
-    Raises
-    ------
-    RuntimeError
-        If the download never starts within all attempts.
-    """
-    dl_root = Path(DOWNLOADS_PATH or Path.home() / "Downloads")
-    dl_root.mkdir(parents=True, exist_ok=True)
-
-    for attempt in range(1, max_attempts + 1):
-        try:
-            # Navigation that ends in “download” instead of a page render.
-            with page.expect_download(timeout=timeout) as dl_info:
-                try:
-                    page.goto(url, wait_until="commit")   # skip full load
-                except Exception as e:
-                    if 'ERR_ABORTED' in str(e) and 'query1' in str(e): #means this stock has no price data
-                        pass
-                    else:
-                        raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
-            dl = dl_info.value                       # playwright.download.Download
-            target = dl_root / dl.suggested_filename
-            dl.save_as(target)
-            delete_newer_duplicates(str(target))
-            return target
-
-        except PlaywrightTimeout:
-            # Download didn’t start fast enough – try again.
-            if attempt < max_attempts:
-                time.sleep(delay_between_attempts)
-                continue
-            raise RuntimeError(f"Timed out waiting for download from {url!r}")
-
-        except Exception as e:
-            # Other transient issues (net::ERR_ABORTED, etc.).
-            if 'ERR_ABORTED' in str(e) and 'query1' in str(e): #means this stock has no price data
-                raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
-            if attempt < max_attempts:
-                time.sleep(delay_between_attempts)
-                continue
-            else:
-                raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
 
 def convert_earnings_date(s):
     try:
@@ -250,72 +194,7 @@ def convert_earnings_date(s):
         write_line(f"ERROR: Failed to convert date '{s}' - {e}")
         return ""
     
-def get_yahoo_price_data(
-    page,
-    symbol: str,
-    max_attempts: int = 3,
-    delay_between_attempts: float = 1.0,
-) -> Path:
-  
-    blacklist_file = str(COMMON_DIR / 'blacklist.csv')
-    columns = ['Date', 'Symbol', 'Open', 'High', 'Low', 'Close', 'Volume']
-    df_price_data = pd.DataFrame()
-    for attempt in range(1, max_attempts + 1):
-        try:
-            write_line(f"Downloading price data for {symbol}")
 
-            # loop while offsetting the url continues to return results
-            while True:
-                try:
-                    # Load price data url
-                    target_base_url = f"https://finance.yahoo.com/quote/{symbol}/history/"
-                    page = load_url(page, target_base_url)
-                    
-                    # Check dom for errors
-                    html_content = page.content()             
-                    if '<h1>500</h1>' in html_content or 'We are experiencing some temporary issues.' in html_content:
-                        try:
-                            page.reload()
-                            go_to_sleep(5, 10)
-                        except Exception as e:
-                            raise e
-                    elif ("We couldn't find any results." in html_content and len(df_price_data) == 0):
-                        write_line(f"Blacklisting {symbol}.")
-                        new_row = {"Ticker": symbol}
-                        append_to_csv(blacklist_file, pd.DataFrame([new_row]))
-                        break                    
-                    else:
-                        selectors = [
-                            {
-                                "property_name": "data-testid",        
-                                "property_value": "download-link"
-                            }
-                        ]
-                        result = pw_download_after_click_by_selectors(page, selectors, DOWNLOADS_PATH)
-                        return result
-                    
-                except Exception as ex:
-                    write_line(f"ERROR: Failed processing {symbol}: {ex}")               
-                    raise ex
-
-        except PlaywrightTimeout:
-            # Download didn’t start fast enough – try again.
-            if attempt < max_attempts:
-                time.sleep(delay_between_attempts)
-                continue
-            raise RuntimeError(f"Timed out waiting for download from {url!r}")
-
-        except Exception as e:
-            # Other transient issues (net::ERR_ABORTED, etc.).
-            if 'ERR_ABORTED' in str(e) and 'query1' in str(e): #means this stock has no price data
-                raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
-            if attempt < max_attempts:
-                time.sleep(delay_between_attempts)
-                continue
-            else:
-                raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
-
-    return df_symbol_earnings
 
     
 async def get_yahoo_earnings_data(
@@ -615,85 +494,47 @@ async def pw_download_after_click_by_selectors_async(
 
     raise RuntimeError(f"Download never started after clicking selectors: {selectors!r}")
 
-def get_playwright_browser(
+async def get_playwright_browser(
     headless: Optional[bool] = None,
     slow_mo: Optional[int] = None,
     use_async: bool = False,
-) -> Union[
-    Tuple[SyncPlaywright, SyncBrowser, SyncBrowserContext, SyncPage],
-    Coroutine[Any, Any, Tuple[AsyncPlaywright, AsyncBrowser, AsyncBrowserContext, AsyncPage]],
-]:
+) -> Tuple[AsyncPlaywright, AsyncBrowser, AsyncBrowserContext, AsyncPage]:
     """
-    Launch a fresh Playwright browser.  
-    If use_async=False (default), returns a 4-tuple of sync objects.
-    If use_async=True, returns an async coroutine that yields async objects when awaited.
-
+    Launch a fresh Playwright browser (Async).
+    If use_async=False, raises ValueError as sync support is removed.
+    
     Returns (playwright, browser, context, page).
     """
     if headless is None:
         headless = cfg.HEADLESS_MODE
 
-    if use_async:
-        return _get_playwright_browser_async(headless, slow_mo)
-    else:
-        return _get_playwright_browser_sync(headless, slow_mo)
+    if not use_async:
+        raise ValueError("Synchronous Playwright execution is no longer supported. Please use use_async=True.")
 
-
-def _get_playwright_browser_sync(
-    headless: bool,
-    slow_mo: Optional[int],
-) -> Tuple[SyncPlaywright, SyncBrowser, SyncBrowserContext, SyncPage]:
-    # 1. Start the sync controller
-    playwright = sync_playwright().start()
-
-    # 2. Launch Chromium
-    browser = playwright.chromium.launch(
-        headless=headless,
-        slow_mo=slow_mo or 0,
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-
-    # 3. Persistent context (incognito-like with user data)
-    context = playwright.chromium.launch_persistent_context(
-        user_data_dir=str(USER_DATA_DIR),
-        headless=headless,
-        slow_mo=slow_mo or 0,
-        accept_downloads=True,
-        downloads_path=str(DOWNLOADS_PATH),
-        user_agent=cfg.USER_AGENT,
-        viewport={"width": 1920, "height": 1080},
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-    
-    # Stealth Init Script
-    stealth_js = """
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-    """
-    context.add_init_script(stealth_js)
-
-    # 4. Open a new tab
-    page = context.new_page()
-
-    return playwright, browser, context, page
+    return await _get_playwright_browser_async(headless, slow_mo)
 
 
 async def _get_playwright_browser_async(
     headless: bool,
     slow_mo: Optional[int],
 ) -> Tuple[AsyncPlaywright, AsyncBrowser, AsyncBrowserContext, AsyncPage]:
+    write_line("Starting _get_playwright_browser_async...")
     # 1. Start the async controller
+    write_line("Initializing async_playwright()...")
     playwright = await async_playwright().start()
+    write_line("async_playwright started.")
 
     # 2. Launch Chromium
+    write_line(f"Launching chromium process (headless={headless})...")
     browser = await playwright.chromium.launch(
         headless=headless,
         slow_mo=slow_mo or 0,
         args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
+    write_line("Chromium launched successfully.")
 
     # 3. Persistent context
+    write_line("Launching persistent context...")
     context = await playwright.chromium.launch_persistent_context(
         user_data_dir=str(USER_DATA_DIR),
         headless=headless,
@@ -704,53 +545,22 @@ async def _get_playwright_browser_async(
         viewport={"width": 1920, "height": 1080},
         args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
+    write_line("Persistent context launched.")
 
     # Stealth Init Script
-    stealth_js = """
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-    """
+    write_line("Adding stealth init script...")
+
     await context.add_init_script(stealth_js)
+    write_line("Stealth script added.")
 
     # 4. Open a new tab
+    write_line("Opening new page...")
     page = await context.new_page()
+    write_line("New page opened. Returning Playwright objects.")
 
     return playwright, browser, context, page
 
-def load_url(
-    page: Page,
-    url: str,
-    wait_until: str = "load",
-    timeout: int = 30_000
-) -> Page:
-    """
-    Navigate the given Playwright Page to the specified URL.
 
-    Args:
-      page:       The Page object (tab) returned by get_playwright_browser().
-      url:        The target URL to load.
-      wait_until: When to consider navigation “done”:
-                    - "load"            : wait for the load event
-                    - "domcontentloaded": wait for DOMContentLoaded
-                    - "networkidle"     : wait until there are no network connections for at least 500 ms
-                    - "commit"          : wait until navigation is committed
-      timeout:    Maximum time in milliseconds to wait before timing out.
-
-    Returns:
-      The same Page instance, now pointed at the new URL.
-    """
-    try:
-        # 1. Use the Page (tab) from your context:
-        #    This is where all your interactions happen—navigation, clicks, fills, etc.
-        page.goto(url, wait_until=wait_until, timeout=timeout)
-
-        # 2. At this point the page has fully loaded per the wait_until strategy.
-        #    You can now interact with page.locator(), take screenshots, intercept network, etc.
-
-        return page
-    except Exception as e:
-        write_line(f"ERROR: Failed loading url {url}")
 
 
 async def load_url_async(
@@ -781,26 +591,7 @@ async def load_url_async(
             print(f"ERROR: Failed loading url {url}: {e}")
         return None
     
-def pw_save_cookies(
-    context: BrowserContext,
-    cookies_path: str
-) -> None:
-    """
-    Save all cookies from the given Playwright BrowserContext to a JSON file.
 
-    This lets you persist login/session cookies after you authenticate, so you
-    can reload them on subsequent browser launches and skip the login step.
-
-    Args:
-      context:      A BrowserContext (from get_playwright_browser or similar).
-      cookies_path: Path where to write the JSON list of cookie dicts.
-    """
-    # 1. Extract all cookies currently stored in this context
-    cookies = context.cookies()
-
-    # 2. Write them out to disk in JSON format
-    with open(cookies_path, "w", encoding="utf-8") as f:
-        json.dump(cookies, f, indent=2)
 
 async def pw_save_cookies_async(
     context: AsyncBrowserContext,
@@ -843,70 +634,9 @@ async def pw_load_cookies_async(
         # 2. Add them into the context’s cookie store
         await context.add_cookies(cookies)
 
-def pw_load_cookies(
-    context: BrowserContext,
-    cookies_path: str
-) -> None:
-    """
-    Load cookies from a JSON file into the given Playwright BrowserContext.
 
-    This lets you reuse login/session cookies across browser launches so you
-    don’t have to re-authenticate every time.
-
-    Args:
-      context:       A BrowserContext returned by get_playwright_browser().
-      cookies_path:  Path to a JSON file containing a list of cookie dicts,
-                     e.g. [{"name": "...", "value": "...", "domain": "...", ...}, ...]
-    """
-    if os.path.exists(cookies_path):
-        # 1. Read the cookie data from disk
-        with open(cookies_path, "r", encoding="utf-8") as f:
-            cookies = json.load(f)
-
-        # 2. Add each cookie to the context’s cookie store
-        #    Playwright will automatically scope them by domain/path.
-        context.add_cookies(cookies)
  
-def pw_fill_by_selectors(
-    page: Page,
-    selectors: list[dict],
-    text: str,
-    timeout: int = 10_000
-) -> None:
-    """
-    Try each selector definition to locate an element on the page
-    and fill it with the provided text.
-
-    Args:
-      page:       The Playwright Page instance.
-      selectors:  A list of dicts, each with:
-                    - property_name: the attribute name (e.g. "id", "name", "data-test")
-                    - property_value: the expected attribute value.
-      text:       The text to type into the first matching element.
-      timeout:    How long (ms) to wait for each locator to appear.
-
-    Raises:
-      RuntimeError: if none of the selectors match an element.
-    """
-    for sel in selectors:
-        name = sel["property_name"]
-        value = sel["property_value"]
-
-        # Build a CSS selector. If it's an id, use the # shortcut, otherwise use [attr="value"]
-        if name.lower() == "id":
-            css = f"#{value}"
-        else:
-            css = f'[{name}="{value}"]'
-
-        locator = page.locator(css)
-        # count() waits up to `timeout` for elements to appear
-        # if locator.count(timeout=timeout) > 0:
-        if locator.count() > 0:
-            # fill() automatically waits for visibility & clears before typing
-            locator.first.fill(text, timeout=timeout)
-            return True
-
-    raise RuntimeError(f"No element found for selectors: {selectors!r}") 
+ 
     
 async def pw_fill_by_selectors_async(
     page: AsyncPage,
@@ -1041,196 +771,7 @@ async def pw_login_to_yahoo_async(
     else:
         write_line("No theme dialog, continuing.")    
     
-def pw_login_to_yahoo(page, context):
-    
-    # Load Yahoo login URL    
-    write_line("Loading yahoo login url...")
-    yahoo_login_url = (
-        "https://yahoo.com/finance"
-    )
-    load_url(page, yahoo_login_url)
-    write_line("Loaded yahoo login url")
-    
-    if is_yahoo_logged_in(page):
-        write_line("Already logged into Yahoo from saved cookies.")
-    else:
-        
-        # Select username from list
-        if page_has_text(page, "Select an account to sign in"):
-            selectors = [
-                {"property_name": "name", "property_value": 'username'}
-            ]
-            pw_click_by_selectors(page, selectors)
-            
-        # Enter username
-        else:
-            write_line("Entering username...")
-            selectors = [
-                {"property_name": "id", "property_value": 'login-username'}
-            ]
-            result = pw_fill_by_selectors(page, selectors, 'rdprokes@gmail.com')
-            if result: # text entered successfully
-                write_line("Username entered")
-            else:
-                write_line("Username entry failed after retries. Must manually enter manually and proceed...")
-                input("Press enter to continue...")
-        
-            # Click submit button
-            write_line("Clicking submit button...")
-            selectors = [
-                {"property_name": "id", "property_value": 'login-signin', "property_type": "input"},
-                {"property_name": "id", "property_value": 'tpa-google-button', "property_type": "button"}
-            ]
-            result = pw_click_by_selectors(page, selectors)
-            if result: # text entered successfully
-                write_line("Clicked submit button")
-                time.sleep(2)
-            else:
-                write_line("Clicking submit failed. Must perform manually and proceed...")
 
-        
-        # Enter the password
-        write_line("Entering password...")
-        selectors = [
-            {"property_name": 'name', "property_value": 'password'},
-            {"property_name": 'id', "property_value": 'login-passwd'}
-        ]
-        result = pw_fill_by_selectors(page, selectors, 'IRoll24Deep#1988')
-        if result: # text entered successfully
-            write_line("Password entered")
-        else:
-            write_line("Password entry failed. Must manually enter and proceed...")
-            input("Press enter to continue...")
-        
-        # Click submit button
-        write_line("Clicking submit button...")
-        selectors = [
-            {"property_name": "id", "property_value": 'login-signin', "property_type": "button"},
-            {"property_name": "id", "property_value": 'tpa-google-button', "property_type": "button"}
-        ]
-        result = pw_click_by_selectors(page, selectors)
-        if result: # text entered successfully
-            write_line("Clicked submit button")
-            time.sleep(10)
-        else:
-            write_line("Clicking submit failed. Must perform manually and proceed...")
-           
-    # Click ok button for theme selector 
-    selectors = [
-        {"property_name": "aria-label", "property_value": 'OK', "property_type": "button"}
-    ]
-    result = pw_click_by_selectors(page, selectors)
-    if result: # text entered successfully
-        write_line("Clicked OK button")
-        time.sleep(10)
-    else:
-        write_line("Clicking OK failed. Continuing.")
-
-async def pw_login_to_yahoo_async(page: AsyncPage, context: AsyncBrowserContext):
-    
-    # Load Yahoo login URL    
-    write_line("Loading yahoo login url...")
-    yahoo_login_url = (
-        "https://yahoo.com/finance"
-    )
-    await load_url_async(page, yahoo_login_url)
-    write_line("Loaded yahoo login url")
-    
-    if await is_yahoo_logged_in_async(page):
-        write_line("Already logged into Yahoo from saved cookies.")
-    else:
-        
-        # Select username from list
-        if await page_has_text_async(page, "Select an account to sign in"):
-            selectors = [
-                {"property_name": "name", "property_value": 'username'}
-            ]
-            await pw_click_by_selectors_async(page, selectors)
-            
-        # Enter username
-        else:
-            write_line("Entering username...")
-            selectors = [
-                {"property_name": "id", "property_value": 'login-username'}
-            ]
-            result = await pw_fill_by_selectors_async(page, selectors, 'rdprokes@gmail.com')
-            if result: # text entered successfully
-                write_line("Username entered")
-            else:
-                write_line("Username entry failed after retries. Must manually enter manually and proceed...")
-                # input("Press enter to continue...") # Cannot input in async headless usually, rely on timeouts or logs
-        
-            # Click submit button
-            write_line("Clicking submit button...")
-            selectors = [
-                {"property_name": "id", "property_value": 'login-signin', "property_type": "input"},
-                {"property_name": "id", "property_value": 'tpa-google-button', "property_type": "button"}
-            ]
-            result = await pw_click_by_selectors_async(page, selectors)
-            if result: # text entered successfully
-                write_line("Clicked submit button")
-                await asyncio.sleep(2)
-            else:
-                write_line("Clicking submit failed. Must perform manually and proceed...")
-
-        
-        # Enter the password
-        write_line("Entering password...")
-        selectors = [
-            {"property_name": 'name', "property_value": 'password'},
-            {"property_name": 'id', "property_value": 'login-passwd'}
-        ]
-        result = await pw_fill_by_selectors_async(page, selectors, 'IRoll24Deep#1988')
-        if result: # text entered successfully
-            write_line("Password entered")
-        else:
-            write_line("Password entry failed. Must manually enter and proceed...")
-            # input("Press enter to continue...")
-        
-        # Click submit button
-        write_line("Clicking submit button...")
-        selectors = [
-            {"property_name": "id", "property_value": 'login-signin', "property_type": "button"},
-            {"property_name": "id", "property_value": 'tpa-google-button', "property_type": "button"}
-        ]
-        result = await pw_click_by_selectors_async(page, selectors)
-        if result: # text entered successfully
-            write_line("Clicked submit button")
-            await asyncio.sleep(10)
-        else:
-            write_line("Clicking submit failed. Must perform manually and proceed...")
-           
-    # Click ok button for theme selector 
-    selectors = [
-        {"property_name": "aria-label", "property_value": 'OK', "property_type": "button"}
-    ]
-    result = await pw_click_by_selectors_async(page, selectors)
-    if result: # text entered successfully
-        write_line("Clicked OK button")
-        await asyncio.sleep(10)
-    else:
-        write_line("Clicking OK failed. Continuing.")
-        
-def is_yahoo_logged_in(page: Page, timeout: int = 5_000) -> bool:
-    """
-    Determine if the user is logged into Yahoo by checking for the
-    subscriptions badge link that only appears when authenticated.
-
-    This version matches on both the href and the inner text "gold".
-
-    Args:
-      page:     The Playwright Page instance.
-      timeout:  Maximum time in milliseconds to wait for the element.
-
-    Returns:
-      True if the <a> with href="/subscriptions" containing the text "gold" is present.
-    """
-    # Locate an <a> tag with the correct href and inner span text:
-    locator = page.locator(
-        "a[href='/subscriptions']",
-        has_text="gold"
-    )
-    return locator.count() > 0
    
 async def is_yahoo_logged_in_async(
     page: AsyncPage,
@@ -1258,72 +799,7 @@ async def is_yahoo_logged_in_async(
     except TimeoutError:
         return False    
     
-def pw_click_by_selectors(
-    page: Page,
-    selectors: List[Dict[str, Any]],
-    max_attempts: int = 3,
-    timeout: int = 2_000,
-    delay_between_attempts: float = 0.5,
-    wait_until: str = "load"
-) -> bool:
-    """
-    Try each selector definition up to max_attempts times to locate an element,
-    click it, and then wait for navigation or the load event.
 
-    Args:
-      page:                 The Playwright Page instance.
-      selectors:            A list of dicts, each with:
-                               - property_name:  attribute name (e.g. "id", "name")
-                               - property_value: attribute value to match
-                               - property_type:  (optional) tag name (e.g. "button", "input")
-      max_attempts:         How many times to retry the selector list.
-      timeout:              How long (ms) to wait for locators and navigation.
-      delay_between_attempts: Seconds to wait before each retry cycle.
-      wait_until:           When to consider navigation “done”: "load", 
-                            "domcontentloaded", "networkidle", or "commit"
-
-    Returns:
-      True if a click succeeded (and any navigation/load completed), False otherwise.
-    """
-    for attempt in range(1, max_attempts + 1):
-        for sel in selectors:
-            name = sel["property_name"]
-            value = sel["property_value"]
-            tag  = sel.get("property_type", "").strip()
-
-            # Build CSS selector
-            if name.lower() == "id":
-                css = f"#{value}"
-            else:
-                css = f'[{name}="{value}"]'
-            if tag:
-                css = f"{tag}{css}"
-
-            locator = page.locator(css)
-            try:
-                # wait up to `timeout` for the element
-                if locator.count() > 0:
-                    try:
-                        # If click triggers a navigation, this will wait for it.
-                        with page.expect_navigation(wait_until=wait_until, timeout=timeout):
-                            locator.first.click(timeout=timeout)
-                            # time.sleep(1)
-                    except Exception as e:
-                        if 'Timeout' in str(e):
-                            # No navigation occurred within timeout – likely page loaded instantly
-                            pass
-                    return True
-            except Exception as e:
-                
-                # element not found or click failed; try next selector
-                continue
-
-        # nothing clicked this round—pause before retrying
-        if attempt < max_attempts:
-            time.sleep(delay_between_attempts)
-
-    # all attempts exhausted
-    return False
 
 async def pw_click_by_selectors_async(
     page: AsyncPage,
@@ -1393,23 +869,7 @@ async def pw_click_by_selectors_async(
     # all attempts exhausted
     return False
 
-def page_has_text(page, search_text: str, case_sensitive: bool = True) -> bool:
-    """
-    Returns True if `search_text` is found anywhere in the page DOM.
 
-    - Uses document.body.textContent, so it catches text even if split across tags.
-    - By default it’s case-sensitive; pass case_sensitive=False for a case-insensitive check.
-    """
-    # 1) Pull all text from the DOM
-    full_text = page.evaluate("() => document.body.textContent")
-
-    # 2) Optionally normalize case
-    if not case_sensitive:
-        full_text = full_text.lower()
-        search_text = search_text.lower()
-
-    # 3) Check for a simple substring match
-    return search_text in full_text
 
 async def page_has_text_async(
     page: AsyncPage,
@@ -1637,169 +1097,7 @@ def find_latest_file(folder_path, search_string, extensions, new_extension):
         
     if not files:
         print(f"No files found matching pattern: '{search_string}' as a word and extensions '{extensions}'")
-        return None
-    
-    # Determine the latest file by modification time
-    latest_file = max(files, key=os.path.getmtime)
-    if search_string not in latest_file:
-        return None
-        d =''
-        find_latest_file(folder_path, search_string, extensions, new_extension)
-    return latest_file
 
-
-def scan_ticker_files(
-    folder_path: str,
-    ticker: str,
-    substring: str,
-    extensions: List[str]
-) -> Tuple[List[str], List[str], List[str]]:
-    """
-    Scan the given folder for files whose names contain the ticker and
-    one of the given extensions, then classify them into quarterly,
-    monthly, and annual lists based on filename.
-
-    Args:
-      folder_path: Path to the directory to scan (non-recursive).
-      ticker:      Stock ticker to match in filenames (case-insensitive).
-      extensions:  List of file extensions to include (e.g. ["csv", "xlsx"]).
-
-    Returns:
-      A tuple of three lists of file paths (strings):
-        - quarterly_files: filenames containing passed in ticker
-    """
-    base = Path(folder_path)
-    ticker_lower = ticker.lower()
-    ext_set = {ext.lower().lstrip('.') for ext in extensions}
-
-    files: List[str] = []
-    for file_path in base.iterdir():
-        if not file_path.is_file():
-            continue
-
-        name_lower = file_path.name.lower()
-        # Must contain ticker and one of the extensions
-        if ticker_lower not in name_lower:
-            continue
-        if file_path.suffix.lstrip('.').lower() not in ext_set:
-            continue
-
-        # Classify based on the keywords in the filename
-        if substring in name_lower:
-            files.append(str(file_path))
-
-    return files
-
-def delete_newer_duplicates(filename: str) -> List[str]:
-    """
-    Compute a SHA-256 hash of the given file to uniquely identify it,
-    then delete any files in the same directory that were created on or
-    after this file and have the same hash.
-
-    Args:
-        filename: Path to the reference file.
-
-    Returns:
-        A list of file paths that were deleted.
-    """
-    ref_path = Path(filename)
-    if not ref_path.is_file():
-        raise FileNotFoundError(f"{filename!r} does not exist or is not a file.")
-    
-    # Helper to compute SHA-256 hash of a file
-    def compute_hash(path: Path) -> str:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    
-    ref_hash = compute_hash(ref_path)
-    ref_ctime = ref_path.stat().st_ctime
-
-    deleted_files: List[str] = []
-    for candidate in ref_path.parent.iterdir():
-        try:
-            if not candidate.is_file() or candidate == ref_path:
-                continue
-            # check creation time
-            window_seconds = 10 * 60  # 5 minutes
-            for candidate in ref_path.parent.iterdir():
-                if not candidate.is_file() or candidate == ref_path:
-                    continue
-
-                candidate_ctime = candidate.stat().st_ctime
-                # check if created within 5 minutes before the ref file or any time after it
-                if candidate_ctime >= ref_ctime - window_seconds:
-                    if compute_hash(candidate) == ref_hash:
-                        candidate.unlink()
-                        deleted_files.append(str(candidate))
-                        return deleted_files
-        except Exception as e:
-            continue
-    return deleted_files
-
-def append_to_csv(path, data):
-    """
-    Appends rows from `data` to CSV at `path`, creating the file (with header)
-    if it doesn’t exist or is empty, and locking via a .lock file to avoid races.
-    """
-    lock_file = path + ".lock"
-    lock = FileLock(lock_file)
-    df = pd.DataFrame(data)
-
-    with lock:
-        # Treat non-existent OR zero‐byte files as “need header”
-        file_empty = (not os.path.exists(path)) or (os.path.getsize(path) == 0)
-
-        df.to_csv(
-            path,
-            mode='a', 
-            header=file_empty,
-            index=False
-        )
-
-def delete_files_with_string(folder_path, search_string, extensions):
-    """
-    Deletes files in the specified folder that contain the given search string 
-    as a whole word and have one of the specified extensions.
-    
-    Args:
-        folder_path (str): Path to the folder containing the files.
-        search_string (str): String to search for as a whole word in file names.
-        extensions (list or str): List of file extensions to filter by, or a single extension.
-    """
-    search_string = str(search_string)
-    # if np.isnan(search_string):
-    #     return
-    
-    # Ensure extensions is a list, even if a single extension is provided
-    if isinstance(extensions, str):
-        extensions = [extensions]
-    
-    matching_files = []
-    
-    # Iterate over each extension to collect matching files
-    for ext in extensions:
-        search_pattern = os.path.join(folder_path, f"*.{ext}")
-        files = glob.glob(search_pattern)
-        # Filter files where the search string matches as a whole word in the filename (excluding extension)
-        matching_files.extend([
-            file for file in files
-            if search_string in os.path.splitext(os.path.basename(file))[0]
-        ])
-    
-    if not matching_files:
-        # print(f"No files found matching the search string '{search_string}' as a whole word with extensions {extensions}.")
-        pass
-    else:
-        # Iterate through the list of matching files and delete each one
-        for file in matching_files:
-            try:
-                os.remove(file)
-                print(f"Deleted file: {file}")
-            except OSError as e:
-                print(f"Error deleting file {file}: {e}")
 
 async def is_aria_selected_true_async(
     page: Page,
@@ -1819,59 +1117,7 @@ async def is_aria_selected_true_async(
     attr = await locator.get_attribute("aria-selected")
     return attr == "true"
 
-def is_aria_selected_true(
-    page: Page,
-    selector: str,
-    timeout: int = 5_000
-) -> bool:
-    """
-    Check whether the element matching `selector` has aria-selected="true".
 
-    Args:
-      page:      Playwright Page instance.
-      selector:  CSS selector for the target element.
-      timeout:   How long (ms) to wait for the element to appear.
-
-    Returns:
-      True if aria-selected is exactly "true", False otherwise.
-    """
-    locator = page.locator(selector)
-    try:
-        # wait for the element to be in the DOM
-        locator.wait_for(state="attached", timeout=timeout)
-    except TimeoutError:
-        return False
-
-    # get_attribute returns a string or None
-    return locator.get_attribute("aria-selected") == "true"
-
-def element_exists(
-    page: Page,
-    selector: str,
-    timeout: int = 5_000
-) -> bool:
-    """
-    Check whether an element matching `selector` exists in the DOM.
-
-    Args:
-      page:      Playwright Page instance.
-      selector:  CSS selector for the target element.
-      timeout:   How long (ms) to wait for the element to appear.
-
-    Returns:
-      True if the element is found, False otherwise.
-    """
-    locator = page.locator(selector)
-    try:
-        locator.wait_for(state="attached", timeout=timeout)
-        return True
-    except TimeoutError as te:
-        return False
-    except Exception as e:
-        if 'Timeout' in str(e):
-            return False
-        else:
-            raise e
 async def element_exists_async(
     page: Page,
     selector: str,
@@ -1892,472 +1138,5 @@ async def element_exists_async(
             return False
         raise
     
-def get_all_reports_to_refresh(ticker: str):
-    # Define the configuration for each report type.
-    # Note: Adjust paths and xpaths as needed.
-    reports = [
-        {
-            "name": "Quarterly Balance Sheet",
-            "black_path": str(COMMON_DIR / 'blacklist_financial.csv'),
-            "file_path": str(COMMON_DIR / 'Yahoo' / 'Balance Sheet' / f'{ticker}_quarterly_balance-sheet.csv'),
-            "file_suffix": "quarterly_balance-sheet",
-            "url": f'https://finance.yahoo.com/quote/{ticker}/balance-sheet?p={ticker}',
-            "ticker": ticker,
-            "period": "quarterly",
-            "error_condition": lambda current_url: (
-                '404' in current_url 
-            ),
-            "blacklist_condition": lambda ticker, content:(
-                f"No results for '{ticker}'" in content or f"Symbols similar to '{ticker}'" in content
-            )
-        },
-        {
-            "name": "Quarterly Valuations",
-            "black_path": str(COMMON_DIR / 'blacklist_financial.csv'),
-            "file_path": str(COMMON_DIR / 'Yahoo' / 'Valuation' / f'{ticker}_quarterly_valuation_measures.csv'),
-            "file_suffix": "quarterly_valuation_measures",
-            "url": f'https://finance.yahoo.com/quote/{ticker}/key-statistics?p={ticker}',
-            "ticker": ticker,
-            "period": "quarterly",
-            "error_condition": lambda current_url,: (
-                '404' in current_url 
-            ),
-            "blacklist_condition": lambda ticker, content:(
-                f"No results for '{ticker}'" in content or f"Symbols similar to '{ticker}'" in content
-            )
-        },
-        {
-            "name": "Quarterly Cash Flow",
-            "black_path": str(COMMON_DIR / 'blacklist_financial.csv'),
-            "file_path": str(COMMON_DIR / 'Yahoo' / 'Cash Flow' / f'{ticker}_quarterly_cash-flow.csv'),
-            "file_suffix": "quarterly_cash-flow",
-            "url": f'https://finance.yahoo.com/quote/{ticker}/cash-flow?p={ticker}',
-            "ticker": ticker,
-            "period": "quarterly",
-            "error_condition": lambda current_url,: (
-                '404' in current_url 
-            ),
-            "blacklist_condition": lambda ticker, content:(
-                f"No results for '{ticker}'" in content or f"Symbols similar to '{ticker}'" in content
-            )
-        },
-        {
-            "name": "Quarterly Income Statement",
-            "black_path": str(COMMON_DIR / 'blacklist_financial.csv'),
-            "file_path": str(COMMON_DIR / 'Yahoo' / 'Income Statement' / f'{ticker}_quarterly_financials.csv'),
-            "file_suffix": "quarterly_financials",
-            "url": f'https://finance.yahoo.com/quote/{ticker}/financials?p={ticker}',
-            "ticker": ticker,
-            "period": "quarterly",
-            "error_condition": lambda current_url: (
-                '404' in current_url 
-            ),
-            "blacklist_condition": lambda ticker, content:(
-                f"No results for '{ticker}'" in content or f"Symbols similar to '{ticker}'" in content
-            )
-        }
-    ]
-    try:
-        reports_to_refresh = []
-        for report in reports:
-            # file_paths = [report["annual_file_path"], report["quarterly_file_path"],  report["monthly_file_path"]]
-            # for file_path in file_paths:
-            file_path = report['file_path']
-            if os.path.exists(file_path):
-                file_mtime = os.path.getmtime(file_path)
-                file_modification_date = datetime.datetime.fromtimestamp(file_mtime)
-                threshold_date = datetime.datetime.now() - timedelta(days=28)
-                if file_modification_date > threshold_date:
-                    # write_line(f'{file_path} updated within the past 28 days so skipping.')
-                    continue
-            
-            reports_to_refresh.append(report)
-        write_line(f"{len(reports_to_refresh)} report(s) added for {ticker}")
-    except Exception as e:
-        pass
-    return reports_to_refresh
 
-def transpose_yahoo_dataframe(filepath: str, ticker, **read_csv_kwargs) -> None:
-    """
-    Read a CSV export from Yahoo Finance, transpose it, compute percent changes,
-    and overwrite the original file with the transformed data.
-
-    Parameters
-    ----------
-    filepath : str
-        Path to the CSV file containing the Yahoo Finance table.
-    **read_csv_kwargs :
-        Additional kwargs to pass to pd.read_csv (e.g. sep, header, encoding).
-
-    Returns
-    -------
-    None
-    """
-    print(f"▶ Reading file: {filepath}")
-    df = pd.read_csv(filepath, **read_csv_kwargs)
-
-    # Set the 'name' column as the index
-    df.set_index("name", inplace=True)
-
-    # Drop rows where all elements are NaN
-    df.dropna(how='all', inplace=True)
-
-    # Drop 'ttm' column if present
-    if 'ttm' in df.columns:
-    #     df.drop(columns=['ttm'], inplace=True)
-        df = df.rename(columns={"ttm": datetime.date.today().strftime("%m/%d/%Y")})
-    
-    # Remove commas and cast to float
-    df = df.replace(',', '', regex=True).astype(float)
-
-    # Replace any remaining NA/NaN with 0
-    df.fillna(0, inplace=True)
-
-    # Transpose so dates become the index
-    df_transposed = df.T
-
-    # Convert the index to datetime
-    df_transposed.index = pd.to_datetime(df_transposed.index)
-
-    # Compute percent change
-    # df_transposed = df_transposed.pct_change() * 100
-    df_transposed['Symbol'] = ticker
-    # Write back to the same file, labeling the index as "Date"
-    print("▶ Transformation complete — writing back to file")
-    
-    df_transposed.to_csv(filepath, index=True, index_label='Date')
-    print(f"✔ File updated: {filepath}")
-
-def process_single_report(report, df_blacklist, DOWNLOADS_PATH, page_factory):
-    """
-    Encapsulate the per-report logic you had in your loop.
-    `page_factory()` should return a fresh Playwright `page` object for each thread.
-    """
-    ticker = report['ticker']
-    if ticker in df_blacklist['Ticker'].tolist():
-        write_line(f"Skipping blacklisted {ticker}")
-        return
-
-    write_line(f"Getting {report['name']} for {ticker}")
-    retry_counter = 0
-    max_retries = 3
-
-    page = page_factory()  # new browser/page for this thread
-
-    while retry_counter < max_retries:
-        retry_counter += 1
-        try:
-            # … put all your existing download-and-click logic here …
-            # Instead of spawning a thread for the pipeline, just call it directly:
-            files = scan_ticker_files(DOWNLOADS_PATH, f"{ticker}_", report['file_suffix'], ['csv','crdownload'])
-            if files:
-                merge_and_dedup_csv(
-                    input_files=files,
-                    output_path=report['file_path'],
-                    dedup_subset=None,
-                    keep="first",
-                    symbol=ticker
-                )
-                transpose_yahoo_dataframe(report['file_path'], ticker)
-                delete_files_with_string(DOWNLOADS_PATH, f"{ticker}_", ['csv','crdownload'])
-                write_line(f"✅ Completed pipeline for {ticker}")
-                break
-        except Exception as e:
-            write_line(f"ERROR in {report['name']} for {ticker}: {e}")
-    else:
-        write_line(f"❌ Failed after {max_retries} retries: {ticker}")
-
-def run_reports_in_parallel(reports, df_blacklist, DOWNLOADS_PATH, page_factory, max_workers=4):
-    """
-    Kick off up to `max_workers` threads to process reports in parallel.
-    """
-    with ThreadPoolExecutor(max_workers=max_workers) as exe:
-        # Submit all reports
-        futures = {
-            exe.submit(process_single_report, rpt, df_blacklist, DOWNLOADS_PATH, page_factory): rpt
-            for rpt in reports
-        }
-
-        # Optional: wait for them and log any exceptions
-        for future in as_completed(futures):
-            rpt = futures[future]
-            try:
-                future.result()
-            except Exception as e:
-                write_line(f"Unhandled exception for {rpt['ticker']}: {e}")
-
-# --- Usage ---
-# Define a page factory that returns a new Playwright page each call:
-def make_new_page():
-    playwright, browser, context, page = get_playwright_browser()
-    return page
-
-
-def _process_ticker(files, report_path, ticker, DOWNLOADS_PATH):
-    # 1) merge & dedup
-    merge_and_dedup_csv(
-        input_files=files,
-        output_path=report_path,
-        dedup_subset=None,
-        keep="first",
-        symbol=ticker
-    )
-    # 2) transpose in‑place
-    transpose_yahoo_dataframe(report_path, ticker)
-    # 3) clean up downloads
-    delete_files_with_string(DOWNLOADS_PATH, ticker + '_', ['csv', 'crdownload'])
-
-def run_report_pipeline(files, report, ticker, DOWNLOADS_PATH):
-    """
-    Kick off the merge→transpose→cleanup sequence on a background thread.
-    Returns the Thread object in case you want to .join() or inspect .is_alive().
-    """
-    t = threading.Thread(
-        target=_process_ticker,
-        args=(files, report['file_path'], ticker, DOWNLOADS_PATH),
-        daemon=True
-    )
-    t.start()
-    return t
-
-def get_all_reports_list(params: Tuple[Playwright, Browser, BrowserContext, Page], reports: list, df_blacklist: pd.DataFrame):
-    playwright = params[0] 
-    browser = params[1]
-    context = params[2]
-    page = params[3]
-    report_counter = 0
-    for report in reports:
-        report_counter += 1
-        ticker = report['ticker']
-        if ticker in list(df_blacklist['Ticker']) or pd.isna(ticker):
-            continue
-        
-        # Begin retry loop for the report download        
-        write_line(f"Getting {report['name']} for {ticker} - {report_counter} / {len(reports)}")
-        max_retries = 3
-        retry_counter = 0
-        while retry_counter < max_retries:
-            retry_counter += 1
-            try:           
-                max_attempts = 3
-                for attempt in range(1, max_attempts + 1):
-                    load_url(page, report["url"])  
-                    selector = f'button#tab-{report["period"]}[role="tab"]'
-                    exists = element_exists(page, selector)  
-                    if not exists:
-                        write_line(f"Skipping because {report['period']} {report['name']} doesn't exist for {ticker}")    
-                        # if report["blacklist_condition"](ticker, page.content()):                        
-                        new_row = {"Ticker": ticker}
-                        df_blacklist.loc[len(df_blacklist)] = new_row
-                        append_to_csv(report['black_path'], pd.DataFrame([new_row]))
-                        
-                        retry_counter = 4
-                        break      
-                    else:
-                        try:                      
-                            # Click period button
-                            selectors = [
-                                {
-                                    "property_type": "button",
-                                    "property_name": "id",
-                                    "property_value": f"tab-{report['period']}"
-                                },
-                                {
-                                    "property_type": "button",
-                                    "property_name": "title",
-                                    "property_value": f"{report['period'].capitalize()}"
-                                }
-                            ]
-                            
-                            result = pw_click_by_selectors(page, selectors)
-                            while not is_aria_selected_true(page, f'button#tab-{report["period"]}[role="tab"]'):
-                                result = pw_click_by_selectors(page, selectors)
-                            if result:
-                                write_line(f"Successfully clicked {report['period']} tab for {ticker} {report['name']}")
-                                selectors = [
-                                {
-                                    "property_type": "button",
-                                    "property_name": "data-testid",
-                                    "property_value": "download-link"
-                                },
-                                # Fallback: match by data-rapid_p attribute
-                                {
-                                    "property_type": "button",
-                                    "property_name": "data-rapid_p",
-                                    "property_value": "21"
-                                }
-                                ]    
-                                
-                                exists = element_exists(page, 'button[data-testid="download-link"]')
-                                if exists:
-                                    result = pw_download_after_click_by_selectors(page, selectors, DOWNLOADS_PATH)
-                                    if result:
-                                        write_line(f"Successfully downloaded {report['period']} data for {ticker} {report['name']} on attempt {attempt}")
-                                        files = scan_ticker_files(DOWNLOADS_PATH, f"{ticker}_", report['file_suffix'], ['csv', 'crdownload'] )
-                                        if len(files) > 0:
-                                            thread = run_report_pipeline(files, report, ticker, DOWNLOADS_PATH)
-                                            retry_counter = 4
-                                            break
-                                        else:
-                                            write_line(f"Failed to download {report['period']} data for {ticker} {report['name']}")
-
-                                    else:
-                                        write_line(f"Attempt {attempt} failed downloading {report['period']} data for {ticker} {report['name']}.")
-                                        if attempt < max_attempts:
-                                            time.sleep(1)  # brief pause before retrying
-                                        else:
-                                            write_line(f"Failed downloading {report['period']} data for {ticker} {report['name']} after {max_attempts} attempts.")
-                                else:
-                                    new_row = {"Ticker": ticker}
-                                    df_blacklist.loc[len(df_blacklist)] = new_row
-                                    append_to_csv(report['black_path'], pd.DataFrame([new_row]))
-                                    retry_counter = 4
-                                    break
-                            else:
-                                write_line(f"Failed clicking {report['period']} tab for {ticker} {report['name']}.")        
-                        except Exception as e:
-                            write_line(f"ERROR: Failed downloading {report['name']} for {ticker} - {str(e)}")
-            except Exception as e:
-                write_line(f'ERROR: {ticker} in {report["name"]} - {e}')       
-                # If the error condition is met, update the blacklist and break.
-                content = page.content()
-                if report["blacklist_condition"](ticker, content) or retry_counter >= max_retries:                        
-                    new_row = {"Ticker": ticker}
-                    df_blacklist.loc[len(df_blacklist)] = new_row
-                    append_to_csv(report['black_path'], pd.DataFrame([new_row]))
-                    retry_counter = 4
-                    break
-                elif report["error_condition"](page.url):
-                    write_line(f'No {report["name"]} found for {ticker}')    
-                    # break
-                pass
-                # else:
-                #     playwright, browser, context, page = get_playwright_browser()
-                    
-                
-    return (playwright, browser, context, page)
-     
-     
-async def get_all_reports_list_async(params: Tuple[Playwright, Browser, BrowserContext, Page], reports: list):
-    # Extract playwright parameters
-    playwright = params[0] 
-    browser = params[1]
-    context = params[2]
-    page = params[3]
-    
-    # Iterate through list of reports
-    report_counter = 0
-    for report in reports:
-        report_counter += 1
-        ticker = report['ticker']
-        
-        # Begin retry loop for the report download        
-        write_line(f"Getting {report['name']} for {ticker} - {report_counter} / {len(reports)}")
-        max_retries = 3
-        retry_counter = 0
-        while retry_counter < max_retries:
-            
-            # Increment retry counter
-            retry_counter += 1
-            try:           
-                max_attempts = 3
-                
-                # Try max number of times
-                for attempt in range(1, max_attempts + 1):
-                    
-                    # Load url for report
-                    await load_url_async(page, report["url"])  
-                    
-                    # Check if period tab exists
-                    selector = f'button#tab-{report["period"]}[role="tab"]'
-                    exists = await element_exists_async(page, selector)  
-                    if not exists:
-                        
-                        # If it doesn't exist add it to the blacklist
-                        write_line(f"Skipping because {report['period']} {report['name']} doesn't exist for {ticker}")    
-                        new_row = {"Ticker": ticker}
-                        append_to_csv(report['black_path'], pd.DataFrame([new_row]))
-                        
-                        # Break out of the retry loop
-                        retry_counter = 4
-                        break  
-                       
-                    else:
-                        try:                      
-                            # Setup selectors for period button
-                            selectors = [
-                                {
-                                    "property_type": "button",
-                                    "property_name": "id",
-                                    "property_value": f"tab-{report['period']}"
-                                },
-                                {
-                                    "property_type": "button",
-                                    "property_name": "title",
-                                    "property_value": f"{report['period'].capitalize()}"
-                                }
-                            ]
-                            
-                            
-                            result = await pw_click_by_selectors_async(page, selectors)
-                            if result:
-                                write_line(f"Successfully clicked {report['period']} tab for {ticker} {report['name']}")
-                                selectors = [
-                                {
-                                    "property_type": "button",
-                                    "property_name": "data-testid",
-                                    "property_value": "download-link"
-                                },
-                                # Fallback: match by data-rapid_p attribute
-                                {
-                                    "property_type": "button",
-                                    "property_name": "data-rapid_p",
-                                    "property_value": "21"
-                                }
-                                ]    
-                                
-                                # Check if download link exists
-                                exists = await element_exists_async(page, 'button[data-testid="download-link"]')
-                                if exists:
-                                    
-                                    # Click download button
-                                    result = await pw_download_after_click_by_selectors_async(page, selectors, DOWNLOADS_PATH)
-                                    if result:
-                                        write_line(f"Successfully downloaded {report['period']} data for {ticker} {report['name']} on attempt {attempt}")
-                                        files = scan_ticker_files(DOWNLOADS_PATH, f"{ticker}_", report['file_suffix'], ['csv', 'crdownload'] )
-                                        if len(files) == 0:
-                                            write_line(f"Failed to download {report['period']} data for {ticker} {report['name']}")
-                                            continue
-                                        thread = run_report_pipeline(files, report, ticker, DOWNLOADS_PATH)
-                                        retry_counter = 4
-                                        break
-                                    else:
-                                        write_line(f"Attempt {attempt} failed downloading {report['period']} data for {ticker} {report['name']}.")
-                                        if attempt < max_attempts:
-                                            time.sleep(1)  # brief pause before retrying
-                                        else:
-                                            write_line(f"Failed downloading {report['period']} data for {ticker} {report['name']} after {max_attempts} attempts.")
-                                else:
-                                    new_row = {"Ticker": ticker}
-                                    append_to_csv(report['black_path'], pd.DataFrame([new_row]))
-                                    retry_counter = 4
-                                    break
-                            else:
-                                write_line(f"Failed clicking {report['period']} tab for {ticker} {report['name']}.")        
-                        except Exception as e:
-                            write_line(f"ERROR: Failed downloading {report['name']} for {ticker} - {str(e)}")
-            except Exception as e:
-                write_line(f'ERROR: {ticker} in {report["name"]} - {e}')       
-                # If the error condition is met, update the blacklist and break.
-                content = await page.content()
-                if report["blacklist_condition"](ticker, content) or retry_counter >= max_retries:                        
-                    new_row = {"Ticker": ticker}
-                    append_to_csv(report['black_path'], pd.DataFrame([new_row]))
-                    retry_counter = 4
-                    break
-                elif report["error_condition"](page.url):
-                    write_line(f'No {report["name"]} found for {ticker}')    
-                    # breaks                    
-                
-    return (playwright, browser, context, page)
      
