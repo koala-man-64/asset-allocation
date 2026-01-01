@@ -15,11 +15,12 @@ from typing import List, Optional
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from scripts.common import core as mdc
 from scripts.common import config as cfg
+from scripts.common import delta_core # NEW: Import Delta Core
 
 warnings.filterwarnings('ignore')
 
 # Constants for Cloud Storage (Relative paths to Azure Container root)
-CSV_FOLDER = "price_targets"
+DATA_FOLDER = "price_targets"
 WHITELIST_FILE = "price_target_data_whitelist.csv"
 BLACKLIST_FILE = "price_target_data_blacklist.csv"
 NASDAQ_KEY_FILE = "nasdaq_key.txt"
@@ -52,7 +53,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         "tp_high_est", "tp_low_est", "tp_cnt_est", 
         "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
     ]
-    price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.parquet"
+    price_target_cloud_path = f"{DATA_FOLDER}/{symbol}"
 
     try:
         # Ensure timestamp
@@ -106,7 +107,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
 
         # Save
-        mdc.store_parquet(updated_earnings, price_target_cloud_path, client=pt_client)
+        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
         # mdc.write_line(f"  Uploaded updated data for {symbol}")
 
         return updated_earnings
@@ -131,20 +132,18 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
 
     # 1. Freshness Check
     for symbol in symbols:
-        price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.parquet"
+        price_target_cloud_path = f"{DATA_FOLDER}/{symbol}"
         is_fresh = False
         
-        if pt_client:
-             last_mod = pt_client.get_last_modified(price_target_cloud_path)
-             if last_mod:
-                 now_utc = datetime.now(timezone.utc)
-                 if last_mod.tzinfo is None:
-                     last_mod = last_mod.replace(tzinfo=timezone.utc)
-                 if now_utc - last_mod < timedelta(days=7):
-                     is_fresh = True
+        last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
+        if last_ts:
+             now_ts = datetime.now(timezone.utc).timestamp()
+             # Compare seconds from epoch
+             if (now_ts - last_ts) < (7 * 24 * 3600): # 7 days in seconds
+                 is_fresh = True
         
         if is_fresh:
-            loaded_df = mdc.load_parquet(price_target_cloud_path, client=pt_client)
+            loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
@@ -156,7 +155,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             # Ideally we want to append new data to old data.
             # So let's try to load "stale" data to merge with it, rather than starting empty.
             # So let's try to load "stale" data to merge with it, rather than starting empty.
-            existing_df = mdc.load_parquet(price_target_cloud_path, client=pt_client)
+            existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
             if existing_df is None or existing_df.empty:
                 existing_df = pd.DataFrame(columns=column_names)
             elif 'obs_date' in existing_df.columns:
@@ -290,9 +289,8 @@ def run_interactive_mode(df=None):
             break
             
         # Load individual file
-        file_path = f"{CSV_FOLDER}/{user_symbol}.parquet"
-        file_path = f"{CSV_FOLDER}/{user_symbol}.parquet"
-        symbol_df = mdc.load_parquet(file_path, client=pt_client)
+        file_path = f"{DATA_FOLDER}/{user_symbol}"
+        symbol_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, file_path)
         
         if symbol_df is None:
              print(f"No local data found for {user_symbol}")

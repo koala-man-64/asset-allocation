@@ -19,6 +19,7 @@ if project_root not in sys.path:
 from scripts.common import core as mdc
 from scripts.common import playwright_lib as pl
 from scripts.common import config as cfg
+from scripts.common import delta_core # NEW: Import Delta Core
 
 warnings.filterwarnings('ignore')
 
@@ -155,7 +156,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
     retry_counter = 0
     
     # Determine cloud path
-    cloud_path = f"Yahoo/{report['folder']}/{ticker}_{report['file_suffix']}.parquet"
+    cloud_path = f"Yahoo/{report['folder']}/{ticker}_{report['file_suffix']}"
     
     # Temp download dir
     temp_dir = Path.home() / "Downloads" / f"temp_{ticker}_{report['period']}"
@@ -228,9 +229,9 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                              
                              df_clean = transpose_dataframe(df, ticker)
                              
-                             # 7. Upload to Azure
-                             mdc.store_parquet(df_clean, cloud_path, client=fin_client)
-                             mdc.write_line(f"Uploaded {cloud_path}")
+                             # 7. Upload to Azure (Delta)
+                             delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_FINANCE, cloud_path)
+                             mdc.write_line(f"Uploaded {cloud_path} (Delta)")
                              
                              # Auto-whitelist on success
                              if whitelist_callback: whitelist_callback(ticker)
@@ -368,19 +369,21 @@ async def main():
             report['url'] = report['url_template'].format(ticker=symbol)
             
             # Check Cloud
-            cloud_path = f"Yahoo/{report['folder']}/{symbol}_{report['file_suffix']}.parquet"
+            # Check Cloud
+            cloud_path = f"Yahoo/{report['folder']}/{symbol}_{report['file_suffix']}"
             
             should_refresh = True
-            if fin_client:
-                last_mod = fin_client.get_last_modified(cloud_path)
-                if last_mod:
-                    # Ensure UTC
-                    if last_mod.tzinfo is None:
-                        last_mod = last_mod.replace(tzinfo=timezone.utc)
-                    
-                    age = now_utc - last_mod
-                    if age.days < freshness_threshold_days:
-                        should_refresh = False
+            
+            # Use delta_core for freshness
+            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_FINANCE, cloud_path)
+            
+            if last_ts:
+                # last_ts is seconds (float)
+                # Convert last_ts to datetime aware
+                dt_last = datetime.datetime.fromtimestamp(last_ts, timezone.utc)
+                age = now_utc - dt_last
+                if age.days < freshness_threshold_days:
+                    should_refresh = False
             
             if should_refresh:
                 reports_to_process.append(report)

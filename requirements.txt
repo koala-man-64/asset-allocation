@@ -16,6 +16,7 @@ pytz
 # Added during Azure Migration & Testing Audit
 azure-storage-blob==12.24.0
 azure-identity==1.15.0
+deltalake>=0.15.0
 python-dotenv==1.0.1
 pytest==8.3.4
 python-dateutil
