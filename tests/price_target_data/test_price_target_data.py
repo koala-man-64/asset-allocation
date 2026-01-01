@@ -6,8 +6,9 @@ from scripts.price_target_data import scraper as pta
 
 # --- Test Logic ---
 
+@patch('scripts.price_target_data.scraper.delta_core')
 @patch('scripts.price_target_data.scraper.mdc')
-def test_transform_symbol_data(mock_mdc):
+def test_transform_symbol_data(mock_mdc, mock_delta_core):
     # Setup inputs
     symbol = "TEST"
     existing_df = pd.DataFrame()
@@ -31,37 +32,39 @@ def test_transform_symbol_data(mock_mdc):
     assert res.iloc[0]['ticker'] == symbol
     
     # Verify save called
-    # expected path: price_targets/TEST.parquet
-    mock_mdc.store_parquet.assert_called()
-    args, _ = mock_mdc.store_parquet.call_args
-    assert "price_targets/TEST.parquet" in args[1]
+    # expected path: price_targets/TEST (directory)
+    mock_delta_core.store_delta.assert_called()
+    args, _ = mock_delta_core.store_delta.call_args
+    # args[0] is df, args[1] is container, args[2] is path
+    assert "price_targets/TEST" in args[2]
 
+@patch('scripts.price_target_data.scraper.delta_core')
 @patch('scripts.price_target_data.scraper.mdc')
 @patch('scripts.price_target_data.scraper.nasdaqdatalink')
-@patch('scripts.price_target_data.scraper.pt_client')
-def test_process_symbols_batch_fresh(mock_pt_client, mock_nasdaq, mock_mdc):
+def test_process_symbols_batch_fresh(mock_nasdaq, mock_mdc, mock_delta_core):
     # Scenario: Symbol is fresh in cloud, should NOT call API
     
-    # Mock stale check: return a recent date
-    mock_pt_client.get_last_modified.return_value = pd.Timestamp.utcnow()
+    # Mock fresh check: return a recent timestamp (seconds since epoch)
+    now_ts = pd.Timestamp.utcnow().timestamp()
+    mock_delta_core.get_delta_last_commit.return_value = now_ts
     
-    # Mock load_parquet to return something
-    mock_mdc.load_parquet.return_value = pd.DataFrame({'ticker': ['TEST'], 'obs_date': [pd.Timestamp('2023-01-01')]})
+    # Mock load_delta to return something
+    mock_delta_core.load_delta.return_value = pd.DataFrame({'ticker': ['TEST'], 'obs_date': [pd.Timestamp('2023-01-01')]})
     
     res = pta.process_symbols_batch(['TEST'])
     
     assert len(res) == 1
     mock_nasdaq.get_table.assert_not_called()
 
+@patch('scripts.price_target_data.scraper.delta_core')
 @patch('scripts.price_target_data.scraper.mdc')
 @patch('scripts.price_target_data.scraper.nasdaqdatalink')
-@patch('scripts.price_target_data.scraper.pt_client')
-def test_process_symbols_batch_stale(mock_pt_client, mock_nasdaq, mock_mdc):
+def test_process_symbols_batch_stale(mock_nasdaq, mock_mdc, mock_delta_core):
     # Scenario: Symbol is stale/missing, SHOULD call API
     
-    # Mock stale check: return None (missing file) or old date
-    mock_pt_client.get_last_modified.return_value = None
-    mock_mdc.load_parquet.return_value = None 
+    # Mock stale check: return None (missing file)
+    mock_delta_core.get_delta_last_commit.return_value = None
+    mock_delta_core.load_delta.return_value = None 
     
     # Mock API return
     mock_api_df = pd.DataFrame({
@@ -76,3 +79,6 @@ def test_process_symbols_batch_stale(mock_pt_client, mock_nasdaq, mock_mdc):
     assert len(res) == 1
     assert res[0] == 'TEST'
     mock_nasdaq.get_table.assert_called()
+    
+    # Verify save was called implicitly via transform_symbol_data
+    mock_delta_core.store_delta.assert_called()

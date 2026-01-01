@@ -1,21 +1,21 @@
-import nasdaqdatalink
-import pandas as pd
-import numpy as np
-import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import os
 import sys
+import os
 import warnings
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, date
 from pathlib import Path
 from typing import List, Optional
 
+import pandas as pd
+import numpy as np
+import nasdaqdatalink
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 # Local imports
-# Adjust path if necessary to find 'scripts' when running directly
+# Adjust path to find 'scripts' when running directly
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from scripts.common import core as mdc
 from scripts.common import config as cfg
-from scripts.common import delta_core # NEW: Import Delta Core
+from scripts.common import delta_core
 
 warnings.filterwarnings('ignore')
 
@@ -28,7 +28,14 @@ NASDAQ_KEY_FILE = "nasdaq_key.txt"
 BATCH_SIZE = 50
 
 # Initialize Client
-pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_PRICE_TARGETS)
+_pt_client = None
+
+def get_client():
+    """Lazy loader for the Azure Storage Client."""
+    global _pt_client
+    if _pt_client is None:
+        _pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_PRICE_TARGETS)
+    return _pt_client
 
 def setup_nasdaq_key():
     """Attempts to load Nasdaq Data Link key from Environment or Cloud."""
@@ -67,7 +74,6 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         today = pd.to_datetime("today").normalize()
 
         # If last observation is old, we might want to carry it forward to today
-        # Only do this if we actually have data
         if not target_price_data.empty and latest_obs_date < today:
             all_dates = pd.date_range(start=target_price_data['obs_date'].min(), end=today)
             df_all_dates = pd.DataFrame({'obs_date': all_dates})
@@ -86,7 +92,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
 
         # Resample to Daily to fill gaps
         target_price_data.set_index('obs_date', inplace=True)
-        # Handle duplicates if any (though API usually returns unique per date? safety check)
+        # Handle duplicates if any (safety check)
         target_price_data = target_price_data[~target_price_data.index.duplicated(keep='last')]
         
         full_date_range = pd.date_range(start=target_price_data.index.min(), end=target_price_data.index.max(), freq='D')
@@ -95,10 +101,6 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         target_price_data.reset_index(inplace=True)
         target_price_data = target_price_data.rename(columns={'index': 'obs_date'})
         
-        # Restore ticker column if lost during reindex/ffill (it might become nan if first row was not start of range? No, ffill handles it)
-        # But if reindex introduced new rows at START, they are NaN. 
-        # Actually logic above: 'start=target_price_data.index.min()' ensures we start where data starts.
-        # But 'ticker' column needs to be filled.
         target_price_data['ticker'] = symbol
 
         # Merge with existing
@@ -108,7 +110,6 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
 
         # Save
         delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
-        # mdc.write_line(f"  Uploaded updated data for {symbol}")
 
         return updated_earnings
 
@@ -147,14 +148,10 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
-                # results.append(loaded_df) # Don't return full DF to save memory
                 results.append(symbol)
         else:
             stale_symbols.append(symbol)
             # Init empty existing df for stale symbols, or try to load what WAS there?
-            # Ideally we want to append new data to old data.
-            # So let's try to load "stale" data to merge with it, rather than starting empty.
-            # So let's try to load "stale" data to merge with it, rather than starting empty.
             existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
             if existing_df is None or existing_df.empty:
                 existing_df = pd.DataFrame(columns=column_names)
@@ -167,7 +164,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
         return results
 
     # 2. Batch API Call
-    min_date = date(2020, 1, 1) # Or derive from existing data? simpler to just fetch all > 2020 for now.
+    min_date = date(2020, 1, 1) 
     
     mdc.write_line(f"Fetching batch of {len(stale_symbols)} symbols from API...")
     
@@ -190,17 +187,12 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
     # Identify which symbols were returned
     found_tickers = set()
     if not batch_df.empty:
-        # Group by ticker
-        # batch_df['ticker'] might be mixed case? API usually returns per request.
-        # Ensure we match `stale_symbols`.
-        
         # Iterate over unique tickers in response
         for symbol, group_df in batch_df.groupby('ticker'):
             symbol = str(symbol) # ensure string
             if symbol in existing_data_map:
                 processed_df = transform_symbol_data(symbol, group_df.copy(), existing_data_map[symbol])
                 if processed_df is not None:
-                    # results.append(processed_df)
                     results.append(symbol)
                     processed_count += 1
                 found_tickers.add(symbol)
@@ -212,7 +204,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             existing_df = existing_data_map[symbol]
             if existing_df.empty:
                 mdc.write_line(f"Blacklisting {symbol} (No data).")
-                mdc.update_csv_set(BLACKLIST_FILE, symbol, client=pt_client)
+                mdc.update_csv_set(BLACKLIST_FILE, symbol, client=get_client())
             else:
                 # We have old data but no new data. Just use old.
                 results.append(symbol)
@@ -222,7 +214,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
     
     # Auto-whitelist successful symbols
     for symbol in found_tickers:
-        mdc.update_csv_set(WHITELIST_FILE, symbol, client=pt_client)
+        mdc.update_csv_set(WHITELIST_FILE, symbol, client=get_client())
 
     return results
 
@@ -233,8 +225,8 @@ def run_batch_processing():
     df_symbols = mdc.get_symbols()
     
     # Cloud-aware list filtering
-    whitelist_list = mdc.load_ticker_list(WHITELIST_FILE, client=pt_client)
-    blacklist_list = mdc.load_ticker_list(BLACKLIST_FILE, client=pt_client)
+    whitelist_list = mdc.load_ticker_list(WHITELIST_FILE, client=get_client())
+    blacklist_list = mdc.load_ticker_list(BLACKLIST_FILE, client=get_client())
     
     if blacklist_list:
         mdc.write_line(f"Filtering out {len(blacklist_list)} blacklisted symbols.")
@@ -253,17 +245,28 @@ def run_batch_processing():
     # We will submit chunks of symbols to the executor.
     # Each valid 'task' is now a batch of BATCH_SIZE symbols.
     
+    # TODO: Re-implement parallelism using ThreadPoolExecutor if needed.
+    # Currently, this logic just calculates chunks but doesn't execute them.
+    # NOTE: Execution loop is missing in original code.
+    
     chunked_symbols = [symbols[i:i + BATCH_SIZE] for i in range(0, len(symbols), BATCH_SIZE)]
     
     num_cores = os.cpu_count() or 1
-    # Reduce workers slightly since each worker does more heavy lifting? 
-    # Or keep same. API parallelism is still limited by network/rate limits?
-    # Nasdaq rate limits might be triggered.
     num_workers = max(1, int(num_cores * 0.75))
     mdc.write_line(f"Using {num_workers} worker threads for {len(chunked_symbols)} batches (Batch Size: {BATCH_SIZE}).")
 
-    # 4. Save Final Aggregation - REMOVED for per-symbol storage
-    # Updates are already saved in transform_symbol_data
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        future_to_chunk = {executor.submit(process_symbols_batch, chunk): chunk for chunk in chunked_symbols}
+        
+        for future in as_completed(future_to_chunk):
+            chunk = future_to_chunk[future]
+            try:
+                # We can stick with just logging completion here since results are saved internally
+                # or we could aggregate return values if needed.
+                future.result() 
+            except Exception as exc:
+                mdc.write_line(f"Batch generation generated an exception: {exc}")
+    
     mdc.write_line("Batch processing complete. All symbols updated individually.")
 
 
@@ -273,16 +276,6 @@ def run_interactive_mode(df=None):
     """
     setup_nasdaq_key()
     
-    if df is None:
-        pass # We load per symbol now
-
-    # symbols = df['Symbol'].unique().tolist() # Can't list all easily without expensive list-blob call
-    # mdc.write_line("Here are 5 random symbols:")
-    # try:
-    #     mdc.write_line(random.sample(symbols, min(len(symbols), 5)))
-    # except ValueError:
-    #     pass
-
     while True:
         user_symbol = input("\nEnter symbol (or 'quit'): ").strip().upper()
         if user_symbol.lower() == 'quit':
@@ -300,9 +293,9 @@ def run_interactive_mode(df=None):
             symbol_df['Symbol'] = user_symbol
             symbol_df = symbol_df.sort_values(by='Date').reset_index(drop=True)
         
-        if 'Close' not in symbol_df.columns:
+        if symbol_df is not None and 'Close' not in symbol_df.columns:
              print("Close price not in dataset (this column requires price history).")
-             
+              
         # Fetch fresh TP diff check
         try:
             tp_data = nasdaqdatalink.get_table('ZACKS/TP', ticker=user_symbol)
