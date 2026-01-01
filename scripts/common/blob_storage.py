@@ -59,6 +59,35 @@ class BlobStorageClient:
         blob_client = self.container_client.get_blob_client(remote_path)
         return blob_client.exists()
 
+    def list_files(self, name_starts_with=None) -> list:
+        """
+        Lists files in the container.
+        """
+        try:
+            blobs = self.container_client.list_blobs(name_starts_with=name_starts_with)
+            return [b.name for b in blobs]
+        except Exception as e:
+            logger.error(f"Error listing files: {e}")
+            raise
+
+    def delete_file(self, remote_path: str):
+        """
+        Deletes a file from the container.
+        """
+        try:
+            blob_client = self.container_client.get_blob_client(remote_path)
+            # Only delete if it exists? Or let SDK raise?
+            # Test expects success if it deletes, usually idempotent or silent logic is preferred?
+            # Standard delete_blob raises ResourceNotFoundError if not found.
+            if blob_client.exists():
+                blob_client.delete_blob()
+                logger.info(f"Deleted blob: {remote_path}")
+            else:
+                logger.warning(f"Attempted to delete non-existent blob: {remote_path}")
+        except Exception as e:
+            logger.error(f"Error deleting file {remote_path}: {e}")
+            raise
+
     def read_csv(self, remote_path: str) -> pd.DataFrame:
         """
         Reads a CSV from Azure Blob Storage into a Pandas DataFrame.

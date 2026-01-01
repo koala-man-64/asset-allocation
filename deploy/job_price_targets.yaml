@@ -34,7 +34,7 @@ properties:
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: price-target-job
-      command: ["python", "-m", "scripts.price_target_data.price_target_data"]
+      command: ["python", "-m", "scripts.price_target_data.scraper"]
       resources:
         cpu: 1.0
         memory: 2Gi
