@@ -58,6 +58,7 @@ from playwright.sync_api import Error          # generic base class
 from playwright.sync_api import TimeoutError   # subclass for time-outs
 from scripts.common import config as cfg
 warnings.filterwarnings('ignore')
+from scripts.common import core as mdc
 
 
 DOWNLOADS_PATH = cfg.DOWNLOADS_PATH
@@ -782,7 +783,36 @@ async def pw_login_to_yahoo_async(
         write_line("Dismissed theme dialog")
         await asyncio.sleep(5)
     else:
-        write_line("No theme dialog, continuing.")    
+        write_line("No theme dialog, continuing.")
+
+async def authenticate_yahoo_async(page: AsyncPage, context: AsyncBrowserContext) -> None:
+    """
+    Centralized authentication logic for Yahoo Finance.
+    Loads cookies, logs in (if needed), and saves fresh cookies.
+    """
+    write_line("Attempting to load cookies for authentication...")
+    cookies_path = "pw_cookies.json"
+    cookies_data = mdc.get_json_content(cookies_path)
+    
+    loaded_count = 0
+    if cookies_data:
+        loaded_count = len(cookies_data)
+        await context.add_cookies(cookies_data)
+        write_line(f"Loaded {loaded_count} cookies from {cookies_path}.")
+    else:
+        write_line(f"No existing cookies found at {cookies_path}.")
+        
+    # Reload to apply cookies
+    await page.reload()
+    
+    # Perform login check / execution
+    await pw_login_to_yahoo_async(page, context)
+    
+    # Save fresh cookies
+    new_cookies = await context.cookies()
+    saved_count = len(new_cookies)
+    mdc.save_json_content(new_cookies, cookies_path)
+    write_line(f"Authentication complete. Saved {saved_count} cookies to {cookies_path}.")    
     
 
    

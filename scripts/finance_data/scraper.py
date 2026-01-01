@@ -221,17 +221,7 @@ async def run_async_playwright(reports_to_refresh):
     
     try:
         # Auth
-        mdc.write_line("Loading cookies and logging in...")
-        cookies_path = "pw_cookies.json"
-        cookies_data = mdc.get_json_content(cookies_path)
-        if cookies_data:
-            await context.add_cookies(cookies_data)
-        
-        await page.reload()
-        await pl.pw_login_to_yahoo_async(page, context)
-        
-        new_cookies = await context.cookies()
-        mdc.save_json_content(new_cookies, cookies_path)
+        await pl.authenticate_yahoo_async(page, context)
         
         # Semaphore for parallel tabs
         semaphore = asyncio.Semaphore(4) 
