@@ -477,13 +477,7 @@ def get_active_tickers():
     if api_key:
         nasdaqdatalink.ApiConfig.api_key = api_key
     else:
-        # Try loading from Azure/Common
-        key_content = get_common_file_text('nasdaq_key.txt')
-        if key_content:
-            nasdaqdatalink.ApiConfig.api_key = key_content.strip()
-            # write_line("Loaded NASDAQ API key from storage.")
-        else:
-             print(f"Warning: NASDAQ API key not found in Environment or Azure.")
+         print(f"Warning: NASDAQ_API_KEY environment variable is missing. Active tickers fetch may fail or be limited.")
             
     try:
         df = nasdaqdatalink.get_table("ZACKS/MT", paginate=True, qopts={"columns": selected_columns})

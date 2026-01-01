@@ -32,18 +32,18 @@ class BlobStorageClient:
         session.mount('https://', adapter)
         transport = RequestsTransport(session=session)
 
-        if self.account_name:
-            # IDENTITY PATH (Preferred)
+        if self.connection_string:
+            # KEY/STRING PATH (Prioritized for robustness/CI)
+            logger.info("Initializing BlobStorageClient with Connection String")
+            self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string, transport=transport)
+        elif self.account_name:
+            # IDENTITY PATH (Fallback if CS missing)
             logger.info(f"Initializing BlobStorageClient with Managed Identity for account: {self.account_name}")
             account_url = f"https://{self.account_name}.blob.core.windows.net"
             credential = DefaultAzureCredential()
             self.blob_service_client = BlobServiceClient(account_url, credential=credential, transport=transport)
-        elif self.connection_string:
-            # KEY/STRING PATH (Legacy)
-            logger.warning("Initializing BlobStorageClient with Connection String (Legacy Auth)")
-            self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string, transport=transport)
         else:
-            raise ValueError("Authentication failed: Set AZURE_STORAGE_ACCOUNT_NAME (Identity) or AZURE_STORAGE_CONNECTION_STRING.")
+            raise ValueError("Authentication failed: Set AZURE_STORAGE_CONNECTION_STRING (Preferred) or AZURE_STORAGE_ACCOUNT_NAME (Identity).")
             
         self.container_client = self.blob_service_client.get_container_client(self.container_name)
         
@@ -221,4 +221,3 @@ class BlobStorageClient:
         except Exception as e:
             logger.error(f"Error writing parquet to {remote_path}: {e}")
             raise
-

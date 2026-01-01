@@ -8,6 +8,10 @@ from deltalake import DeltaTable, write_deltalake
 # Configure logger
 logger = logging.getLogger(__name__)
 
+def _parse_connection_string(conn_str: str) -> Dict[str, str]:
+    """Parses Azure Storage Connection String into a dictionary."""
+    return dict(item.split('=', 1) for item in conn_str.split(';') if '=' in item)
+
 def get_delta_storage_options() -> Dict[str, str]:
     """
     Constructs the storage_options dictionary required by deltalake (delta-rs)
@@ -18,24 +22,32 @@ def get_delta_storage_options() -> Dict[str, str]:
     
     Note: delta-rs support for Azure Managed Identity can be complex.
     For now, we support:
-    1. Account Key (AZURE_STORAGE_ACCOUNT_KEY or AZURE_STORAGE_ACCESS_KEY)
+    1. Account Key (AZURE_STORAGE_ACCOUNT_KEY or parsed from Connection String)
     2. Connection String (not directly supported by simple options, usually parsed)
     3. SAS Token (AZURE_STORAGE_SAS_TOKEN)
     4. Azure CLI/Identity fallback (azure_use_azure_cli='true')
     """
     options = {}
     
+    # 0. Helper: Parse Connection String if present
+    cs_map = {}
+    conn_str = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
+    if conn_str:
+        cs_map = _parse_connection_string(conn_str)
+    
     # Account Name is mandatory
     account_name = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
     if not account_name:
-        # Check if we can parse it from connection string? 
-        # For now, assume it must be set.
-        pass
-    else:
+        account_name = cs_map.get('AccountName')
+        
+    if account_name:
         options['account_name'] = account_name
 
     # 1. Account Key
     account_key = os.environ.get('AZURE_STORAGE_ACCOUNT_KEY') or os.environ.get('AZURE_STORAGE_ACCESS_KEY')
+    if not account_key:
+        account_key = cs_map.get('AccountKey')
+
     if account_key:
         options['account_key'] = account_key
         return options
@@ -72,7 +84,15 @@ def get_delta_table_uri(container: str, path: str, account_name: Optional[str] =
     """
     acc = account_name or os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
     if not acc:
-         raise ValueError("AZURE_STORAGE_ACCOUNT_NAME must be set to construct Delta URI.")
+         # Try logic from parsing connection string if environment variable is missing
+         # Re-use parsing logic (inefficient to do twice but safe)
+         conn_str = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
+         if conn_str:
+             cs_map = dict(item.split('=', 1) for item in conn_str.split(';') if '=' in item)
+             acc = cs_map.get('AccountName')
+
+    if not acc:
+         raise ValueError("AZURE_STORAGE_ACCOUNT_NAME must be set (or parseable from AZURE_STORAGE_CONNECTION_STRING) to construct Delta URI.")
          
     # Clean path
     path = path.strip('/')

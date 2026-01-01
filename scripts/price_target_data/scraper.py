@@ -23,7 +23,7 @@ warnings.filterwarnings('ignore')
 DATA_FOLDER = "price_targets"
 WHITELIST_FILE = "price_target_data_whitelist.csv"
 BLACKLIST_FILE = "price_target_data_blacklist.csv"
-NASDAQ_KEY_FILE = "nasdaq_key.txt"
+
 
 BATCH_SIZE = 50
 
@@ -38,17 +38,12 @@ def get_client():
     return _pt_client
 
 def setup_nasdaq_key():
-    """Attempts to load Nasdaq Data Link key from Environment or Cloud."""
+    """Attempts to load Nasdaq Data Link key from Environment."""
     key = os.environ.get('NASDAQ_API_KEY')
     if key:
         nasdaqdatalink.ApiConfig.api_key = key
     else:
-        # Fetch from cloud
-        key_content = mdc.get_common_file_text(NASDAQ_KEY_FILE)
-        if key_content:
-            nasdaqdatalink.ApiConfig.api_key = key_content.strip()
-        else:
-            mdc.write_line("WARNING: Nasdaq API key not found in Env or Cloud.")
+        raise ValueError("NASDAQ_API_KEY environment variable is required.")
 
 def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing_price_targets: pd.DataFrame) -> Optional[pd.DataFrame]:
     """
