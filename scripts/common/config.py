@@ -109,3 +109,7 @@ TICKERS_TO_ADD = [
     'Industry': 'Market Cap'
     },
 ]
+
+# Azure Storage Container Names
+AZURE_CONTAINER_NAME = os.environ.get("AZURE_CONTAINER_NAME", "market-data")
+AZURE_CONFIG_CONTAINER_NAME = os.environ.get("AZURE_CONFIG_CONTAINER_NAME", "common-data")

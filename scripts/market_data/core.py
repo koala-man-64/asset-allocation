@@ -221,8 +221,8 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     
     # Pre-load whitelist and blacklist for caching
     white_path = str(pl.COMMON_DIR / 'whitelist.csv')
-    df_whitelist = load_csv(white_path)
-    df_blacklist = load_csv(black_path) # black_path defined above
+    df_whitelist = mdc.load_common_csv(white_path)
+    df_blacklist = mdc.load_common_csv(black_path) # black_path defined above
     
     # Cloud Path for aggregate
     historical_path_str = 'get_historical_data_output.parquet'

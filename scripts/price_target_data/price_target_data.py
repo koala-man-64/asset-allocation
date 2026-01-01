@@ -32,7 +32,7 @@ def setup_nasdaq_key():
         nasdaqdatalink.ApiConfig.api_key = key
     else:
         # Fetch from cloud
-        key_content = mdc.get_file_text(NASDAQ_KEY_FILE)
+        key_content = mdc.get_common_file_text(NASDAQ_KEY_FILE)
         if key_content:
             nasdaqdatalink.ApiConfig.api_key = key_content.strip()
         else:

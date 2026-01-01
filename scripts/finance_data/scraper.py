@@ -330,9 +330,9 @@ async def main():
     
     # Filter Blacklist
     blacklist_path = "blacklist_financial.csv"
-    blacklist_list = mdc.load_ticker_list(blacklist_path)
+    blacklist_list = mdc.load_common_ticker_list(blacklist_path)
     # Also usual blacklist
-    blacklist_general = mdc.load_ticker_list("blacklist.csv")
+    blacklist_general = mdc.load_common_ticker_list("blacklist.csv")
     
     full_blacklist = set(blacklist_list + blacklist_general)
     

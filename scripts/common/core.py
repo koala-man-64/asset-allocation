@@ -26,10 +26,17 @@ from scripts.common import config as cfg
 # If different modules need different containers, this might need refactoring to a factory pattern.
 try:
     # Assuming cfg.AZURE_CONTAINER_NAME is available and correct
-    storage_client = BlobStorageClient(container_name=cfg.AZURE_CONTAINER_NAME)
-except (ValueError, AttributeError):
+    if os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or os.environ.get('AZURE_STORAGE_CONNECTION_STRING'):
+        storage_client = BlobStorageClient(container_name=cfg.AZURE_CONTAINER_NAME)
+        common_storage_client = BlobStorageClient(container_name=cfg.AZURE_CONFIG_CONTAINER_NAME)
+    else:
+        storage_client = None
+        common_storage_client = None
+except (ValueError, AttributeError) as e:
     # print("Warning: AZURE_STORAGE_CONNECTION_STRING not found or config missing. Azure operations will fail.")
+    print(f"Warning: Failed to initialize Azure Storage Client: {e}")
     storage_client = None
+    common_storage_client = None
 
 # Create a logger for this module
 logger = logging.getLogger(__name__)
@@ -161,7 +168,21 @@ def load_csv(file_path) -> object:
          raise RuntimeError("Azure Storage Client not initialized. Cannot load CSV.")
 
     # Let errors propagate (File not found, permission denied, etc)
+
     return storage_client.read_csv(remote_path)
+
+def load_common_csv(file_path):
+    """
+    Loads a CSV from the COMMON Azure Blob Storage container.
+    """
+    remote_path = get_remote_path(file_path)
+    
+    if common_storage_client is None:
+         # raise RuntimeError("Azure Common Storage Client not initialized. Cannot load CSV.")
+         return None
+
+    return common_storage_client.read_csv(remote_path)
+
 
 def update_csv_set(file_path, ticker):
     """
@@ -227,6 +248,19 @@ def get_file_text(file_path: Union[str, Path]) -> Optional[str]:
     # If we get here, either no client or no data
     logger.warning(f"Failed to load {file_path} from cloud.")
     return None
+
+def get_common_file_text(file_path: Union[str, Path]) -> Optional[str]:
+    """Retrieves file content as text from the COMMON Azure container."""
+    if common_storage_client:
+        blob_name = get_remote_path(file_path)
+        content_bytes = common_storage_client.download_data(blob_name)
+        if content_bytes:
+            return content_bytes.decode('utf-8')
+    
+    logger.warning(f"Failed to load {file_path} from common cloud container.")
+    return None
+
+
 
 def store_file(local_path: str, remote_path: str):
     """
@@ -309,6 +343,22 @@ def load_ticker_list(file_path: Union[str, Path]) -> list:
     # If no standard header, try first column
     return df.iloc[:, 0].dropna().unique().tolist()
 
+def load_common_ticker_list(file_path):
+    """Loads a ticker list from the COMMON container."""
+    try:
+        df = load_common_csv(file_path)
+        if df is not None and not df.empty:
+             if 'Symbol' in df.columns:
+                 return df['Symbol'].tolist()
+             elif 'Ticker' in df.columns:
+                 return df['Ticker'].tolist()
+             else:
+                 # Assume first column
+                 return df.iloc[:, 0].tolist()
+        return []
+    except Exception:
+        return []
+
 # ------------------------------------------------------------------------------
 # Symbol Management
 # ------------------------------------------------------------------------------
@@ -331,7 +381,7 @@ def get_active_tickers():
         nasdaqdatalink.ApiConfig.api_key = api_key
     else:
         # Try loading from Azure/Common
-        key_content = get_file_text('nasdaq_key.txt')
+        key_content = get_common_file_text('nasdaq_key.txt')
         if key_content:
             nasdaqdatalink.ApiConfig.api_key = key_content.strip()
             # write_line("Loaded NASDAQ API key from storage.")
@@ -382,8 +432,9 @@ def get_symbols():
     symbols_to_remove = set()
     
     # Update to use load_ticker_list which we will update to be Cloud-Aware
-    symbols_to_remove.update(load_ticker_list(blacklist_path))
-    symbols_to_remove.update(load_ticker_list(blacklist_fin_path))
+
+    symbols_to_remove.update(load_common_ticker_list(blacklist_path))
+    symbols_to_remove.update(load_common_ticker_list(blacklist_fin_path))
     
     if symbols_to_remove:
         write_line(f"Excluding {len(symbols_to_remove)} blacklisted symbols.")

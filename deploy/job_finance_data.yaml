@@ -27,6 +27,8 @@ properties:
         value: assetallocstorage001
       - name: AZURE_CONTAINER_NAME
         value: finance-data
+      - name: AZURE_CONFIG_CONTAINER_NAME
+        value: common-data
       - name: HEADLESS_MODE
         value: 'True'
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
