@@ -16,6 +16,7 @@ env:
   IMAGE_NAME: asset-allocation-scraper
   MARKET_DATA_JOB: market-data-job
   FINANCE_DATA_JOB: finance-data-job
+  PRICE_TARGET_JOB: price-target-job
 
 jobs:
   build-and-deploy:
@@ -54,3 +55,12 @@ jobs:
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Update Price Target Job
+        run: |
+          az containerapp job update \
+            --name ${{ env.PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-secrets nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }} \
+            --set-env-vars NASDAQ_API_KEY=secretref:nasdaq-api-key
