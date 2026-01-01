@@ -792,15 +792,15 @@ async def authenticate_yahoo_async(page: AsyncPage, context: AsyncBrowserContext
     """
     write_line("Attempting to load cookies for authentication...")
     cookies_path = "pw_cookies.json"
-    cookies_data = mdc.get_json_content(cookies_path)
+    cookies_data = mdc.get_common_json_content(cookies_path)
     
     loaded_count = 0
     if cookies_data:
         loaded_count = len(cookies_data)
         await context.add_cookies(cookies_data)
-        write_line(f"Loaded {loaded_count} cookies from {cookies_path}.")
+        write_line(f"Loaded {loaded_count} cookies from {cookies_path} (Common Container).")
     else:
-        write_line(f"No existing cookies found at {cookies_path}.")
+        write_line(f"No existing cookies found at {cookies_path} in Common Container.")
         
     # Reload to apply cookies
     await page.reload()
@@ -811,8 +811,8 @@ async def authenticate_yahoo_async(page: AsyncPage, context: AsyncBrowserContext
     # Save fresh cookies
     new_cookies = await context.cookies()
     saved_count = len(new_cookies)
-    mdc.save_json_content(new_cookies, cookies_path)
-    write_line(f"Authentication complete. Saved {saved_count} cookies to {cookies_path}.")    
+    mdc.save_common_json_content(new_cookies, cookies_path)
+    write_line(f"Authentication complete. Saved {saved_count} cookies to {cookies_path} (Common Container).")    
     
 
    

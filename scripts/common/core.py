@@ -362,10 +362,30 @@ def get_json_content(file_path: Union[str, Path]) -> Optional[dict]:
             write_error(f"Error decoding JSON from {file_path}: {e}")
     return None
 
+def get_common_json_content(file_path: Union[str, Path]) -> Optional[dict]:
+    """Retrieves JSON content from the COMMON Azure container."""
+    text = get_common_file_text(file_path)
+    if text:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            write_error(f"Error decoding JSON from common {file_path}: {e}")
+    return None
+
 def save_json_content(data: dict, file_path: Union[str, Path]) -> None:
     """Saves dictionary as JSON to Azure."""
     text = json.dumps(data, indent=2)
     save_file_text(text, file_path)
+
+def save_common_json_content(data: dict, file_path: Union[str, Path]) -> None:
+    """Saves dictionary as JSON to the COMMON Azure container."""
+    text = json.dumps(data, indent=2)
+    
+    if common_storage_client:
+        blob_name = get_remote_path(file_path)
+        common_storage_client.upload_data(blob_name, text.encode('utf-8'), overwrite=True)
+    else:
+        raise RuntimeError(f"Cannot save {file_path}: Common Azure Client not initialized.")
 
 def delete_files_with_string(folder_path, search_string, extensions=['csv','crdownload']):
     if isinstance(extensions, str):
