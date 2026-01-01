@@ -275,7 +275,7 @@ async def run_async_playwright(reports_to_refresh):
         await pl.authenticate_yahoo_async(page, context)
         
         # Semaphore for parallel tabs
-        semaphore = asyncio.Semaphore(4) 
+        semaphore = asyncio.Semaphore(1) 
         
         # Blacklist helper
         # Blacklist/Whitelist helpers
