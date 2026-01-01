@@ -1,109 +1,104 @@
 import pytest
 import pandas as pd
+import uuid
+from unittest.mock import MagicMock, AsyncMock, patch
+from scripts.market_data import core as mdc_core
 from scripts.common import config as cfg
+from scripts.common import core as mdc
+from scripts.common import delta_core
+import os
 
-@pytest.mark.integration
-def test_01_connection_and_list(azure_client):
-    """
-    Verify Azure connection and file listing.
-    """
-    print("\n--- Test 01: Connection & List ---")
-    try:
-        files = azure_client.list_files()
-        print(f"✅ Successfully listed files. Count: {len(files)}")
-        assert isinstance(files, list)
-    except Exception as e:
-        pytest.fail(f"Failed to list files: {e}")
+# --- Helpers ---
 
-@pytest.mark.integration
-def test_02_read_write_blob(azure_client, temp_test_file):
+@pytest.fixture
+def unique_ticker():
+    """Generates a unique ticker to avoid collisions in shared storage."""
+    return f"TEST_MKT_{uuid.uuid4().hex[:8].upper()}"
+
+@pytest.fixture
+def storage_cleanup(unique_ticker):
     """
-    Verify read/write operations to Azure Blob Storage.
+    Yields the ticker for the test, and cleans up associated blobs after.
     """
-    print("\n--- Test 02: Read/Write Blob ---")
-    df = pd.DataFrame({'col1': [1, 2], 'col2': ['A', 'B']})
-    file_name = temp_test_file
+    # Setup: Ensure container exists (Safe fallback)
+    container = cfg.AZURE_CONTAINER_NAME
+    mdc.get_storage_client(container) 
+    
+    yield unique_ticker
+    
+    # Teardown
+    print(f"\nCleaning up storage for {unique_ticker}...")
+    prefix = f"Yahoo/Price Data/{unique_ticker}"
     
     try:
-        # Write
-        azure_client.write_csv(file_name, df)
-        print("✅ Write successful.")
+        client = mdc.get_storage_client(container)
+        blobs = client.list_files(name_starts_with=prefix)
+        blobs.sort(key=len, reverse=True)
         
-        # Existence Check
-        exists = azure_client.file_exists(file_name)
-        assert exists, "File should exist after write"
-        print("✅ Existence check passed.")
-
-        # Read
-        df_read = azure_client.read_csv(file_name)
-        assert df_read is not None, "Read returned None"
-        assert len(df_read) == 2, "Read dataframe has wrong length"
-        print("✅ Read successful.")
-        
+        for blob in blobs:
+            try:
+                client.delete_file(blob)
+            except Exception:
+                pass
+                
+        # Cleanup Delta Log directory explicit check
+        delta_log = f"{prefix}/_delta_log"
+        if client.file_exists(delta_log):
+             client.delete_file(delta_log)
+             
     except Exception as e:
-        pytest.fail(f"Read/Write failed: {e}")
+        print(f"Error during cleanup: {e}")
 
-@pytest.mark.integration
-def test_02b_read_write_blob_parquet(azure_client, temp_test_file):
+# --- Integration Tests ---
+
+@pytest.mark.asyncio
+@patch('scripts.market_data.core.pl.download_yahoo_price_data_async')
+async def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):
     """
-    Verify read/write operations to Azure Blob Storage using Parquet.
+    Verifies that download_and_process_yahoo_data correctly:
+    1. Reads a (mocked) downloaded CSV.
+    2. Cleans/Transforms it.
+    3. Writes it to Azure as Delta.
     """
-    print("\n--- Test 02b: Read/Write Parquet ---")
-    df = pd.DataFrame({'col1': [1, 2], 'col2': ['A', 'B']})
-    file_name = temp_test_file.replace('.csv', '.parquet')
+    symbol = storage_cleanup
     
-    try:
-        # Write
-        azure_client.write_parquet(file_name, df)
-        print("✅ Parquet Write successful.")
-        
-        # Existence Check
-        exists = azure_client.file_exists(file_name)
-        assert exists, "Parquet file should exist after write"
-        print("✅ Parquet Existence check passed.")
-
-        # Read
-        df_read = azure_client.read_parquet(file_name)
-        assert df_read is not None, "Parquet Read returned None"
-        assert len(df_read) == 2, "Read dataframe has wrong length"
-        assert 'col1' in df_read.columns, "Column missing"
-        print("✅ Parquet Read successful.")
-        
-        # Cleanup
-        azure_client.delete_file(file_name)
-
-    except Exception as e:
-        pytest.fail(f"Parquet Read/Write failed: {e}")
-
-
-@pytest.mark.integration
-def test_03_delete_blob(azure_client, temp_test_file):
-    """
-    Verify file deletion.
-    """
-    print("\n--- Test 03: Delete Blob ---")
-    file_name = temp_test_file
-    # Ensure file exists first (re-write or assume carried over if not parallel? 
-    # Fixtures are localized so let's write quickly to ensure this test is atomic)
-    df = pd.DataFrame({'col1': [1]})
-    azure_client.write_csv(file_name, df)
+    # 1. Prepare Dummy Host CSV
+    csv_content = """Date,Open,High,Low,Close,Adj Close,Volume
+2023-01-01,100,105,95,102,102,1000
+2023-01-02,102,108,100,105,105,1500
+"""
+    temp_file = tmp_path / f"{symbol}.csv"
+    temp_file.write_text(csv_content)
     
-    try:
-        azure_client.delete_file(file_name)
-        exists = azure_client.file_exists(file_name)
-        assert not exists, "File should not exist after delete"
-        print("✅ Delete successful.")
-    except Exception as e:
-        pytest.fail(f"Delete failed: {e}")
-
-@pytest.mark.integration
-def test_04_config_values():
-    """
-    Verify critical configuration values.
-    """
-    print("\n--- Test 04: Config Values ---")
-    print(f"Container: {cfg.AZURE_CONTAINER_NAME}")
-    print(f"Timeout: {cfg.DATA_FRESHNESS_SECONDS}")
-    assert cfg.AZURE_CONTAINER_NAME is not None
-    assert cfg.DATA_FRESHNESS_SECONDS > 0
-    print("✅ Config values valid.")
+    # Mock return so scraper uses this file
+    mock_download.return_value = str(temp_file)
+    
+    # Mock Page (methods used: goto, title)
+    mock_page = AsyncMock()
+    mock_page.title.return_value = "Yahoo Finance"
+    
+    # 2. Setup Inputs
+    df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
+    ticker_file_path = f"Yahoo/Price Data/{symbol}"
+    period1 = 1672531200 # Dummy timestamp
+    
+    # 3. Execute
+    print(f"Executng download_and_process for {symbol}...")
+    res_df, res_path = await mdc_core.download_and_process_yahoo_data(
+        symbol, df_ticker, ticker_file_path, mock_page, period1
+    )
+    
+    # 4. Verify Local Result
+    assert res_df is not None
+    assert len(res_df) == 2
+    assert res_df.iloc[0]['Symbol'] == symbol
+    assert res_path == ticker_file_path
+    
+    # 5. Verify Cloud Persistence (Delta)
+    print(f"Verifying Delta table at {ticker_file_path}...")
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_NAME, ticker_file_path)
+    
+    assert loaded_df is not None
+    assert len(loaded_df) == 2
+    assert 'Close' in loaded_df.columns
+    assert loaded_df.iloc[1]['Close'] == 105.0

@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 init(autoreset=True)
 
 # Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file
+load_dotenv(override=True)
 
 # --- Constants & Configuration ---
 

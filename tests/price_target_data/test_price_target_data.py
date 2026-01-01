@@ -21,6 +21,10 @@ def storage_cleanup(unique_ticker):
     """
     Yields the ticker for the test, and cleans up associated blobs after.
     """
+    # Setup: Ensure container exists (Safe fallback for non-existent containers during tests)
+    container = cfg.AZURE_CONTAINER_PRICE_TARGETS
+    mdc.get_storage_client(container) # This initializes Client which auto-checks/creates container
+    
     yield unique_ticker
     
     # Teardown
