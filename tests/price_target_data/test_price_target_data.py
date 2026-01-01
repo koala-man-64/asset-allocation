@@ -46,6 +46,18 @@ def storage_cleanup(unique_ticker):
                     # Log but continue cleanup
                     print(f"Warning: Failed to delete {blob}: {e}")
             print(f"Attempted to delete {len(blobs)} blobs.")
+
+            # HNS Compatibility: Explicitly delete directories if list_blobs didn't return them
+            # Delta Lake structure: <prefix>/_delta_log/ and <prefix>/
+            dirs_to_delete = [f"{prefix}/_delta_log", prefix]
+            for d in dirs_to_delete:
+                try:
+                    # Verify existence before delete to avoid warning log in delete_file
+                    if client.file_exists(d):
+                        client.delete_file(d)
+                except Exception:
+                    # Swallowing directory errors as they might already be gone
+                    pass
         else:
             print("Warning: Could not get storage client for cleanup.")
             
