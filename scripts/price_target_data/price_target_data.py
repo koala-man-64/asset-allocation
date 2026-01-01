@@ -209,7 +209,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             existing_df = existing_data_map[symbol]
             if existing_df.empty:
                 mdc.write_line(f"Blacklisting {symbol} (No data).")
-                mdc.update_csv_set(BLACKLIST_FILE, symbol)
+                mdc.update_common_csv_set(BLACKLIST_FILE, symbol)
             else:
                 # We have old data but no new data. Just use old.
                 results.append(symbol)
@@ -219,7 +219,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
     
     # Auto-whitelist successful symbols
     for symbol in found_tickers:
-        mdc.update_csv_set(WHITELIST_FILE, symbol)
+        mdc.update_common_csv_set(WHITELIST_FILE, symbol)
 
     return results
 
@@ -230,8 +230,8 @@ def run_batch_processing():
     df_symbols = mdc.get_symbols()
     
     # Cloud-aware list filtering
-    whitelist_list = mdc.load_ticker_list(WHITELIST_FILE)
-    blacklist_list = mdc.load_ticker_list(BLACKLIST_FILE)
+    whitelist_list = mdc.load_common_ticker_list(WHITELIST_FILE)
+    blacklist_list = mdc.load_common_ticker_list(BLACKLIST_FILE)
     
     if blacklist_list:
         mdc.write_line(f"Filtering out {len(blacklist_list)} blacklisted symbols.")

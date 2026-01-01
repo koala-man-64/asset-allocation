@@ -183,6 +183,44 @@ def load_common_csv(file_path):
 
     return common_storage_client.read_csv(remote_path)
 
+def store_common_csv(obj: pd.DataFrame, file_path):
+    """
+    Stores a DataFrame to the COMMON Azure Blob Storage container as CSV.
+    """
+    remote_path = get_remote_path(file_path)
+    
+    if common_storage_client is None:
+        raise RuntimeError("Azure Common Storage Client not initialized. Cannot store CSV.")
+        
+    common_storage_client.write_csv(remote_path, obj)
+    return remote_path
+
+def update_common_csv_set(file_path, ticker):
+    """
+    Adds a ticker to a CSV file in the COMMON Azure container if it doesn't exist.
+    """
+    try:
+        remote_path = get_remote_path(file_path)
+
+        df = pd.DataFrame(columns=['Symbol'])
+        
+        # Load existing
+        existing_df = load_common_csv(remote_path)
+        if existing_df is not None and not existing_df.empty:
+            df = existing_df
+            if 'Symbol' not in df.columns:
+                 df.columns = ['Symbol']
+
+        if ticker not in df['Symbol'].values:
+            new_row = pd.DataFrame([{'Symbol': ticker}])
+            df = pd.concat([df, new_row], ignore_index=True)
+            df = df.sort_values('Symbol').reset_index(drop=True)
+            
+            store_common_csv(df, remote_path)
+            write_line(f"Added {ticker} to {remote_path} (Common Container)")
+    except Exception as e:
+        write_error(f"Error updating common {file_path}: {e}")
+
 
 def update_csv_set(file_path, ticker):
     """
@@ -343,21 +381,27 @@ def load_ticker_list(file_path: Union[str, Path]) -> list:
     # If no standard header, try first column
     return df.iloc[:, 0].dropna().unique().tolist()
 
-def load_common_ticker_list(file_path):
-    """Loads a ticker list from the COMMON container."""
-    try:
-        df = load_common_csv(file_path)
-        if df is not None and not df.empty:
-             if 'Symbol' in df.columns:
-                 return df['Symbol'].tolist()
-             elif 'Ticker' in df.columns:
-                 return df['Ticker'].tolist()
-             else:
-                 # Assume first column
-                 return df.iloc[:, 0].tolist()
+def load_common_ticker_list(file_path: Union[str, Path]) -> list:
+    """
+    Loads a list of tickers from a CSV file in the COMMON Azure container.
+    """
+    df = load_common_csv(file_path)
+    
+    if df is None or df.empty:
         return []
-    except Exception:
-        return []
+        
+    # Standardize column name check
+    col_name = None
+    if 'Symbol' in df.columns:
+        col_name = 'Symbol'
+    elif 'Ticker' in df.columns:
+        col_name = 'Ticker'
+            
+    if col_name:
+        return df[col_name].dropna().unique().tolist()
+        
+    # If no standard header, try first column
+    return df.iloc[:, 0].dropna().unique().tolist()
 
 # ------------------------------------------------------------------------------
 # Symbol Management

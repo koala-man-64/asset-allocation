@@ -282,14 +282,14 @@ async def run_async_playwright(reports_to_refresh):
         # Blacklist/Whitelist helpers
         black_path = "finance_data_blacklist.csv"
         def blacklist_ticker(ticker):
-            mdc.update_csv_set(black_path, ticker)
+            mdc.update_common_csv_set(black_path, ticker)
 
         white_path = "finance_data_whitelist.csv"
-        whitelist_list = mdc.load_ticker_list(white_path) # Returns list of strings
+        whitelist_list = mdc.load_common_ticker_list(white_path) # Returns list of strings
         whitelist_set = set(whitelist_list)
         
         def whitelist_ticker(ticker):
-            mdc.update_csv_set(white_path, ticker)
+            mdc.update_common_csv_set(white_path, ticker)
 
         async def fetch_task(report):
             async with semaphore:
@@ -331,7 +331,7 @@ async def main():
     
     # Filter Blacklist
     blacklist_path = "finance_data_blacklist.csv"
-    blacklist_list = mdc.load_ticker_list(blacklist_path)
+    blacklist_list = mdc.load_common_ticker_list(blacklist_path)
     
     full_blacklist = set(blacklist_list)
     

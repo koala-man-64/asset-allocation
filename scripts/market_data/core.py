@@ -40,10 +40,10 @@ store_csv = mdc.store_csv
 load_csv = mdc.load_csv
 store_parquet = mdc.store_parquet
 load_parquet = mdc.load_parquet
-update_csv_set = mdc.update_csv_set
+update_csv_set = mdc.update_common_csv_set
 delete_files_with_string = mdc.delete_files_with_string
 get_symbols = mdc.get_symbols
-load_ticker_list = mdc.load_ticker_list
+load_ticker_list = mdc.load_common_ticker_list
 is_weekend = mdc.is_weekend
 
 
@@ -210,7 +210,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     white_path = 'market_data_whitelist.csv'
     
     symbols_to_remove = set()
-    symbols_to_remove.update(load_ticker_list(black_path))
+    symbols_to_remove.update(mdc.load_common_ticker_list(black_path))
     
     symbols = [
         row['Symbol'] 
@@ -219,8 +219,8 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     ]
     
     # Pre-load whitelist and blacklist for caching
-    df_whitelist = mdc.load_csv(white_path)
-    df_blacklist = mdc.load_csv(black_path) 
+    df_whitelist = mdc.load_common_csv(white_path)
+    df_blacklist = mdc.load_common_csv(black_path) 
     
     # Cloud Path for aggregate
     historical_path_str = 'get_historical_data_output.parquet'
