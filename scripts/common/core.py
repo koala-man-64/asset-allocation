@@ -184,6 +184,17 @@ def get_file_text(file_path: Union[str, Path]) -> Optional[str]:
     logger.warning(f"Failed to load {file_path} from cloud.")
     return None
 
+def store_file(local_path: str, remote_path: str):
+    """
+    Stores a generic file (binary) to Azure Blob Storage.
+    """
+    if storage_client:
+        # Read file
+        with open(local_path, "rb") as data:
+             storage_client.upload_file(data, remote_path)
+    else:
+        write_line(f"No storage client. File remains local: {local_path}")
+
 def save_file_text(content: str, file_path: Union[str, Path]) -> None:
     """Saves text content to Azure."""
     if storage_client:

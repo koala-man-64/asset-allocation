@@ -104,6 +104,41 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     
     return df_transposed
 
+async def save_debug_artifacts(page, ticker, context_name):
+    """
+    Captures screenshot and HTML content for debugging.
+    """
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        debug_dir = cfg.BASE_DIR / "debug_dumps"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        
+        base_name = f"{ticker}_{context_name}_{timestamp}"
+        
+        # 1. Screenshot
+        screenshot_path = debug_dir / f"{base_name}.png"
+        await page.screenshot(path=str(screenshot_path))
+        mdc.write_line(f"Saved screenshot: {screenshot_path}")
+        
+        # Upload screenshot
+        mdc.store_file(str(screenshot_path), f"debug_dumps/{base_name}.png")
+        mdc.write_line(f"Uploaded screenshot: debug_dumps/{base_name}.png")
+
+        # 2. HTML Content
+        html_path = debug_dir / f"{base_name}.html"
+        content = await page.content()
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        mdc.write_line(f"Saved HTML dump: {html_path}")
+        
+        # Upload HTML
+        mdc.store_file(str(html_path), f"debug_dumps/{base_name}.html")
+        mdc.write_line(f"Uploaded HTML: debug_dumps/{base_name}.html")
+        
+    except Exception as e:
+        mdc.write_line(f"Failed to save debug artifacts: {e}")
+
+
 async def process_report_cloud(playwright_params, report, blacklist_callback=None, whitelist_set=None, whitelist_callback=None):
     """
     Orchestrates: Navigation -> Download (Temp) -> Read -> Transpose -> Upload (Cloud) -> Cleanup.
@@ -148,6 +183,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                 
                 if not exists:
                     mdc.write_line(f"Skipping {report['name']} for {ticker} (Period tab not found - likely temporary or data missing)")
+                    await save_debug_artifacts(page, ticker, f"missing_tab_{report['period']}")
                     # DO NOT BLACKLIST for missing tab - could be network timeout or layout shift
                     break
                 
@@ -203,6 +239,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                         mdc.write_line(f"Download returned no file for {ticker}")
                 else:
                     mdc.write_line(f"No download link for {ticker}")
+                    await save_debug_artifacts(page, ticker, "missing_download_link")
                     # DO NOT BLACKLIST - might be temp failure
                     break
                     
