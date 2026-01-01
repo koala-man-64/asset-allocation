@@ -104,7 +104,7 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     
     return df_transposed
 
-async def process_report_cloud(playwright_params, report, blacklist_callback=None):
+async def process_report_cloud(playwright_params, report, blacklist_callback=None, whitelist_set=None, whitelist_callback=None):
     """
     Orchestrates: Navigation -> Download (Temp) -> Read -> Transpose -> Upload (Cloud) -> Cleanup.
     """
@@ -132,11 +132,15 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                 await pl.load_url_async(page, report["url"])
                 
                 # 1b. Check for invalid ticker (Redirection to Symbol Lookup)
-                title = await page.title()
-                if "Symbol Lookup" in title or "Lookup" in title:
-                     mdc.write_line(f"Ticker {ticker} not found (Redirected to {title}). Blacklisting.")
-                     if blacklist_callback: blacklist_callback(ticker)
-                     break
+                # Skip check if whitelisted
+                if whitelist_set and ticker in whitelist_set:
+                     mdc.write_line(f"{ticker} is in whitelist, skipping validation")
+                else:
+                    title = await page.title()
+                    if "Symbol Lookup" in title or "Lookup" in title:
+                         mdc.write_line(f"Ticker {ticker} not found (Redirected to {title}). Blacklisting.")
+                         if blacklist_callback: blacklist_callback(ticker)
+                         break
 
                 # 2. Check tab existence
                 selector = f'button#tab-{report["period"]}[role="tab"]'
@@ -185,6 +189,10 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                              # 7. Upload to Azure
                              mdc.store_parquet(df_clean, cloud_path)
                              mdc.write_line(f"Uploaded {cloud_path}")
+                             
+                             # Auto-whitelist on success
+                             if whitelist_callback: whitelist_callback(ticker)
+                             
                              success = True
                              break 
                              
@@ -233,9 +241,17 @@ async def run_async_playwright(reports_to_refresh):
         semaphore = asyncio.Semaphore(4) 
         
         # Blacklist helper
+        # Blacklist/Whitelist helpers
         black_path = "blacklist_financial.csv"
         def blacklist_ticker(ticker):
             mdc.update_csv_set(black_path, ticker)
+
+        white_path = "whitelist.csv"
+        whitelist_list = mdc.load_ticker_list(white_path) # Returns list of strings
+        whitelist_set = set(whitelist_list)
+        
+        def whitelist_ticker(ticker):
+            mdc.update_csv_set(white_path, ticker)
 
         async def fetch_task(report):
             async with semaphore:
@@ -243,7 +259,13 @@ async def run_async_playwright(reports_to_refresh):
                 task_page = await context.new_page()
                 try:
                     params = (playwright, browser, context, task_page)
-                    await process_report_cloud(params, report, blacklist_callback=blacklist_ticker)
+                    await process_report_cloud(
+                        params, 
+                        report, 
+                        blacklist_callback=blacklist_ticker,
+                        whitelist_set=whitelist_set,
+                        whitelist_callback=whitelist_ticker
+                    )
                 except Exception as e:
                     mdc.write_line(f"Task error {report['ticker']}: {e}")
                 finally:
