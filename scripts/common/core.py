@@ -21,33 +21,42 @@ from scripts.common import config as cfg
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.
 
+def _has_storage_config() -> bool:
+    return bool(
+        os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
+        or os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
+    )
+
+def _init_storage_client(container_name: str, error_context: str, error_types) -> Optional[BlobStorageClient]:
+    if not _has_storage_config():
+        return None
+    try:
+        return BlobStorageClient(container_name=container_name)
+    except error_types as e:
+        print(f"Warning: Failed to initialize {error_context}: {e}")
+        return None
+
 # Initialize Storage Client
 # We keep this initialization here to be shared. 
 # If different modules need different containers, this might need refactoring to a factory pattern.
-try:
-    # Assuming cfg.AZURE_CONTAINER_NAME is available and correct
-    if os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or os.environ.get('AZURE_STORAGE_CONNECTION_STRING'):
-        storage_client = BlobStorageClient(container_name=cfg.AZURE_CONTAINER_NAME)
-        common_storage_client = BlobStorageClient(container_name=cfg.AZURE_CONFIG_CONTAINER_NAME)
-    else:
-        storage_client = None
-        common_storage_client = None
-except (ValueError, AttributeError) as e:
-    # print("Warning: AZURE_STORAGE_CONNECTION_STRING not found or config missing. Azure operations will fail.")
-    print(f"Warning: Failed to initialize Azure Storage Client: {e}")
-    storage_client = None
-    print(f"Warning: Failed to initialize Azure Storage Client: {e}")
-    storage_client = None
-    common_storage_client = None
+storage_client = _init_storage_client(
+    cfg.AZURE_CONTAINER_NAME,
+    "Azure Storage Client",
+    (ValueError, AttributeError),
+)
+common_storage_client = _init_storage_client(
+    cfg.AZURE_CONFIG_CONTAINER_NAME,
+    "Azure Storage Client",
+    (ValueError, AttributeError),
+)
 
 def get_storage_client(container_name: str) -> Optional[BlobStorageClient]:
     """Factory method to get a storage client for a specific container."""
-    try:
-        if os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or os.environ.get('AZURE_STORAGE_CONNECTION_STRING'):
-            return BlobStorageClient(container_name=container_name)
-    except Exception as e:
-        print(f"Warning: Failed to initialize client for {container_name}: {e}")
-    return None
+    return _init_storage_client(
+        container_name,
+        f"client for {container_name}",
+        (Exception,),
+    )
 
 # Create a logger for this module
 logger = logging.getLogger(__name__)
@@ -56,10 +65,8 @@ logger = logging.getLogger(__name__)
 # Logging Utilities
 # ------------------------------------------------------------------------------
 
-def write_line(msg):
-    '''
-    Log a line with info level
-    '''
+def write_line(msg: str):
+    """Log a line with info level."""
     # Basic fall back if logging isn't configured upstream
     # Configure logging with separate streams if no handlers exist
     if not logging.getLogger().handlers:
@@ -97,16 +104,12 @@ def write_line(msg):
 
     logger.info(msg)
 
-def write_error(msg):
-    '''
-    Log a line with error level (stderr)
-    '''
+def write_error(msg: str):
+    """Log a line with error level (stderr)."""
     logger.error(msg)
 
-def write_warning(msg):
-    '''
-    Log a line with warning level (stderr)
-    '''
+def write_warning(msg: str):
+    """Log a line with warning level (stderr)."""
     logger.warning(msg)
 
 def write_inline(text, endline=False):
@@ -155,7 +158,7 @@ def get_remote_path(file_path):
          return s_path.split("common/")[-1]
     return s_path.strip("/")
 
-def store_csv(obj: pd.DataFrame, file_path):
+def store_csv(obj: pd.DataFrame, file_path: Union[str, Path]) -> str:
     """
     Stores a DataFrame to Azure Blob Storage as CSV.
     file_path: Remote path or local path (converted).
@@ -168,7 +171,7 @@ def store_csv(obj: pd.DataFrame, file_path):
     storage_client.write_csv(remote_path, obj)
     return remote_path
 
-def load_csv(file_path, client: Optional[BlobStorageClient] = None) -> object:
+def load_csv(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[pd.DataFrame]:
     """
     Loads a CSV from Azure Blob Storage.
     file_path: Can be a local path (for compatibility, converted to remote) or relative remote path.
@@ -192,7 +195,6 @@ def load_common_csv(file_path):
     remote_path = get_remote_path(file_path)
     
     if common_storage_client is None:
-         # raise RuntimeError("Azure Common Storage Client not initialized. Cannot load CSV.")
          return None
 
     return common_storage_client.read_csv(remote_path)
@@ -274,7 +276,6 @@ def store_parquet(df: pd.DataFrame, file_path: Union[str, Path], client: Optiona
     target_client = client if client else storage_client
 
     if target_client is None:
-        # raise RuntimeError("Azure Storage Client not initialized. Cannot store Parquet.")
         return # Skip cloud op
 
     # Convert to Parquet bytes
@@ -293,7 +294,6 @@ def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient
     target_client = client if client else storage_client
 
     if target_client is None:
-        # raise RuntimeError("Azure Storage Client not initialized. Cannot load Parquet.")
         return None
         
     try:
@@ -301,8 +301,7 @@ def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient
         if blob_data:
             from io import BytesIO
             return pd.read_parquet(BytesIO(blob_data))
-    except Exception as e:
-        # logger.warning(f"Failed to load parquet {remote_path}: {e}")
+    except Exception:
         pass
         
     return None

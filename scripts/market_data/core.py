@@ -56,7 +56,7 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     # Load df_ticker
     ticker = ticker.replace('.', '-')
     # Use unified path construction that load_csv understands
-    ticker_file_path = str(pl.COMMON_DIR / 'Yahoo' / 'Price Data' / f'{ticker}').replace('\\', '/')
+    ticker_file_path = str(pl.COMMON_DIR / 'yahoo' / 'price_data' / f'{ticker}').replace('\\', '/')
     df_ticker = load_delta(cfg.AZURE_CONTAINER_NAME, ticker_file_path)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])

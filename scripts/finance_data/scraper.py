@@ -156,7 +156,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
     retry_counter = 0
     
     # Determine cloud path
-    cloud_path = f"Yahoo/{report['folder']}/{ticker}_{report['file_suffix']}"
+    cloud_path = f"yahoo/{report['folder'].lower().replace(' ', '_')}/{ticker}_{report['file_suffix']}"
     
     # Temp download dir
     temp_dir = Path.home() / "Downloads" / f"temp_{ticker}_{report['period']}"
@@ -227,8 +227,6 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                              df = pd.read_csv(download_path)
                              df_clean = transpose_dataframe(df, ticker)
                              
-                             df_clean = transpose_dataframe(df, ticker)
-                             
                              # 7. Upload to Azure (Delta)
                              delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_FINANCE, cloud_path)
                              mdc.write_line(f"Uploaded {cloud_path} (Delta)")
@@ -284,9 +282,7 @@ async def run_async_playwright(reports_to_refresh):
         # Semaphore for parallel tabs
         semaphore = asyncio.Semaphore(1) 
         
-        # Blacklist helper
-        # Blacklist/Whitelist helpers
-        # Blacklist/Whitelist helpers
+        # Blacklist/whitelist helpers
         black_path = "finance_data_blacklist.csv"
         def blacklist_ticker(ticker):
             mdc.update_csv_set(black_path, ticker, client=fin_client)
@@ -336,7 +332,6 @@ async def main():
     # Load Universe
     df_symbols = mdc.get_symbols()
     
-    # Filter Blacklist
     blacklist_path = "finance_data_blacklist.csv"
     blacklist_list = mdc.load_ticker_list(blacklist_path, client=fin_client)
     
@@ -369,8 +364,7 @@ async def main():
             report['url'] = report['url_template'].format(ticker=symbol)
             
             # Check Cloud
-            # Check Cloud
-            cloud_path = f"Yahoo/{report['folder']}/{symbol}_{report['file_suffix']}"
+            cloud_path = f"yahoo/{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
             
             should_refresh = True
             
