@@ -3,6 +3,7 @@ name: Run Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -28,5 +29,15 @@ jobs:
         AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}
         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+        # Runtime settings for CI
+        HEADLESS_MODE: "True"
+        DOWNLOADS_PATH: "/tmp/downloads"
+        PLAYWRIGHT_USER_DATA_DIR: "/tmp/playwright_userdata"
+        # Container Mappings
+        AZURE_CONTAINER_MARKET: "market-data"
+        AZURE_CONTAINER_FINANCE: "finance-data"
+        AZURE_CONTAINER_EARNINGS: "earnings-data"
+        AZURE_CONTAINER_TARGETS: "price-targets"
+        AZURE_CONTAINER_COMMON: "common-data"
       run: |
         pytest
