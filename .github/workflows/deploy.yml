@@ -43,27 +43,37 @@ jobs:
 
       - name: Update Market Data Job
         run: |
+          az containerapp job secret set \
+            --name ${{ env.MARKET_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}"
           az containerapp job update \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --cron-expression "0 14-22 * * *"
+            --cron-expression "0 14-22 * * *" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password"
 
       - name: Update Finance Data Job
         run: |
+          az containerapp job secret set \
+            --name ${{ env.FINANCE_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}"
           az containerapp job update \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password"
 
       - name: Update Price Target Job
         run: |
           az containerapp job secret set \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --secrets nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}
+            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}"
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars NASDAQ_API_KEY=secretref:nasdaq-api-key
+            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password"

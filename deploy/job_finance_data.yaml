@@ -19,6 +19,8 @@ properties:
     replicaTimeout: 1800
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
+    - name: yahoo-username
+    - name: yahoo-password
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
     containers:
@@ -29,6 +31,10 @@ properties:
         value: finance-data
       - name: AZURE_CONFIG_CONTAINER_NAME
         value: common-data
+      - name: YAHOO_USERNAME
+        secretRef: yahoo-username
+      - name: YAHOO_PASSWORD
+        secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest

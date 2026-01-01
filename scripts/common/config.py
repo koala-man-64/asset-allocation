@@ -65,6 +65,10 @@ DEFAULT_USER_DATA = Path.home() / ".playwright_userdata"
 DOWNLOADS_PATH = Path(os.environ.get("DOWNLOADS_PATH", DEFAULT_DOWNLOADS))
 USER_DATA_DIR = Path(os.environ.get("PLAYWRIGHT_USER_DATA_DIR", DEFAULT_USER_DATA))
 
+# Yahoo Credentials
+YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")
+YAHOO_PASSWORD = os.environ.get("YAHOO_PASSWORD")
+
 # Internal Data Config
 TICKERS_TO_ADD = [
     {

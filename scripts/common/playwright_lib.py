@@ -730,7 +730,7 @@ async def pw_login_to_yahoo_async(
             selectors = [
                 {"property_name": "id", "property_value": "login-username"}
             ]
-            if await pw_fill_by_selectors_async(page, selectors, "rdprokes@gmail.com"):
+            if await pw_fill_by_selectors_async(page, selectors, cfg.YAHOO_USERNAME):
                 write_line("Username entered")
             else:
                 if await is_yahoo_logged_in_async(page):
@@ -757,7 +757,7 @@ async def pw_login_to_yahoo_async(
             {"property_name": "name", "property_value": "password"},
             {"property_name": "id", "property_value": "login-passwd"}
         ]
-        if await pw_fill_by_selectors_async(page, selectors, "IRoll24Deep#1988"):
+        if await pw_fill_by_selectors_async(page, selectors, cfg.YAHOO_PASSWORD):
             write_line("Password entered")
         else:
             write_line("Password entry failed; please enter manually.")
