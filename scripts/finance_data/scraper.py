@@ -216,15 +216,18 @@ async def run_async_playwright(reports_to_refresh):
     """
     Main async orchestration.
     """
+    mdc.write_line("Initializing Playwright...")
     playwright, browser, context, page = await pl.get_playwright_browser(use_async=True)
     
     try:
         # Auth
+        mdc.write_line("Loading cookies and logging in...")
         cookies_path = "pw_cookies.json"
         cookies_data = mdc.get_json_content(cookies_path)
         if cookies_data:
             await context.add_cookies(cookies_data)
         
+        await page.reload()
         await pl.pw_login_to_yahoo_async(page, context)
         
         new_cookies = await context.cookies()

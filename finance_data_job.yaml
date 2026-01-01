@@ -1,0 +1,52 @@
+identity:
+  type: SystemAssigned
+location: East US
+name: finance-data-job
+properties:
+  configuration:
+    dapr: null
+    eventTriggerConfig: null
+    identitySettings: []
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+    registries:
+    - identity: ''
+      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
+      server: assetallocationacr.azurecr.io
+      username: assetallocationacr
+    replicaRetryLimit: 0
+    replicaTimeout: 1800
+    scheduleTriggerConfig:
+      cronExpression: 0 22 * * *
+      parallelism: 1
+      replicaCompletionCount: 1
+    secrets:
+    - name: assetallocationacrazurecrio-assetallocationacr
+      value: "SECRET_REMOVED"
+    triggerType: Schedule
+  environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  template:
+    containers:
+    - command:
+      - python
+      - -m
+      - scripts.finance_data.scraper
+      env:
+      - name: AZURE_STORAGE_ACCOUNT_NAME
+        value: assetallocstorage001
+      - name: AZURE_CONTAINER_NAME
+        value: finance-data
+      - name: HEADLESS_MODE
+        value: 'True'
+      - name: NASDAQ_API_KEY
+        value: "SECRET_REMOVED"
+      image: assetallocationacr.azurecr.io/asset-allocation-scraper:ce31aa30242b06e293bd8fc14850c671a9a56f98
+      imageType: ContainerImage
+      name: finance-data-job
+      resources:
+        cpu: 1.0
+        memory: 2Gi
+    initContainers: null
+    volumes: null
+  workloadProfileName: Consumption
