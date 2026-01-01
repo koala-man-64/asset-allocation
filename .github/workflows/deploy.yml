@@ -58,9 +58,12 @@ jobs:
 
       - name: Update Price Target Job
         run: |
+          az containerapp job secret set \
+            --name ${{ env.PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-secrets nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }} \
             --set-env-vars NASDAQ_API_KEY=secretref:nasdaq-api-key
