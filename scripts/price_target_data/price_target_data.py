@@ -22,8 +22,7 @@ warnings.filterwarnings('ignore')
 CSV_FOLDER = "price_targets"
 BLACKLIST_FILE = "blacklist_price_targets.csv"
 NASDAQ_KEY_FILE = "nasdaq_key.txt"
-OUTPUT_FILE = "df_price_targets.parquet"
-# DF_COMBINED_PATH = "df_combined.parquet" # [Mechanical cleanup] Unused constant
+
 BATCH_SIZE = 50
 
 def setup_nasdaq_key():
@@ -142,7 +141,8 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
-                results.append(loaded_df)
+                # results.append(loaded_df) # Don't return full DF to save memory
+                results.append(symbol)
         else:
             stale_symbols.append(symbol)
             # Init empty existing df for stale symbols, or try to load what WAS there?
@@ -193,7 +193,8 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             if symbol in existing_data_map:
                 processed_df = transform_symbol_data(symbol, group_df.copy(), existing_data_map[symbol])
                 if processed_df is not None:
-                    results.append(processed_df)
+                    # results.append(processed_df)
+                    results.append(symbol)
                     processed_count += 1
                 found_tickers.add(symbol)
     
@@ -207,7 +208,8 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
                 mdc.update_csv_set(BLACKLIST_FILE, symbol)
             else:
                 # We have old data but no new data. Just use old.
-                results.append(existing_df)
+                # results.append(existing_df)
+                results.append(symbol)
 
     if processed_count > 0:
         mdc.write_line(f"Batch processed {processed_count}/{len(stale_symbols)} stale symbols updated.")
@@ -247,30 +249,9 @@ def run_batch_processing():
     num_workers = max(1, int(num_cores * 0.75))
     mdc.write_line(f"Using {num_workers} worker threads for {len(chunked_symbols)} batches (Batch Size: {BATCH_SIZE}).")
 
-    updated_symbol_dfs = []
-
-    # 3. Parallel Execution
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        future_to_batch = {executor.submit(process_symbols_batch, batch): batch for batch in chunked_symbols}
-        
-        for future in as_completed(future_to_batch):
-            try:
-                res_list = future.result()
-                if res_list:
-                    updated_symbol_dfs.extend(res_list)
-            except Exception as e:
-                mdc.write_line(f"Exception for batch: {e}")
-
-    # 4. Save Final Aggregation
-    if updated_symbol_dfs:
-         updates_df = pd.concat(updated_symbol_dfs, ignore_index=True)
-         updates_df.rename(columns={'ticker': 'Symbol', 'obs_date': 'Date'}, inplace=True)
-         updates_df['Date'] = pd.to_datetime(updates_df['Date'])
-         
-         mdc.store_parquet(updates_df, OUTPUT_FILE)
-         mdc.write_line(f"Saved aggregated price targets to Cloud: {OUTPUT_FILE}")
-    else:
-        mdc.write_line("No updates generated.")
+    # 4. Save Final Aggregation - REMOVED for per-symbol storage
+    # Updates are already saved in transform_symbol_data
+    mdc.write_line("Batch processing complete. All symbols updated individually.")
 
 
 def run_interactive_mode(df=None):
@@ -280,31 +261,31 @@ def run_interactive_mode(df=None):
     setup_nasdaq_key()
     
     if df is None:
-        mdc.write_line("Loading aggregated data from Cloud...")
-        df = mdc.load_parquet(OUTPUT_FILE)
-        if df is not None:
-             df['Date'] = pd.to_datetime(df['Date'])
-        else:
-             print("No data available for interactive mode.")
-             return
+        pass # We load per symbol now
 
-    symbols = df['Symbol'].unique().tolist()
-    mdc.write_line("Here are 5 random symbols:")
-    try:
-        mdc.write_line(random.sample(symbols, min(len(symbols), 5)))
-    except ValueError:
-        pass
+    # symbols = df['Symbol'].unique().tolist() # Can't list all easily without expensive list-blob call
+    # mdc.write_line("Here are 5 random symbols:")
+    # try:
+    #     mdc.write_line(random.sample(symbols, min(len(symbols), 5)))
+    # except ValueError:
+    #     pass
 
     while True:
         user_symbol = input("\nEnter symbol (or 'quit'): ").strip().upper()
         if user_symbol.lower() == 'quit':
             break
             
-        if user_symbol not in symbols:
-            print(f"Symbol '{user_symbol}' not found.")
-            continue
-            
-        symbol_df = df[df['Symbol'] == user_symbol].sort_values(by='Date').reset_index(drop=True)
+        # Load individual file
+        file_path = f"{CSV_FOLDER}/{user_symbol}.parquet"
+        symbol_df = mdc.load_parquet(file_path)
+        
+        if symbol_df is None:
+             print(f"No local data found for {user_symbol}")
+             # Check API?
+        else:
+            symbol_df['Date'] = pd.to_datetime(symbol_df['obs_date']) # Standardize date col?
+            symbol_df['Symbol'] = user_symbol
+            symbol_df = symbol_df.sort_values(by='Date').reset_index(drop=True)
         
         if 'Close' not in symbol_df.columns:
              print("Close price not in dataset (this column requires price history).")
