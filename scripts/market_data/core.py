@@ -246,11 +246,11 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
                 ts = last_mod
                 
     if is_fresh:
-        print(f"✅  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
+        print(f"  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
         # Load from cloud
         df_concat = load_parquet(historical_path_str)
     else:
-        print("♻️  Cache missing or stale → downloading fresh historical data…")
+        print("  Cache missing or stale - downloading fresh historical data...")
         semaphore = asyncio.Semaphore(3)
         async def fetch(symbol):
             async with semaphore:
@@ -272,7 +272,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
             df_concat = pd.concat(valid_frames, ignore_index=True)
             # Save to cloud
             store_parquet(df_concat, historical_path_str)
-            print(f"💾  Wrote fresh data to {historical_path_str}")
+            print(f"  Wrote fresh data to {historical_path_str}")
     return df_concat
 
 # Run verification when executed directly

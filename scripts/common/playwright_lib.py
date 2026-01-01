@@ -709,7 +709,7 @@ async def pw_login_to_yahoo_async(
 ) -> None:
     # 1) Load Yahoo
     write_line("Loading Yahoo Finance…")
-    await page.goto("https://yahoo.com/finance", wait_until="load")
+    await page.goto("https://yahoo.com/finance", wait_until="domcontentloaded")
     write_line("Yahoo Finance loaded")
 
     # 2) Check if already logged in
