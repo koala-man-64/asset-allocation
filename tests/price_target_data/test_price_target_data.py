@@ -2,11 +2,11 @@ import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock, patch, ANY
-from scripts.price_target_data import price_target_data as pta
+from scripts.price_target_data import scraper as pta
 
 # --- Test Logic ---
 
-@patch('scripts.price_target_data.price_target_data.mdc')
+@patch('scripts.price_target_data.scraper.mdc')
 def test_transform_symbol_data(mock_mdc):
     # Setup inputs
     symbol = "TEST"
@@ -36,13 +36,14 @@ def test_transform_symbol_data(mock_mdc):
     args, _ = mock_mdc.store_parquet.call_args
     assert "price_targets/TEST.parquet" in args[1]
 
-@patch('scripts.price_target_data.price_target_data.mdc')
-@patch('scripts.price_target_data.price_target_data.nasdaqdatalink')
-def test_process_symbols_batch_fresh(mock_nasdaq, mock_mdc):
+@patch('scripts.price_target_data.scraper.mdc')
+@patch('scripts.price_target_data.scraper.nasdaqdatalink')
+@patch('scripts.price_target_data.scraper.pt_client')
+def test_process_symbols_batch_fresh(mock_pt_client, mock_nasdaq, mock_mdc):
     # Scenario: Symbol is fresh in cloud, should NOT call API
     
     # Mock stale check: return a recent date
-    mock_mdc.storage_client.get_last_modified.return_value = pd.Timestamp.utcnow()
+    mock_pt_client.get_last_modified.return_value = pd.Timestamp.utcnow()
     
     # Mock load_parquet to return something
     mock_mdc.load_parquet.return_value = pd.DataFrame({'ticker': ['TEST'], 'obs_date': [pd.Timestamp('2023-01-01')]})
@@ -52,13 +53,14 @@ def test_process_symbols_batch_fresh(mock_nasdaq, mock_mdc):
     assert len(res) == 1
     mock_nasdaq.get_table.assert_not_called()
 
-@patch('scripts.price_target_data.price_target_data.mdc')
-@patch('scripts.price_target_data.price_target_data.nasdaqdatalink')
-def test_process_symbols_batch_stale(mock_nasdaq, mock_mdc):
+@patch('scripts.price_target_data.scraper.mdc')
+@patch('scripts.price_target_data.scraper.nasdaqdatalink')
+@patch('scripts.price_target_data.scraper.pt_client')
+def test_process_symbols_batch_stale(mock_pt_client, mock_nasdaq, mock_mdc):
     # Scenario: Symbol is stale/missing, SHOULD call API
     
     # Mock stale check: return None (missing file) or old date
-    mock_mdc.storage_client.get_last_modified.return_value = None
+    mock_pt_client.get_last_modified.return_value = None
     mock_mdc.load_parquet.return_value = None 
     
     # Mock API return
