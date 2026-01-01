@@ -498,15 +498,15 @@ def get_symbols():
     df_symbols = pd.DataFrame()
     file_path = "df_symbols.csv" 
     
-    # Try to load from Azure Cache
-    df_symbols = load_csv(file_path)
+    # Try to load from Azure Cache (Use Common Container)
+    df_symbols = load_common_csv(file_path)
     
     if df_symbols is None or df_symbols.empty:
         write_line("Local symbol cache missing or empty. Fetching from NASDAQ API...")
         df_symbols = get_active_tickers() 
-        store_csv(df_symbols, file_path)
+        store_common_csv(df_symbols, file_path)
     else:
-        write_line(f"Loaded {len(df_symbols)} symbols from Azure cache.")
+        write_line(f"Loaded {len(df_symbols)} symbols from Azure cache (Common).")
         
     if 'Symbol' not in df_symbols.columns:
         df_symbols['Symbol'] = pd.Series(dtype='object')
@@ -523,11 +523,11 @@ def get_symbols():
             df_symbols = pd.concat([df_symbols, pd.DataFrame.from_dict([ticker_to_add])], ignore_index=True)
             
     df_symbols.drop_duplicates()
-    store_csv(df_symbols, file_path)
+    store_common_csv(df_symbols, file_path)
     
     # Specific artifact creation
-    store_csv(pd.DataFrame(tickers_to_add), 'market_analysis_tickers.csv')
-    store_csv(df_symbols, 'stock_tickers.csv')
+    store_common_csv(pd.DataFrame(tickers_to_add), 'market_analysis_tickers.csv')
+    store_common_csv(df_symbols, 'stock_tickers.csv')
     
     return df_symbols
 

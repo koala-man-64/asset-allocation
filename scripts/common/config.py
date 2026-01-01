@@ -62,7 +62,7 @@ DATA_FRESHNESS_SECONDS = 4 * 60 * 60
 DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Playwright Configuration
-HEADLESS_MODE = True
+HEADLESS_MODE = os.environ.get("HEADLESS_MODE", "True").lower() == "true"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Playwright Paths
