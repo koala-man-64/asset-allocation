@@ -45,7 +45,7 @@ storage_client = _init_storage_client(
     (ValueError, AttributeError),
 )
 common_storage_client = _init_storage_client(
-    cfg.AZURE_CONFIG_CONTAINER_NAME,
+    cfg.AZURE_CONTAINER_COMMON,
     "Azure Storage Client",
     (ValueError, AttributeError),
 )

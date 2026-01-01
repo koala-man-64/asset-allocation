@@ -13,6 +13,15 @@ load_dotenv(override=True)
 
 # --- Constants & Configuration ---
 
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise ValueError(f"Environment variable '{name}' is strictly required but not set.")
+    return value
+
+def _require_env_path(name: str) -> Path:
+    return Path(_require_env(name))
+
 # Base Directory (Project Root)
 # scripts/common/config.py -> scripts/common -> scripts -> ProjectRoot
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -25,7 +34,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Prioritize Account Name (Identity), allow Connection String as fallback
 AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
 AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
-AZURE_CONTAINER_NAME = os.environ.get('AZURE_CONTAINER_NAME', 'market-data')
+# Note: AZURE_CONTAINER_NAME legacy line removed as we now define it below strictly.
 
 # UI Colors
 COLOR_INDEX = Fore.YELLOW
@@ -57,13 +66,9 @@ HEADLESS_MODE = True
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Playwright Paths
-# Defaults to user home for local dev, overridable via env vars for Cloud/Container usage.
-# In Azure Containers, typically set DOWNLOADS_PATH to /tmp/downloads or a mounted volume.
-DEFAULT_DOWNLOADS = Path.home() / "Downloads"
-DEFAULT_USER_DATA = Path.home() / ".playwright_userdata"
-
-DOWNLOADS_PATH = Path(os.environ.get("DOWNLOADS_PATH", DEFAULT_DOWNLOADS))
-USER_DATA_DIR = Path(os.environ.get("PLAYWRIGHT_USER_DATA_DIR", DEFAULT_USER_DATA))
+# STRICT MODE: These must be set in the environment (.env or system)
+DOWNLOADS_PATH = _require_env_path("DOWNLOADS_PATH")
+USER_DATA_DIR = _require_env_path("PLAYWRIGHT_USER_DATA_DIR")
 
 # Yahoo Credentials
 YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")
@@ -116,8 +121,15 @@ TICKERS_TO_ADD = [
 ]
 
 # Azure Storage Container Names
-AZURE_CONTAINER_NAME = os.environ.get("AZURE_CONTAINER_NAME", "market-data")
-AZURE_CONFIG_CONTAINER_NAME = os.environ.get("AZURE_CONFIG_CONTAINER_NAME", "common-data")
-AZURE_CONTAINER_PRICE_TARGETS = os.environ.get("AZURE_CONTAINER_PRICE_TARGETS", "price-targets")
-AZURE_CONTAINER_FINANCE = os.environ.get("AZURE_CONTAINER_FINANCE", "finance-data")
-AZURE_CONTAINER_EARNINGS = os.environ.get("AZURE_CONTAINER_EARNINGS", "earnings-data")
+# Standardized names: AZURE_CONTAINER_[MARKET|FINANCE|EARNINGS|TARGETS|COMMON]
+# STRICT MODE: Defaults removed.
+AZURE_CONTAINER_MARKET = _require_env("AZURE_CONTAINER_MARKET")
+AZURE_CONTAINER_FINANCE = _require_env("AZURE_CONTAINER_FINANCE")
+AZURE_CONTAINER_EARNINGS = _require_env("AZURE_CONTAINER_EARNINGS")
+AZURE_CONTAINER_TARGETS = _require_env("AZURE_CONTAINER_TARGETS")
+AZURE_CONTAINER_COMMON = _require_env("AZURE_CONTAINER_COMMON")
+
+# Legacy/Backup for backward compatibility (Deprecated, will refactor out)
+AZURE_CONTAINER_NAME = AZURE_CONTAINER_MARKET
+AZURE_CONFIG_CONTAINER_NAME = AZURE_CONTAINER_COMMON
+AZURE_CONTAINER_PRICE_TARGETS = AZURE_CONTAINER_TARGETS

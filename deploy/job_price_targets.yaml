@@ -28,13 +28,11 @@ properties:
     - env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
-      - name: AZURE_CONTAINER_NAME
-        value: market-data
-      - name: AZURE_CONTAINER_PRICE_TARGETS
+      - name: AZURE_CONTAINER_TARGETS
         value: price-targets
       - name: NASDAQ_API_KEY
         secretRef: nasdaq-api-key
-      - name: AZURE_CONFIG_CONTAINER_NAME
+      - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: YAHOO_USERNAME
         secretRef: yahoo-username

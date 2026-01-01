@@ -27,9 +27,9 @@ properties:
     - env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
-      - name: AZURE_CONTAINER_NAME
+      - name: AZURE_CONTAINER_FINANCE
         value: finance-data
-      - name: AZURE_CONFIG_CONTAINER_NAME
+      - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: YAHOO_USERNAME
         secretRef: yahoo-username

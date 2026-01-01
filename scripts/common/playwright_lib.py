@@ -61,8 +61,13 @@ warnings.filterwarnings('ignore')
 from scripts.common import core as mdc
 
 
-DOWNLOADS_PATH = cfg.DOWNLOADS_PATH
-USER_DATA_DIR  = cfg.USER_DATA_DIR
+def _require_path(value: Optional[Path], env_name: str) -> Path:
+    if value is None:
+        raise RuntimeError(f"{env_name} must be set for Playwright execution.")
+    return value
+
+DOWNLOADS_PATH = _require_path(cfg.DOWNLOADS_PATH, "DOWNLOADS_PATH")
+USER_DATA_DIR  = _require_path(cfg.USER_DATA_DIR, "PLAYWRIGHT_USER_DATA_DIR")
 COMMON_DIR = Path(__file__).parent.resolve()
 
 def write_line(msg: str):
@@ -221,7 +226,7 @@ async def get_yahoo_earnings_data(
     RuntimeError
         If the download never starts within all attempts.
     """
-    dl_root = Path(DOWNLOADS_PATH or Path.home() / "Downloads")
+    dl_root = DOWNLOADS_PATH
     dl_root.mkdir(parents=True, exist_ok=True)
 
     blacklist_file = str(COMMON_DIR / 'blacklist_earnings.csv')

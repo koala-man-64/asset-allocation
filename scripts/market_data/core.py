@@ -49,7 +49,7 @@ load_ticker_list = mdc.load_ticker_list
 is_weekend = mdc.is_weekend
 
 # Initialize specific client for Market Data
-market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_NAME)
+market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_MARKET)
 
 
 async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whitelist=None, df_blacklist=None) -> tuple[pd.DataFrame, str]:
@@ -57,7 +57,7 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     ticker = ticker.replace('.', '-')
     # Use unified path construction that load_csv understands
     ticker_file_path = str(pl.COMMON_DIR / 'yahoo' / 'price_data' / f'{ticker}').replace('\\', '/')
-    df_ticker = load_delta(cfg.AZURE_CONTAINER_NAME, ticker_file_path)    
+    df_ticker = load_delta(cfg.AZURE_CONTAINER_MARKET, ticker_file_path)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
     
@@ -171,7 +171,7 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 columns_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
                 df_ticker = df_ticker.drop(columns=[col for col in columns_to_drop if col in df_ticker.columns])
 
-                store_delta(df_ticker, cfg.AZURE_CONTAINER_NAME, ticker_file_path)
+                store_delta(df_ticker, cfg.AZURE_CONTAINER_MARKET, ticker_file_path)
                 
                 # Auto-whitelist on success
                 update_csv_set(white_path, ticker, client=market_client)
@@ -239,7 +239,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     is_fresh = False
     
     # Use delta_core for metadata check
-    last_ts = get_delta_last_commit(cfg.AZURE_CONTAINER_NAME, historical_path_str)
+    last_ts = get_delta_last_commit(cfg.AZURE_CONTAINER_MARKET, historical_path_str)
     if last_ts:
         # last_ts is seconds since epoch (UTC)
         now_ts = datetime.now(timezone.utc).timestamp()
@@ -250,7 +250,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     if is_fresh:
         print(f"  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
         # Load from cloud
-        df_concat = load_delta(cfg.AZURE_CONTAINER_NAME, historical_path_str)
+        df_concat = load_delta(cfg.AZURE_CONTAINER_MARKET, historical_path_str)
     else:
         print("  Cache missing or stale - downloading fresh historical data...")
         semaphore = asyncio.Semaphore(3)
@@ -273,7 +273,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
         if valid_frames:
             df_concat = pd.concat(valid_frames, ignore_index=True)
             # Save to cloud
-            store_delta(df_concat, cfg.AZURE_CONTAINER_NAME, historical_path_str)
+            store_delta(df_concat, cfg.AZURE_CONTAINER_MARKET, historical_path_str)
             print(f"  Wrote fresh data to {historical_path_str}")
     return df_concat
 

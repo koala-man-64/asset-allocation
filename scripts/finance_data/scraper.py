@@ -62,8 +62,60 @@ REPORT_CONFIG = [
 # Helper Functions
 # ------------------------------------------------------------------------------
 
-# Initialize specific client
-fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
+def _validate_environment() -> None:
+    required = [
+        "AZURE_CONTAINER_NAME",
+        "AZURE_CONFIG_CONTAINER_NAME",
+        "AZURE_CONTAINER_FINANCE",
+        "DOWNLOADS_PATH",
+        "PLAYWRIGHT_USER_DATA_DIR",
+        "YAHOO_USERNAME",
+        "YAHOO_PASSWORD",
+        "NASDAQ_API_KEY",
+    ]
+    missing = [name for name in required if not os.environ.get(name)]
+
+    account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+
+    if not (account_name or conn_str):
+        missing.append("AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING")
+    elif not conn_str:
+        has_service_principal = all(
+            os.environ.get(name)
+            for name in ("AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID")
+        )
+        has_credential = any([
+            os.environ.get("AZURE_STORAGE_ACCOUNT_KEY"),
+            os.environ.get("AZURE_STORAGE_ACCESS_KEY"),
+            os.environ.get("AZURE_STORAGE_SAS_TOKEN"),
+            os.environ.get("IDENTITY_ENDPOINT"),
+            os.environ.get("MSI_ENDPOINT"),
+            has_service_principal,
+        ])
+        if not has_credential:
+            missing.append(
+                "Azure storage credentials (AZURE_STORAGE_ACCOUNT_KEY, "
+                "AZURE_STORAGE_ACCESS_KEY, AZURE_STORAGE_SAS_TOKEN, "
+                "AZURE_CLIENT_ID+AZURE_CLIENT_SECRET+AZURE_TENANT_ID, "
+                "or IDENTITY_ENDPOINT/MSI_ENDPOINT)"
+            )
+
+    if missing:
+        raise RuntimeError(
+            "Missing required environment configuration: "
+            + ", ".join(missing)
+        )
+
+fin_client = None
+
+def _require_fin_client():
+    global fin_client
+    if fin_client is None:
+        fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
+    if fin_client is None:
+        raise RuntimeError("Finance storage client failed to initialize.")
+    return fin_client
 
 def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
@@ -282,17 +334,19 @@ async def run_async_playwright(reports_to_refresh):
         # Semaphore for parallel tabs
         semaphore = asyncio.Semaphore(1) 
         
+        client = _require_fin_client()
+
         # Blacklist/whitelist helpers
         black_path = "finance_data_blacklist.csv"
         def blacklist_ticker(ticker):
-            mdc.update_csv_set(black_path, ticker, client=fin_client)
+            mdc.update_csv_set(black_path, ticker, client=client)
 
         white_path = "finance_data_whitelist.csv"
-        whitelist_list = mdc.load_ticker_list(white_path, client=fin_client) # Returns list of strings
+        whitelist_list = mdc.load_ticker_list(white_path, client=client) # Returns list of strings
         whitelist_set = set(whitelist_list)
         
         def whitelist_ticker(ticker):
-            mdc.update_csv_set(white_path, ticker, client=fin_client)
+            mdc.update_csv_set(white_path, ticker, client=client)
 
         async def fetch_task(report):
             async with semaphore:
@@ -327,13 +381,15 @@ async def run_async_playwright(reports_to_refresh):
 
 
 async def main():
+    _validate_environment()
+    client = _require_fin_client()
     mdc.write_line(f"Processing Business Data Scraper {mdc.get_current_timestamp_str()}...")
 
     # Load Universe
     df_symbols = mdc.get_symbols()
     
     blacklist_path = "finance_data_blacklist.csv"
-    blacklist_list = mdc.load_ticker_list(blacklist_path, client=fin_client)
+    blacklist_list = mdc.load_ticker_list(blacklist_path, client=client)
     
     full_blacklist = set(blacklist_list)
     

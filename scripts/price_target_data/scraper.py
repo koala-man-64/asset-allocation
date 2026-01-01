@@ -34,7 +34,7 @@ def get_client():
     """Lazy loader for the Azure Storage Client."""
     global _pt_client
     if _pt_client is None:
-        _pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_PRICE_TARGETS)
+        _pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_TARGETS)
     return _pt_client
 
 def setup_nasdaq_key():
@@ -104,7 +104,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
 
         # Save
-        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
+        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
 
         return updated_earnings
 
@@ -131,7 +131,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
         price_target_cloud_path = f"{DATA_FOLDER}/{symbol}"
         is_fresh = False
         
-        last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
+        last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
         if last_ts:
              now_ts = datetime.now(timezone.utc).timestamp()
              # Compare seconds from epoch
@@ -139,7 +139,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
                  is_fresh = True
         
         if is_fresh:
-            loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
+            loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
@@ -147,7 +147,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
         else:
             stale_symbols.append(symbol)
             # Init empty existing df for stale symbols, or try to load what WAS there?
-            existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, price_target_cloud_path)
+            existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
             if existing_df is None or existing_df.empty:
                 existing_df = pd.DataFrame(columns=column_names)
             elif 'obs_date' in existing_df.columns:
@@ -278,7 +278,7 @@ def run_interactive_mode(df=None):
             
         # Load individual file
         file_path = f"{DATA_FOLDER}/{user_symbol}"
-        symbol_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, file_path)
+        symbol_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, file_path)
         
         if symbol_df is None:
              print(f"No local data found for {user_symbol}")

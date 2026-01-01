@@ -70,11 +70,16 @@ def get_delta_storage_options() -> Dict[str, str]:
         return options
 
     # 4. Managed Identity / Azure CLI (Fallback)
-    # Using 'allow_unsafe_rename' is sometimes needed for certain filesystems, keeping it safe here.
-    # To try Managed Identity, we often set 'azure_use_azure_cli' or similar with delta-rs.
-    # Recent versions support chain authentication.
-    # We will try setting 'use_azure_cli' to true if no other auth found.
-    options['use_azure_cli'] = 'true'
+    # If we are in an Azure environment (Container Apps, App Service, VM), IDENTITY_ENDPOINT is usually set.
+    # In that case, we should NOT force use_azure_cli, as the underlying library (object_store/azure-identity)
+    # should automatically detect Managed Identity.
+    # We only default to Azure CLI if we are NOT in a known MSI environment.
+    if os.environ.get('IDENTITY_ENDPOINT') or os.environ.get('MSI_ENDPOINT'):
+        logger.info("Detected Managed Identity environment (IDENTITY_ENDPOINT/MSI_ENDPOINT). Skipping 'use_azure_cli'.")
+        # Do not set 'use_azure_cli' to true, relying on default chain/MSI.
+    else:
+        # Local development fallback: try Azure CLI
+        options['use_azure_cli'] = 'true'
     
     return options
 
