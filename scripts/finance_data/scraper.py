@@ -238,7 +238,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                      else:
                         mdc.write_line(f"Download returned no file for {ticker}")
                 else:
-                    mdc.write_line(f"No download link for {ticker}")
+                    mdc.write_line(f"No download link for {ticker} - {report['name']}")
                     await save_debug_artifacts(page, ticker, "missing_download_link")
                     # DO NOT BLACKLIST - might be temp failure
                     break
