@@ -302,6 +302,9 @@ def run_interactive_mode(df=None):
             print(f"Error: {e}")
 
 def main():
+    if not cfg.AZURE_CONTAINER_TARGETS:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_TARGETS' is strictly required for Price Target Scraper.")
+
     if len(sys.argv) > 1 and sys.argv[1] == '--interactive':
         run_interactive_mode()
     else:

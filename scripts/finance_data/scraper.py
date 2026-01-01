@@ -106,6 +106,9 @@ def _validate_environment() -> None:
             "Missing required environment configuration: "
             + ", ".join(missing)
         )
+    
+    if not cfg.AZURE_CONTAINER_FINANCE:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_FINANCE' is strictly required for Finance Data Scraper.")
 
 fin_client = None
 

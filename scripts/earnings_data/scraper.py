@@ -130,6 +130,9 @@ if __name__ == "__main__":
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    if not cfg.AZURE_CONTAINER_EARNINGS:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_EARNINGS' is strictly required for Earnings Data Scraper.")
+
     # Load symbols
     mdc.write_line("Fetching symbols...")
     df_symbols = mdc.get_symbols()

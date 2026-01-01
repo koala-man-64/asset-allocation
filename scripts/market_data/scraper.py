@@ -11,11 +11,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from scripts.common import playwright_lib as pl
 from scripts.common import core as mdc
 from scripts.market_data import core as malib
+from scripts.common import config as cfg
+
+def _validate_environment():
+    if not cfg.AZURE_CONTAINER_MARKET:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_MARKET' is strictly required for Market Data Scraper.")
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
 async def main_async():
+    _validate_environment()
     # 1. Setup Browser
     mdc.write_line("Initializing Playwright...")
     playwright, browser, context, page = await pl.get_playwright_browser(use_async=True)

@@ -122,12 +122,13 @@ TICKERS_TO_ADD = [
 
 # Azure Storage Container Names
 # Standardized names: AZURE_CONTAINER_[MARKET|FINANCE|EARNINGS|TARGETS|COMMON]
-# STRICT MODE: Defaults removed.
-AZURE_CONTAINER_MARKET = _require_env("AZURE_CONTAINER_MARKET")
-AZURE_CONTAINER_FINANCE = _require_env("AZURE_CONTAINER_FINANCE")
-AZURE_CONTAINER_EARNINGS = _require_env("AZURE_CONTAINER_EARNINGS")
-AZURE_CONTAINER_TARGETS = _require_env("AZURE_CONTAINER_TARGETS")
-AZURE_CONTAINER_COMMON = _require_env("AZURE_CONTAINER_COMMON")
+# STRICT MODE REVISION: Allow None at import time so jobs can run with partial config.
+# Specific scripts will fail at runtime if their required container is missing.
+AZURE_CONTAINER_MARKET = os.environ.get("AZURE_CONTAINER_MARKET")
+AZURE_CONTAINER_FINANCE = os.environ.get("AZURE_CONTAINER_FINANCE")
+AZURE_CONTAINER_EARNINGS = os.environ.get("AZURE_CONTAINER_EARNINGS")
+AZURE_CONTAINER_TARGETS = os.environ.get("AZURE_CONTAINER_TARGETS")
+AZURE_CONTAINER_COMMON = os.environ.get("AZURE_CONTAINER_COMMON")
 
 # Legacy/Backup for backward compatibility (Deprecated, will refactor out)
 AZURE_CONTAINER_NAME = AZURE_CONTAINER_MARKET
