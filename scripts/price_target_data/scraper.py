@@ -26,6 +26,9 @@ NASDAQ_KEY_FILE = "nasdaq_key.txt"
 
 BATCH_SIZE = 50
 
+# Initialize Client
+pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_PRICE_TARGETS)
+
 def setup_nasdaq_key():
     """Attempts to load Nasdaq Data Link key from Environment or Cloud."""
     key = os.environ.get('NASDAQ_API_KEY')
@@ -103,7 +106,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
 
         # Save
-        mdc.store_parquet(updated_earnings, price_target_cloud_path)
+        mdc.store_parquet(updated_earnings, price_target_cloud_path, client=pt_client)
         # mdc.write_line(f"  Uploaded updated data for {symbol}")
 
         return updated_earnings
@@ -131,8 +134,8 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
         price_target_cloud_path = f"{CSV_FOLDER}/{symbol}.parquet"
         is_fresh = False
         
-        if mdc.storage_client:
-             last_mod = mdc.storage_client.get_last_modified(price_target_cloud_path)
+        if pt_client:
+             last_mod = pt_client.get_last_modified(price_target_cloud_path)
              if last_mod:
                  now_utc = datetime.now(timezone.utc)
                  if last_mod.tzinfo is None:
@@ -141,7 +144,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
                      is_fresh = True
         
         if is_fresh:
-            loaded_df = mdc.load_parquet(price_target_cloud_path)
+            loaded_df = mdc.load_parquet(price_target_cloud_path, client=pt_client)
             if loaded_df is not None:
                 if 'obs_date' in loaded_df.columns:
                     loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
@@ -152,7 +155,8 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             # Init empty existing df for stale symbols, or try to load what WAS there?
             # Ideally we want to append new data to old data.
             # So let's try to load "stale" data to merge with it, rather than starting empty.
-            existing_df = mdc.load_parquet(price_target_cloud_path)
+            # So let's try to load "stale" data to merge with it, rather than starting empty.
+            existing_df = mdc.load_parquet(price_target_cloud_path, client=pt_client)
             if existing_df is None or existing_df.empty:
                 existing_df = pd.DataFrame(columns=column_names)
             elif 'obs_date' in existing_df.columns:
@@ -209,7 +213,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
             existing_df = existing_data_map[symbol]
             if existing_df.empty:
                 mdc.write_line(f"Blacklisting {symbol} (No data).")
-                mdc.update_common_csv_set(BLACKLIST_FILE, symbol)
+                mdc.update_csv_set(BLACKLIST_FILE, symbol, client=pt_client)
             else:
                 # We have old data but no new data. Just use old.
                 results.append(symbol)
@@ -219,7 +223,7 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
     
     # Auto-whitelist successful symbols
     for symbol in found_tickers:
-        mdc.update_common_csv_set(WHITELIST_FILE, symbol)
+        mdc.update_csv_set(WHITELIST_FILE, symbol, client=pt_client)
 
     return results
 
@@ -230,8 +234,8 @@ def run_batch_processing():
     df_symbols = mdc.get_symbols()
     
     # Cloud-aware list filtering
-    whitelist_list = mdc.load_common_ticker_list(WHITELIST_FILE)
-    blacklist_list = mdc.load_common_ticker_list(BLACKLIST_FILE)
+    whitelist_list = mdc.load_ticker_list(WHITELIST_FILE, client=pt_client)
+    blacklist_list = mdc.load_ticker_list(BLACKLIST_FILE, client=pt_client)
     
     if blacklist_list:
         mdc.write_line(f"Filtering out {len(blacklist_list)} blacklisted symbols.")
@@ -287,7 +291,8 @@ def run_interactive_mode(df=None):
             
         # Load individual file
         file_path = f"{CSV_FOLDER}/{user_symbol}.parquet"
-        symbol_df = mdc.load_parquet(file_path)
+        file_path = f"{CSV_FOLDER}/{user_symbol}.parquet"
+        symbol_df = mdc.load_parquet(file_path, client=pt_client)
         
         if symbol_df is None:
              print(f"No local data found for {user_symbol}")

@@ -61,6 +61,9 @@ REPORT_CONFIG = [
 # Helper Functions
 # ------------------------------------------------------------------------------
 
+# Initialize specific client
+fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
+
 def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
     Transposes the Yahoo Finance dataframe, sets proper index, and casts types.
@@ -121,7 +124,8 @@ async def save_debug_artifacts(page, ticker, context_name):
         mdc.write_line(f"Saved screenshot: {screenshot_path}")
         
         # Upload screenshot
-        mdc.store_file(str(screenshot_path), f"debug_dumps/{base_name}.png")
+        mdc.store_file(str(screenshot_path), f"debug_dumps/{base_name}.png") # Debug dumps might still go to main container? Or finance? 
+        # Using default container for debug dumps seems fine, or we can move them.
         mdc.write_line(f"Uploaded screenshot: debug_dumps/{base_name}.png")
 
         # 2. HTML Content
@@ -222,8 +226,10 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                              df = pd.read_csv(download_path)
                              df_clean = transpose_dataframe(df, ticker)
                              
+                             df_clean = transpose_dataframe(df, ticker)
+                             
                              # 7. Upload to Azure
-                             mdc.store_parquet(df_clean, cloud_path)
+                             mdc.store_parquet(df_clean, cloud_path, client=fin_client)
                              mdc.write_line(f"Uploaded {cloud_path}")
                              
                              # Auto-whitelist on success
@@ -282,14 +288,14 @@ async def run_async_playwright(reports_to_refresh):
         # Blacklist/Whitelist helpers
         black_path = "finance_data_blacklist.csv"
         def blacklist_ticker(ticker):
-            mdc.update_common_csv_set(black_path, ticker)
+            mdc.update_csv_set(black_path, ticker, client=fin_client)
 
         white_path = "finance_data_whitelist.csv"
-        whitelist_list = mdc.load_common_ticker_list(white_path) # Returns list of strings
+        whitelist_list = mdc.load_ticker_list(white_path, client=fin_client) # Returns list of strings
         whitelist_set = set(whitelist_list)
         
         def whitelist_ticker(ticker):
-            mdc.update_common_csv_set(white_path, ticker)
+            mdc.update_csv_set(white_path, ticker, client=fin_client)
 
         async def fetch_task(report):
             async with semaphore:
@@ -331,7 +337,7 @@ async def main():
     
     # Filter Blacklist
     blacklist_path = "finance_data_blacklist.csv"
-    blacklist_list = mdc.load_common_ticker_list(blacklist_path)
+    blacklist_list = mdc.load_ticker_list(blacklist_path, client=fin_client)
     
     full_blacklist = set(blacklist_list)
     
@@ -365,8 +371,8 @@ async def main():
             cloud_path = f"Yahoo/{report['folder']}/{symbol}_{report['file_suffix']}.parquet"
             
             should_refresh = True
-            if mdc.storage_client:
-                last_mod = mdc.storage_client.get_last_modified(cloud_path)
+            if fin_client:
+                last_mod = fin_client.get_last_modified(cloud_path)
                 if last_mod:
                     # Ensure UTC
                     if last_mod.tzinfo is None:

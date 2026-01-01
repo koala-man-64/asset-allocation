@@ -113,3 +113,5 @@ TICKERS_TO_ADD = [
 # Azure Storage Container Names
 AZURE_CONTAINER_NAME = os.environ.get("AZURE_CONTAINER_NAME", "market-data")
 AZURE_CONFIG_CONTAINER_NAME = os.environ.get("AZURE_CONFIG_CONTAINER_NAME", "common-data")
+AZURE_CONTAINER_PRICE_TARGETS = os.environ.get("AZURE_CONTAINER_PRICE_TARGETS", "price-targets")
+AZURE_CONTAINER_FINANCE = os.environ.get("AZURE_CONTAINER_FINANCE", "finance-data")

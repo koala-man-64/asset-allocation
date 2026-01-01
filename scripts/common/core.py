@@ -36,7 +36,18 @@ except (ValueError, AttributeError) as e:
     # print("Warning: AZURE_STORAGE_CONNECTION_STRING not found or config missing. Azure operations will fail.")
     print(f"Warning: Failed to initialize Azure Storage Client: {e}")
     storage_client = None
+    print(f"Warning: Failed to initialize Azure Storage Client: {e}")
+    storage_client = None
     common_storage_client = None
+
+def get_storage_client(container_name: str) -> Optional[BlobStorageClient]:
+    """Factory method to get a storage client for a specific container."""
+    try:
+        if os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or os.environ.get('AZURE_STORAGE_CONNECTION_STRING'):
+            return BlobStorageClient(container_name=container_name)
+    except Exception as e:
+        print(f"Warning: Failed to initialize client for {container_name}: {e}")
+    return None
 
 # Create a logger for this module
 logger = logging.getLogger(__name__)
@@ -157,19 +168,22 @@ def store_csv(obj: pd.DataFrame, file_path):
     storage_client.write_csv(remote_path, obj)
     return remote_path
 
-def load_csv(file_path) -> object:
+def load_csv(file_path, client: Optional[BlobStorageClient] = None) -> object:
     """
     Loads a CSV from Azure Blob Storage.
     file_path: Can be a local path (for compatibility, converted to remote) or relative remote path.
+    client: Optional specific client to use. Defaults to global market-data client.
     """
     remote_path = get_remote_path(file_path)
     
-    if storage_client is None:
+    target_client = client if client else storage_client
+    
+    if target_client is None:
          raise RuntimeError("Azure Storage Client not initialized. Cannot load CSV.")
 
     # Let errors propagate (File not found, permission denied, etc)
 
-    return storage_client.read_csv(remote_path)
+    return target_client.read_csv(remote_path)
 
 def load_common_csv(file_path):
     """
@@ -222,9 +236,10 @@ def update_common_csv_set(file_path, ticker):
         write_error(f"Error updating common {file_path}: {e}")
 
 
-def update_csv_set(file_path, ticker):
+def update_csv_set(file_path, ticker, client: Optional[BlobStorageClient] = None):
     """
     Adds a ticker to a CSV file in Azure if it doesn't exist, ensuring uniqueness and sorting.
+    client: Optional specific client to use.
     """
     try:
         remote_path = get_remote_path(file_path)
@@ -232,7 +247,7 @@ def update_csv_set(file_path, ticker):
         df = pd.DataFrame(columns=['Symbol'])
         
         # Load existing
-        existing_df = load_csv(remote_path)
+        existing_df = load_csv(remote_path, client=client)
         if existing_df is not None and not existing_df.empty:
             df = existing_df
             if 'Symbol' not in df.columns:
@@ -248,32 +263,49 @@ def update_csv_set(file_path, ticker):
     except Exception as e:
         write_error(f"Error updating {file_path}: {e}")
 
-def store_parquet(obj: pd.DataFrame, file_path):
+def store_parquet(df: pd.DataFrame, file_path: Union[str, Path], client: Optional[BlobStorageClient] = None):
     """
-    Stores a DataFrame to Azure Blob Storage as Parquet.
-    file_path: Remote path or local path (converted).
+    Stores a DataFrame as a Parquet file in Azure Blob Storage.
+    file_path: Relative path in the container (e.g. 'Yahoo/Price Data/AAPL.parquet')
+    client: Optional specific client to use. Defaults to global market-data client.
     """
     remote_path = get_remote_path(file_path)
     
-    if storage_client is None:
-        raise RuntimeError("Azure Storage Client not initialized. Cannot store Parquet.")
-        
-    storage_client.write_parquet(remote_path, obj)
+    target_client = client if client else storage_client
+
+    if target_client is None:
+        # raise RuntimeError("Azure Storage Client not initialized. Cannot store Parquet.")
+        return # Skip cloud op
+
+    # Convert to Parquet bytes
+    parquet_bytes = df.to_parquet(index=False)
+    
+    target_client.write_blob(remote_path, parquet_bytes)
     return remote_path
 
-def load_parquet(file_path) -> object:
+def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[pd.DataFrame]:
     """
     Loads a Parquet file from Azure Blob Storage.
-    file_path: Can be a local path (for compatibility, converted to remote) or relative remote path.
+    client: Optional specific client to use. Defaults to global market-data client.
     """
     remote_path = get_remote_path(file_path)
     
-    if storage_client is None:
-         raise RuntimeError("Azure Storage Client not initialized. Cannot load Parquet.")
+    target_client = client if client else storage_client
 
-    # Let errors propagate (File not found, permission denied, etc)
-    return storage_client.read_parquet(remote_path)
-
+    if target_client is None:
+        # raise RuntimeError("Azure Storage Client not initialized. Cannot load Parquet.")
+        return None
+        
+    try:
+        blob_data = target_client.read_blob(remote_path)
+        if blob_data:
+            from io import BytesIO
+            return pd.read_parquet(BytesIO(blob_data))
+    except Exception as e:
+        # logger.warning(f"Failed to load parquet {remote_path}: {e}")
+        pass
+        
+    return None
 
 def get_file_text(file_path: Union[str, Path]) -> Optional[str]:
     """Retrieves file content as text from Azure. Raises error if failed or missing."""
@@ -356,14 +388,15 @@ def delete_files_with_string(folder_path, search_string, extensions=['csv','crdo
             except OSError as e:
                 write_error(f"Error deleting file {file}: {e}")
 
-def load_ticker_list(file_path: Union[str, Path]) -> list:
+def load_ticker_list(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> list:
     """
     Loads a list of tickers from a CSV file in Azure. 
     Assumes file has a header like 'Ticker' or 'Symbol', or is headerless.
+    client: Optional specific client to use.
     """
     # load_csv handles remote path conversion and Azure loading
     # It now raises errors if failed, which we propagate.
-    df = load_csv(file_path)
+    df = load_csv(file_path, client=client)
     
     if df is None or df.empty:
         return []

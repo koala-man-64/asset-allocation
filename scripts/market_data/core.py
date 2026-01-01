@@ -40,11 +40,14 @@ store_csv = mdc.store_csv
 load_csv = mdc.load_csv
 store_parquet = mdc.store_parquet
 load_parquet = mdc.load_parquet
-update_csv_set = mdc.update_common_csv_set
+update_csv_set = mdc.update_csv_set
 delete_files_with_string = mdc.delete_files_with_string
 get_symbols = mdc.get_symbols
-load_ticker_list = mdc.load_common_ticker_list
+load_ticker_list = mdc.load_ticker_list
 is_weekend = mdc.is_weekend
+
+# Initialize specific client for Market Data
+market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_NAME)
 
 
 async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whitelist=None, df_blacklist=None) -> tuple[pd.DataFrame, str]:
@@ -52,7 +55,7 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     ticker = ticker.replace('.', '-')
     # Use unified path construction that load_csv understands
     ticker_file_path = str(pl.COMMON_DIR / 'Yahoo' / 'Price Data' / f'{ticker}.parquet')
-    df_ticker = load_parquet(ticker_file_path)    
+    df_ticker = load_parquet(ticker_file_path, client=market_client)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
     
@@ -124,7 +127,7 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                  page_title = await page.title()
                  if "Symbol Lookup" in page_title or "Lookup" in page_title:
                       write_line(f"Ticker {ticker} not found on Yahoo (redirected to lookup). Blacklisting.")
-                      update_csv_set(black_path, ticker)
+                      update_csv_set(black_path, ticker, client=market_client)
                       return None, None
                       
              except Exception as e:
@@ -166,23 +169,23 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 columns_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
                 df_ticker = df_ticker.drop(columns=[col for col in columns_to_drop if col in df_ticker.columns])
 
-                store_parquet(df_ticker, ticker_file_path)
+                store_parquet(df_ticker, ticker_file_path, client=market_client)
                 
                 # Auto-whitelist on success
-                update_csv_set(white_path, ticker)
+                update_csv_set(white_path, ticker, client=market_client)
                 
                 return df_ticker.reset_index(drop=True), ticker_file_path 
         else:
             # File download failed locally
             write_line(f"Download failed for {ticker}. Adding to blacklist.")
-            update_csv_set(black_path, ticker)
+            update_csv_set(black_path, ticker, client=market_client)
             return None, ticker_file_path
         
     except Exception as e:
         e_str = str(e).lower()
         if '404' in e_str or 'list index out of range' in e_str or 'waiting for download from' in e_str:
             write_line(f'Skipping {ticker} because no data was found')
-            update_csv_set(black_path, ticker)
+            update_csv_set(black_path, ticker, client=market_client)
         elif '401' in e_str:
             write_error(f'ERROR: {ticker} - Unauthorized.')
             go_to_sleep(30, 60)
@@ -210,7 +213,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     white_path = 'market_data_whitelist.csv'
     
     symbols_to_remove = set()
-    symbols_to_remove.update(mdc.load_common_ticker_list(black_path))
+    symbols_to_remove.update(mdc.load_ticker_list(black_path, client=market_client))
     
     symbols = [
         row['Symbol'] 
@@ -219,8 +222,8 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     ]
     
     # Pre-load whitelist and blacklist for caching
-    df_whitelist = mdc.load_common_csv(white_path)
-    df_blacklist = mdc.load_common_csv(black_path) 
+    df_whitelist = mdc.load_csv(white_path, client=market_client)
+    df_blacklist = mdc.load_csv(black_path, client=market_client) 
     
     # Cloud Path for aggregate
     historical_path_str = 'get_historical_data_output.parquet'
@@ -230,9 +233,12 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     # Check cloud freshness
     is_fresh = False
     
-    # Use mdc.storage_client directly for metadata check
-    if mdc.storage_client:
-        last_mod = mdc.storage_client.get_last_modified(historical_path_str)
+    # Check cloud freshness
+    is_fresh = False
+    
+    # Use market_client directly for metadata check
+    if market_client:
+        last_mod = market_client.get_last_modified(historical_path_str)
         if last_mod:
             # Compare UTC times
             now_utc = datetime.now(timezone.utc)
@@ -248,7 +254,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     if is_fresh:
         print(f"  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
         # Load from cloud
-        df_concat = load_parquet(historical_path_str)
+        df_concat = load_parquet(historical_path_str, client=market_client)
     else:
         print("  Cache missing or stale - downloading fresh historical data...")
         semaphore = asyncio.Semaphore(3)
@@ -271,7 +277,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
         if valid_frames:
             df_concat = pd.concat(valid_frames, ignore_index=True)
             # Save to cloud
-            store_parquet(df_concat, historical_path_str)
+            store_parquet(df_concat, historical_path_str, client=market_client)
             print(f"  Wrote fresh data to {historical_path_str}")
     return df_concat
 
