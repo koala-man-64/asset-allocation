@@ -101,8 +101,8 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     return df_ticker.reset_index(drop=True), ticker_file_path
 
 async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1, df_whitelist=None, df_blacklist=None):
-    black_path = str(pl.COMMON_DIR / 'blacklist.csv')
-    white_path = str(pl.COMMON_DIR / 'whitelist.csv')
+    black_path = 'market_data_blacklist.csv'
+    white_path = 'market_data_whitelist.csv'
 
     # check if ticker exists in whitelist
     if df_whitelist is not None and not df_whitelist.empty:
@@ -205,13 +205,12 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     write_line('Retrieving historical data...')
     df_symbols = df_symbols.dropna(subset=['Symbol'])
     
-    # Paths (local strings, filtering handled by helpers)
-    black_path = str(pl.COMMON_DIR / 'blacklist.csv')
-    blacklist_financial_path = str(pl.COMMON_DIR / 'blacklist_financial.csv')
+    # Paths (standard container)
+    black_path = 'market_data_blacklist.csv'
+    white_path = 'market_data_whitelist.csv'
     
     symbols_to_remove = set()
     symbols_to_remove.update(load_ticker_list(black_path))
-    symbols_to_remove.update(load_ticker_list(blacklist_financial_path))
     
     symbols = [
         row['Symbol'] 
@@ -220,9 +219,8 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     ]
     
     # Pre-load whitelist and blacklist for caching
-    white_path = str(pl.COMMON_DIR / 'whitelist.csv')
-    df_whitelist = mdc.load_common_csv(white_path)
-    df_blacklist = mdc.load_common_csv(black_path) # black_path defined above
+    df_whitelist = mdc.load_csv(white_path)
+    df_blacklist = mdc.load_csv(black_path) 
     
     # Cloud Path for aggregate
     historical_path_str = 'get_historical_data_output.parquet'

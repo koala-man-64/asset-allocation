@@ -279,11 +279,12 @@ async def run_async_playwright(reports_to_refresh):
         
         # Blacklist helper
         # Blacklist/Whitelist helpers
-        black_path = "blacklist_financial.csv"
+        # Blacklist/Whitelist helpers
+        black_path = "finance_data_blacklist.csv"
         def blacklist_ticker(ticker):
             mdc.update_csv_set(black_path, ticker)
 
-        white_path = "whitelist.csv"
+        white_path = "finance_data_whitelist.csv"
         whitelist_list = mdc.load_ticker_list(white_path) # Returns list of strings
         whitelist_set = set(whitelist_list)
         
@@ -329,14 +330,13 @@ async def main():
     df_symbols = mdc.get_symbols()
     
     # Filter Blacklist
-    blacklist_path = "blacklist_financial.csv"
-    blacklist_list = mdc.load_common_ticker_list(blacklist_path)
-    # Also usual blacklist
-    blacklist_general = mdc.load_common_ticker_list("blacklist.csv")
+    blacklist_path = "finance_data_blacklist.csv"
+    blacklist_list = mdc.load_ticker_list(blacklist_path)
     
-    full_blacklist = set(blacklist_list + blacklist_general)
+    full_blacklist = set(blacklist_list)
     
     if full_blacklist:
+        mdc.write_line(f"Filtering out {len(full_blacklist)} blacklisted symbols.")
         df_symbols = df_symbols[~df_symbols['Symbol'].isin(full_blacklist)]
 
     # Apply Debug Filter

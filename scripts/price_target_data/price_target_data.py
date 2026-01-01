@@ -20,7 +20,8 @@ warnings.filterwarnings('ignore')
 
 # Constants for Cloud Storage (Relative paths to Azure Container root)
 CSV_FOLDER = "price_targets"
-BLACKLIST_FILE = "blacklist_price_targets.csv"
+WHITELIST_FILE = "price_target_data_whitelist.csv"
+BLACKLIST_FILE = "price_target_data_blacklist.csv"
 NASDAQ_KEY_FILE = "nasdaq_key.txt"
 
 BATCH_SIZE = 50
@@ -68,6 +69,9 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
             df_all_dates = pd.DataFrame({'obs_date': all_dates})
             target_price_data = df_all_dates.merge(target_price_data, on='obs_date', how='left')
             target_price_data = target_price_data.ffill()
+        
+        # Ensure ticker column is set correctly
+        target_price_data['ticker'] = symbol
         
         # Ensure columns exist
         for col in column_names:
@@ -208,11 +212,14 @@ def process_symbols_batch(symbols: List[str]) -> List[pd.DataFrame]:
                 mdc.update_csv_set(BLACKLIST_FILE, symbol)
             else:
                 # We have old data but no new data. Just use old.
-                # results.append(existing_df)
                 results.append(symbol)
 
     if processed_count > 0:
         mdc.write_line(f"Batch processed {processed_count}/{len(stale_symbols)} stale symbols updated.")
+    
+    # Auto-whitelist successful symbols
+    for symbol in found_tickers:
+        mdc.update_csv_set(WHITELIST_FILE, symbol)
 
     return results
 
@@ -222,9 +229,12 @@ def run_batch_processing():
     # 1. Get Symbols
     df_symbols = mdc.get_symbols()
     
-    # Cloud-aware blacklist filtering
+    # Cloud-aware list filtering
+    whitelist_list = mdc.load_ticker_list(WHITELIST_FILE)
     blacklist_list = mdc.load_ticker_list(BLACKLIST_FILE)
+    
     if blacklist_list:
+        mdc.write_line(f"Filtering out {len(blacklist_list)} blacklisted symbols.")
         df_symbols = df_symbols[~df_symbols['Symbol'].isin(blacklist_list)]
         
     # Apply Debug Symbols Filter

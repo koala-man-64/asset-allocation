@@ -423,23 +423,8 @@ def get_symbols():
         
     tickers_to_add = cfg.TICKERS_TO_ADD
     
-    # Logic note: We assume calling code might want to apply blacklists *after* getting the raw list,
-    # OR we apply it here. Original code applied it here.
-    
-    blacklist_path = 'scripts/common/blacklist.csv'
-    blacklist_fin_path = 'scripts/common/blacklist_financial.csv'
-    
-    symbols_to_remove = set()
-    
-    # Update to use load_ticker_list which we will update to be Cloud-Aware
-
-    symbols_to_remove.update(load_common_ticker_list(blacklist_path))
-    symbols_to_remove.update(load_common_ticker_list(blacklist_fin_path))
-    
-    if symbols_to_remove:
-        write_line(f"Excluding {len(symbols_to_remove)} blacklisted symbols.")
-        df_symbols = df_symbols[~df_symbols['Symbol'].isin(symbols_to_remove)]
-
+    # Logic note: Each scraper now manages its own whitelist/blacklist for isolation.
+    # We return the raw symbols list (including manual additions).
     df_symbols = df_symbols.reset_index(drop=True)
     
     # Mix in manual additions
