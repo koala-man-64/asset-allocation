@@ -43,9 +43,53 @@ def write_line(msg):
     Log a line with info level
     '''
     # Basic fall back if logging isn't configured upstream
+    # Configure logging with separate streams if no handlers exist
     if not logging.getLogger().handlers:
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(message)s')
+        formatter = logging.Formatter('%(asctime)s: %(message)s')
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+
+        # stdout handler for INFO and below (technically all, but we'll see)
+        # Actually standard practice: stdout for everything, or filters. 
+        # Simplest consistent with container best practice:
+        # stdout: INFO, DEBUG
+        # stderr: WARNING, ERROR, CRITICAL
+        
+        # Handler for stdout
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setLevel(logging.INFO)
+        # Filter to ensure only INFO and DEBUG go here if we want strict separation, 
+        # but typically stdout having everything + stderr having errors is also common (duplication).
+        # Let's do strict separation for cleaner logs.
+        class MaxLevelFilter(logging.Filter):
+            def __init__(self, max_level):
+                self.max_level = max_level
+            def filter(self, record):
+                return record.levelno <= self.max_level
+
+        stdout_handler.addFilter(MaxLevelFilter(logging.INFO))
+        stdout_handler.setFormatter(formatter)
+        root_logger.addHandler(stdout_handler)
+
+        # Handler for stderr
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(logging.WARNING)
+        stderr_handler.setFormatter(formatter)
+        root_logger.addHandler(stderr_handler)
+
     logger.info(msg)
+
+def write_error(msg):
+    '''
+    Log a line with error level (stderr)
+    '''
+    logger.error(msg)
+
+def write_warning(msg):
+    '''
+    Log a line with warning level (stderr)
+    '''
+    logger.warning(msg)
 
 def write_inline(text, endline=False):
     if not endline:
@@ -143,7 +187,7 @@ def update_csv_set(file_path, ticker):
             store_csv(df, remote_path)
             write_line(f"Added {ticker} to {remote_path}")
     except Exception as e:
-        write_line(f"Error updating {file_path}: {e}")
+        write_error(f"Error updating {file_path}: {e}")
 
 def store_parquet(obj: pd.DataFrame, file_path):
     """
@@ -211,7 +255,7 @@ def get_json_content(file_path: Union[str, Path]) -> Optional[dict]:
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            write_line(f"Error decoding JSON from {file_path}: {e}")
+            write_error(f"Error decoding JSON from {file_path}: {e}")
     return None
 
 def save_json_content(data: dict, file_path: Union[str, Path]) -> None:
@@ -238,7 +282,7 @@ def delete_files_with_string(folder_path, search_string, extensions=['csv','crdo
                 os.remove(file)
                 print(f"Deleted file: {file}")
             except OSError as e:
-                print(f"Error deleting file {file}: {e}")
+                write_error(f"Error deleting file {file}: {e}")
 
 def load_ticker_list(file_path: Union[str, Path]) -> list:
     """
@@ -307,7 +351,7 @@ def get_active_tickers():
         df.rename(columns=rename_mapping, inplace=True)
         return df
     except Exception as e:
-        write_line(f"Failed to get active tickers: {e}")
+        write_error(f"Failed to get active tickers: {e}")
         return pd.DataFrame(columns=['Symbol'])
 
 def get_symbols():

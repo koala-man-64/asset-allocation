@@ -31,6 +31,8 @@ warnings.filterwarnings('ignore')
 # We will update internal calls.
 
 write_line = mdc.write_line
+write_error = mdc.write_error
+write_warning = mdc.write_warning
 write_inline = mdc.write_inline
 write_section = mdc.write_section
 go_to_sleep = mdc.go_to_sleep
@@ -126,7 +128,7 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                       return None, None
                       
              except Exception as e:
-                 write_line(f"Error checking ticker {ticker}: {e}")
+                 write_error(f"Error checking ticker {ticker}: {e}")
 
     try:
         url = f'https://query1.finance.yahoo.com/v7/finance/download/{ticker.replace(".", "-")}?period1={period1}&period2={cfg.YAHOO_MAX_PERIOD}&interval=1d&events=history'
@@ -182,19 +184,19 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
             write_line(f'Skipping {ticker} because no data was found')
             update_csv_set(black_path, ticker)
         elif '401' in e_str:
-            write_line(f'ERROR: {ticker} - Unauthorized.')
+            write_error(f'ERROR: {ticker} - Unauthorized.')
             go_to_sleep(30, 60)
         elif '429' in e_str:
             write_line(f'Sleeping due to excessive requests for {ticker}')
             go_to_sleep(30, 60)
         elif 'remote' in e_str or 'failed' in e_str or 'http' in e_str:
-            write_line(f'ERROR: {ticker} - {e}')
+            write_error(f'ERROR: {ticker} - {e}')
             go_to_sleep(15, 30)
         elif 'system cannot find the file specified:' in e_str:
-            write_line(f'ERROR: File not found. {ticker} - {e}')
+            write_error(f'ERROR: File not found. {ticker} - {e}')
             go_to_sleep(15, 30)
         else:
-            write_line(f'Uknown error: {ticker} - {e}')
+            write_error(f'Uknown error: {ticker} - {e}')
             go_to_sleep(30, 60)
         return None, ticker_file_path
 
@@ -258,7 +260,7 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
                 try:
                     return await get_historical_data_async(symbol, drop_prior, get_latest, page, df_whitelist=df_whitelist, df_blacklist=df_blacklist)
                 except Exception as e:
-                    print(f"[Error] symbol={symbol}: {e}")
+                    write_error(f"[Error] symbol={symbol}: {e}")
                     return None
                 finally:
                     await page.close()

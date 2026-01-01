@@ -136,7 +136,7 @@ async def save_debug_artifacts(page, ticker, context_name):
         mdc.write_line(f"Uploaded HTML: debug_dumps/{base_name}.html")
         
     except Exception as e:
-        mdc.write_line(f"Failed to save debug artifacts: {e}")
+        mdc.write_error(f"Failed to save debug artifacts: {e}")
 
 
 async def process_report_cloud(playwright_params, report, blacklist_callback=None, whitelist_set=None, whitelist_callback=None):
@@ -233,7 +233,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                              break 
                              
                          except Exception as e:
-                             mdc.write_line(f"Error processing CSV for {ticker}: {e}")
+                             mdc.write_error(f"Error processing CSV for {ticker}: {e}")
                              break
                      else:
                         mdc.write_line(f"Download returned no file for {ticker}")
@@ -244,7 +244,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                     break
                     
             except Exception as e:
-                mdc.write_line(f"Error taking snapshot for {ticker}: {e}")
+                mdc.write_error(f"Error taking snapshot for {ticker}: {e}")
                 # Refresh page and wait before retry
                 try:
                     await page.reload()
@@ -304,7 +304,7 @@ async def run_async_playwright(reports_to_refresh):
                         whitelist_callback=whitelist_ticker
                     )
                 except Exception as e:
-                    mdc.write_line(f"Task error {report['ticker']}: {e}")
+                    mdc.write_error(f"Task error {report['ticker']}: {e}")
                 finally:
                     await task_page.close()
 

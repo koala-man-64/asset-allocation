@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 
 async def main_async():
     # 1. Setup Browser
-    print("Initializing Playwright...")
+    mdc.write_line("Initializing Playwright...")
     playwright, browser, context, page = await pl.get_playwright_browser(use_async=True)
     
     # 2. Authenticate
@@ -29,25 +29,25 @@ async def main_async():
     get_latest = False
     
     # 3. Get Universe of Symbols
-    print("Fetching symbol universe...")
+    mdc.write_line("Fetching symbol universe...")
     # This involves Azure cache check or Nasdaq API call
     df_symbols = malib.get_symbols()
     
     # Apply Debug Filter
     from scripts.common import config as cfg
     if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
-        print(f"DEBUG MODE: Restricting execution to {len(cfg.DEBUG_SYMBOLS)} symbols: {cfg.DEBUG_SYMBOLS}")
+        mdc.write_line(f"DEBUG MODE: Restricting execution to {len(cfg.DEBUG_SYMBOLS)} symbols: {cfg.DEBUG_SYMBOLS}")
         df_symbols = df_symbols[df_symbols['Symbol'].isin(cfg.DEBUG_SYMBOLS)]
     
     # 4. Refresh Data
-    print(f"Starting data refresh for {len(df_symbols)} symbols...")
+    mdc.write_line(f"Starting data refresh for {len(df_symbols)} symbols...")
     # This orchestrates the concurrent download and Azure upload
     df_history = await malib.refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_latest, browser, page, context)
     
     if df_history is not None and not df_history.empty:
-        print(f"Data refresh/load complete. Loaded {len(df_history)} rows.")
+        mdc.write_line(f"Data refresh/load complete. Loaded {len(df_history)} rows.")
     else:
-        print("Data refresh complete (no new data loaded or returned).")
+        mdc.write_line("Data refresh complete (no new data loaded or returned).")
     
     await browser.close()
     await playwright.stop()
