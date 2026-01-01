@@ -40,6 +40,10 @@ properties:
         secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
+      - name: DOWNLOADS_PATH
+        value: "/tmp/downloads"
+      - name: PLAYWRIGHT_USER_DATA_DIR
+        value: "/tmp/playwright_userdata"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: price-target-job

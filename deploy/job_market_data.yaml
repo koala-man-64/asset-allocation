@@ -21,6 +21,10 @@ properties:
     - name: assetallocationacrazurecrio-assetallocationacr
     - name: yahoo-username
     - name: yahoo-password
+    - name: DOWNLOADS_PATH
+      value: "/tmp/downloads"
+    - name: PLAYWRIGHT_USER_DATA_DIR
+      value: "/tmp/playwright_userdata"
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
     containers:
@@ -37,6 +41,10 @@ properties:
         secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
+      - name: DOWNLOADS_PATH
+        value: "/tmp/downloads"
+      - name: PLAYWRIGHT_USER_DATA_DIR
+        value: "/tmp/playwright_userdata"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: market-data-job
