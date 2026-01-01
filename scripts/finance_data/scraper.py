@@ -131,14 +131,20 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                 # 1. Navigation
                 await pl.load_url_async(page, report["url"])
                 
+                # 1b. Check for invalid ticker (Redirection to Symbol Lookup)
+                title = await page.title()
+                if "Symbol Lookup" in title or "Lookup" in title:
+                     mdc.write_line(f"Ticker {ticker} not found (Redirected to {title}). Blacklisting.")
+                     if blacklist_callback: blacklist_callback(ticker)
+                     break
+
                 # 2. Check tab existence
                 selector = f'button#tab-{report["period"]}[role="tab"]'
                 exists = await pl.element_exists_async(page, selector)
                 
                 if not exists:
-                    mdc.write_line(f"Skipping {report['name']} for {ticker} (Period tab not found)")
-                    # Valid "not found" scenario - maybe blacklist?
-                    if blacklist_callback: blacklist_callback(ticker)
+                    mdc.write_line(f"Skipping {report['name']} for {ticker} (Period tab not found - likely temporary or data missing)")
+                    # DO NOT BLACKLIST for missing tab - could be network timeout or layout shift
                     break
                 
                 # 3. Click Tab
@@ -189,7 +195,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                         mdc.write_line(f"Download returned no file for {ticker}")
                 else:
                     mdc.write_line(f"No download link for {ticker}")
-                    if blacklist_callback: blacklist_callback(ticker)
+                    # DO NOT BLACKLIST - might be temp failure
                     break
                     
             except Exception as e:
