@@ -31,6 +31,10 @@ properties:
     - env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
+      - name: AZURE_CONTAINER_NAME
+        value: market-data
+      - name: AZURE_CONFIG_CONTAINER_NAME
+        value: common-data
       - name: AZURE_CONTAINER_MARKET
         value: market-data
       - name: AZURE_CONTAINER_COMMON
