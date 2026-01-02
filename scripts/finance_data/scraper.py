@@ -456,4 +456,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    job_name = 'finance-data-job'
+    with mdc.JobLock(job_name):
+        asyncio.run(main())

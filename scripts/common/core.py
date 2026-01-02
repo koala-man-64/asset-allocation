@@ -16,6 +16,7 @@ import nasdaqdatalink
 
 # Local imports
 from scripts.common.blob_storage import BlobStorageClient
+from azure.storage.blob import BlobLeaseClient
 from scripts.common import config as cfg 
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
@@ -540,3 +541,67 @@ def get_symbols():
 
 def is_weekend(date):
     return date.weekday() >= 5
+
+# ------------------------------------------------------------------------------
+# Concurrency / Locking (Distributed Lock via Azure Blob Lease)
+# ------------------------------------------------------------------------------
+
+class JobLock:
+    """
+    Context manager for distributed locking using Azure Blob Storage Leases.
+    Ensures that only one instance of a job runs at a time.
+    """
+    def __init__(self, job_name: str, lease_duration: int = 60):
+        self.job_name = job_name
+        self.lease_duration = lease_duration
+        self.lock_blob_name = f"locks/{job_name}.lock"
+        self.lease_client = None
+        self.blob_client = None
+
+    def __enter__(self):
+        write_line(f"Acquiring lock for {self.job_name}...")
+        
+        if common_storage_client is None:
+            write_warning("Common storage client not initialized. Skipping lock check (UNSAFE concurrency).")
+            return self
+
+        # 1. Ensure lock file exists
+        if not common_storage_client.file_exists(self.lock_blob_name):
+            try:
+                # Create empty lock file
+                common_storage_client.upload_data(self.lock_blob_name, b"", overwrite=False)
+            except Exception:
+                # Ignore if created by race condition
+                pass
+        
+        # 2. Get Blob Client from the underlying client
+        # Note: self.common_storage_client.service_client is usually the account client.
+        # We need the blob client for the specific blob.
+        # Assuming BlobStorageClient exposes .get_blob_client(blob_name) or we can derive it.
+        # Looking at blob_storage.py (inferred), usually it wraps ContainerClient.
+        # We need to access the underlying ContainerClient to get a BlobClient.
+        
+        try:
+             # Access internal container client
+             container_client = common_storage_client.container_client
+             self.blob_client = container_client.get_blob_client(self.lock_blob_name)
+             self.lease_client = BlobLeaseClient(self.blob_client)
+             
+             # 3. Acquire Lease
+             self.lease_client.acquire(lease_duration=self.lease_duration)
+             write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
+             return self
+             
+        except Exception as e:
+            # If acquire fails (Conflict/409), it means locked.
+            write_error(f"Failed to acquire lock for {self.job_name}: {e}")
+            write_line("Another instance is likely running. Exiting.")
+            sys.exit(0) # Graceful exit
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.lease_client:
+            try:
+                write_line(f"Releasing lock for {self.job_name}...")
+                self.lease_client.release()
+            except Exception as e:
+                write_error(f"Error releasing lock: {e}")

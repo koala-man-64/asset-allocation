@@ -59,4 +59,6 @@ async def main_async():
     await playwright.stop()
     
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    job_name = 'market-data-job'
+    with mdc.JobLock(job_name):
+        asyncio.run(main_async())

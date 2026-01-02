@@ -311,4 +311,6 @@ def main():
         run_batch_processing()
 
 if __name__ == "__main__":
-    main()
+    job_name = 'price-target-job'
+    with mdc.JobLock(job_name):
+        main()
