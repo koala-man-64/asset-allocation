@@ -5,12 +5,14 @@ from typing import Optional, Dict, Any, Union
 from pathlib import Path
 
 import pandas as pd
+from azure.core.exceptions import AzureError, ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContainerSasPermissions, generate_container_sas
 from deltalake import DeltaTable, write_deltalake
 
 # Configure logger
 logger = logging.getLogger(__name__)
+_checked_containers = set()
 
 def _parse_connection_string(conn_str: str) -> Dict[str, str]:
     """Parses Azure Storage Connection String into a dictionary."""
@@ -50,6 +52,45 @@ def _get_user_delegation_sas(
     except Exception as exc:
         logger.warning(f"Failed to generate user delegation SAS for {container}: {exc}")
         return None
+
+def _ensure_container_exists(container: Optional[str]) -> None:
+    if not container or container in _checked_containers:
+        return
+
+    cs_map = {}
+    conn_str = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
+    if conn_str:
+        cs_map = _parse_connection_string(conn_str)
+
+    account_name = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or cs_map.get('AccountName')
+    account_key = (
+        os.environ.get('AZURE_STORAGE_ACCOUNT_KEY')
+        or os.environ.get('AZURE_STORAGE_ACCESS_KEY')
+        or cs_map.get('AccountKey')
+    )
+    sas_token = os.environ.get('AZURE_STORAGE_SAS_TOKEN')
+
+    try:
+        if conn_str:
+            service_client = BlobServiceClient.from_connection_string(conn_str)
+        elif account_name:
+            account_url = f"https://{account_name}.blob.core.windows.net"
+            credential = account_key or sas_token or DefaultAzureCredential()
+            service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        else:
+            logger.warning(f"Container creation skipped; missing account name for {container}.")
+            return
+
+        container_client = service_client.get_container_client(container)
+        if not container_client.exists():
+            container_client.create_container()
+            logger.info(f"Created container: {container}")
+    except ResourceExistsError:
+        pass
+    except AzureError as exc:
+        logger.warning(f"Failed to ensure container exists for {container}: {exc}")
+    finally:
+        _checked_containers.add(container)
 
 def get_delta_storage_options(container: Optional[str] = None) -> Dict[str, str]:
     """
@@ -165,6 +206,7 @@ def store_delta(
     Writes a pandas DataFrame to a Delta table in Azure.
     """
     try:
+        _ensure_container_exists(container)
         uri = get_delta_table_uri(container, path)
         opts = get_delta_storage_options(container)
         
