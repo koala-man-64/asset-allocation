@@ -219,7 +219,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
     retry_counter = 0
     
     # Determine cloud path
-    cloud_path = f"yahoo/{report['folder'].lower().replace(' ', '_')}/{ticker}_{report['file_suffix']}"
+    cloud_path = f"{report['folder'].lower().replace(' ', '_')}/{ticker}_{report['file_suffix']}"
     
     # Temp download dir
     temp_dir = Path.home() / "Downloads" / f"temp_{ticker}_{report['period']}"
@@ -431,7 +431,7 @@ async def main():
             report['url'] = report['url_template'].format(ticker=symbol)
             
             # Check Cloud
-            cloud_path = f"yahoo/{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
+            cloud_path = f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
             
             should_refresh = True
             
