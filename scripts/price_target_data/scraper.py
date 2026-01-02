@@ -20,7 +20,7 @@ from scripts.common import delta_core
 warnings.filterwarnings('ignore')
 
 # Constants for Cloud Storage (Relative paths to Azure Container root)
-DATA_FOLDER = "price_targets"
+DATA_FOLDER = "bronze/price_targets"
 WHITELIST_FILE = "price_target_data_whitelist.csv"
 BLACKLIST_FILE = "price_target_data_blacklist.csv"
 

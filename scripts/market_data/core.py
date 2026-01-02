@@ -56,7 +56,7 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     # Load df_ticker
     ticker = ticker.replace('.', '-')
     # Use unified path construction that load_csv understands
-    ticker_file_path = f"price_data/{ticker}"
+    ticker_file_path = f"bronze/price_data/{ticker}"
     df_ticker = load_delta(cfg.AZURE_CONTAINER_MARKET, ticker_file_path)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])

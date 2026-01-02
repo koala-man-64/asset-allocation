@@ -62,9 +62,9 @@ async def main_async(df_symbols: pd.DataFrame):
     
     async def fetch(symbol):
         async with semaphore:
-            # Cloud path: yahoo/earnings/{symbol}
+            # Cloud path: bronze/earnings/{symbol}
             # Note: We use snake_case folder structure as per Architecture Refactor
-            cloud_path = f"yahoo/earnings/{symbol}"
+            cloud_path = f"bronze/earnings/{symbol}"
             
             # Check Freshness via Delta Metadata
             last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_EARNINGS, cloud_path)

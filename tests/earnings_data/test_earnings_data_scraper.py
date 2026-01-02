@@ -25,8 +25,10 @@ def storage_cleanup(unique_ticker):
     
     yield unique_ticker
     
-    print(f"\nCleaning up storage for {unique_ticker}...")
-    prefix = f"yahoo/earnings/{unique_ticker}"
+    # Teardown
+    # Ensure client is using the EARNINGS container
+    print(f"\nCleaning up storage for {unique_ticker} in {container}...")
+    prefix = f"bronze/earnings/{unique_ticker}"
     
     try:
         client = mdc.get_storage_client(container)
@@ -68,6 +70,8 @@ async def test_earnings_migration_integration(mock_get_data, unique_ticker, stor
     
     # 2. Setup Inputs
     df_symbols = pd.DataFrame({'Symbol': [symbol]})
+    # Must match the cloud path logic in scraper: "bronze/earnings/{symbol}"
+    cloud_path = f"bronze/earnings/{symbol}"
     
     # 3. Execute
     # We mock 'pl.get_playwright_browser' to avoid real browser launch, 
