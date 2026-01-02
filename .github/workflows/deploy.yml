@@ -43,6 +43,15 @@ jobs:
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
 
+      - name: Ensure Storage Containers Exist
+        run: |
+          for container in market-data finance-data price-targets earnings common-data; do
+            az storage container create \
+              --name $container \
+              --account-name assetallocstorage001 \
+              --auth-mode login || true
+          done
+
       - name: Update and Start Market Data Job
         run: |
           az containerapp job secret set \
