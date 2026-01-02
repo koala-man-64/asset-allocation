@@ -227,54 +227,27 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     df_whitelist = mdc.load_csv(white_path, client=market_client)
     df_blacklist = mdc.load_csv(black_path, client=market_client) 
     
-    # Cloud Path for aggregate
-    historical_path_str = 'get_historical_data_output'
-    freshness_threshold = cfg.DATA_FRESHNESS_SECONDS
     df_concat = pd.DataFrame()
-    
-    # Check cloud freshness
-    is_fresh = False
-    
-    # Check cloud freshness
-    is_fresh = False
-    
-    # Use delta_core for metadata check
-    last_ts = get_delta_last_commit(cfg.AZURE_CONTAINER_MARKET, historical_path_str)
-    if last_ts:
-        # last_ts is seconds since epoch (UTC)
-        now_ts = datetime.now(timezone.utc).timestamp()
-        if (now_ts - last_ts) < freshness_threshold:
-            is_fresh = True
-            ts = datetime.fromtimestamp(last_ts, timezone.utc)
-                
-    if is_fresh:
-        print(f"  Using cached historical data ({ts:%Y-%m-%d %H:%M})")
-        # Load from cloud
-        df_concat = load_delta(cfg.AZURE_CONTAINER_MARKET, historical_path_str)
-    else:
-        print("  Cache missing or stale - downloading fresh historical data...")
-        semaphore = asyncio.Semaphore(3)
-        async def fetch(symbol):
-            async with semaphore:
-                page = await context.new_page()
-                try:
-                    return await get_historical_data_async(symbol, drop_prior, get_latest, page, df_whitelist=df_whitelist, df_blacklist=df_blacklist)
-                except Exception as e:
-                    write_error(f"[Error] symbol={symbol}: {e}")
-                    return None
-                finally:
-                    await page.close()
-        
-        tasks  = [fetch(sym) for sym in symbols if "." not in sym]
-        frames = await asyncio.gather(*tasks, return_exceptions=False)
-        # Tuple unpacking handling: async returns (df, path)
-        valid_frames = [df[0] for df in frames if df is not None and df[0] is not None]
-        
-        if valid_frames:
-            df_concat = pd.concat(valid_frames, ignore_index=True)
-            # Save to cloud
-            store_delta(df_concat, cfg.AZURE_CONTAINER_MARKET, historical_path_str)
-            print(f"  Wrote fresh data to {historical_path_str}")
+
+    semaphore = asyncio.Semaphore(3)
+    async def fetch(symbol):
+        async with semaphore:
+            page = await context.new_page()
+            try:
+                return await get_historical_data_async(symbol, drop_prior, get_latest, page, df_whitelist=df_whitelist, df_blacklist=df_blacklist)
+            except Exception as e:
+                write_error(f"[Error] symbol={symbol}: {e}")
+                return None
+            finally:
+                await page.close()
+
+    tasks  = [fetch(sym) for sym in symbols if "." not in sym]
+    frames = await asyncio.gather(*tasks, return_exceptions=False)
+    # Tuple unpacking handling: async returns (df, path)
+    valid_frames = [df[0] for df in frames if df is not None and df[0] is not None]
+
+    if valid_frames:
+        df_concat = pd.concat(valid_frames, ignore_index=True)
     return df_concat
 
 # Run verification when executed directly
