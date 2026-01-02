@@ -70,6 +70,8 @@ jobs:
               --cron-expression "0 15 * * *" \
               --replica-timeout 1800 \
               --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi
           fi
           
@@ -104,6 +106,8 @@ jobs:
               --cron-expression "0 22 * * *" \
               --replica-timeout 1800 \
               --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi
           fi
 
@@ -137,6 +141,8 @@ jobs:
               --cron-expression "0 12 * * *" \
               --replica-timeout 1800 \
               --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi
           fi
 
@@ -170,6 +176,8 @@ jobs:
               --cron-expression "0 23 * * *" \
               --replica-timeout 1800 \
               --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi
           fi
 
