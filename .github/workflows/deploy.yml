@@ -61,8 +61,16 @@ jobs:
             az containerapp job create \
               --name ${{ env.MARKET_DATA_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml deploy/job_market_data.yaml \
-              --secrets "assetallocationacrazurecrio-assetallocationacr=$ACR_PASSWORD"
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "0 15 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --cpu 1.0 --memory 2.0Gi
           fi
           
           az containerapp job secret set \
@@ -87,8 +95,16 @@ jobs:
             az containerapp job create \
               --name ${{ env.FINANCE_DATA_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml deploy/job_finance_data.yaml \
-              --secrets "assetallocationacrazurecrio-assetallocationacr=$ACR_PASSWORD"
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "0 22 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --cpu 1.0 --memory 2.0Gi
           fi
 
           az containerapp job secret set \
@@ -112,8 +128,16 @@ jobs:
             az containerapp job create \
               --name ${{ env.PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml deploy/job_price_targets.yaml \
-              --secrets "assetallocationacrazurecrio-assetallocationacr=$ACR_PASSWORD"
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "0 12 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --cpu 1.0 --memory 2.0Gi
           fi
 
           az containerapp job secret set \
@@ -137,8 +161,16 @@ jobs:
             az containerapp job create \
               --name ${{ env.EARNINGS_DATA_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml deploy/job_earnings_data.yaml \
-              --secrets "assetallocationacrazurecrio-assetallocationacr=$ACR_PASSWORD"
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "0 23 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --cpu 1.0 --memory 2.0Gi
           fi
 
           az containerapp job secret set \
