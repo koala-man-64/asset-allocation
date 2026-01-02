@@ -63,9 +63,15 @@ REPORT_CONFIG = [
 # ------------------------------------------------------------------------------
 
 def _validate_environment() -> None:
+    config_container = (
+        os.environ.get("AZURE_CONFIG_CONTAINER_NAME")
+        or os.environ.get("AZURE_CONTAINER_COMMON")
+    )
+    if config_container and not os.environ.get("AZURE_CONFIG_CONTAINER_NAME"):
+        os.environ["AZURE_CONFIG_CONTAINER_NAME"] = config_container
+
     required = [
         "AZURE_CONTAINER_NAME",
-        "AZURE_CONFIG_CONTAINER_NAME",
         "AZURE_CONTAINER_FINANCE",
         "DOWNLOADS_PATH",
         "PLAYWRIGHT_USER_DATA_DIR",
@@ -74,6 +80,8 @@ def _validate_environment() -> None:
         "NASDAQ_API_KEY",
     ]
     missing = [name for name in required if not os.environ.get(name)]
+    if not config_container:
+        missing.append("AZURE_CONFIG_CONTAINER_NAME or AZURE_CONTAINER_COMMON")
 
     account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
     conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
