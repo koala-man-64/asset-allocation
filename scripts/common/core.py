@@ -158,17 +158,24 @@ def get_remote_path(file_path):
          return s_path.split("common/")[-1]
     return s_path.strip("/")
 
-def store_csv(obj: pd.DataFrame, file_path: Union[str, Path]) -> str:
+def store_csv(
+    obj: pd.DataFrame,
+    file_path: Union[str, Path],
+    client: Optional[BlobStorageClient] = None,
+) -> str:
     """
     Stores a DataFrame to Azure Blob Storage as CSV.
     file_path: Remote path or local path (converted).
+    client: Optional specific client to use. Defaults to global market-data client.
     """
     remote_path = get_remote_path(file_path)
     
-    if storage_client is None:
+    target_client = client if client else storage_client
+
+    if target_client is None:
         raise RuntimeError("Azure Storage Client not initialized. Cannot store CSV.")
-        
-    storage_client.write_csv(remote_path, obj)
+
+    target_client.write_csv(remote_path, obj)
     return remote_path
 
 def load_csv(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[pd.DataFrame]:
@@ -260,7 +267,7 @@ def update_csv_set(file_path, ticker, client: Optional[BlobStorageClient] = None
             df = pd.concat([df, new_row], ignore_index=True)
             df = df.sort_values('Symbol').reset_index(drop=True)
             
-            store_csv(df, remote_path)
+            store_csv(df, remote_path, client=client)
             write_line(f"Added {ticker} to {remote_path}")
     except Exception as e:
         write_error(f"Error updating {file_path}: {e}")
