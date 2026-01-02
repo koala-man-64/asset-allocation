@@ -1,8 +1,12 @@
 import os
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
+
 import pandas as pd
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient, ContainerSasPermissions, generate_container_sas
 from deltalake import DeltaTable, write_deltalake
 
 # Configure logger
@@ -12,7 +16,42 @@ def _parse_connection_string(conn_str: str) -> Dict[str, str]:
     """Parses Azure Storage Connection String into a dictionary."""
     return dict(item.split('=', 1) for item in conn_str.split(';') if '=' in item)
 
-def get_delta_storage_options() -> Dict[str, str]:
+def _get_user_delegation_sas(
+    container: Optional[str],
+    account_name: Optional[str],
+    ttl_minutes: int = 60,
+) -> Optional[str]:
+    if not container or not account_name:
+        return None
+
+    try:
+        credential = DefaultAzureCredential()
+        account_url = f"https://{account_name}.blob.core.windows.net"
+        service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        start = datetime.now(timezone.utc) - timedelta(minutes=5)
+        expiry = start + timedelta(minutes=ttl_minutes)
+        delegation_key = service_client.get_user_delegation_key(start, expiry)
+        permissions = ContainerSasPermissions(
+            read=True,
+            write=True,
+            delete=True,
+            list=True,
+            add=True,
+            create=True,
+        )
+        return generate_container_sas(
+            account_name=account_name,
+            container_name=container,
+            user_delegation_key=delegation_key,
+            permission=permissions,
+            expiry=expiry,
+            start=start,
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to generate user delegation SAS for {container}: {exc}")
+        return None
+
+def get_delta_storage_options(container: Optional[str] = None) -> Dict[str, str]:
     """
     Constructs the storage_options dictionary required by deltalake (delta-rs)
     for Azure Blob Storage authentication.
@@ -75,8 +114,12 @@ def get_delta_storage_options() -> Dict[str, str]:
     # should automatically detect Managed Identity.
     # We only default to Azure CLI if we are NOT in a known MSI environment.
     if os.environ.get('IDENTITY_ENDPOINT') or os.environ.get('MSI_ENDPOINT'):
-        logger.info("Detected Managed Identity environment (IDENTITY_ENDPOINT/MSI_ENDPOINT). Skipping 'use_azure_cli'.")
-        # Do not set 'use_azure_cli' to true, relying on default chain/MSI.
+        sas_token = _get_user_delegation_sas(container, account_name)
+        if sas_token:
+            options['sas_token'] = sas_token
+        else:
+            logger.info("Detected Managed Identity environment; user delegation SAS unavailable.")
+        # Do not set 'use_azure_cli' to true, relying on default chain/MSI if needed.
     else:
         # Local development fallback: try Azure CLI
         options['use_azure_cli'] = 'true'
@@ -120,7 +163,7 @@ def store_delta(
     """
     try:
         uri = get_delta_table_uri(container, path)
-        opts = get_delta_storage_options()
+        opts = get_delta_storage_options(container)
         
         write_deltalake(
             uri,
@@ -142,7 +185,7 @@ def load_delta(container: str, path: str, version: int = None) -> Optional[pd.Da
     """
     try:
         uri = get_delta_table_uri(container, path)
-        opts = get_delta_storage_options()
+        opts = get_delta_storage_options(container)
         
         dt = DeltaTable(uri, version=version, storage_options=opts)
         return dt.to_pandas()
@@ -159,7 +202,7 @@ def get_delta_last_commit(container: str, path: str) -> Optional[float]:
     """
     try:
         uri = get_delta_table_uri(container, path)
-        opts = get_delta_storage_options()
+        opts = get_delta_storage_options(container)
         
         dt = DeltaTable(uri, storage_options=opts)
         # history() returns a list of dictionaries. 0-th index is usually latest? 
