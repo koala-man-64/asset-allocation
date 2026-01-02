@@ -153,7 +153,7 @@ def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     mock_nasdaq.get_table.assert_called()
     
     # Verify data was written to cloud
-    path = f"price_targets/{symbol}"
+    path = f"bronze/price_targets/{symbol}"
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, path)
     assert loaded_df is not None
     assert not loaded_df.empty

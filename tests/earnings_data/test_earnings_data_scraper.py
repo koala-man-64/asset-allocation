@@ -94,7 +94,7 @@ async def test_earnings_migration_integration(mock_get_data, unique_ticker, stor
              await earn_scraper.main_async(df_symbols)
 
     # 4. Verify Cloud Persistence
-    cloud_path = f"yahoo/earnings/{symbol}"
+    cloud_path = f"bronze/earnings/{symbol}"
     print(f"Verifying read from {cloud_path}...")
     
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_EARNINGS, cloud_path)
