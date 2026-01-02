@@ -1,0 +1,29 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.1, pytest-8.3.4, pluggy-1.6.0
+rootdir: c:\Users\rdpro\Projects\AssetAllocation
+configfile: pytest.ini
+plugins: asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+
+----------------------------- live log collection -----------------------------
+INFO     scripts.common.blob_storage:blob_storage.py:37 Initializing BlobStorageClient with Connection String
+INFO     scripts.common.blob_storage:blob_storage.py:37 Initializing BlobStorageClient with Connection String
+collected 1 item
+
+tests/finance_data/test_finance_data_scraper.py::test_process_report_cloud_integration 
+------------------------------- live log setup --------------------------------
+INFO     scripts.common.blob_storage:blob_storage.py:37 Initializing BlobStorageClient with Connection String
+-------------------------------- live log call --------------------------------
+INFO     scripts.common.core:core.py:106 Downloaded Integration Test Report for TEST_FIN_77416840
+INFO     scripts.common.delta_core:delta_core.py:221 Successfully wrote Delta table to bronze/valuation/TEST_FIN_77416840_quarterly_valuation_measures
+INFO     scripts.common.core:core.py:106 Uploaded bronze/valuation/TEST_FIN_77416840_quarterly_valuation_measures (Delta)
+PASSED                                                                   [100%]
+------------------------------ live log teardown ------------------------------
+INFO     scripts.common.blob_storage:blob_storage.py:37 Initializing BlobStorageClient with Connection String
+INFO     scripts.common.blob_storage:blob_storage.py:84 Deleted blob: bronze/valuation/TEST_FIN_77416840_quarterly_valuation_measures/_delta_log/00000000000000000000.json
+INFO     scripts.common.blob_storage:blob_storage.py:84 Deleted blob: bronze/valuation/TEST_FIN_77416840_quarterly_valuation_measures/part-00000-22046d11-fff5-4169-a5b1-89dadf2f29b2-c000.snappy.parquet
+
+
+============================== 1 passed in 7.44s ==============================
+
+Exit Code: 0

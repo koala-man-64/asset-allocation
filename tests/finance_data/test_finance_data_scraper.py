@@ -3,7 +3,7 @@ import pandas as pd
 import uuid
 import os
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.finance_data import scraper as yc
+from scripts.finance_data import core as yc
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
@@ -57,7 +57,7 @@ def storage_cleanup(unique_ticker):
 # --- Integration Tests ---
 
 @pytest.mark.asyncio
-@patch('scripts.finance_data.scraper.pl')
+@patch('scripts.finance_data.core.pl')
 async def test_process_report_cloud_integration(mock_pl, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies process_report_cloud:
