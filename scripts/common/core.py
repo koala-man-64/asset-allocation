@@ -169,7 +169,7 @@ def store_csv(
     client: Optional specific client to use. Defaults to global market-data client.
     """
     remote_path = get_remote_path(file_path)
-    
+
     target_client = client if client else storage_client
 
     if target_client is None:
