@@ -4,7 +4,7 @@ import numpy as np
 import uuid
 import time
 from unittest.mock import MagicMock, patch
-from scripts.price_target_data import scraper as pta
+from scripts.price_target_data import core as pta
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
@@ -100,7 +100,7 @@ def test_transform_symbol_data_integration(storage_cleanup):
     assert 'tp_mean_est' in loaded_df.columns
     assert len(loaded_df) >= 3
 
-@patch('scripts.price_target_data.scraper.nasdaqdatalink')
+@patch('scripts.price_target_data.core.nasdaqdatalink')
 def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     # Scenario: Symbol exists and is fresh.
     symbol = storage_cleanup
@@ -128,7 +128,7 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     assert res[0] == symbol
     mock_nasdaq.get_table.assert_not_called()
 
-@patch('scripts.price_target_data.scraper.nasdaqdatalink')
+@patch('scripts.price_target_data.core.nasdaqdatalink')
 def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     # Scenario: Symbol is missing (stale by default), should write new data.
     symbol = storage_cleanup

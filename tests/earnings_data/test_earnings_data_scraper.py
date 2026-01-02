@@ -4,7 +4,7 @@ import pandas as pd
 import uuid
 import os
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.earnings_data import scraper as earn_scraper
+from scripts.earnings_data import core as earn_core
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
@@ -47,7 +47,7 @@ def storage_cleanup(unique_ticker):
 # --- Integration Tests ---
 
 @pytest.mark.asyncio
-@patch('scripts.earnings_data.scraper.pl.get_yahoo_earnings_data')
+@patch('scripts.earnings_data.core.pl.get_yahoo_earnings_data')
 async def test_earnings_migration_integration(mock_get_data, unique_ticker, storage_cleanup):
     """
     Verifies the new earnings scraper loop:
@@ -75,10 +75,10 @@ async def test_earnings_migration_integration(mock_get_data, unique_ticker, stor
     
     # 3. Execute
     # We mock 'pl.get_playwright_browser' to avoid real browser launch, 
-    # but we want 'main_async' to run the logic.
-    # main_async initializes playwright, so we mock that too.
+    # but we want 'run_earnings_refresh' to run the logic.
+    # run_earnings_refresh initializes playwright, so we mock that too.
     
-    with patch('scripts.earnings_data.scraper.pl.get_playwright_browser') as mock_browser_init:
+    with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
         # Mock browser components
         mock_page = AsyncMock()
         mock_context = AsyncMock()
@@ -89,9 +89,9 @@ async def test_earnings_migration_integration(mock_get_data, unique_ticker, stor
         mock_browser_init.return_value = (mock_playwright, mock_browser, mock_context, mock_page)
         
         # Also need to mock cookies load to prevent file error if not exists
-        with patch('scripts.earnings_data.scraper.pl.pw_load_cookies_async') as mock_cookies, \
+        with patch('scripts.earnings_data.core.pl.pw_load_cookies_async') as mock_cookies, \
              patch('scripts.common.config.DEBUG_SYMBOLS', []):
-             await earn_scraper.main_async(df_symbols)
+             await earn_core.run_earnings_refresh(df_symbols)
 
     # 4. Verify Cloud Persistence
     cloud_path = f"bronze/earnings/{symbol}"
