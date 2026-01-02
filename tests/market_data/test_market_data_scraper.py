@@ -28,7 +28,8 @@ def storage_cleanup(unique_ticker):
     
     # Teardown
     print(f"\nCleaning up storage for {unique_ticker}...")
-    prefix = f"yahoo/price_data/{unique_ticker}"
+    print(f"\nCleaning up storage for {unique_ticker}...")
+    prefix = f"price_data/{unique_ticker}"
     
     try:
         client = mdc.get_storage_client(container)
@@ -79,7 +80,7 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     
     # 2. Setup Inputs
     df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
-    ticker_file_path = f"yahoo/price_data/{symbol}"
+    ticker_file_path = f"price_data/{symbol}"
     period1 = 1672531200 # Dummy timestamp
     
     # 3. Execute
