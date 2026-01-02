@@ -114,6 +114,9 @@ def get_delta_storage_options(container: Optional[str] = None) -> Dict[str, str]
     # should automatically detect Managed Identity.
     # We only default to Azure CLI if we are NOT in a known MSI environment.
     if os.environ.get('IDENTITY_ENDPOINT') or os.environ.get('MSI_ENDPOINT'):
+        identity_endpoint = os.environ.get('IDENTITY_ENDPOINT') or os.environ.get('MSI_ENDPOINT')
+        if identity_endpoint:
+            options['identity_endpoint'] = identity_endpoint
         sas_token = _get_user_delegation_sas(container, account_name)
         if sas_token:
             options['sas_token'] = sas_token
