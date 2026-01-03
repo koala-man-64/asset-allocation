@@ -32,7 +32,7 @@ def storage_cleanup(unique_ticker):
     # Teardown
     print(f"\nCleaning up storage for {unique_ticker}...")
     container = cfg.AZURE_CONTAINER_TARGETS
-    prefix = f"bronze/price_targets/{unique_ticker}"
+    prefix = f"price_targets/{unique_ticker}"
     
     try:
         client = mdc.get_storage_client(container)
@@ -79,7 +79,7 @@ def test_transform_symbol_data_integration(storage_cleanup):
     assert res.iloc[0]['ticker'] == symbol
     
     # Verify Data Persistence (Real Read)
-    path = f"bronze/price_targets/{symbol}"
+    path = f"price_targets/{symbol}"
     print(f"Verifying read from {path}...")
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, path)
     
@@ -94,7 +94,7 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     symbol = storage_cleanup
     
     # 1. Setup: Write "Fresh" Data
-    path = f"bronze/price_targets/{symbol}"
+    path = f"price_targets/{symbol}"
     
     # Create dummy DataFrame
     df = pd.DataFrame({
@@ -148,7 +148,7 @@ def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     mock_nasdaq.get_table.assert_called()
     
     # Verify data was written to cloud
-    path = f"bronze/price_targets/{symbol}"
+    path = f"price_targets/{symbol}"
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, path)
     assert loaded_df is not None
     assert not loaded_df.empty

@@ -36,7 +36,7 @@ def storage_cleanup(unique_ticker):
     # Or strict path construction
     folder = "Valuation"
     suffix = "quarterly_valuation_measures"
-    target_path = f"bronze/{folder.lower()}/{unique_ticker}_{suffix}"
+    target_path = f"{folder.lower()}/{unique_ticker}_{suffix}"
     
     try:
         client = mdc.get_storage_client(container)
@@ -132,7 +132,7 @@ Total Liabilities,500,450
     assert success is True
     
     # 5. Verify Cloud Persistence
-    cloud_path = f"bronze/valuation/{symbol}_quarterly_valuation_measures"
+    cloud_path = f"valuation/{symbol}_quarterly_valuation_measures"
     print(f"Verifying read from {cloud_path}...")
     
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_FINANCE, cloud_path)

@@ -304,24 +304,8 @@ async def refresh_finance_data_async(df_symbols: pd.DataFrame):
             report['ticker'] = symbol
             report['url'] = report['url_template'].format(ticker=symbol)
             
-            # Use DataPaths for consistency even in freshness check logic
+            # Use DataPaths for consistency
             cloud_path = DataPaths.get_finance_path(report['folder'], symbol, report['file_suffix'])
-            # Note: The original returned by DataPaths.get_finance_path includes "bronze/" which is what we want?
-            # Original code was: f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}" inside the loop (Line 331)
-            # BUT Line 141 (process_report_cloud) had "bronze/" prefix.
-            # Delta Core usually expects path relative to container root.
-            # If the container is 'finance-data', and we want 'bronze/...' then yes.
-            # Wait, line 331 in original code was: cloud_path = f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
-            # Line 141 was: cloud_path = f"bronze/{report['folder'].lower().replace(' ', '_')}/{ticker}_{report['file_suffix']}"
-             
-            # This implies the freshness check might have been looking at a different path or I misinterpreted the original 331.
-            # Let's double check 331 vs 141 in original file.
-            # 141: cloud_path = f"bronze/..."
-            # 331: cloud_path = f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
-            
-            # This looks like a BUG in the original code or valid inconsistency if stored in different places?
-            # Highly likely 331 was missing "bronze/" or checking a legacy path?
-            # Given standardization, we should enforce "bronze/".
             
             should_refresh = True
             

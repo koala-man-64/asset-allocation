@@ -98,7 +98,14 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         target_price_data['ticker'] = symbol
 
         # Merge with existing
-        updated_earnings = pd.concat([existing_price_targets, target_price_data], ignore_index=True)
+        # Concatenate - handle empty to avoid FutureWarning
+        if existing_price_targets is None or existing_price_targets.empty:
+            updated_earnings = target_price_data
+        elif target_price_data is None or target_price_data.empty:
+            updated_earnings = existing_price_targets
+        else:
+            updated_earnings = pd.concat([existing_price_targets, target_price_data], ignore_index=True)
+        
         updated_earnings = updated_earnings.drop_duplicates(subset=['obs_date', 'ticker'], keep='last')
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
 

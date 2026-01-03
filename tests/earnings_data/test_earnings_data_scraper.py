@@ -28,7 +28,7 @@ def storage_cleanup(unique_ticker):
     # Teardown
     # Ensure client is using the EARNINGS container
     print(f"\nCleaning up storage for {unique_ticker} in {container}...")
-    prefix = f"bronze/earnings/{unique_ticker}"
+    prefix = f"earnings/{unique_ticker}"
     
     try:
         client = mdc.get_storage_client(container)
@@ -75,8 +75,8 @@ def test_earnings_migration_integration(mock_get_data, unique_ticker, storage_cl
     
     # 2. Setup Inputs
     df_symbols = pd.DataFrame({'Symbol': [symbol]})
-    # Must match the cloud path logic in scraper: "bronze/earnings/{symbol}"
-    cloud_path = f"bronze/earnings/{symbol}"
+    # Must match the cloud path logic in scraper: "earnings/{symbol}"
+    cloud_path = f"earnings/{symbol}"
     
     # 3. Execute
     # We mock 'pl.get_playwright_browser' to avoid real browser launch, 
@@ -102,7 +102,7 @@ def test_earnings_migration_integration(mock_get_data, unique_ticker, storage_cl
     asyncio.run(run_test())
 
     # 4. Verify Cloud Persistence
-    cloud_path = f"bronze/earnings/{symbol}"
+    cloud_path = f"earnings/{symbol}"
     print(f"Verifying read from {cloud_path}...")
     
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_EARNINGS, cloud_path)

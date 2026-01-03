@@ -29,12 +29,11 @@ def storage_cleanup(unique_ticker):
     # Teardown
     print(f"\nCleaning up storage for {unique_ticker}...")
     print(f"\nCleaning up storage for {unique_ticker}...")
-    prefix = f"bronze/price_data/{unique_ticker}"
+    prefix = f"price_data/{unique_ticker}"
     
     try:
         client = mdc.get_storage_client(container)
         blobs = client.list_files(name_starts_with=prefix)
-        blobs.sort(key=len, reverse=True)
         
         for blob in blobs:
             try:
@@ -42,7 +41,7 @@ def storage_cleanup(unique_ticker):
             except Exception:
                 pass
                 
-        # Cleanup Delta Log directory explicit check
+        # Cleanup Delta Log
         delta_log = f"{prefix}/_delta_log"
         if client.file_exists(delta_log):
              client.delete_file(delta_log)
@@ -58,7 +57,7 @@ import asyncio
 
 # ... (Helpers)
 
-@patch('scripts.market_data.core.pl.download_yahoo_price_data_async')
+@patch('scripts.common.playwright_lib.download_yahoo_price_data_async')
 def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies that download_and_process_yahoo_data correctly:
@@ -85,7 +84,7 @@ def test_download_and_process_integration(mock_download, unique_ticker, storage_
     
     # 2. Setup Inputs
     df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
-    ticker_file_path = f"bronze/price_data/{symbol}"
+    ticker_file_path = f"price_data/{symbol}"
     period1 = 1672531200 # Dummy timestamp
     
 

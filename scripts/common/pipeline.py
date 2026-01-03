@@ -10,21 +10,20 @@ logger = logging.getLogger(__name__)
 
 class DataPaths:
     """
-    Centralized configuration for data storage paths (Bronze Layer).
+    Centralized configuration for data storage paths.
     """
-    BRONZE_ROOT = "bronze"
 
     @staticmethod
     def get_market_data_path(ticker: str) -> str:
-        return f"{DataPaths.BRONZE_ROOT}/price_data/{ticker.replace('.', '-')}"
+        return f"price_data/{ticker.replace('.', '-')}"
 
     @staticmethod
     def get_price_target_path(ticker: str) -> str:
-        return f"{DataPaths.BRONZE_ROOT}/price_targets/{ticker}"
+        return f"price_targets/{ticker}"
 
     @staticmethod
     def get_earnings_path(ticker: str) -> str:
-        return f"{DataPaths.BRONZE_ROOT}/earnings/{ticker}"
+        return f"earnings/{ticker}"
 
     @staticmethod
     def get_finance_path(folder: str, ticker: str, file_suffix: str) -> str:
@@ -32,7 +31,7 @@ class DataPaths:
         folder: e.g. 'Balance Sheet' -> 'balance_sheet'
         """
         clean_folder = folder.lower().replace(' ', '_')
-        return f"{DataPaths.BRONZE_ROOT}/{clean_folder}/{ticker}_{file_suffix}"
+        return f"{clean_folder}/{ticker}_{file_suffix}"
 
 
 class ListManager:

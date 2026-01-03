@@ -148,7 +148,13 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 df_response['Date'] = pd.to_datetime(df_response['Date'])
                 df_response['Symbol'] = ticker
 
-                df_ticker = pd.concat([df_ticker, df_response], ignore_index=True)
+           # Concatenate - handle empty to avoid FutureWarning
+                if df_ticker is None or df_ticker.empty:
+                    df_ticker = df_response
+                elif df_response is None or df_response.empty:
+                    pass # df_ticker remains the same
+                else:
+                    df_ticker = pd.concat([df_ticker, df_response], ignore_index=True)
                 df_ticker = df_ticker.sort_values(by=['Date', 'Symbol', 'Volume'], ascending=[True, True, False])
                 df_ticker = df_ticker.drop_duplicates(subset=['Date', 'Symbol'], keep='first')
                 
