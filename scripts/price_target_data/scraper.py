@@ -15,7 +15,6 @@ warnings.filterwarnings('ignore')
 
 
 import asyncio
-# ... imports ...
 
 def main():
     if not cfg.AZURE_CONTAINER_TARGETS:

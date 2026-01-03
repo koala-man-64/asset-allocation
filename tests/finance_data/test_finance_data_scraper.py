@@ -58,9 +58,7 @@ def storage_cleanup(unique_ticker):
 
 
 import asyncio
-# ... (existing imports)
 
-# ... (Helpers)
 
 @patch('scripts.finance_data.core.pl')
 def test_process_report_cloud_integration(mock_pl, unique_ticker, storage_cleanup, tmp_path):

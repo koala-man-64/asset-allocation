@@ -53,9 +53,7 @@ def storage_cleanup(unique_ticker):
 
 
 import asyncio
-# ... (existing imports)
 
-# ... (Helpers)
 
 @patch('scripts.common.playwright_lib.download_yahoo_price_data_async')
 def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):

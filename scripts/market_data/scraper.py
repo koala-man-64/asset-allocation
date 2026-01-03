@@ -37,7 +37,7 @@ async def main_async():
     # 3. Get Universe of Symbols
     mdc.write_line("Fetching symbol universe...")
     # This involves Azure cache check or Nasdaq API call
-    df_symbols = malib.get_symbols()
+    df_symbols = mdc.get_symbols()
     
     # Apply Debug Filter
     from scripts.common import config as cfg

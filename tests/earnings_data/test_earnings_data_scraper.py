@@ -48,9 +48,7 @@ def storage_cleanup(unique_ticker):
 
 
 import asyncio
-# ... (existing imports)
 
-# ... (Helpers)
 
 @patch('scripts.earnings_data.core.pl.get_yahoo_earnings_data')
 def test_earnings_migration_integration(mock_get_data, unique_ticker, storage_cleanup):

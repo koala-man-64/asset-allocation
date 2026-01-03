@@ -27,7 +27,40 @@ from scripts.common.pipeline import DataPaths, ListManager
 
 warnings.filterwarnings('ignore')
 
-# ... [Configuration retained] ...
+
+# ------------------------------------------------------------------------------
+# Configuration
+# ------------------------------------------------------------------------------
+REPORT_CONFIG = [
+    {
+        "name": "Quarterly Balance Sheet",
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "url_template": 'https://finance.yahoo.com/quote/{ticker}/balance-sheet?p={ticker}',
+        "period": "quarterly"
+    },
+    {
+        "name": "Quarterly Valuations",
+        "folder": "Valuation",
+        "file_suffix": "quarterly_valuation_measures",
+        "url_template": 'https://finance.yahoo.com/quote/{ticker}/key-statistics?p={ticker}',
+        "period": "quarterly"
+    },
+    {
+        "name": "Quarterly Cash Flow",
+        "folder": "Cash Flow",
+        "file_suffix": "quarterly_cash-flow",
+        "url_template": 'https://finance.yahoo.com/quote/{ticker}/cash-flow?p={ticker}',
+        "period": "quarterly"
+    },
+    {
+        "name": "Quarterly Income Statement",
+        "folder": "Income Statement",
+        "file_suffix": "quarterly_financials",
+        "url_template": 'https://finance.yahoo.com/quote/{ticker}/financials?p={ticker}',
+        "period": "quarterly"
+    }
+]
 
 # ------------------------------------------------------------------------------
 # Client Management

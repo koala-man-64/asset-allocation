@@ -49,11 +49,23 @@ def delete_files_with_string(directory, substring, extension):
 # Aliases
 store_delta = delta_core.store_delta
 
-# ... [Retained re-exports] ...
-
+# Re-expose functions from mdc for backward compatibility
 write_line = mdc.write_line
 write_error = mdc.write_error
-# ...
+write_warning = mdc.write_warning
+write_inline = mdc.write_inline
+write_section = mdc.write_section
+go_to_sleep = mdc.go_to_sleep
+store_csv = mdc.store_csv
+load_csv = mdc.load_csv
+store_delta = delta_core.store_delta
+load_delta = delta_core.load_delta
+get_delta_last_commit = delta_core.get_delta_last_commit
+update_csv_set = mdc.update_csv_set
+delete_files_with_string = mdc.delete_files_with_string
+get_symbols = mdc.get_symbols
+load_ticker_list = mdc.load_ticker_list
+is_weekend = mdc.is_weekend
 
 # Initialize specific client for Market Data
 market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_MARKET)
