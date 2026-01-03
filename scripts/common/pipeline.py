@@ -15,7 +15,7 @@ class DataPaths:
 
     @staticmethod
     def get_market_data_path(ticker: str) -> str:
-        return f"price_data/{ticker.replace('.', '-')}"
+        return f"{ticker.replace('.', '-')}"
 
     @staticmethod
     def get_price_target_path(ticker: str) -> str:

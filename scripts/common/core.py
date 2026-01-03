@@ -276,10 +276,8 @@ def store_parquet(df: pd.DataFrame, file_path: Union[str, Path], client: Optiona
     if client is None:
         return # Skip cloud op
 
-    # Convert to Parquet bytes
-    parquet_bytes = df.to_parquet(index=False)
-    
-    client.write_blob(remote_path, parquet_bytes)
+    # Convert to Parquet bytes (handled by client.write_parquet)
+    client.write_parquet(remote_path, df)
     return remote_path
 
 def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[pd.DataFrame]:
@@ -291,16 +289,7 @@ def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient
     
     if client is None:
         return None
-        
-    try:
-        blob_data = client.read_blob(remote_path)
-        if blob_data:
-            from io import BytesIO
-            return pd.read_parquet(BytesIO(blob_data))
-    except Exception:
-        pass
-        
-    return None
+    return client.read_parquet(remote_path)
 
 def get_file_text(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[str]:
     """Retrieves file content as text from Azure. Raises error if failed or missing."""
@@ -332,9 +321,7 @@ def store_file(local_path: str, remote_path: str, client: Optional[BlobStorageCl
     Stores a generic file (binary) to Azure Blob Storage.
     """
     if client:
-        # Read file
-        with open(local_path, "rb") as data:
-             client.upload_file(data, remote_path)
+        client.upload_file(local_path, remote_path)
     else:
         write_line(f"No storage client. File remains local: {local_path}")
 
