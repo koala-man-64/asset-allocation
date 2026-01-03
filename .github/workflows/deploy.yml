@@ -84,7 +84,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --cron-expression "0 14-22 * * *" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
           az containerapp job start \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -119,7 +119,7 @@ jobs:
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
           az containerapp job start \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -154,7 +154,7 @@ jobs:
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
