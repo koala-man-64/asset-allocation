@@ -467,7 +467,7 @@ def get_active_tickers():
         "zacks_m_ind_desc": "Industry_2", "optionable_flag": "Optionable", "country_name": "Country"
     }
 
-    nasdaqdatalink.ApiConfig.verify_ssl = False
+    # nasdaqdatalink.ApiConfig.verify_ssl = False # SSL Verification Enabled
     api_key = os.environ.get('NASDAQ_API_KEY')
     if api_key:
         nasdaqdatalink.ApiConfig.api_key = api_key
