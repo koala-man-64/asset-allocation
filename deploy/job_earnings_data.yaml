@@ -32,7 +32,7 @@ properties:
       - name: AZURE_CONFIG_CONTAINER_NAME
         value: common-data
       - name: AZURE_CONTAINER_EARNINGS
-        value: earnings
+        value: earnings-data
       - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: YAHOO_USERNAME
