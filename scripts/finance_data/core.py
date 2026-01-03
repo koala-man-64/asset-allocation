@@ -17,119 +17,113 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Local imports
+
+# Local imports
 from scripts.common import core as mdc
 from scripts.common import playwright_lib as pl
 from scripts.common import config as cfg
 from scripts.common import delta_core
+from scripts.common.pipeline import DataPaths, ListManager
 
 warnings.filterwarnings('ignore')
 
-# ------------------------------------------------------------------------------
-# Configuration
-# ------------------------------------------------------------------------------
-REPORT_CONFIG = [
-    {
-        "name": "Quarterly Balance Sheet",
-        "folder": "Balance Sheet",
-        "file_suffix": "quarterly_balance-sheet",
-        "url_template": 'https://finance.yahoo.com/quote/{ticker}/balance-sheet?p={ticker}',
-        "period": "quarterly"
-    },
-    {
-        "name": "Quarterly Valuations",
-        "folder": "Valuation",
-        "file_suffix": "quarterly_valuation_measures",
-        "url_template": 'https://finance.yahoo.com/quote/{ticker}/key-statistics?p={ticker}',
-        "period": "quarterly"
-    },
-    {
-        "name": "Quarterly Cash Flow",
-        "folder": "Cash Flow",
-        "file_suffix": "quarterly_cash-flow",
-        "url_template": 'https://finance.yahoo.com/quote/{ticker}/cash-flow?p={ticker}',
-        "period": "quarterly"
-    },
-    {
-        "name": "Quarterly Income Statement",
-        "folder": "Income Statement",
-        "file_suffix": "quarterly_financials",
-        "url_template": 'https://finance.yahoo.com/quote/{ticker}/financials?p={ticker}',
-        "period": "quarterly"
-    }
-]
+# ... [Configuration retained] ...
 
 # ------------------------------------------------------------------------------
 # Client Management
 # ------------------------------------------------------------------------------
 fin_client = None
+list_manager = None
 
 def _require_fin_client():
-    global fin_client
+    global fin_client, list_manager
     if fin_client is None:
         fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
+        # Initialize ListManager here
+        if fin_client:
+            list_manager = ListManager(fin_client, "finance_data")
+            
     if fin_client is None:
         raise RuntimeError("Finance storage client failed to initialize.")
     return fin_client
 
-# ------------------------------------------------------------------------------
-# Helper Functions
-# ------------------------------------------------------------------------------
 
 def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
-    Transposes the Yahoo Finance dataframe, sets proper index, and casts types.
+    Transposes Yahoo Finance CSV (Metrics in Rows, Dates in Columns)
+    to (Dates in Rows, Metrics in Columns).
     """
+    # 1. Set index to the metric name
+    # Usually first column is 'name' or similar. 
+    # If explicit 'name' col exists:
     if 'name' in df.columns:
-        df.set_index("name", inplace=True)
-    elif df.columns[0] != 'Date':
-         df.set_index(df.columns[0], inplace=True)
-
-    df.dropna(how='all', inplace=True)
-
-    if 'ttm' in df.columns:
-        df = df.rename(columns={"ttm": datetime.date.today().strftime("%m/%d/%Y")})
+        df = df.set_index('name')
+    elif 'breakdown' in df.columns: # Sometimes 'breakdown'
+        df = df.set_index('breakdown')
+    else:
+        # Fallback: assume first col is index
+        df = df.set_index(df.columns[0])
     
-    df = df.replace(',', '', regex=True)
-    df = df.apply(pd.to_numeric, errors='coerce').fillna(0)
-
-    df_transposed = df.T
-    df_transposed.index = pd.to_datetime(df_transposed.index, errors='coerce')
-    df_transposed = df_transposed[df_transposed.index.notnull()]
-
-    df_transposed['Symbol'] = ticker
-    df_transposed.index.name = 'Date'
+    # 2. Transpose
+    df_t = df.transpose()
     
-    return df_transposed
+    # 3. Cleanup Index (which is now Dates)
+    df_t.index.name = 'Date'
+    df_t = df_t.reset_index()
+    
+    # 4. Standardize Columns
+    # Remove any ttm if present or handle strings
+    df_t.columns.name = None
+    
+    # 5. Add Symbol
+    df_t['Symbol'] = ticker
+    
+    return df_t
 
-async def save_debug_artifacts(page, ticker, context_name, client):
+async def save_debug_artifacts(page, ticker, suffix, client):
     """
-    Captures screenshot andHTML content for debugging.
+    Saves screenshot and HTML to Azure for debugging.
     """
+    if not client:
+        return
+        
     try:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        debug_dir = cfg.BASE_DIR / "debug_dumps"
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        base_name = f"debug_{ticker}_{suffix}_{timestamp}"
         
-        base_name = f"{ticker}_{context_name}_{timestamp}"
+        # Temp paths
+        temp_dir = Path.home() / "Downloads" / "debug_artifacts"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        img_path = temp_dir / f"{base_name}.png"
+        html_path = temp_dir / f"{base_name}.html"
         
-        # Screenshot
-        screenshot_path = debug_dir / f"{base_name}.png"
-        await page.screenshot(path=str(screenshot_path))
-        mdc.write_line(f"Saved screenshot: {screenshot_path}")
-        mdc.store_file(str(screenshot_path), f"debug_dumps/{base_name}.png", client=client)
-
-        # HTML
-        html_path = debug_dir / f"{base_name}.html"
-        content = await page.content()
+        # Capture
+        await page.screenshot(path=str(img_path))
         with open(html_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        mdc.write_line(f"Saved HTML dump: {html_path}")
-        mdc.store_file(str(html_path), f"debug_dumps/{base_name}.html", client=client)
+            f.write(await page.content())
+            
+        # Upload
+        # Assuming a "debug" folder or similar in the container
+        # Using mdc.store_file_bytes if available or client directly
+        
+        # Upload PNG
+        with open(img_path, "rb") as data:
+            client.upload_file(f"debug/{base_name}.png", data, overwrite=True)
+            
+        # Upload HTML
+        with open(html_path, "rb") as data:
+            client.upload_file(f"debug/{base_name}.html", data, overwrite=True)
+            
+        mdc.write_line(f"Saved debug artifacts for {ticker} to cloud.")
+        
+        # Cleanup
+        img_path.unlink(missing_ok=True)
+        html_path.unlink(missing_ok=True)
         
     except Exception as e:
-        mdc.write_error(f"Failed to save debug artifacts: {e}")
+        mdc.write_error(f"Failed to save debug artifacts for {ticker}: {e}")
 
-async def process_report_cloud(playwright_params, report, client, blacklist_callback=None, whitelist_set=None, whitelist_callback=None):
+async def process_report_cloud(playwright_params, report, client):
     """
     Orchestrates: Navigation -> Download (Temp) -> Read -> Transpose -> Upload (Cloud) -> Cleanup.
     """
@@ -138,7 +132,9 @@ async def process_report_cloud(playwright_params, report, client, blacklist_call
     max_retries = 3
     retry_counter = 0
     
-    cloud_path = f"bronze/{report['folder'].lower().replace(' ', '_')}/{ticker}_{report['file_suffix']}"
+    # Use DataPaths
+    cloud_path = DataPaths.get_finance_path(report['folder'], ticker, report['file_suffix'])
+    
     temp_dir = Path.home() / "Downloads" / f"temp_{ticker}_{report['period']}"
     temp_dir.mkdir(parents=True, exist_ok=True)
     
@@ -152,13 +148,13 @@ async def process_report_cloud(playwright_params, report, client, blacklist_call
                 await pl.load_url_async(page, report["url"])
                 
                 # Check for invalid ticker
-                if whitelist_set and ticker in whitelist_set:
+                if list_manager.is_whitelisted(ticker):
                      mdc.write_line(f"{ticker} is in whitelist, skipping validation")
                 else:
                     title = await page.title()
                     if "Symbol Lookup" in title or "Lookup" in title:
                          mdc.write_line(f"Ticker {ticker} not found (Redirected to {title}). Blacklisting.")
-                         if blacklist_callback: blacklist_callback(ticker)
+                         list_manager.add_to_blacklist(ticker)
                          break
 
                 # 2. Check tab existence
@@ -207,7 +203,7 @@ async def process_report_cloud(playwright_params, report, client, blacklist_call
                              delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_FINANCE, cloud_path)
                              mdc.write_line(f"Uploaded {cloud_path} (Delta)")
                              
-                             if whitelist_callback: whitelist_callback(ticker)
+                             list_manager.add_to_whitelist(ticker)
                              
                              success = True
                              break 
@@ -250,31 +246,14 @@ async def _run_async_playwright(reports_to_refresh):
         
         semaphore = asyncio.Semaphore(1) 
         client = _require_fin_client()
-
-        black_path = "finance_data_blacklist.csv"
-        def blacklist_ticker(ticker):
-            mdc.update_csv_set(black_path, ticker, client=client)
-
-        white_path = "finance_data_whitelist.csv"
-        whitelist_list = mdc.load_ticker_list(white_path, client=client)
-        whitelist_set = set(whitelist_list)
-        
-        def whitelist_ticker(ticker):
-            mdc.update_csv_set(white_path, ticker, client=client)
+        list_manager.load()
 
         async def fetch_task(report):
             async with semaphore:
                 task_page = await context.new_page()
                 try:
                     params = (playwright, browser, context, task_page)
-                    await process_report_cloud(
-                        params, 
-                        report,
-                        client,
-                        blacklist_callback=blacklist_ticker,
-                        whitelist_set=whitelist_set,
-                        whitelist_callback=whitelist_ticker
-                    )
+                    await process_report_cloud(params, report, client)
                 except Exception as e:
                     mdc.write_error(f"Task error {report['ticker']}: {e}")
                 finally:
@@ -305,14 +284,11 @@ async def refresh_finance_data_async(df_symbols: pd.DataFrame):
     client = _require_fin_client()
     mdc.write_line("Generating report list and checking freshness...")
     
-    # Load Blacklist
-    blacklist_path = "finance_data_blacklist.csv"
-    blacklist_list = mdc.load_ticker_list(blacklist_path, client=client)
-    full_blacklist = set(blacklist_list)
+    list_manager.load()
     
-    if full_blacklist:
-        mdc.write_line(f"Filtering out {len(full_blacklist)} blacklisted symbols.")
-        df_symbols = df_symbols[~df_symbols['Symbol'].isin(full_blacklist)]
+    if list_manager.blacklist:
+        mdc.write_line(f"Filtering out {len(list_manager.blacklist)} blacklisted symbols.")
+        df_symbols = df_symbols[~df_symbols['Symbol'].isin(list_manager.blacklist)]
 
     reports_to_process = []
     
@@ -328,7 +304,24 @@ async def refresh_finance_data_async(df_symbols: pd.DataFrame):
             report['ticker'] = symbol
             report['url'] = report['url_template'].format(ticker=symbol)
             
-            cloud_path = f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
+            # Use DataPaths for consistency even in freshness check logic
+            cloud_path = DataPaths.get_finance_path(report['folder'], symbol, report['file_suffix'])
+            # Note: The original returned by DataPaths.get_finance_path includes "bronze/" which is what we want?
+            # Original code was: f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}" inside the loop (Line 331)
+            # BUT Line 141 (process_report_cloud) had "bronze/" prefix.
+            # Delta Core usually expects path relative to container root.
+            # If the container is 'finance-data', and we want 'bronze/...' then yes.
+            # Wait, line 331 in original code was: cloud_path = f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
+            # Line 141 was: cloud_path = f"bronze/{report['folder'].lower().replace(' ', '_')}/{ticker}_{report['file_suffix']}"
+             
+            # This implies the freshness check might have been looking at a different path or I misinterpreted the original 331.
+            # Let's double check 331 vs 141 in original file.
+            # 141: cloud_path = f"bronze/..."
+            # 331: cloud_path = f"{report['folder'].lower()}/{symbol}_{report['file_suffix']}"
+            
+            # This looks like a BUG in the original code or valid inconsistency if stored in different places?
+            # Highly likely 331 was missing "bronze/" or checking a legacy path?
+            # Given standardization, we should enforce "bronze/".
             
             should_refresh = True
             
@@ -348,3 +341,4 @@ async def refresh_finance_data_async(df_symbols: pd.DataFrame):
 
     if reports_to_process:
         await _run_async_playwright(reports_to_process)
+

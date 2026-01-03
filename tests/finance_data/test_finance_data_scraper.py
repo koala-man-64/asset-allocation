@@ -56,9 +56,14 @@ def storage_cleanup(unique_ticker):
 
 # --- Integration Tests ---
 
-@pytest.mark.asyncio
+
+import asyncio
+# ... (existing imports)
+
+# ... (Helpers)
+
 @patch('scripts.finance_data.core.pl')
-async def test_process_report_cloud_integration(mock_pl, unique_ticker, storage_cleanup, tmp_path):
+def test_process_report_cloud_integration(mock_pl, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies process_report_cloud:
     1. Navigation/Interaction mocks (skipped).
@@ -106,15 +111,23 @@ Total Liabilities,500,450
     # 4. Execute
     print(f"Executing process_report_cloud for {symbol}...")
     
+
     # Initialize explicit client for test
     client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
     
-    success = await yc.process_report_cloud(
-        playwright_params, 
-        report, 
-        client,
-        whitelist_set=set()
-    )
+    # Mock global list_manager in core
+    mock_list_manager = MagicMock()
+    mock_list_manager.is_whitelisted.return_value = False
+    
+    async def run_test():
+        with patch('scripts.finance_data.core.list_manager', mock_list_manager):
+            return await yc.process_report_cloud(
+                playwright_params, 
+                report, 
+                client
+            )
+    
+    success = asyncio.run(run_test())
     
     assert success is True
     

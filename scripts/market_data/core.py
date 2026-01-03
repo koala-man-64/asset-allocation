@@ -16,47 +16,55 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 # Local imports
+
+# Local imports
 from scripts.common import playwright_lib as pl
+
 from scripts.common import config as cfg
 from scripts.common import core as mdc
-from scripts.common import delta_core # NEW: Import Delta Core
+from scripts.common import delta_core
 
-# Initialize Storage Client (Optional override or use common)
-# We will use mdc.storage_client if we need it, or pass data via mdc functions.
+from scripts.common.pipeline import DataPaths, ListManager
+import time
+import random
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
+# Helper Functions
+def is_weekend(date_obj):
+    return date_obj.weekday() >= 5
 
-# Re-expose functions from mdc for backward compatibility (optional but clean)
-# or update internal calls to use mdc.
-# We will update internal calls.
+def go_to_sleep(min_time, max_time):
+    time.sleep(random.randint(min_time, max_time))
+
+def delete_files_with_string(directory, substring, extension):
+    if not os.path.exists(directory):
+        return
+    for filename in os.listdir(directory):
+        if substring in filename and filename.endswith(extension):
+            file_path = os.path.join(directory, filename)
+            try:
+                os.remove(file_path)
+            except OSError as e:
+                mdc.write_error(f"Error deleting {file_path}: {e}")
+
+# Aliases
+store_delta = delta_core.store_delta
+
+# ... [Retained re-exports] ...
 
 write_line = mdc.write_line
 write_error = mdc.write_error
-write_warning = mdc.write_warning
-write_inline = mdc.write_inline
-write_section = mdc.write_section
-go_to_sleep = mdc.go_to_sleep
-store_csv = mdc.store_csv
-load_csv = mdc.load_csv
-store_delta = delta_core.store_delta
-load_delta = delta_core.load_delta
-get_delta_last_commit = delta_core.get_delta_last_commit
-update_csv_set = mdc.update_csv_set
-delete_files_with_string = mdc.delete_files_with_string
-get_symbols = mdc.get_symbols
-load_ticker_list = mdc.load_ticker_list
-is_weekend = mdc.is_weekend
+# ...
 
 # Initialize specific client for Market Data
 market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_MARKET)
-
+list_manager = ListManager(market_client, "market_data")
 
 async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whitelist=None, df_blacklist=None) -> tuple[pd.DataFrame, str]:
     # Load df_ticker
     ticker = ticker.replace('.', '-')
-    # Use unified path construction that load_csv understands
-    ticker_file_path = f"bronze/price_data/{ticker}"
+    # Unified path from DataPaths
+    ticker_file_path = DataPaths.get_market_data_path(ticker)
+    
     df_ticker = load_delta(cfg.AZURE_CONTAINER_MARKET, ticker_file_path)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
@@ -101,39 +109,31 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
             break
         else:
              write_line(f"Data missing/stale for {ticker} (Date: {period2.date()}). Downloading...")
-             return await download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1, df_whitelist, df_blacklist)
+             return await download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1)
     
     return df_ticker.reset_index(drop=True), ticker_file_path
 
-async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1, df_whitelist=None, df_blacklist=None):
-    black_path = 'market_data_blacklist.csv'
-    white_path = 'market_data_whitelist.csv'
-
-    # check if ticker exists in whitelist
-    if df_whitelist is not None and not df_whitelist.empty:
-        if ticker in df_whitelist['Symbol'].values:
-            write_line(f'{ticker} is in whitelist, skipping validation')
-            pass # proceed to download
-        else:
-             # Check if ticker exists in blacklist
-             if df_blacklist is not None and not df_blacklist.empty:
-                 if ticker in df_blacklist['Symbol'].values:
-                     write_line(f'{ticker} is in blacklist, skipping')
-                     return None, None
-     
-             # Check if ticker exists in Yahoo
-             try:
-                 quote_url = f'https://finance.yahoo.com/quote/{ticker}/'
-                 await page.goto(quote_url)
-                 
-                 page_title = await page.title()
-                 if "Symbol Lookup" in page_title or "Lookup" in page_title:
-                      write_line(f"Ticker {ticker} not found on Yahoo (redirected to lookup). Blacklisting.")
-                      update_csv_set(black_path, ticker, client=market_client)
-                      return None, None
-                      
-             except Exception as e:
-                 write_error(f"Error checking ticker {ticker}: {e}")
+async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, page, period1):
+    # Use ListManager
+    if list_manager.is_whitelisted(ticker):
+        write_line(f'{ticker} is in whitelist, skipping validation')
+    elif list_manager.is_blacklisted(ticker):
+        write_line(f'{ticker} is in blacklist, skipping')
+        return None, None
+    else:
+         # Check if ticker exists in Yahoo
+         try:
+             quote_url = f'https://finance.yahoo.com/quote/{ticker}/'
+             await page.goto(quote_url)
+             
+             page_title = await page.title()
+             if "Symbol Lookup" in page_title or "Lookup" in page_title:
+                  write_line(f"Ticker {ticker} not found on Yahoo (redirected to lookup). Blacklisting.")
+                  list_manager.add_to_blacklist(ticker)
+                  return None, None
+                  
+         except Exception as e:
+             write_error(f"Error checking ticker {ticker}: {e}")
 
     try:
         url = f'https://query1.finance.yahoo.com/v7/finance/download/{ticker.replace(".", "-")}?period1={period1}&period2={cfg.YAHOO_MAX_PERIOD}&interval=1d&events=history'
@@ -174,20 +174,20 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 store_delta(df_ticker, cfg.AZURE_CONTAINER_MARKET, ticker_file_path)
                 
                 # Auto-whitelist on success
-                update_csv_set(white_path, ticker, client=market_client)
+                list_manager.add_to_whitelist(ticker)
                 
                 return df_ticker.reset_index(drop=True), ticker_file_path 
         else:
             # File download failed locally
             write_line(f"Download failed for {ticker}. Adding to blacklist.")
-            update_csv_set(black_path, ticker, client=market_client)
+            list_manager.add_to_blacklist(ticker)
             return None, ticker_file_path
         
     except Exception as e:
         e_str = str(e).lower()
         if '404' in e_str or 'list index out of range' in e_str or 'waiting for download from' in e_str:
             write_line(f'Skipping {ticker} because no data was found')
-            update_csv_set(black_path, ticker, client=market_client)
+            list_manager.add_to_blacklist(ticker)
         elif '401' in e_str:
             write_error(f'ERROR: {ticker} - Unauthorized.')
             go_to_sleep(30, 60)
@@ -210,22 +210,14 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
     write_line('Retrieving historical data...')
     df_symbols = df_symbols.dropna(subset=['Symbol'])
     
-    # Paths (standard container)
-    black_path = 'market_data_blacklist.csv'
-    white_path = 'market_data_whitelist.csv'
-    
-    symbols_to_remove = set()
-    symbols_to_remove.update(mdc.load_ticker_list(black_path, client=market_client))
+    # Load lists once
+    list_manager.load()
     
     symbols = [
         row['Symbol'] 
         for _, row in df_symbols.iterrows() 
-        if '.' not in row['Symbol'] and row['Symbol'] not in symbols_to_remove
+        if '.' not in row['Symbol'] and not list_manager.is_blacklisted(row['Symbol'])
     ]
-    
-    # Pre-load whitelist and blacklist for caching
-    df_whitelist = mdc.load_csv(white_path, client=market_client)
-    df_blacklist = mdc.load_csv(black_path, client=market_client) 
     
     df_concat = pd.DataFrame()
 
@@ -234,7 +226,8 @@ async def refresh_stock_data_async(df_symbols, lookback_bars, drop_prior, get_la
         async with semaphore:
             page = await context.new_page()
             try:
-                return await get_historical_data_async(symbol, drop_prior, get_latest, page, df_whitelist=df_whitelist, df_blacklist=df_blacklist)
+                # Removed df_whitelist/df_blacklist args as they are handled by list_manager globally in module
+                return await get_historical_data_async(symbol, drop_prior, get_latest, page)
             except Exception as e:
                 write_error(f"[Error] symbol={symbol}: {e}")
                 return None

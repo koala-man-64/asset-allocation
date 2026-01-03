@@ -189,7 +189,7 @@ jobs:
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_EARNINGS=earnings" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
           az containerapp job start \
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}

@@ -14,12 +14,8 @@ from scripts.finance_data import core as fin_lib
 warnings.filterwarnings('ignore')
 
 def _validate_environment() -> None:
-    config_container = (
-        os.environ.get("AZURE_CONTAINER_COMMON")
-        or os.environ.get("AZURE_CONTAINER_COMMON")
-    )
-    if config_container and not os.environ.get("AZURE_CONTAINER_COMMON"):
-        os.environ["AZURE_CONTAINER_COMMON"] = config_container
+
+    config_container = os.environ.get("AZURE_CONTAINER_COMMON")
 
     required = [
         "AZURE_CONTAINER_FINANCE",
@@ -31,7 +27,8 @@ def _validate_environment() -> None:
     ]
     missing = [name for name in required if not os.environ.get(name)]
     if not config_container:
-        missing.append("AZURE_CONTAINER_COMMON or AZURE_CONTAINER_COMMON")
+        missing.append("AZURE_CONTAINER_COMMON")
+
 
     account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
     conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")

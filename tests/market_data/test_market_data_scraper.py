@@ -52,9 +52,14 @@ def storage_cleanup(unique_ticker):
 
 # --- Integration Tests ---
 
-@pytest.mark.asyncio
+
+import asyncio
+# ... (existing imports)
+
+# ... (Helpers)
+
 @patch('scripts.market_data.core.pl.download_yahoo_price_data_async')
-async def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):
+def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies that download_and_process_yahoo_data correctly:
     1. Reads a (mocked) downloaded CSV.
@@ -83,11 +88,22 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     ticker_file_path = f"bronze/price_data/{symbol}"
     period1 = 1672531200 # Dummy timestamp
     
+
     # 3. Execute
-    print(f"Executng download_and_process for {symbol}...")
-    res_df, res_path = await mdc_core.download_and_process_yahoo_data(
-        symbol, df_ticker, ticker_file_path, mock_page, period1
-    )
+    print(f"Executing download_and_process for {symbol}...")
+    
+    # Mock global list_manager
+    mock_list_manager = MagicMock()
+    mock_list_manager.is_whitelisted.return_value = False
+    mock_list_manager.is_blacklisted.return_value = False
+    
+    async def run_test():
+        with patch('scripts.market_data.core.list_manager', mock_list_manager):
+            return await mdc_core.download_and_process_yahoo_data(
+                symbol, df_ticker, ticker_file_path, mock_page, period1
+            )
+
+    res_df, res_path = asyncio.run(run_test())
     
     # 4. Verify Local Result
     assert res_df is not None

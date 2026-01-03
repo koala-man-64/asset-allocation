@@ -1,8 +1,10 @@
+
 import pytest
 import pandas as pd
 import numpy as np
 import uuid
 import time
+import asyncio
 from unittest.mock import MagicMock, patch
 from scripts.price_target_data import core as pta
 from scripts.common import config as cfg
@@ -36,35 +38,21 @@ def storage_cleanup(unique_ticker):
         client = mdc.get_storage_client(container)
         if client:
             blobs = client.list_files(name_starts_with=prefix)
-            # Sort by length descending to delete deep files/children before parent directories
-            # This handles Azure Hierarchical Namespace (HNS) directory deletion order
             blobs.sort(key=len, reverse=True)
-            
-            if not blobs:
-                 print(f"No blobs found to clean for {prefix}")
             
             for blob in blobs:
                 try:
                     client.delete_file(blob)
                 except Exception as e:
-                    # Log but continue cleanup
                     print(f"Warning: Failed to delete {blob}: {e}")
-            print(f"Attempted to delete {len(blobs)} blobs.")
-
-            # HNS Compatibility: Explicitly delete directories if list_blobs didn't return them
-            # Delta Lake structure: <prefix>/_delta_log/ and <prefix>/
+            
             dirs_to_delete = [f"{prefix}/_delta_log", prefix]
             for d in dirs_to_delete:
                 try:
-                    # Verify existence before delete to avoid warning log in delete_file
                     if client.file_exists(d):
                         client.delete_file(d)
                 except Exception:
-                    # Swallowing directory errors as they might already be gone
                     pass
-        else:
-            print("Warning: Could not get storage client for cleanup.")
-            
     except Exception as e:
         print(f"Error during cleanup of {prefix}: {e}")
 
@@ -118,9 +106,12 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     print(f"Pre-seeding fresh data for {symbol}...")
     delta_core.store_delta(df, cfg.AZURE_CONTAINER_TARGETS, path)
     
-    # Ensure it's written and timestamp is recent (should be, since we just wrote it)
-    # 2. Execute Batch
-    res = pta.process_symbols_batch([symbol])
+    # 2. Execute Batch (Async wrapper)
+    async def run_test():
+        semaphore = asyncio.Semaphore(1)
+        return await pta.process_batch_async([symbol], semaphore)
+
+    res = asyncio.run(run_test())
     
     # 3. Verify
     # Should find it fresh and return it WITHOUT calling API
@@ -133,21 +124,25 @@ def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     # Scenario: Symbol is missing (stale by default), should write new data.
     symbol = storage_cleanup
     
-    # 1. Setup: Ensure no data exists (fixture handles unique name)
-    
-    # 2. Mock API return for this symbol
+    # 1. Mock API return for this symbol
     mock_api_df = pd.DataFrame({
         'ticker': [symbol],
         'obs_date': [pd.Timestamp('2023-01-01')],
         'tp_mean_est': [50.0]
     })
+    # The async code calls run_in_executor which calls the sync get_table
     mock_nasdaq.get_table.return_value = mock_api_df
     
-    # 3. Execute
+    # 2. Execute (Async wrapper)
     print(f"Running batch for stale/missing symbol {symbol}...")
-    res = pta.process_symbols_batch([symbol])
     
-    # 4. Verify
+    async def run_test():
+        semaphore = asyncio.Semaphore(1)
+        return await pta.process_batch_async([symbol], semaphore)
+
+    res = asyncio.run(run_test())
+    
+    # 3. Verify
     assert len(res) == 1
     assert res[0] == symbol
     mock_nasdaq.get_table.assert_called()
@@ -158,3 +153,4 @@ def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     assert loaded_df is not None
     assert not loaded_df.empty
     assert loaded_df.iloc[0]['tp_mean_est'] == 50.0
+

@@ -46,9 +46,14 @@ def storage_cleanup(unique_ticker):
 
 # --- Integration Tests ---
 
-@pytest.mark.asyncio
+
+import asyncio
+# ... (existing imports)
+
+# ... (Helpers)
+
 @patch('scripts.earnings_data.core.pl.get_yahoo_earnings_data')
-async def test_earnings_migration_integration(mock_get_data, unique_ticker, storage_cleanup):
+def test_earnings_migration_integration(mock_get_data, unique_ticker, storage_cleanup):
     """
     Verifies the new earnings scraper loop:
     1. Checks Delta freshness (mocked empty first).
@@ -78,20 +83,23 @@ async def test_earnings_migration_integration(mock_get_data, unique_ticker, stor
     # but we want 'run_earnings_refresh' to run the logic.
     # run_earnings_refresh initializes playwright, so we mock that too.
     
-    with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
-        # Mock browser components
-        mock_page = AsyncMock()
-        mock_context = AsyncMock()
-        mock_context.new_page.return_value = mock_page
-        mock_browser = AsyncMock()
-        mock_playwright = AsyncMock()
-        
-        mock_browser_init.return_value = (mock_playwright, mock_browser, mock_context, mock_page)
-        
-        # Also need to mock cookies load to prevent file error if not exists
-        with patch('scripts.earnings_data.core.pl.pw_load_cookies_async') as mock_cookies, \
-             patch('scripts.common.config.DEBUG_SYMBOLS', []):
-             await earn_core.run_earnings_refresh(df_symbols)
+    async def run_test():
+        with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
+            # Mock browser components
+            mock_page = AsyncMock()
+            mock_context = AsyncMock()
+            mock_context.new_page.return_value = mock_page
+            mock_browser = AsyncMock()
+            mock_playwright = AsyncMock()
+            
+            mock_browser_init.return_value = (mock_playwright, mock_browser, mock_context, mock_page)
+            
+            # Also need to mock cookies load to prevent file error if not exists
+            with patch('scripts.earnings_data.core.pl.pw_load_cookies_async') as mock_cookies, \
+                 patch('scripts.common.config.DEBUG_SYMBOLS', []):
+                 await earn_core.run_earnings_refresh(df_symbols)
+
+    asyncio.run(run_test())
 
     # 4. Verify Cloud Persistence
     cloud_path = f"bronze/earnings/{symbol}"
