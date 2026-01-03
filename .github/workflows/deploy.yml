@@ -73,7 +73,8 @@ jobs:
               --replica-retry-limit 0 \
               --parallelism 1 \
               --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "-m" "scripts.market_data.scraper"
           fi
           
           az containerapp job secret set \
@@ -85,7 +86,8 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --cron-expression "0 14-22 * * *" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.market_data.scraper"
           az containerapp job start \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -109,7 +111,8 @@ jobs:
               --replica-retry-limit 0 \
               --parallelism 1 \
               --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "-m" "scripts.finance_data.scraper"
           fi
 
           az containerapp job secret set \
@@ -120,7 +123,8 @@ jobs:
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.finance_data.scraper"
           az containerapp job start \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -144,7 +148,8 @@ jobs:
               --replica-retry-limit 0 \
               --parallelism 1 \
               --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "-m" "scripts.price_target_data.scraper"
           fi
 
           az containerapp job secret set \
@@ -155,7 +160,8 @@ jobs:
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.price_target_data.scraper"
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -179,7 +185,8 @@ jobs:
               --replica-retry-limit 0 \
               --parallelism 1 \
               --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "-m" "scripts.earnings_data.scraper"
           fi
 
           az containerapp job secret set \
@@ -190,7 +197,8 @@ jobs:
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True"
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.earnings_data.scraper"
           az containerapp job start \
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
