@@ -29,11 +29,16 @@ def get_client():
         _earn_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_EARNINGS)
     return _earn_client
 
-async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
+async def fetch_earnings_for_symbol(symbol: str, context, semaphore, whitelist_set: set, blacklist_callback, whitelist_callback):
     """
     Fetches earnings data for a single symbol.
     """
     async with semaphore:
+        # Check whitelist - if present, we might skip some checks, but for earnings we mostly just fetch.
+        # But we can log it.
+        if symbol in whitelist_set:
+            mdc.write_line(f"{symbol} is in whitelist.")
+            
         # Cloud path: bronze/earnings/{symbol}
         cloud_path = f"bronze/earnings/{symbol}"
         
@@ -83,8 +88,20 @@ async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
                 # Save to Cloud (Delta)
                 delta_core.store_delta(df_new, cfg.AZURE_CONTAINER_EARNINGS, cloud_path)
                 mdc.write_line(f"Saved earnings for {symbol} to {cfg.AZURE_CONTAINER_EARNINGS}/{cloud_path}")
+                
+                # Whitelist on success
+                if whitelist_callback:
+                    whitelist_callback(symbol)
             else:
                 mdc.write_line(f"No earnings data found for {symbol}")
+                
+        except ValueError as ve:
+            if "Symbol not found" in str(ve):
+                mdc.write_line(f"Blacklisting {symbol} (detected invalid/no-data).")
+                if blacklist_callback:
+                    blacklist_callback(symbol)
+            else:
+                mdc.write_line(f"ValueError for {symbol}: {ve}")
         except Exception as e:
             mdc.write_line(f"Error retrieving earnings data for {symbol}: {str(e)}")
         finally:                
@@ -104,14 +121,35 @@ async def run_earnings_refresh(df_symbols: pd.DataFrame):
         if cookies_path.exists():
              await pl.pw_load_cookies_async(context, str(cookies_path))
         
-        await page.reload() # Refresh to apply cookies if needed? Usually load_cookies applies to context.
+        await page.reload() 
         
-        # Filter out symbols containing dots
+        client = get_client()
+
+        # Load Blacklist
+        blacklist_path = "earnings_data_blacklist.csv"
+        blacklist_list = mdc.load_ticker_list(blacklist_path, client=client)
+        full_blacklist = set(blacklist_list)
+        
+        def blacklist_ticker(ticker):
+            mdc.update_csv_set(blacklist_path, ticker, client=client)
+
+        # Load Whitelist
+        whitelist_path = "earnings_data_whitelist.csv"
+        whitelist_list = mdc.load_ticker_list(whitelist_path, client=client)
+        whitelist_set = set(whitelist_list)
+
+        def whitelist_ticker(ticker):
+            mdc.update_csv_set(whitelist_path, ticker, client=client)
+
+        # Filter symbols
         symbols = [
                 row['Symbol'] 
                 for _, row in df_symbols.iterrows() 
-                if '.' not in str(row['Symbol'])
+                if '.' not in str(row['Symbol']) and row['Symbol'] not in full_blacklist
         ]
+        
+        if full_blacklist:
+            mdc.write_line(f"Filtered {len(full_blacklist)} blacklisted symbols.")
         
         # Debug override
         if cfg.DEBUG_SYMBOLS:
@@ -121,7 +159,7 @@ async def run_earnings_refresh(df_symbols: pd.DataFrame):
         semaphore = asyncio.Semaphore(3) # Limit concurrency
         
         mdc.write_line(f"Starting fetch for {len(symbols)} symbols...")
-        tasks = [fetch_earnings_for_symbol(sym, context, semaphore) for sym in symbols]
+        tasks = [fetch_earnings_for_symbol(sym, context, semaphore, whitelist_set, blacklist_ticker, whitelist_ticker) for sym in symbols]
         await asyncio.gather(*tasks, return_exceptions=True)
         
     finally:

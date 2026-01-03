@@ -229,7 +229,8 @@ async def get_yahoo_earnings_data(
     dl_root = DOWNLOADS_PATH
     dl_root.mkdir(parents=True, exist_ok=True)
 
-    blacklist_file = str(COMMON_DIR / 'blacklist_earnings.csv')
+    dl_root.mkdir(parents=True, exist_ok=True)
+
     columns = ['Date', 'Symbol', 'Reported EPS', 'EPS Estimate', 'Surprise']
     df_symbol_earnings = pd.DataFrame()
     for attempt in range(1, max_attempts + 1):
@@ -303,28 +304,17 @@ async def get_yahoo_earnings_data(
                             offset += 100
                     elif '<h1>500</h1>' in html_content or 'We are experiencing some temporary issues.' in html_content:
                         try:
-                            page.reload()
+                            await page.reload()
                             go_to_sleep(5, 10)
                         except Exception as e:
                             raise e
                     elif ("We couldn't find any results." in html_content and len(df_symbol_earnings) == 0):
-                        write_line(f"Blacklisting {symbol}.")
-                        new_row = {"Ticker": symbol}
-                        append_to_csv(blacklist_file, pd.DataFrame([new_row]))
-                        break
+                        write_line(f"No results found for {symbol}. Signaling for blacklist.")
+                        raise ValueError("Symbol not found")
                     elif cal_table is None or "We couldn't find any results." in html_content:
                         break
                 except Exception as ex:
                     write_line(f"ERROR: Failed processing {symbol} for offset {offset}: {ex}")
-                    # try:
-                    #     driver.login_to_yahoo()
-                    #     driver.refresh()
-                    #     go_to_sleep(5, 10)
-                    #     break
-                    # except:
-                    #     driver.quit()
-                    #     driver = cl.get_driver(True)
-                    #     driver.login_to_yahoo()                  
                     raise ex
             return df_symbol_earnings
 

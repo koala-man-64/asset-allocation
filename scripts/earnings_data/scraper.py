@@ -25,21 +25,7 @@ def main():
     mdc.write_line("Fetching symbols...")
     df_symbols = mdc.get_symbols()
     
-    # Filter blacklisted
-    blacklist_file = "earnings_data_blacklist.csv"
-    # Note: Using core.get_client() internally via load_ticker_list if we wanted, 
-    # but here we can just use the config container implicitly or pass a client if we want explicit.
-    # mdc.load_ticker_list uses storage_client=None by default which defaults to common/config container 
-    # if paths are simple. 
-    # However, to match previous logic, let's use the earnings client for blacklist if that's where it lives?
-    # Original scraper used get_client() for blacklist load.
-    
-    client = earn_lib.get_client()
-    blacklist_list = mdc.load_ticker_list(blacklist_file, client=client)
-    
-    if blacklist_list:
-         mdc.write_line(f"Filtering out {len(blacklist_list)} blacklisted symbols.")
-         df_symbols = df_symbols[~df_symbols['Symbol'].isin(blacklist_list)]
+
 
     try:
         asyncio.run(earn_lib.run_earnings_refresh(df_symbols))
