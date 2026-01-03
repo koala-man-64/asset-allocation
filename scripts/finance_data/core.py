@@ -101,9 +101,9 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     
     return df_transposed
 
-async def save_debug_artifacts(page, ticker, context_name):
+async def save_debug_artifacts(page, ticker, context_name, client):
     """
-    Captures screenshot and HTML content for debugging.
+    Captures screenshot andHTML content for debugging.
     """
     try:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -116,7 +116,7 @@ async def save_debug_artifacts(page, ticker, context_name):
         screenshot_path = debug_dir / f"{base_name}.png"
         await page.screenshot(path=str(screenshot_path))
         mdc.write_line(f"Saved screenshot: {screenshot_path}")
-        mdc.store_file(str(screenshot_path), f"debug_dumps/{base_name}.png")
+        mdc.store_file(str(screenshot_path), f"debug_dumps/{base_name}.png", client=client)
 
         # HTML
         html_path = debug_dir / f"{base_name}.html"
@@ -124,12 +124,12 @@ async def save_debug_artifacts(page, ticker, context_name):
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(content)
         mdc.write_line(f"Saved HTML dump: {html_path}")
-        mdc.store_file(str(html_path), f"debug_dumps/{base_name}.html")
+        mdc.store_file(str(html_path), f"debug_dumps/{base_name}.html", client=client)
         
     except Exception as e:
         mdc.write_error(f"Failed to save debug artifacts: {e}")
 
-async def process_report_cloud(playwright_params, report, blacklist_callback=None, whitelist_set=None, whitelist_callback=None):
+async def process_report_cloud(playwright_params, report, client, blacklist_callback=None, whitelist_set=None, whitelist_callback=None):
     """
     Orchestrates: Navigation -> Download (Temp) -> Read -> Transpose -> Upload (Cloud) -> Cleanup.
     """
@@ -167,7 +167,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                 
                 if not exists:
                     mdc.write_line(f"Skipping {report['name']} for {ticker} (Period tab not found)")
-                    await save_debug_artifacts(page, ticker, f"missing_tab_{report['period']}")
+                    await save_debug_artifacts(page, ticker, f"missing_tab_{report['period']}", client=client)
                     break
                 
                 # 3. Click Tab
@@ -218,7 +218,7 @@ async def process_report_cloud(playwright_params, report, blacklist_callback=Non
                         mdc.write_line(f"Download returned no file for {ticker}")
                 else:
                     mdc.write_line(f"No download link for {ticker} - {report['name']}")
-                    await save_debug_artifacts(page, ticker, "missing_download_link")
+                    await save_debug_artifacts(page, ticker, "missing_download_link", client=client)
                     break
                     
             except Exception as e:
@@ -269,7 +269,8 @@ async def _run_async_playwright(reports_to_refresh):
                     params = (playwright, browser, context, task_page)
                     await process_report_cloud(
                         params, 
-                        report, 
+                        report,
+                        client,
                         blacklist_callback=blacklist_ticker,
                         whitelist_set=whitelist_set,
                         whitelist_callback=whitelist_ticker

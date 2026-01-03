@@ -28,8 +28,8 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_CONTAINER_NAME
-        value: earnings
-      - name: AZURE_CONFIG_CONTAINER_NAME
+        value: earnings-data
+      - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: AZURE_CONTAINER_EARNINGS
         value: earnings-data

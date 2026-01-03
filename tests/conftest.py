@@ -20,7 +20,7 @@ def azure_client():
 
     try:
         # Use the configured container name
-        client = BlobStorageClient(container_name=cfg.AZURE_CONTAINER_NAME)
+        client = BlobStorageClient(container_name=cfg.AZURE_CONTAINER_MARKET)
         return client
     except Exception as e:
         pytest.fail(f"Failed to initialize BlobStorageClient: {e}")

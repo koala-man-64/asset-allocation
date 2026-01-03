@@ -21,11 +21,17 @@ from scripts.common import config as cfg
 def main():
     write_line("Starting PCA Analysis Script (Modularized)...")
     
+    # Initialize Client (Market Data Container for historical data)
+    market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_MARKET)
+    if not market_client:
+        write_line("Error: Could not initialize Market Data Storage Client.")
+        return
+
     # 1. Load Data (Strictly Azure)
     input_file = 'get_historical_data_output.parquet'
     
     try:
-        df = load_parquet(input_file)
+        df = load_parquet(input_file, client=market_client)
     except RuntimeError as e:
         write_line(f"CRITICAL ERROR: {e}")
         return
@@ -72,7 +78,7 @@ def main():
 
                 # Save results to Azure
                 output_path = 'pca_results.csv'
-                store_csv(loadings, output_path)
+                store_csv(loadings, output_path, client=market_client)
             else:
                 write_line("Not enough data for PCA after dropping NaNs.")
         else:

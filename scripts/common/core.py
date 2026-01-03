@@ -40,11 +40,7 @@ def _init_storage_client(container_name: str, error_context: str, error_types) -
 # Initialize Storage Client
 # We keep this initialization here to be shared. 
 # If different modules need different containers, this might need refactoring to a factory pattern.
-storage_client = _init_storage_client(
-    cfg.AZURE_CONTAINER_NAME,
-    "Azure Storage Client",
-    (ValueError, AttributeError),
-)
+
 common_storage_client = _init_storage_client(
     cfg.AZURE_CONTAINER_COMMON,
     "Azure Storage Client",
@@ -167,34 +163,30 @@ def store_csv(
     """
     Stores a DataFrame to Azure Blob Storage as CSV.
     file_path: Remote path or local path (converted).
-    client: Optional specific client to use. Defaults to global market-data client.
+    client: Specific client to use.
     """
     remote_path = get_remote_path(file_path)
 
-    target_client = client if client else storage_client
+    if client is None:
+        raise RuntimeError("Azure Storage Client not provided. Cannot store CSV.")
 
-    if target_client is None:
-        raise RuntimeError("Azure Storage Client not initialized. Cannot store CSV.")
-
-    target_client.write_csv(remote_path, obj)
+    client.write_csv(remote_path, obj)
     return remote_path
 
 def load_csv(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[pd.DataFrame]:
     """
     Loads a CSV from Azure Blob Storage.
     file_path: Can be a local path (for compatibility, converted to remote) or relative remote path.
-    client: Optional specific client to use. Defaults to global market-data client.
+    client: Specific client to use.
     """
     remote_path = get_remote_path(file_path)
     
-    target_client = client if client else storage_client
-    
-    if target_client is None:
-         raise RuntimeError("Azure Storage Client not initialized. Cannot load CSV.")
+    if client is None:
+         raise RuntimeError("Azure Storage Client not provided. Cannot load CSV.")
 
     # Let errors propagate (File not found, permission denied, etc)
 
-    return target_client.read_csv(remote_path)
+    return client.read_csv(remote_path)
 
 def load_common_csv(file_path):
     """
@@ -277,35 +269,31 @@ def store_parquet(df: pd.DataFrame, file_path: Union[str, Path], client: Optiona
     """
     Stores a DataFrame as a Parquet file in Azure Blob Storage.
     file_path: Relative path in the container (e.g. 'Yahoo/Price Data/AAPL.parquet')
-    client: Optional specific client to use. Defaults to global market-data client.
+    client: Specific client to use.
     """
     remote_path = get_remote_path(file_path)
     
-    target_client = client if client else storage_client
-
-    if target_client is None:
+    if client is None:
         return # Skip cloud op
 
     # Convert to Parquet bytes
     parquet_bytes = df.to_parquet(index=False)
     
-    target_client.write_blob(remote_path, parquet_bytes)
+    client.write_blob(remote_path, parquet_bytes)
     return remote_path
 
 def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[pd.DataFrame]:
     """
     Loads a Parquet file from Azure Blob Storage.
-    client: Optional specific client to use. Defaults to global market-data client.
+    client: Specific client to use.
     """
     remote_path = get_remote_path(file_path)
     
-    target_client = client if client else storage_client
-
-    if target_client is None:
+    if client is None:
         return None
         
     try:
-        blob_data = target_client.read_blob(remote_path)
+        blob_data = client.read_blob(remote_path)
         if blob_data:
             from io import BytesIO
             return pd.read_parquet(BytesIO(blob_data))
@@ -314,16 +302,16 @@ def load_parquet(file_path: Union[str, Path], client: Optional[BlobStorageClient
         
     return None
 
-def get_file_text(file_path: Union[str, Path]) -> Optional[str]:
+def get_file_text(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[str]:
     """Retrieves file content as text from Azure. Raises error if failed or missing."""
-    if storage_client:
+    if client:
         blob_name = get_remote_path(file_path)
-        content_bytes = storage_client.download_data(blob_name)
+        content_bytes = client.download_data(blob_name)
         if content_bytes:
             return content_bytes.decode('utf-8')
     
     # If we get here, either no client or no data
-    logger.warning(f"Failed to load {file_path} from cloud.")
+    logger.warning(f"Failed to load {file_path} from cloud (client={client is not None}).")
     return None
 
 def get_common_file_text(file_path: Union[str, Path]) -> Optional[str]:
@@ -339,29 +327,29 @@ def get_common_file_text(file_path: Union[str, Path]) -> Optional[str]:
 
 
 
-def store_file(local_path: str, remote_path: str):
+def store_file(local_path: str, remote_path: str, client: Optional[BlobStorageClient] = None):
     """
     Stores a generic file (binary) to Azure Blob Storage.
     """
-    if storage_client:
+    if client:
         # Read file
         with open(local_path, "rb") as data:
-             storage_client.upload_file(data, remote_path)
+             client.upload_file(data, remote_path)
     else:
         write_line(f"No storage client. File remains local: {local_path}")
 
-def save_file_text(content: str, file_path: Union[str, Path]) -> None:
+def save_file_text(content: str, file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> None:
     """Saves text content to Azure."""
-    if storage_client:
+    if client:
         blob_name = get_remote_path(file_path)
-        storage_client.upload_data(blob_name, content.encode('utf-8'), overwrite=True)
+        client.upload_data(blob_name, content.encode('utf-8'), overwrite=True)
     else:
          raise RuntimeError(f"Cannot save {file_path}: Azure Client not initialized.")
 
 import json
-def get_json_content(file_path: Union[str, Path]) -> Optional[dict]:
+def get_json_content(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[dict]:
     """Retrieves JSON content from Azure."""
-    text = get_file_text(file_path)
+    text = get_file_text(file_path, client=client)
     if text:
         try:
             return json.loads(text)
@@ -379,10 +367,10 @@ def get_common_json_content(file_path: Union[str, Path]) -> Optional[dict]:
             write_error(f"Error decoding JSON from common {file_path}: {e}")
     return None
 
-def save_json_content(data: dict, file_path: Union[str, Path]) -> None:
+def save_json_content(data: dict, file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> None:
     """Saves dictionary as JSON to Azure."""
     text = json.dumps(data, indent=2)
-    save_file_text(text, file_path)
+    save_file_text(text, file_path, client=client)
 
 def save_common_json_content(data: dict, file_path: Union[str, Path]) -> None:
     """Saves dictionary as JSON to the COMMON Azure container."""

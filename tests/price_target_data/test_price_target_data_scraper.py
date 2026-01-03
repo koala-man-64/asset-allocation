@@ -22,14 +22,14 @@ def storage_cleanup(unique_ticker):
     Yields the ticker for the test, and cleans up associated blobs after.
     """
     # Setup: Ensure container exists (Safe fallback for non-existent containers during tests)
-    container = cfg.AZURE_CONTAINER_PRICE_TARGETS
+    container = cfg.AZURE_CONTAINER_TARGETS
     mdc.get_storage_client(container) # This initializes Client which auto-checks/creates container
     
     yield unique_ticker
     
     # Teardown
     print(f"\nCleaning up storage for {unique_ticker}...")
-    container = cfg.AZURE_CONTAINER_PRICE_TARGETS
+    container = cfg.AZURE_CONTAINER_TARGETS
     prefix = f"bronze/price_targets/{unique_ticker}"
     
     try:
@@ -93,7 +93,7 @@ def test_transform_symbol_data_integration(storage_cleanup):
     # Verify Data Persistence (Real Read)
     path = f"bronze/price_targets/{symbol}"
     print(f"Verifying read from {path}...")
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, path)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, path)
     
     assert loaded_df is not None
     assert not loaded_df.empty
@@ -116,7 +116,7 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     })
     
     print(f"Pre-seeding fresh data for {symbol}...")
-    delta_core.store_delta(df, cfg.AZURE_CONTAINER_PRICE_TARGETS, path)
+    delta_core.store_delta(df, cfg.AZURE_CONTAINER_TARGETS, path)
     
     # Ensure it's written and timestamp is recent (should be, since we just wrote it)
     # 2. Execute Batch
@@ -154,7 +154,7 @@ def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     
     # Verify data was written to cloud
     path = f"bronze/price_targets/{symbol}"
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_PRICE_TARGETS, path)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, path)
     assert loaded_df is not None
     assert not loaded_df.empty
     assert loaded_df.iloc[0]['tp_mean_est'] == 50.0

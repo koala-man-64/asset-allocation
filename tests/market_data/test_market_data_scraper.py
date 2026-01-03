@@ -21,7 +21,7 @@ def storage_cleanup(unique_ticker):
     Yields the ticker for the test, and cleans up associated blobs after.
     """
     # Setup: Ensure container exists (Safe fallback)
-    container = cfg.AZURE_CONTAINER_NAME
+    container = cfg.AZURE_CONTAINER_MARKET
     mdc.get_storage_client(container) 
     
     yield unique_ticker
@@ -97,7 +97,7 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     
     # 5. Verify Cloud Persistence (Delta)
     print(f"Verifying Delta table at {ticker_file_path}...")
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_NAME, ticker_file_path)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_MARKET, ticker_file_path)
     
     assert loaded_df is not None
     assert len(loaded_df) == 2

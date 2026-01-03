@@ -105,9 +105,14 @@ Total Liabilities,500,450
     
     # 4. Execute
     print(f"Executing process_report_cloud for {symbol}...")
+    
+    # Initialize explicit client for test
+    client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
+    
     success = await yc.process_report_cloud(
         playwright_params, 
         report, 
+        client,
         whitelist_set=set()
     )
     
