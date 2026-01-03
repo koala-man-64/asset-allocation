@@ -19,7 +19,7 @@ class DataPaths:
 
     @staticmethod
     def get_price_target_path(ticker: str) -> str:
-        return f"price_targets/{ticker}"
+        return f"{ticker}"
 
     @staticmethod
     def get_earnings_path(ticker: str) -> str:
