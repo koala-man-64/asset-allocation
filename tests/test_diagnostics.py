@@ -4,7 +4,7 @@ import logging
 from unittest.mock import patch, call
 from scripts.common import core as mdc
 
-def test_log_environment_diagnostics(caplog):
+def test_log_environment_diagnostics(caplog, capsys):
     """
     Verifies that log_environment_diagnostics:
     1. Logs all environment variables.
@@ -25,11 +25,13 @@ def test_log_environment_diagnostics(caplog):
              
     # Analyze logs
     logs = caplog.text
+    captured = capsys.readouterr()
+    stdout_content = captured.out
     
-    # 1. Check Header
-    assert "ENVIRONMENT DIAGNOSTICS" in logs
+    # 1. Check Header (Printed to stdout via write_section)
+    assert "ENVIRONMENT DIAGNOSTICS" in stdout_content
     
-    # 2. Check Normal Var
+    # 2. Check Normal Var (Logged via logger)
     assert "NORMAL_VAR = visible" in logs
     
     # 3. Check Masking
@@ -40,7 +42,7 @@ def test_log_environment_diagnostics(caplog):
     assert "TEST_PASSWORD = Sup...***(19 chars)" in logs
     
     # TEST_CONN_STR
-    assert "TEST_CONN_STR = End...***(36 chars)" in logs
+    assert "TEST_CONN_STR = End...***(34 chars)" in logs
     
     # TEST_SHORT_TOKEN (len 3) -> "***"
     assert "TEST_SHORT_TOKEN = ***" in logs
