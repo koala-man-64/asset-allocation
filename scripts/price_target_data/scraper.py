@@ -17,6 +17,7 @@ warnings.filterwarnings('ignore')
 import asyncio
 
 def main():
+    mdc.log_environment_diagnostics()
     if not cfg.AZURE_CONTAINER_TARGETS:
         raise ValueError("Environment variable 'AZURE_CONTAINER_TARGETS' is strictly required for Price Target Scraper.")
 

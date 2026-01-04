@@ -38,10 +38,24 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Azure Configuration
-# Prioritize Account Name (Identity), allow Connection String as fallback
-AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
-AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
-# Note: AZURE_CONTAINER_NAME legacy line removed as we now define it below strictly.
+# STRICT ENFORCEMENT: All containers and account details must be present.
+AZURE_STORAGE_ACCOUNT_NAME = _require_env('AZURE_STORAGE_ACCOUNT_NAME')
+# Connection string is optional IF account name and managed identity work, 
+# but usually we want at least one. However, the user asked for NO defaults.
+# We will require Account Name as the primary identity.
+AZURE_STORAGE_CONNECTION_STRING = _require_env('AZURE_STORAGE_CONNECTION_STRING') 
+
+# Yahoo Credentials
+YAHOO_USERNAME = _require_env("YAHOO_USERNAME")
+YAHOO_PASSWORD = _require_env("YAHOO_PASSWORD")
+
+# Azure Storage Container Names
+AZURE_CONTAINER_MARKET = _require_env("AZURE_CONTAINER_MARKET")
+AZURE_CONTAINER_FINANCE = _require_env("AZURE_CONTAINER_FINANCE")
+AZURE_CONTAINER_EARNINGS = _require_env("AZURE_CONTAINER_EARNINGS")
+AZURE_CONTAINER_TARGETS = _require_env("AZURE_CONTAINER_TARGETS")
+AZURE_CONTAINER_COMMON = _require_env("AZURE_CONTAINER_COMMON")
+
 
 # UI Colors
 COLOR_INDEX = Fore.YELLOW
@@ -62,24 +76,21 @@ ENABLE_LOGGING = True
 YAHOO_MAX_PERIOD = 99999999999
 DATA_FRESHNESS_SECONDS = 4 * 60 * 60
 
-
 # Debug Configuration
-# Set to a list of symbols (e.g., ['AAPL', 'MSFT']) to restrict the scraper to only these.
-# Set to [] or None to run on the full universe.
 DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Playwright Configuration
-HEADLESS_MODE = os.environ.get("HEADLESS_MODE", "True").lower() == "true"
+# STRICT ENFORCEMENT: HEADLESS_MODE must be explicit (True/False)
+_headless_str = _require_env("HEADLESS_MODE").lower()
+if _headless_str not in ['true', 'false']:
+    raise ValueError("HEADLESS_MODE must be 'true' or 'false'")
+HEADLESS_MODE = _headless_str == "true"
+
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Playwright Paths
-# Required at runtime when executing Playwright; optional at import to allow tests/tools to load.
 DOWNLOADS_PATH = _optional_env_path("DOWNLOADS_PATH")
 USER_DATA_DIR = _optional_env_path("PLAYWRIGHT_USER_DATA_DIR")
-
-# Yahoo Credentials
-YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")
-YAHOO_PASSWORD = os.environ.get("YAHOO_PASSWORD")
 
 # Internal Data Config
 TICKERS_TO_ADD = [
@@ -126,14 +137,3 @@ TICKERS_TO_ADD = [
     'Industry': 'Market Cap'
     },
 ]
-
-# Azure Storage Container Names
-# Standardized names: AZURE_CONTAINER_[MARKET|FINANCE|EARNINGS|TARGETS|COMMON]
-# STRICT MODE REVISION: Allow None at import time so jobs can run with partial config.
-# Specific scripts will fail at runtime if their required container is missing.
-AZURE_CONTAINER_MARKET = os.environ.get("AZURE_CONTAINER_MARKET")
-AZURE_CONTAINER_FINANCE = os.environ.get("AZURE_CONTAINER_FINANCE")
-AZURE_CONTAINER_EARNINGS = os.environ.get("AZURE_CONTAINER_EARNINGS")
-AZURE_CONTAINER_TARGETS = os.environ.get("AZURE_CONTAINER_TARGETS")
-AZURE_CONTAINER_COMMON = os.environ.get("AZURE_CONTAINER_COMMON")
-

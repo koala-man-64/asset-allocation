@@ -22,6 +22,7 @@ def main():
         raise ValueError("Environment variable 'AZURE_CONTAINER_EARNINGS' is strictly required for Earnings Data Scraper.")
 
     # Load symbols
+    mdc.log_environment_diagnostics()
     mdc.write_line("Fetching symbols...")
     df_symbols = mdc.get_symbols()
     

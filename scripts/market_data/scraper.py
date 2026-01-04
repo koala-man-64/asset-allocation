@@ -21,6 +21,7 @@ def _validate_environment():
 warnings.filterwarnings('ignore')
 
 async def main_async():
+    mdc.log_environment_diagnostics()
     _validate_environment()
     # 1. Setup Browser
     mdc.write_line("Initializing Playwright...")

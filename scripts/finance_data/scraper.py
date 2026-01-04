@@ -46,6 +46,7 @@ def _validate_environment() -> None:
         raise ValueError("Environment variable 'AZURE_CONTAINER_FINANCE' is strictly required for Finance Data Scraper.")
 
 async def main_async():
+    mdc.log_environment_diagnostics()
     _validate_environment()
     mdc.write_line(f"Processing Business Data Scraper {mdc.get_current_timestamp_str()}...")
 

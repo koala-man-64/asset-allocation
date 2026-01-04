@@ -68,6 +68,34 @@ def get_storage_client(container_name: str) -> Optional[BlobStorageClient]:
         (Exception,),
     )
 
+def log_environment_diagnostics():
+    """
+    Logs environment variables for debugging purposes.
+    SECURITY: Masks values for keys containing 'KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'CONN'.
+    """
+    write_section("ENVIRONMENT DIAGNOSTICS", "Dumping Environment Variables...")
+    
+    sensitive_patterns = ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'CONN', 'AUTH']
+    
+    sorted_keys = sorted(os.environ.keys())
+    for key in sorted_keys:
+        value = os.environ[key]
+        
+        # Masking Logic
+        is_sensitive = any(pattern in key.upper() for pattern in sensitive_patterns)
+        
+        if is_sensitive and value:
+            # Show first 3 chars if long enough, else full mask
+            if len(value) > 4:
+                masked_value = f"{value[:3]}...***({len(value)} chars)"
+            else:
+                masked_value = "***"
+            logger.info(f"{key} = {masked_value}")
+        else:
+            logger.info(f"{key} = {value}")
+            
+    sys.stdout.flush()
+
 # ------------------------------------------------------------------------------
 # Logging Utilities
 # ------------------------------------------------------------------------------
