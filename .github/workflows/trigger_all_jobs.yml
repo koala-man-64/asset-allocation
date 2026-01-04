@@ -1,0 +1,46 @@
+name: Manual Job Trigger
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: AssetAllocationRG
+  MARKET_DATA_JOB: market-data-job
+  FINANCE_DATA_JOB: finance-data-job
+  PRICE_TARGET_JOB: price-target-job
+  EARNINGS_DATA_JOB: earnings-data-job
+
+jobs:
+  trigger-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Trigger Market Data Job
+        run: |
+          echo "Starting ${{ env.MARKET_DATA_JOB }}..."
+          az containerapp job start --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Trigger Finance Data Job
+        run: |
+          echo "Starting ${{ env.FINANCE_DATA_JOB }}..."
+          az containerapp job start --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Trigger Price Target Job
+        run: |
+          echo "Starting ${{ env.PRICE_TARGET_JOB }}..."
+          az containerapp job start --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Trigger Earnings Data Job
+        run: |
+          echo "Starting ${{ env.EARNINGS_DATA_JOB }}..."
+          az containerapp job start --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
