@@ -1,0 +1,36 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.1, pytest-8.3.4, pluggy-1.6.0
+rootdir: c:\Users\rdpro\Projects\AssetAllocation
+configfile: pytest.ini
+
+----------------------------- live log collection -----------------------------
+INFO     scripts.common.core:core.py:49 Test environment detected (PYTEST_CURRENT_TEST or TEST_MODE). Skipping global common_storage_client initialization to prevent network calls.
+collected 1 item
+
+tests/earnings_data/test_earnings_data_scraper.py::test_earnings_migration_integration 
+-------------------------------- live log call --------------------------------
+INFO     scripts.common.core:core.py:106 ListManager loaded: 0 whitelisted, 0 blacklisted.
+INFO     scripts.common.core:core.py:106 Starting fetch for 1 symbols...
+WARNING  scripts.common.delta_core:delta_core.py:268 Failed to get Delta history for earnings/TEST_EARN_F0DCE004: Generic delta kernel error: No files in log segment
+INFO     scripts.common.delta_core:delta_core.py:221 Successfully wrote Delta table to earnings/TEST_EARN_F0DCE004
+INFO     scripts.common.core:core.py:106 Saved earnings for TEST_EARN_F0DCE004 to earnings-data/earnings/TEST_EARN_F0DCE004
+INFO     scripts.common.core:core.py:106 Added TEST_EARN_F0DCE004 to earnings_data_whitelist.csv
+Verifying write to earnings/TEST_EARN_F0DCE004...
+Test passed (Write to storage verified via mock).
+PASSED
+[Mock] Cleaned up storage for TEST_EARN_F0DCE004
+
+
+============================== warnings summary ===============================
+..\..\AppData\Roaming\Python\Python313\site-packages\_pytest\config\__init__.py:1441
+  C:\Users\rdpro\AppData\Roaming\Python\Python313\site-packages\_pytest\config\__init__.py:1441: PytestConfigWarning: Unknown config option: asyncio_default_fixture_loop_scope
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+..\..\AppData\Roaming\Python\Python313\site-packages\_pytest\config\__init__.py:1441
+  C:\Users\rdpro\AppData\Roaming\Python\Python313\site-packages\_pytest\config\__init__.py:1441: PytestConfigWarning: Unknown config option: asyncio_mode
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 1 passed, 2 warnings in 0.81s ========================

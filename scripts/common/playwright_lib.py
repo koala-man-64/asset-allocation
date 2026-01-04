@@ -66,8 +66,13 @@ def _require_path(value: Optional[Path], env_name: str) -> Path:
         raise RuntimeError(f"{env_name} must be set for Playwright execution.")
     return value
 
-DOWNLOADS_PATH = _require_path(cfg.DOWNLOADS_PATH, "DOWNLOADS_PATH")
-USER_DATA_DIR  = _require_path(cfg.USER_DATA_DIR, "PLAYWRIGHT_USER_DATA_DIR")
+
+def _get_downloads_path() -> Path:
+    return _require_path(cfg.DOWNLOADS_PATH, "DOWNLOADS_PATH")
+
+def _get_user_data_dir() -> Path:
+    return _require_path(cfg.USER_DATA_DIR, "PLAYWRIGHT_USER_DATA_DIR")
+
 COMMON_DIR = Path(__file__).parent.resolve()
 
 def write_line(msg: str):
@@ -117,7 +122,7 @@ async def download_yahoo_price_data_async(
     RuntimeError
         If the download never starts within all attempts.
     """
-    dl_root = DOWNLOADS_PATH
+    dl_root = _get_downloads_path()
     dl_root.mkdir(parents=True, exist_ok=True)
     write_line(f"Downloading to: {dl_root}")
 
@@ -226,7 +231,7 @@ async def get_yahoo_earnings_data(
     RuntimeError
         If the download never starts within all attempts.
     """
-    dl_root = DOWNLOADS_PATH
+    dl_root = _get_downloads_path()
     dl_root.mkdir(parents=True, exist_ok=True)
 
     dl_root.mkdir(parents=True, exist_ok=True)
@@ -369,7 +374,7 @@ def pw_download_after_click_by_selectors(
       RuntimeError if no selector yields a download within all attempts.
     """
     # Resolve downloads_dir (string) into a Path
-    download_path = Path(downloads_dir) if downloads_dir else DOWNLOADS_PATH
+    download_path = Path(downloads_dir) if downloads_dir else _get_downloads_path()
     download_path.mkdir(parents=True, exist_ok=True)
     write_line(f"Downloading to: {download_path}")
 
@@ -444,7 +449,7 @@ async def pw_download_after_click_by_selectors_async(
       RuntimeError if no selector yields a download within all attempts.
     """
     # Resolve downloads_dir into a Path
-    download_path = Path(downloads_dir).expanduser() if downloads_dir else DOWNLOADS_PATH
+    download_path = Path(downloads_dir).expanduser() if downloads_dir else _get_downloads_path()
     download_path.mkdir(parents=True, exist_ok=True)
     write_line(f"Downloading to: {download_path}")
 
@@ -535,11 +540,11 @@ async def _get_playwright_browser_async(
     # 3. Persistent context
     write_line("Launching persistent context...")
     context = await playwright.chromium.launch_persistent_context(
-        user_data_dir=str(USER_DATA_DIR),
+        user_data_dir=str(_get_user_data_dir()),
         headless=headless,
         slow_mo=slow_mo or 0,
         accept_downloads=True,
-        downloads_path=str(DOWNLOADS_PATH),
+        downloads_path=str(_get_downloads_path()),
         user_agent=cfg.USER_AGENT,
         viewport={"width": 1920, "height": 1080},
         args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]

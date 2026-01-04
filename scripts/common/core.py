@@ -37,6 +37,9 @@ def _init_storage_client(container_name: str, error_context: str, error_types) -
         print(f"Warning: Failed to initialize {error_context}: {e}")
         return None
 
+# Create a logger for this module
+logger = logging.getLogger(__name__)
+
 # Initialize Storage Client
 # We keep this initialization here to be shared. 
 # If different modules need different containers, this might need refactoring to a factory pattern.
@@ -58,9 +61,6 @@ def get_storage_client(container_name: str) -> Optional[BlobStorageClient]:
         f"client for {container_name}",
         (Exception,),
     )
-
-# Create a logger for this module
-logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------------------
 # Logging Utilities

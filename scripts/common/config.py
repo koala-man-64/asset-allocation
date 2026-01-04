@@ -1,6 +1,7 @@
 
 import os
 from pathlib import Path
+from typing import Optional
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
 
@@ -21,6 +22,12 @@ def _require_env(name: str) -> str:
 
 def _require_env_path(name: str) -> Path:
     return Path(_require_env(name))
+
+def _optional_env_path(name: str) -> Optional[Path]:
+    value = os.environ.get(name)
+    if not value:
+        return None
+    return Path(value)
 
 # Base Directory (Project Root)
 # scripts/common/config.py -> scripts/common -> scripts -> ProjectRoot
@@ -66,9 +73,9 @@ HEADLESS_MODE = os.environ.get("HEADLESS_MODE", "True").lower() == "true"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Playwright Paths
-# STRICT MODE: These must be set in the environment (.env or system)
-DOWNLOADS_PATH = _require_env_path("DOWNLOADS_PATH")
-USER_DATA_DIR = _require_env_path("PLAYWRIGHT_USER_DATA_DIR")
+# Required at runtime when executing Playwright; optional at import to allow tests/tools to load.
+DOWNLOADS_PATH = _optional_env_path("DOWNLOADS_PATH")
+USER_DATA_DIR = _optional_env_path("PLAYWRIGHT_USER_DATA_DIR")
 
 # Yahoo Credentials
 YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")

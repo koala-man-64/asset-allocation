@@ -3,6 +3,7 @@ import pytest
 import pandas as pd
 import uuid
 import os
+import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from scripts.earnings_data import core as earn_core
 from scripts.common import config as cfg
@@ -10,6 +11,10 @@ from scripts.common import core as mdc
 from scripts.common import delta_core
 
 # --- Helpers ---
+
+@pytest.fixture
+def unique_ticker():
+    return f"TEST_EARN_{uuid.uuid4().hex[:8].upper()}"
 
 @pytest.fixture
 def storage_cleanup(unique_ticker):
@@ -21,35 +26,31 @@ def storage_cleanup(unique_ticker):
 
 # --- Integration Tests ---
 
-
-import asyncio
-
-
 @patch('scripts.earnings_data.core.pl.get_yahoo_earnings_data')
 @patch('scripts.common.core.get_storage_client')
-def test_earnings_migration_integration(mock_get_storage, mock_get_data, unique_ticker, storage_cleanup):
+@patch('scripts.common.delta_core.write_deltalake')
+@patch('scripts.common.delta_core._ensure_container_exists')
+def test_earnings_migration_integration(mock_ensure_container, mock_write_delta, mock_get_storage, mock_get_data, unique_ticker, storage_cleanup):
     """
     Verifies the new earnings scraper loop with MOCKED storage:
     1. Checks freshness (mocked).
     2. Calls Playwright helper (mocked).
-    3. Saves to Delta (mocked).
+    3. Saves to Delta (mocked via write_deltalake).
     """
-    # Setup Mock Client
+    # Setup Mock Client (still needed for whitelist/blacklist checks)
     mock_client = MagicMock()
     # Mock file_exists to return False so it thinks it needs to fetch
     mock_client.file_exists.return_value = False
     mock_client.read_parquet.return_value = None
     mock_client.list_files.return_value = []
     
+    # Setup mock for csv operations (whitelist/blacklist)
+    mock_client.read_csv.return_value = pd.DataFrame(columns=['Symbol'])
+
     mock_get_storage.return_value = mock_client
-    """
-    Verifies the new earnings scraper loop:
-    1. Checks Delta freshness (mocked empty first).
-    2. Calls Playwright helper (mocked).
-    3. Saves to Delta.
-    """
-    symbol = unique_ticker
     
+    symbol = unique_ticker
+
     # 1. Mock Data
     mock_df = pd.DataFrame({
         'Symbol': [symbol],
@@ -58,19 +59,13 @@ def test_earnings_migration_integration(mock_get_storage, mock_get_data, unique_
         'Reported EPS': [1.6],
         'Surprise(%)': [0.1]
     })
-    
+
     mock_get_data.return_value = mock_df
-    
+
     # 2. Setup Inputs
     df_symbols = pd.DataFrame({'Symbol': [symbol]})
-    # Must match the cloud path logic in scraper: "earnings/{symbol}"
-    cloud_path = f"earnings/{symbol}"
     
     # 3. Execute
-    # We mock 'pl.get_playwright_browser' to avoid real browser launch, 
-    # but we want 'run_earnings_refresh' to run the logic.
-    # run_earnings_refresh initializes playwright, so we mock that too.
-    
     async def run_test():
         with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
             # Mock browser components
@@ -91,27 +86,18 @@ def test_earnings_migration_integration(mock_get_storage, mock_get_data, unique_
 
     # 4. Verify Cloud Persistence (Mock calls)
     cloud_path = f"earnings/{symbol}"
-    print(f"Verifying read from {cloud_path}...")
+    print(f"Verifying write to {cloud_path}...")
     
     # Assert get_storage_client was called
     mock_get_storage.assert_called()
     
-    # Assert data was written
-    # delta_core.store_delta calls client.write_parquet
-    # We can check if client.write_parquet was called
+    # Assert delta write happened via write_deltalake
+    assert mock_write_delta.called, "write_deltalake should have been called"
     
-    # Finding the call args for write_parquet
-    write_calls = [call for call in mock_client.write_parquet.call_args_list if cloud_path in str(call)]
-    
-    if not write_calls:
-         # Fallback check: maybe it used upload_file? 
-         # delta_core uses write_parquet for main data
-         print(f"DEBUG: Mock Client Calls: {mock_client.method_calls}")
-    
-    # Since we use delta_core, it does a bit more under the hood (checking logs etc).
-    # Ideally we mock delta_core.store_delta directly to be simpler, but mocking the client is deeper.
-    
-    # Let's verify that SOME write happened
-    assert mock_client.write_parquet.called or mock_client.upload_data.called or mock_client.upload_file.called
+    # Verify arguments to ensure correct path/symbol
+    args, kwargs = mock_write_delta.call_args
+    # args[0] is uri
+    uri_arg = args[0]
+    assert symbol in uri_arg, f"Expected {symbol} in write_deltalake URI: {uri_arg}"
     
     print("Test passed (Write to storage verified via mock).")
