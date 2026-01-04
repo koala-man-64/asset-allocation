@@ -23,10 +23,15 @@ from scripts.common import config as cfg
 # market_data.config usually just has constants. Safe.
 
 def _has_storage_config() -> bool:
-    return bool(
+    val = bool(
         os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
         or os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
     )
+    if not val:
+        logger.warning("Storage Config Missing: Neither AZURE_STORAGE_ACCOUNT_NAME nor AZURE_STORAGE_CONNECTION_STRING is set in environment.")
+        # Flush to ensure this warning persists before any potential crash
+        sys.stdout.flush()
+    return val
 
 def _init_storage_client(container_name: str, error_context: str, error_types) -> Optional[BlobStorageClient]:
     if not _has_storage_config():
@@ -34,7 +39,8 @@ def _init_storage_client(container_name: str, error_context: str, error_types) -
     try:
         return BlobStorageClient(container_name=container_name)
     except error_types as e:
-        print(f"Warning: Failed to initialize {error_context}: {e}")
+        logger.warning(f"Failed to initialize {error_context}: {e}")
+        sys.stdout.flush()
         return None
 
 # Create a logger for this module
