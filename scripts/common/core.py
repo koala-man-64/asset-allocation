@@ -41,11 +41,15 @@ def _init_storage_client(container_name: str, error_context: str, error_types) -
 # We keep this initialization here to be shared. 
 # If different modules need different containers, this might need refactoring to a factory pattern.
 
-common_storage_client = _init_storage_client(
-    cfg.AZURE_CONTAINER_COMMON,
-    "Azure Storage Client",
-    (ValueError, AttributeError),
-)
+if "PYTEST_CURRENT_TEST" in os.environ or "TEST_MODE" in os.environ:
+    common_storage_client = None
+    logger.info("Test environment detected (PYTEST_CURRENT_TEST or TEST_MODE). Skipping global common_storage_client initialization to prevent network calls.")
+else:
+    common_storage_client = _init_storage_client(
+        cfg.AZURE_CONTAINER_COMMON,
+        "Azure Storage Client",
+        (ValueError, AttributeError),
+    )
 
 def get_storage_client(container_name: str) -> Optional[BlobStorageClient]:
     """Factory method to get a storage client for a specific container."""

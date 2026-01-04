@@ -118,14 +118,11 @@ async def run_earnings_refresh(df_symbols: pd.DataFrame):
     # Initialize playwright objects
     playwright, browser, context, page = await pl.get_playwright_browser(headless=False, use_async=True)
     
+    today = pd.to_datetime(datetime.now().date())
+    
     try:
-        # Paths (Configured)
-        cookies_path = cfg.USER_DATA_DIR / "pw_cookies_yahoo.json" 
-        
-        if cookies_path.exists():
-             await pl.pw_load_cookies_async(context, str(cookies_path))
-        
-        await page.reload() 
+        # Centralized Authentication (loads from Azure, auto-refreshes if needed)
+        await pl.authenticate_yahoo_async(page, context)
         
         client = get_client()
 
