@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from scripts.common import core as mdc
-from scripts.common import config as cfg
+from scripts.earnings_data import config as cfg
 from scripts.earnings_data import core as earn_lib
 
 warnings.filterwarnings('ignore')

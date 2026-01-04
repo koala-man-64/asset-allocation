@@ -8,7 +8,7 @@ import warnings
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from scripts.common import core as mdc
-from scripts.common import config as cfg
+from scripts.finance_data import config as cfg
 from scripts.finance_data import core as fin_lib
 
 warnings.filterwarnings('ignore')

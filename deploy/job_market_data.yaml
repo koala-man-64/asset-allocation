@@ -21,6 +21,7 @@ properties:
     - name: assetallocationacrazurecrio-assetallocationacr
     - name: yahoo-username
     - name: yahoo-password
+    - name: azure-storage-connection-string
     - name: DOWNLOADS_PATH
       value: "/tmp/downloads"
     - name: PLAYWRIGHT_USER_DATA_DIR
@@ -32,11 +33,14 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
 
-      - name: AZURE_CONTAINER_COMMON
-        value: common-data
-
+      - name: AZURE_STORAGE_ACCOUNT_NAME
+        value: assetallocstorage001
+      - name: AZURE_STORAGE_CONNECTION_STRING
+        secretRef: azure-storage-connection-string
       - name: AZURE_CONTAINER_MARKET
         value: market-data
+      - name: AZURE_CONTAINER_COMMON
+        value: common-data
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD

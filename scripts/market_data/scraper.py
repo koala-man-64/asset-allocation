@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from scripts.common import playwright_lib as pl
 from scripts.common import core as mdc
 from scripts.market_data import core as malib
-from scripts.common import config as cfg
+from scripts.market_data import config as cfg
 
 def _validate_environment():
     if not cfg.AZURE_CONTAINER_MARKET:

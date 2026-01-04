@@ -17,7 +17,7 @@ import nasdaqdatalink
 # Local imports
 from scripts.common.blob_storage import BlobStorageClient
 from azure.storage.blob import BlobLeaseClient
-from scripts.common import config as cfg 
+from scripts.common import config_shared as cfg 
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.

@@ -22,6 +22,7 @@ properties:
     - name: nasdaq-api-key
     - name: yahoo-username
     - name: yahoo-password
+    - name: azure-storage-connection-string
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
     containers:
@@ -29,11 +30,14 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
 
-      - name: AZURE_CONTAINER_COMMON
-        value: common-data
-
+      - name: AZURE_STORAGE_ACCOUNT_NAME
+        value: assetallocstorage001
+      - name: AZURE_STORAGE_CONNECTION_STRING
+        secretRef: azure-storage-connection-string
       - name: AZURE_CONTAINER_FINANCE
         value: finance-data
+      - name: AZURE_CONTAINER_COMMON
+        value: common-data
       - name: NASDAQ_API_KEY
         secretRef: nasdaq-api-key
       - name: YAHOO_USERNAME
