@@ -80,3 +80,49 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Playwright Paths
 DOWNLOADS_PATH = _optional_env_path("DOWNLOADS_PATH")
 USER_DATA_DIR = _optional_env_path("PLAYWRIGHT_USER_DATA_DIR")
+
+# Shared Data Configuration
+TICKERS_TO_ADD = [
+    {
+    'Symbol': 'SPY',
+    'Description': 'S&P 500 Index ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Index'
+    },
+    {
+    'Symbol': 'DIA',
+    'Description': 'Dow Jones Index ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Index'
+    },
+    {
+    'Symbol': 'QQQ',
+    'Description': 'Nasdaq Index ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Index'
+    },
+    {
+    'Symbol': '^VIX',
+    'Description': 'Volatility Index ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Index'
+    },
+    {
+    'Symbol': 'UST',
+    'Description': 'US Treasury ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Index'
+    },
+    {
+    'Symbol': 'IWC',
+    'Description': 'Micro Cap ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Market Cap'
+    },
+    {
+    'Symbol': 'VB',
+    'Description': 'Small Cap ETF',
+    'Sector': 'Market Analysis',
+    'Industry': 'Market Cap'
+    },
+]
