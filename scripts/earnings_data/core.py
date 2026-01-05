@@ -45,7 +45,6 @@ async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
         if list_manager.is_whitelisted(symbol):
             mdc.write_line(f"{symbol} is in whitelist.")
             
-        # Cloud path: earnings/{symbol}
         cloud_path = DataPaths.get_earnings_path(symbol)
         
         # Check Freshness via Delta Metadata

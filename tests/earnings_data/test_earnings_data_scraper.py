@@ -85,7 +85,7 @@ def test_earnings_migration_integration(mock_ensure_container, mock_write_delta,
     asyncio.run(run_test())
 
     # 4. Verify Cloud Persistence (Mock calls)
-    cloud_path = f"earnings/{symbol}"
+    cloud_path = f"{symbol}"
     print(f"Verifying write to {cloud_path}...")
     
     # Assert get_storage_client was called

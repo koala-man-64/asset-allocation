@@ -23,7 +23,7 @@ class DataPaths:
 
     @staticmethod
     def get_earnings_path(ticker: str) -> str:
-        return f"earnings/{ticker}"
+        return f"{ticker}"
 
     @staticmethod
     def get_finance_path(folder: str, ticker: str, file_suffix: str) -> str:
