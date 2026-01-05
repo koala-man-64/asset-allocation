@@ -23,7 +23,6 @@ def _validate_environment() -> None:
         "PLAYWRIGHT_USER_DATA_DIR",
         "YAHOO_USERNAME",
         "YAHOO_PASSWORD",
-        "NASDAQ_API_KEY", # Keeping for consistency with original file validation list
     ]
     missing = [name for name in required if not os.environ.get(name)]
     if not config_container:
