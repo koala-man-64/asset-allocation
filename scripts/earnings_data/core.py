@@ -116,7 +116,7 @@ async def run_earnings_refresh(df_symbols: pd.DataFrame):
     Main orchestration function for earnings refresh.
     """
     # Initialize playwright objects
-    playwright, browser, context, page = await pl.get_playwright_browser(headless=False, use_async=True)
+    playwright, browser, context, page = await pl.get_playwright_browser(headless=None, use_async=True)
     
     today = pd.to_datetime(datetime.now().date())
     
