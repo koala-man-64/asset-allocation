@@ -6,7 +6,7 @@ import os
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from scripts.earnings_data import core as earn_core
-from scripts.common import config as cfg
+from scripts.earnings_data import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
 
@@ -79,7 +79,7 @@ def test_earnings_migration_integration(mock_ensure_container, mock_write_delta,
             
             # Mock the new centralized authentication
             with patch('scripts.earnings_data.core.pl.authenticate_yahoo_async') as mock_auth, \
-                 patch('scripts.common.config.DEBUG_SYMBOLS', []):
+                 patch('scripts.earnings_data.config.DEBUG_SYMBOLS', []):
                  await earn_core.run_earnings_refresh(df_symbols)
 
     asyncio.run(run_test())
