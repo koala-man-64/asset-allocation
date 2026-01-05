@@ -16,10 +16,37 @@ warnings.filterwarnings('ignore')
 
 import asyncio
 
-def main():
-    mdc.log_environment_diagnostics()
+def _validate_environment() -> None:
+    required = [
+        "AZURE_CONTAINER_TARGETS",
+        "DOWNLOADS_PATH", 
+        "PLAYWRIGHT_USER_DATA_DIR",
+        "YAHOO_USERNAME",
+        "YAHOO_PASSWORD",
+        "NASDAQ_API_KEY"
+    ]
+    missing = [name for name in required if not os.environ.get(name)]
+
+    if not os.environ.get("AZURE_CONTAINER_COMMON"):
+         missing.append("AZURE_CONTAINER_COMMON")
+
+    account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    if not (account_name or conn_str):
+        missing.append("AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING")
+
+    if missing:
+        raise RuntimeError(
+            "Missing required environment configuration: "
+            + ", ".join(missing)
+        )
+
     if not cfg.AZURE_CONTAINER_TARGETS:
         raise ValueError("Environment variable 'AZURE_CONTAINER_TARGETS' is strictly required for Price Target Scraper.")
+
+def main():
+    mdc.log_environment_diagnostics()
+    _validate_environment()
 
     if len(sys.argv) > 1 and sys.argv[1] == '--interactive':
         pt_lib.run_interactive_mode()
