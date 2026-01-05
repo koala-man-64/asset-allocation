@@ -2,7 +2,7 @@
 from scripts.common.config_shared import *
 
 # Local Specific Requirements
-AZURE_CONTAINER_TARGETS = _require_env("AZURE_CONTAINER_TARGETS")
+AZURE_CONTAINER_TARGETS = require_env("AZURE_CONTAINER_TARGETS")
 
 # Nasdaq API Key is only needed here
 NASDAQ_API_KEY = os.environ.get("NASDAQ_API_KEY") # Optional or Required? User script usually treats it as possibly optional if logic handles it, but let's check scraper usage if we can.

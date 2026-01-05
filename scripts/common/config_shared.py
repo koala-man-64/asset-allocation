@@ -13,14 +13,14 @@ load_dotenv(override=True)
 
 # --- Constants & Configuration ---
 
-def _require_env(name: str) -> str:
+def require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
         raise ValueError(f"Environment variable '{name}' is strictly required but not set.")
     return value
 
 def _require_env_path(name: str) -> Path:
-    return Path(_require_env(name))
+    return Path(require_env(name))
 
 def _optional_env_path(name: str) -> Optional[Path]:
     value = os.environ.get(name)
@@ -38,13 +38,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Azure Configuration
 # STRICT ENFORCEMENT: Storage account and common container are required for everyone.
-AZURE_STORAGE_ACCOUNT_NAME = _require_env('AZURE_STORAGE_ACCOUNT_NAME')
-AZURE_STORAGE_CONNECTION_STRING = _require_env('AZURE_STORAGE_CONNECTION_STRING') 
-AZURE_CONTAINER_COMMON = _require_env("AZURE_CONTAINER_COMMON")
+AZURE_STORAGE_ACCOUNT_NAME = require_env('AZURE_STORAGE_ACCOUNT_NAME')
+AZURE_STORAGE_CONNECTION_STRING = require_env('AZURE_STORAGE_CONNECTION_STRING') 
+AZURE_CONTAINER_COMMON = require_env("AZURE_CONTAINER_COMMON")
 
 # Yahoo Credentials
-YAHOO_USERNAME = _require_env("YAHOO_USERNAME")
-YAHOO_PASSWORD = _require_env("YAHOO_PASSWORD")
+YAHOO_USERNAME = require_env("YAHOO_USERNAME")
+YAHOO_PASSWORD = require_env("YAHOO_PASSWORD")
 
 # UI Colors
 COLOR_INDEX = Fore.YELLOW
@@ -70,7 +70,7 @@ DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Playwright Configuration
 # STRICT ENFORCEMENT: HEADLESS_MODE must be explicit (True/False)
-_headless_str = _require_env("HEADLESS_MODE").lower()
+_headless_str = require_env("HEADLESS_MODE").lower()
 if _headless_str not in ['true', 'false']:
     raise ValueError("HEADLESS_MODE must be 'true' or 'false'")
 HEADLESS_MODE = _headless_str == "true"

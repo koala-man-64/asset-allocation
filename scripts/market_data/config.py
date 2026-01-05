@@ -2,7 +2,7 @@
 from scripts.common.config_shared import *
 
 # Local Specific Requirements
-AZURE_CONTAINER_MARKET = _require_env("AZURE_CONTAINER_MARKET")
+AZURE_CONTAINER_MARKET = require_env("AZURE_CONTAINER_MARKET")
 
 TICKERS_TO_ADD = [
     {
