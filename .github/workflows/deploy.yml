@@ -34,7 +34,56 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      - name: Detect Market Changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            market_data:
+              - "scripts/market_data/**"
+              - "!scripts/market_data/feature_generator.py"
+              - "deploy/job_market_data.yaml"
+            market_feature:
+              - "scripts/market_data/feature_generator.py"
+              - "deploy/job_market_data_features.yaml"
+
+      - name: Detect Finance Changes
+        uses: dorny/paths-filter@v3
+        id: finance_changes
+        with:
+          filters: |
+            finance_data:
+              - "scripts/finance_data/**"
+              - "!scripts/finance_data/feature_generator.py"
+            finance_feature:
+              - "scripts/finance_data/feature_generator.py"
+
+      - name: Detect Earnings Changes
+        uses: dorny/paths-filter@v3
+        id: earnings_changes
+        with:
+          filters: |
+            earnings_data:
+              - "scripts/earnings_data/**"
+              - "!scripts/earnings_data/feature_generator.py"
+            earnings_feature:
+              - "scripts/earnings_data/feature_generator.py"
+
+      - name: Detect Price Target Changes
+        uses: dorny/paths-filter@v3
+        id: price_target_changes
+        with:
+          filters: |
+            price_target_data:
+              - "scripts/price_target_data/**"
+              - "!scripts/price_target_data/feature_generator.py"
+            price_target_feature:
+              - "scripts/price_target_data/feature_generator.py"
+              
+            
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -63,6 +112,7 @@ jobs:
           done
 
       - name: Update and Start Market Data Job
+        if: steps.changes.outputs.market_data == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.MARKET_DATA_JOB }} not found. Creating..."
@@ -101,6 +151,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Update and Start Market Feature Job
+        if: steps.changes.outputs.market_data == 'true' || steps.changes.outputs.market_feature == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.MARKET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.MARKET_FEATURE_JOB }} not found. Creating..."
@@ -138,6 +189,7 @@ jobs:
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       - name: Update and Start Finance Data Job
+        if: steps.finance_changes.outputs.finance_data == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.FINANCE_DATA_JOB }} not found. Creating..."
@@ -175,6 +227,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Update and Start Finance Feature Job
+        if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_changes.outputs.finance_feature == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.FINANCE_FEATURE_JOB }} not found. Creating..."
@@ -212,6 +265,7 @@ jobs:
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       - name: Update and Start Price Target Job
+        if: steps.price_target_changes.outputs.price_target_data == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_JOB }} not found. Creating..."
@@ -249,6 +303,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Update and Start Price Target Feature Job
+        if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_changes.outputs.price_target_feature == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_FEATURE_JOB }} not found. Creating..."
@@ -286,6 +341,7 @@ jobs:
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       - name: Update and Start Earnings Data Job
+        if: steps.earnings_changes.outputs.earnings_data == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_DATA_JOB }} not found. Creating..."
@@ -323,6 +379,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Update and Start Earnings Feature Job
+        if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_changes.outputs.earnings_feature == 'true'
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_FEATURE_JOB }} not found. Creating..."
