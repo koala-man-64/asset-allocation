@@ -110,7 +110,7 @@ def test_parse_human_number_integration():
     # compute_features uses _resolve_column -> _coerce_numeric -> _parse_human_number
     # Verify it handles "10M" etc via the dataframe path
     df = pd.DataFrame({
-        "Date": ["2020-01-01"], 
+        "Date": ["01/01/2020"], 
         "Symbol": ["AAPL"], 
         "Total Revenue": ["10M"],
         "Total Assets": [100]
