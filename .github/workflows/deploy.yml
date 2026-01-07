@@ -18,6 +18,14 @@ env:
   FINANCE_DATA_JOB: finance-data-job
   PRICE_TARGET_JOB: price-target-job
   EARNINGS_DATA_JOB: earnings-data-job
+  MARKET_FEATURE_JOB: feature-engineering-market-job
+  FINANCE_FEATURE_JOB: feature-engineering-finance-job
+  PRICE_TARGET_FEATURE_JOB: feature-engineering-targets-job
+  EARNINGS_FEATURE_JOB: feature-engineering-earnings-job
+  MARKET_FEATURE_CRON: "30 14-22 * * *"
+  FINANCE_FEATURE_CRON: "30 22 * * *"
+  PRICE_TARGET_FEATURE_CRON: "30 12 * * *"
+  EARNINGS_FEATURE_CRON: "30 23 * * *"
 
 jobs:
   build-and-deploy:
@@ -92,6 +100,45 @@ jobs:
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Update and Start Market Feature Job
+        run: |
+          if ! az containerapp job show --name ${{ env.MARKET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.MARKET_FEATURE_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.MARKET_FEATURE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "${{ env.MARKET_FEATURE_CRON }}" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 2.0 --memory 4.0Gi \
+              --command "python" "-m" "scripts.market_data.feature_generator"
+          fi
+
+          az containerapp job secret set \
+            --name ${{ env.MARKET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.MARKET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --trigger-type Schedule \
+            --cron-expression "${{ env.MARKET_FEATURE_CRON }}" \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.market_data.feature_generator"
+          az containerapp job start \
+            --name ${{ env.MARKET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
       - name: Update and Start Finance Data Job
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -127,6 +174,45 @@ jobs:
             --command "python" "scripts/finance_data/scraper.py"
           az containerapp job start \
             --name ${{ env.FINANCE_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Update and Start Finance Feature Job
+        run: |
+          if ! az containerapp job show --name ${{ env.FINANCE_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.FINANCE_FEATURE_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.FINANCE_FEATURE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "${{ env.FINANCE_FEATURE_CRON }}" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 2.0 --memory 4.0Gi \
+              --command "python" "-m" "scripts.finance_data.feature_generator"
+          fi
+
+          az containerapp job secret set \
+            --name ${{ env.FINANCE_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.FINANCE_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --trigger-type Schedule \
+            --cron-expression "${{ env.FINANCE_FEATURE_CRON }}" \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.finance_data.feature_generator"
+          az containerapp job start \
+            --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Update and Start Price Target Job
@@ -166,6 +252,45 @@ jobs:
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Update and Start Price Target Feature Job
+        run: |
+          if ! az containerapp job show --name ${{ env.PRICE_TARGET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.PRICE_TARGET_FEATURE_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "${{ env.PRICE_TARGET_FEATURE_CRON }}" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 2.0 --memory 4.0Gi \
+              --command "python" "-m" "scripts.price_target_data.feature_generator"
+          fi
+
+          az containerapp job secret set \
+            --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --trigger-type Schedule \
+            --cron-expression "${{ env.PRICE_TARGET_FEATURE_CRON }}" \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.price_target_data.feature_generator"
+          az containerapp job start \
+            --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
       - name: Update and Start Earnings Data Job
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -201,4 +326,43 @@ jobs:
             --command "python" "scripts/earnings_data/scraper.py"
           az containerapp job start \
             --name ${{ env.EARNINGS_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Update and Start Earnings Feature Job
+        run: |
+          if ! az containerapp job show --name ${{ env.EARNINGS_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.EARNINGS_FEATURE_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.EARNINGS_FEATURE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "${{ env.EARNINGS_FEATURE_CRON }}" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 2.0 --memory 4.0Gi \
+              --command "python" "-m" "scripts.earnings_data.feature_generator"
+          fi
+
+          az containerapp job secret set \
+            --name ${{ env.EARNINGS_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.EARNINGS_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --trigger-type Schedule \
+            --cron-expression "${{ env.EARNINGS_FEATURE_CRON }}" \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.earnings_data.feature_generator"
+          az containerapp job start \
+            --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
