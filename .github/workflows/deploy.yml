@@ -120,7 +120,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "-m" "scripts.market_data.feature_generator"
+              --command "python" "scripts/market_data/feature_generator.py"
           fi
 
           az containerapp job secret set \
@@ -134,7 +134,7 @@ jobs:
             --cron-expression "${{ env.MARKET_FEATURE_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "-m" "scripts.market_data.feature_generator"
+            --command "python" "scripts/market_data/feature_generator.py"
           az containerapp job start \
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -196,7 +196,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "-m" "scripts.finance_data.feature_generator"
+              --command "python" "scripts/finance_data/feature_generator.py"
           fi
 
           az containerapp job secret set \
@@ -210,7 +210,7 @@ jobs:
             --cron-expression "${{ env.FINANCE_FEATURE_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "-m" "scripts.finance_data.feature_generator"
+            --command "python" "scripts/finance_data/feature_generator.py"
           az containerapp job start \
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -272,7 +272,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "-m" "scripts.price_target_data.feature_generator"
+              --command "python" "scripts/price_target_data/feature_generator.py"
           fi
 
           az containerapp job secret set \
@@ -286,7 +286,7 @@ jobs:
             --cron-expression "${{ env.PRICE_TARGET_FEATURE_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "-m" "scripts.price_target_data.feature_generator"
+            --command "python" "scripts/price_target_data/feature_generator.py"
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -348,7 +348,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "-m" "scripts.earnings_data.feature_generator"
+              --command "python" "scripts/earnings_data/feature_generator.py"
           fi
 
           az containerapp job secret set \
@@ -362,7 +362,7 @@ jobs:
             --cron-expression "${{ env.EARNINGS_FEATURE_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "-m" "scripts.earnings_data.feature_generator"
+            --command "python" "scripts/earnings_data/feature_generator.py"
           az containerapp job start \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
