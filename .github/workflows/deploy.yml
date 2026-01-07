@@ -248,7 +248,7 @@ jobs:
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Update Price Target Feature Job
+      - name: Update and Start Price Target Feature Job
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_FEATURE_JOB }} not found. Creating..."
@@ -278,11 +278,13 @@ jobs:
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --trigger-type Schedule \
             --cron-expression "${{ env.PRICE_TARGET_FEATURE_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
             --command "python" "scripts/price_target_data/feature_generator.py"
+          az containerapp job start \
+            --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
       - name: Update and Start Earnings Data Job
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -320,7 +322,7 @@ jobs:
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Update Earnings Feature Job
+      - name: Update and Start Earnings Feature Job
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_FEATURE_JOB }} not found. Creating..."
@@ -350,16 +352,13 @@ jobs:
           az containerapp job update \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --trigger-type Schedule \
             --cron-expression "${{ env.EARNINGS_FEATURE_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
             --command "python" "scripts/earnings_data/feature_generator.py"
-      - name: Start Feature Jobs Post-Deploy
-        run: |
-          az containerapp job start \
-            --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
           az containerapp job start \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
+      - name: Start Feature Jobs Post-Deploy
+        run: |
+          echo "All feature jobs are started in their respective update steps."
