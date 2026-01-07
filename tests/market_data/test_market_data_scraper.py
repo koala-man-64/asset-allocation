@@ -51,19 +51,16 @@ def storage_cleanup(unique_ticker):
 
 # --- Integration Tests ---
 
-
-import asyncio
-
-
+@pytest.mark.asyncio
 @patch('scripts.common.playwright_lib.download_yahoo_price_data_async')
-def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):
+async def test_download_and_process_integration(mock_download, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies that download_and_process_yahoo_data correctly:
     1. Reads a (mocked) downloaded CSV.
     2. Cleans/Transforms it.
-    3. Writes it to Azure as Delta.
+    3. Writes it to Azure as Delta (Redirected to local in conftest).
     """
-    symbol = storage_cleanup
+    symbol = unique_ticker
     
     # 1. Prepare Dummy Host CSV
     csv_content = """Date,Open,High,Low,Close,Adj Close,Volume
@@ -84,7 +81,6 @@ def test_download_and_process_integration(mock_download, unique_ticker, storage_
     df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
     ticker_file_path = f"{symbol}"
     period1 = 1672531200 # Dummy timestamp
-    
 
     # 3. Execute
     print(f"Executing download_and_process for {symbol}...")
@@ -94,13 +90,10 @@ def test_download_and_process_integration(mock_download, unique_ticker, storage_
     mock_list_manager.is_whitelisted.return_value = False
     mock_list_manager.is_blacklisted.return_value = False
     
-    async def run_test():
-        with patch('scripts.market_data.core.list_manager', mock_list_manager):
-            return await mdc_core.download_and_process_yahoo_data(
-                symbol, df_ticker, ticker_file_path, mock_page, period1
-            )
-
-    res_df, res_path = asyncio.run(run_test())
+    with patch('scripts.market_data.core.list_manager', mock_list_manager):
+        res_df, res_path = await mdc_core.download_and_process_yahoo_data(
+            symbol, df_ticker, ticker_file_path, mock_page, period1
+        )
     
     # 4. Verify Local Result
     assert res_df is not None
@@ -108,7 +101,7 @@ def test_download_and_process_integration(mock_download, unique_ticker, storage_
     assert res_df.iloc[0]['Symbol'] == symbol
     assert res_path == ticker_file_path
     
-    # 5. Verify Cloud Persistence (Delta)
+    # 5. Verify Persistence (Delta) - Should be redirected to local via conftest
     print(f"Verifying Delta table at {ticker_file_path}...")
     loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_MARKET, ticker_file_path)
     
@@ -116,3 +109,4 @@ def test_download_and_process_integration(mock_download, unique_ticker, storage_
     assert len(loaded_df) == 2
     assert 'Close' in loaded_df.columns
     assert loaded_df.iloc[1]['Close'] == 105.0
+

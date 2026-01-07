@@ -1,21 +1,26 @@
 import pytest
 import os
 import sys
+from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 # Add project root to sys.path if not picked up by pythonpath
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
-# Mock Environment Variables for Testing (Must be set BEFORE importing config)
-if "YAHOO_USERNAME" not in os.environ:
-    os.environ["YAHOO_USERNAME"] = "test_user"
-if "YAHOO_PASSWORD" not in os.environ:
-    os.environ["YAHOO_PASSWORD"] = "test_password"
-if "AZURE_STORAGE_ACCOUNT_NAME" not in os.environ:
-    os.environ["AZURE_STORAGE_ACCOUNT_NAME"] = "test_account"
-if "AZURE_STORAGE_CONNECTION_STRING" not in os.environ:
-    os.environ["AZURE_STORAGE_CONNECTION_STRING"] = "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net"
-if "HEADLESS_MODE" not in os.environ:
-    os.environ["HEADLESS_MODE"] = "True"
+# Load environment variables from .env file (if not already done)
+from dotenv import load_dotenv
+load_dotenv(os.path.join(project_root, '.env'), override=True)
+
+# Mock Environment Variables for Testing (Set fallbacks if missing)
+# Note: NASDAQ_API_KEY should be in .env for actual data fetching.
+os.environ.setdefault("YAHOO_USERNAME", "test_user")
+os.environ.setdefault("YAHOO_PASSWORD", "test_password")
+os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "test_account")
+os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net")
+os.environ.setdefault("HEADLESS_MODE", "True")
+os.environ.setdefault("TEST_MODE", "True")
 
 # Container Mocks
 containers = [
@@ -24,38 +29,36 @@ containers = [
     "AZURE_CONTAINER_COMMON"
 ]
 for container in containers:
-    if container not in os.environ:
-        os.environ[container] = "test-container"
+    os.environ.setdefault(container, "test-container")
 
 from scripts.common import config as cfg
 from scripts.common.blob_storage import BlobStorageClient
 
+@pytest.fixture(scope="session", autouse=True)
+def redirect_storage(tmp_path_factory):
+    """
+    Global autouse fixture to redirect storage calls to a local temp directory.
+    This prevents tests from attempting to connect to Azure.
+    """
+    temp_storage_root = tmp_path_factory.mktemp("local_test_storage")
+    
+    # Patch delta_core to use local file URIs
+    def mock_get_uri(container, path, account_name=None):
+        full_path = temp_storage_root / container / path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(full_path)
+
+    with patch("scripts.common.delta_core.get_delta_table_uri", side_effect=mock_get_uri), \
+         patch("scripts.common.delta_core.get_delta_storage_options", return_value={}), \
+         patch("scripts.common.delta_core._ensure_container_exists", return_value=None):
+        yield temp_storage_root
+
 @pytest.fixture(scope="session")
 def azure_client():
     """
-    Session-scoped fixture to provide an authenticated BlobStorageClient.
-    Skips tests if connection string is missing.
+    Provides a Mocked BlobStorageClient for tests if actual Azure config is missing.
+    In actual integration tests, this would use a real client.
     """
-    connection_string = cfg.AZURE_STORAGE_CONNECTION_STRING
-    if not connection_string:
-        pytest.skip("AZURE_STORAGE_CONNECTION_STRING not set in environment.")
+    mock_client = MagicMock(spec=BlobStorageClient)
+    return mock_client
 
-    try:
-        # Use the configured container name
-        client = BlobStorageClient(container_name=cfg.AZURE_CONTAINER_MARKET)
-        return client
-    except Exception as e:
-        pytest.fail(f"Failed to initialize BlobStorageClient: {e}")
-
-@pytest.fixture(scope="function")
-def temp_test_file(azure_client):
-    """
-    Fixture to provide a temporary file name and ensure cleanup after test.
-    """
-    file_name = "pytest_temp_artifact.csv"
-    yield file_name
-    # Cleanup
-    try:
-        azure_client.delete_file(file_name)
-    except:
-        pass

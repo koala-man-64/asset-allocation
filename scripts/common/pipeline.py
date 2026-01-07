@@ -18,6 +18,22 @@ class DataPaths:
         return f"{ticker.replace('.', '-')}"
 
     @staticmethod
+    def get_gold_features_path(ticker: str) -> str:
+        return f"gold/{ticker}"
+
+    @staticmethod
+    def get_gold_earnings_path(ticker: str) -> str:
+        return f"gold/{ticker}"
+
+    @staticmethod
+    def get_gold_finance_path(ticker: str) -> str:
+        return f"gold/{ticker}"
+
+    @staticmethod
+    def get_gold_price_targets_path(ticker: str) -> str:
+        return f"gold/{ticker}"
+
+    @staticmethod
     def get_price_target_path(ticker: str) -> str:
         return f"{ticker}"
 

@@ -26,11 +26,12 @@ def storage_cleanup(unique_ticker):
 
 # --- Integration Tests ---
 
+@pytest.mark.asyncio
 @patch('scripts.earnings_data.core.pl.get_yahoo_earnings_data')
 @patch('scripts.common.core.get_storage_client')
 @patch('scripts.common.delta_core.write_deltalake')
 @patch('scripts.common.delta_core._ensure_container_exists')
-def test_earnings_migration_integration(mock_ensure_container, mock_write_delta, mock_get_storage, mock_get_data, unique_ticker, storage_cleanup):
+async def test_earnings_migration_integration(mock_ensure_container, mock_write_delta, mock_get_storage, mock_get_data, unique_ticker, storage_cleanup):
     """
     Verifies the new earnings scraper loop with MOCKED storage:
     1. Checks freshness (mocked).
@@ -66,23 +67,20 @@ def test_earnings_migration_integration(mock_ensure_container, mock_write_delta,
     df_symbols = pd.DataFrame({'Symbol': [symbol]})
     
     # 3. Execute
-    async def run_test():
-        with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
-            # Mock browser components
-            mock_page = AsyncMock()
-            mock_context = AsyncMock()
-            mock_context.new_page.return_value = mock_page
-            mock_browser = AsyncMock()
-            mock_playwright = AsyncMock()
-            
-            mock_browser_init.return_value = (mock_playwright, mock_browser, mock_context, mock_page)
-            
-            # Mock the new centralized authentication
-            with patch('scripts.earnings_data.core.pl.authenticate_yahoo_async') as mock_auth, \
-                 patch('scripts.earnings_data.config.DEBUG_SYMBOLS', []):
-                 await earn_core.run_earnings_refresh(df_symbols)
-
-    asyncio.run(run_test())
+    with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
+        # Mock browser components
+        mock_page = AsyncMock()
+        mock_context = AsyncMock()
+        mock_context.new_page.return_value = mock_page
+        mock_browser = AsyncMock()
+        mock_playwright = AsyncMock()
+        
+        mock_browser_init.return_value = (mock_playwright, mock_browser, mock_context, mock_page)
+        
+        # Mock the new centralized authentication
+        with patch('scripts.earnings_data.core.pl.authenticate_yahoo_async') as mock_auth, \
+             patch('scripts.earnings_data.config.DEBUG_SYMBOLS', []):
+             await earn_core.run_earnings_refresh(df_symbols)
 
     # 4. Verify Cloud Persistence (Mock calls)
     cloud_path = f"{symbol}"
@@ -101,3 +99,4 @@ def test_earnings_migration_integration(mock_ensure_container, mock_write_delta,
     assert symbol in uri_arg, f"Expected {symbol} in write_deltalake URI: {uri_arg}"
     
     print("Test passed (Write to storage verified via mock).")
+
