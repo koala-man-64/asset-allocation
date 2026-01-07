@@ -27,7 +27,7 @@ _NUMBER_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)\s*([kKmMbBtT])?\s*$")
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
-    value = pd.to_datetime(series, errors="coerce")
+    value = pd.to_datetime(series, errors="coerce", format="%m/%d/%Y")
     if hasattr(value.dt, "tz_convert") and value.dt.tz is not None:
         value = value.dt.tz_convert(None)
     return value
