@@ -39,11 +39,13 @@ DELTA_SOURCES: List[DeltaSource] = [
         "name": "finance",
         "container": cfg.AZURE_CONTAINER_FINANCE,
         "path_env": "RANKING_FINANCE_DELTA_PATH",
+        "per_symbol": True,
     },
     {
         "name": "price_targets",
         "container": cfg.AZURE_CONTAINER_TARGETS,
         "path_env": "RANKING_PRICE_DELTA_PATH",
+        "per_symbol": True,
     },
 ]
 SOURCE_CONTAINER_MAP = {source["name"]: source["container"] for source in DELTA_SOURCES}
@@ -187,11 +189,33 @@ def _load_delta_source(source: DeltaSource, whitelist: Optional[Set[str]]) -> Op
         raise ValueError(f"Missing required container for {source['name']} source.")
 
     path = _get_delta_path(source)
-    write_line(f"Loading delta source '{source['name']}' from {container}/{path}")
-    df = load_delta(container, path)
-    if df is None or df.empty:
-        write_line(f"Delta source '{source['name']}' is unavailable or empty ({container}/{path}).")
-        return None
+    if source.get("per_symbol"):
+        if not whitelist:
+            write_line(f"No whitelist provided for '{source['name']}' source. Skipping.")
+            return None
+
+        frames = []
+        for ticker in sorted(whitelist):
+            ticker_path = f"{path.rstrip('/')}/{ticker}"
+            write_line(f"Loading delta source '{source['name']}' from {container}/{ticker_path}")
+            df = load_delta(container, ticker_path)
+            if df is None or df.empty:
+                continue
+            frames.append(_normalize_symbol_column(df))
+
+        if not frames:
+            write_line(
+                f"Delta source '{source['name']}' is unavailable or empty ({container}/{path}/<symbol>)."
+            )
+            return None
+
+        df = pd.concat(frames, ignore_index=True)
+    else:
+        write_line(f"Loading delta source '{source['name']}' from {container}/{path}")
+        df = load_delta(container, path)
+        if df is None or df.empty:
+            write_line(f"Delta source '{source['name']}' is unavailable or empty ({container}/{path}).")
+            return None
 
     collapsed = _collapse_latest_by_symbol(df)
     if collapsed is None or collapsed.empty:
