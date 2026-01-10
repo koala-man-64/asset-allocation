@@ -163,8 +163,8 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
                 else:
                     if 'ticker' in existing_df.columns and 'symbol' not in existing_df.columns:
                         existing_df = existing_df.rename(columns={'ticker': 'symbol'})
-                elif 'obs_date' in existing_df.columns:
-                     existing_df['obs_date'] = pd.to_datetime(existing_df['obs_date'])
+                    if 'obs_date' in existing_df.columns:
+                        existing_df['obs_date'] = pd.to_datetime(existing_df['obs_date'])
                 
                 existing_data_map[symbol] = existing_df
 

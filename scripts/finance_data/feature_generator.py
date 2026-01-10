@@ -334,6 +334,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     current_liabilities = (
         _coerce_numeric(out[current_liabilities_col]) if current_liabilities_col else pd.Series(np.nan, index=out.index)
     )
+    shares_outstanding = (
         _coerce_numeric(out[shares_outstanding_col]) if shares_outstanding_col else pd.Series(np.nan, index=out.index)
     )
     cash_and_equivalents_col = _resolve_column(
@@ -371,10 +372,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["fcf_yoy"] = _safe_div(free_cash_flow, free_cash_flow.groupby(symbol_key, sort=False).shift(4)) - 1.0
     
     # Slopes (6q window)
-    out["rev_growth_slope_6q"] = revenue.groupby(symbol_key, sort=False).apply(
+    out["rev_growth_slope_6q"] = revenue.groupby(symbol_key, sort=False, group_keys=False).apply(
         lambda x: _rolling_slope(x, 6)
     )
-    out["fcf_slope_6q"] = free_cash_flow.groupby(symbol_key, sort=False).apply(
+    out["fcf_slope_6q"] = free_cash_flow.groupby(symbol_key, sort=False, group_keys=False).apply(
         lambda x: _rolling_slope(x, 6)
     )
 

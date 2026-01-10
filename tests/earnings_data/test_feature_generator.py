@@ -26,7 +26,12 @@ def test_compute_features_adds_expected_columns():
 
     expected = {"surprise_pct", "surprise_mean_4q", "surprise_std_8q", "beat_rate_8q"}
     assert expected.issubset(set(out.columns))
-    assert len(out) == 12
+    # daily resampling should expand the 12 quarterly rows into a contiguous date range
+    expected_days = (out["date"].max() - out["date"].min()).days + 1
+    assert len(out) == expected_days
+    # ensure earnings flags align with the original quarterly dates
+    earnings_days = out.loc[out["is_earnings_day"] == 1.0]
+    assert earnings_days["days_since_earnings"].eq(0).all()
 
 
 def test_compute_features_rolls_over_quarters():
@@ -70,4 +75,3 @@ def test_compute_features_handles_divide_by_zero():
 def test_compute_features_requires_expected_columns():
     with pytest.raises(ValueError, match="Missing required columns"):
         compute_features(pd.DataFrame({"Date": ["2020-01-01"], "Symbol": ["AAPL"]}))
-
