@@ -22,6 +22,11 @@ class AbstractStrategy(ABC):
         """Unique name of the strategy."""
         ...
 
+    @property
+    def sources_used(self) -> List[str]:
+        """Delta source names required by this strategy (market data is implicit)."""
+        return []
+
     @abstractmethod
     def rank(self, data: pd.DataFrame, ranking_date: date) -> List[RankingResult]:
         """
@@ -52,6 +57,10 @@ class MomentumStrategy(AbstractStrategy):
     @property
     def name(self) -> str:
         return "Momentum_60D"
+
+    @property
+    def sources_used(self) -> List[str]:
+        return []
 
     def rank(self, data: pd.DataFrame, ranking_date: date) -> List[RankingResult]:
         write_line(f"Executing {self.name} strategy...")
@@ -88,6 +97,10 @@ class ValueStrategy(AbstractStrategy):
     @property
     def name(self) -> str:
         return "Value_PE"
+
+    @property
+    def sources_used(self) -> List[str]:
+        return ["finance"]
 
     def rank(self, data: pd.DataFrame, ranking_date: date) -> List[RankingResult]:
         write_line(f"Executing {self.name} strategy...")
@@ -134,6 +147,10 @@ class BrokenGrowthImprovingInternalsStrategy(AbstractStrategy):
     @property
     def name(self) -> str:
         return "BrokenGrowthWithImprovingInternals"
+
+    @property
+    def sources_used(self) -> List[str]:
+        return ["finance", "price_targets"]
 
     def rank(self, data: pd.DataFrame, ranking_date: date) -> List[RankingResult]:
         write_line(f"Executing {self.name} strategy...")

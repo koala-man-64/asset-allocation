@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from scripts.common import config as cfg
 from scripts.ranking import runner
+from scripts.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
 
 
 class DummyClient:
@@ -49,23 +49,20 @@ def test_assemble_ranking_data_merges_sources(monkeypatch):
         }
     )
 
-    monkeypatch.setattr(runner, "_build_blob_client", lambda _: DummyClient())
+    monkeypatch.setattr(runner, "_get_whitelist_intersection", lambda *_: {"ALPHA"})
+    monkeypatch.setattr(runner, "_load_market_data", lambda *_: market_df.copy())
 
-    def fake_load_parquet(*args, **kwargs):
-        return market_df.copy()
-
-    monkeypatch.setattr(runner, "load_parquet", fake_load_parquet)
-
-    def fake_load_delta(container, path):
-        if container == cfg.AZURE_CONTAINER_FINANCE:
+    def fake_load_delta_source(source, whitelist):
+        if source["name"] == "finance":
             return finance_df.copy()
-        if container == cfg.AZURE_CONTAINER_TARGETS:
+        if source["name"] == "price_targets":
             return price_df.copy()
         return pd.DataFrame()
 
-    monkeypatch.setattr(runner, "load_delta", fake_load_delta)
+    monkeypatch.setattr(runner, "_load_delta_source", fake_load_delta_source)
 
-    merged = runner.assemble_ranking_data()
+    strategy = BrokenGrowthImprovingInternalsStrategy()
+    merged = runner.assemble_strategy_data(strategy)
 
     assert "rev_yoy" in merged.columns
     assert "tp_mean_change_30d" in merged.columns
@@ -76,9 +73,10 @@ def test_runner_invokes_save_rankings(monkeypatch):
     data = _build_sample_dataframe()
     calls = []
 
-    monkeypatch.setattr(runner, "assemble_ranking_data", lambda: data)
+    monkeypatch.setattr(runner, "assemble_strategy_data", lambda *_: data)
+    monkeypatch.setattr(runner.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(runner, "write_line", lambda *args, **kwargs: None)
-    monkeypatch.setattr(runner, "save_rankings", lambda results: calls.append(results))
+    monkeypatch.setattr(runner, "save_rankings", lambda results, **kwargs: calls.append(results))
 
     runner.main()
 

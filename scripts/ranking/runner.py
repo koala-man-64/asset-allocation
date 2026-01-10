@@ -5,7 +5,7 @@ Orchestrates data loading, strategy execution, and result saving.
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
@@ -31,6 +31,7 @@ if project_root not in sys.path:
 
 
 DeltaSource = Dict[str, str]
+WhitelistSource = Tuple[str, Optional[str]]
 
 # Delta tables keyed by container + path env override.
 DELTA_SOURCES: List[DeltaSource] = [
@@ -47,6 +48,8 @@ DELTA_SOURCES: List[DeltaSource] = [
         "default_path": "gold/price_targets",
     },
 ]
+SOURCE_CONTAINER_MAP = {source["name"]: source["container"] for source in DELTA_SOURCES}
+SOURCE_LOOKUP = {source["name"]: source for source in DELTA_SOURCES}
 
 
 def _build_blob_client(container_name: str, label: str = "container") -> Optional[BlobStorageClient]:
@@ -105,19 +108,28 @@ def _collect_whitelist_tickers(container_name: Optional[str], context_prefix: st
     return sorted(list_manager.whitelist)
 
 
-def _get_whitelist_tickers(containers: List[tuple[str, Optional[str]]]) -> List[str]:
-    # Union all whitelists for sources used by this ranking run.
-    tickers = set()
+def _get_whitelist_intersection(containers: List[WhitelistSource]) -> Set[str]:
+    # Intersection of whitelists; empty if any source has no whitelist.
+    intersection: Optional[Set[str]] = None
     for context_prefix, container_name in containers:
-        tickers.update(_collect_whitelist_tickers(container_name, context_prefix))
-
-    return sorted(tickers)
+        current = set(_collect_whitelist_tickers(container_name, context_prefix))
+        if intersection is None:
+            intersection = current
+        else:
+            intersection &= current
+        if not intersection:
+            return set()
+    return intersection or set()
 
 
 def _get_market_feature_tickers(
     client: BlobStorageClient, whitelist: Optional[set[str]]
 ) -> List[str]:
     # Resolve available market features, then apply whitelist if present.
+    write_line(
+        "Listing market feature blobs from "
+        f"{cfg.AZURE_CONTAINER_MARKET}/gold/<ticker>..."
+    )
     try:
         blobs = client.list_files(name_starts_with="gold/")
     except Exception as exc:
@@ -136,7 +148,7 @@ def _get_market_feature_tickers(
     return sorted(available)
 
 
-def _load_market_data(whitelist: Optional[set[str]]) -> pd.DataFrame:
+def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
     # Load per-ticker market features from the market container.
     client = _build_blob_client(cfg.AZURE_CONTAINER_MARKET, label="market container")
     if client is None:
@@ -153,6 +165,7 @@ def _load_market_data(whitelist: Optional[set[str]]) -> pd.DataFrame:
     for ticker in tickers:
         # Each ticker's market features live under gold/<ticker>.
         path = DataPaths.get_gold_features_path(ticker)
+        write_line(f"Loading market features from {cfg.AZURE_CONTAINER_MARKET}/{path}")
         df = load_delta(cfg.AZURE_CONTAINER_MARKET, path)
         if df is None or df.empty:
             continue
@@ -170,7 +183,7 @@ def _get_delta_path(source: Dict[str, str]) -> str:
     return os.environ.get(source["path_env"], source["default_path"])
 
 
-def _load_delta_source(source: DeltaSource, whitelist: Optional[set[str]]) -> Optional[pd.DataFrame]:
+def _load_delta_source(source: DeltaSource, whitelist: Optional[Set[str]]) -> Optional[pd.DataFrame]:
     # Load a single delta table and reduce to latest-per-symbol.
     container = source["container"]
     if not container:
@@ -178,6 +191,7 @@ def _load_delta_source(source: DeltaSource, whitelist: Optional[set[str]]) -> Op
         return None
 
     path = _get_delta_path(source)
+    write_line(f"Loading delta source '{source['name']}' from {container}/{path}")
     df = load_delta(container, path)
     if df is None or df.empty:
         write_line(f"Delta source '{source['name']}' is unavailable or empty ({container}/{path}).")
@@ -186,14 +200,11 @@ def _load_delta_source(source: DeltaSource, whitelist: Optional[set[str]]) -> Op
     collapsed = _collapse_latest_by_symbol(df)
     if collapsed is None or collapsed.empty:
         return None
-
     if whitelist:
-        # Apply whitelist consistently across all sources.
         collapsed = collapsed[collapsed["symbol"].isin(whitelist)]
         if collapsed.empty:
             write_line(f"Delta source '{source['name']}' filtered out by whitelist.")
             return None
-
     return collapsed
 
 
@@ -208,25 +219,44 @@ def _merge_source(
     return merged
 
 
-def assemble_ranking_data() -> pd.DataFrame:
-    # Build whitelist from only the containers used in this run.
-    whitelist_sources = [("market_data", cfg.AZURE_CONTAINER_MARKET)]
-    for source in DELTA_SOURCES:
-        whitelist_sources.append((f"{source['name']}_data", source["container"]))
+def _get_whitelist_sources_for_strategy(strategy: AbstractStrategy) -> List[WhitelistSource]:
+    sources: List[WhitelistSource] = [("market_data", cfg.AZURE_CONTAINER_MARKET)]
+    for source_name in strategy.sources_used:
+        container = SOURCE_CONTAINER_MAP.get(source_name)
+        if not container:
+            write_line(f"Warning: Unknown source '{source_name}' for {strategy.name}.")
+            continue
+        sources.append((f"{source_name}_data", container))
+    return sources
 
-    whitelist = set(_get_whitelist_tickers(whitelist_sources))
+
+def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
+    # Build whitelist from the containers the strategy depends on.
+    whitelist_sources = _get_whitelist_sources_for_strategy(strategy)
+    whitelist = _get_whitelist_intersection(whitelist_sources)
     if not whitelist:
-        whitelist = None
+        write_line(f"No whitelist entries available for {strategy.name}.")
+        return pd.DataFrame()
 
     # Market features are the base for ranking inputs.
     base = _load_market_data(whitelist)
     if base.empty:
         return pd.DataFrame()
 
-    for source in DELTA_SOURCES:
+    for source_name in strategy.sources_used:
+        source = SOURCE_LOOKUP.get(source_name)
+        if not source:
+            write_line(f"Warning: Unknown source '{source_name}' for {strategy.name}.")
+            continue
         # Merge each auxiliary data set onto the market features.
         extra = _load_delta_source(source, whitelist)
         base = _merge_source(base, extra, source["name"])
+
+    # Apply whitelist post-merge for safety.
+    base = base[base["symbol"].isin(whitelist)]
+    if base.empty:
+        write_line(f"No data available after whitelist for {strategy.name}.")
+        return pd.DataFrame()
 
     return base.reset_index(drop=True)
 
@@ -251,25 +281,26 @@ def main():
     mdc.log_environment_diagnostics()
     write_line("Starting Ranking Runner...")
 
-    # Load and assemble the full ranking dataset.
-    data = assemble_ranking_data()
-    if data.empty:
-        write_line("No data available to rank.")
-        return
-
-    write_line(f"Ranking input data contains {len(data)} rows and {len(data.columns)} columns.")
     strategies = _instantiate_strategies()
     write_line(f"Running {len(strategies)} ranking strategies.")
 
     # Use UTC to keep ranking dates consistent across environments.
     today = datetime.now(timezone.utc).date()
+    ranking_container = cfg.AZURE_CONTAINER_RANKING or "ranking-data"
     for strategy in strategies:
         try:
+            data = assemble_strategy_data(strategy)
+            if data.empty:
+                write_line(f"No data available for {strategy.name}. Skipping.")
+                continue
+            write_line(
+                f"{strategy.name} input contains {len(data)} rows and {len(data.columns)} columns."
+            )
             # Each strategy handles its own required column checks.
             results = strategy.rank(data, today)
             if results:
                 # Persist rankings per strategy.
-                save_rankings(results)
+                save_rankings(results, container=ranking_container)
                 write_line(f"{strategy.name} produced {len(results)} rankings.")
             else:
                 write_line(f"No results generated for strategy: {strategy.name}")
