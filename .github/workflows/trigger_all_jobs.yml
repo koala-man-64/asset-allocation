@@ -1,6 +1,8 @@
 name: Manual Job Trigger
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
     inputs:
       job:
@@ -32,31 +34,31 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Trigger Market Data Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'market-data' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.job == 'all' || github.event.inputs.job == 'market-data' }}
         run: |
           echo "Starting ${{ env.MARKET_DATA_JOB }}..."
           az containerapp job start --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Finance Data Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'finance-data' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.job == 'all' || github.event.inputs.job == 'finance-data' }}
         run: |
           echo "Starting ${{ env.FINANCE_DATA_JOB }}..."
           az containerapp job start --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Price Target Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'price-target' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.job == 'all' || github.event.inputs.job == 'price-target' }}
         run: |
           echo "Starting ${{ env.PRICE_TARGET_JOB }}..."
           az containerapp job start --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Earnings Data Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'earnings-data' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.job == 'all' || github.event.inputs.job == 'earnings-data' }}
         run: |
           echo "Starting ${{ env.EARNINGS_DATA_JOB }}..."
           az containerapp job start --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Ranking Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'ranking' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.job == 'all' || github.event.inputs.job == 'ranking' }}
         run: |
           echo "Starting ${{ env.RANKING_JOB }}..."
           az containerapp job start --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
