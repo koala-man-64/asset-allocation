@@ -12,6 +12,7 @@ class DummyClient:
 def _build_sample_dataframe():
     return pd.DataFrame(
         {
+            "date": [pd.Timestamp("2023-01-01")],
             "symbol": ["ALPHA"],
             "return_60d": [0.15],
             "pe_ratio": [12.0],
@@ -77,6 +78,7 @@ def test_runner_invokes_save_rankings(monkeypatch):
     monkeypatch.setenv("RANKING_MARGIN_DELTA_THRESHOLD", "0.0")
     monkeypatch.setenv("AZURE_CONTAINER_RANKING", "ranking-data")
     monkeypatch.setattr(runner, "assemble_strategy_data", lambda *_: data)
+    monkeypatch.setattr(runner, "_load_existing_ranking_dates", lambda *_: set())
     monkeypatch.setattr(runner.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(runner, "write_line", lambda *args, **kwargs: None)
     monkeypatch.setattr(runner, "save_rankings", lambda results, **kwargs: calls.append(results))

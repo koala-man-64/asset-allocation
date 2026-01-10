@@ -4,14 +4,14 @@ Orchestrates data loading, strategy execution, and result saving.
 """
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
 from scripts.common import config as cfg
 from scripts.common.blob_storage import BlobStorageClient
-from scripts.common.core import write_line, write_error
+from scripts.common.core import write_error, write_line
 from scripts.common import core as mdc
 from scripts.common.delta_core import load_delta
 from scripts.ranking.core import save_rankings
@@ -69,6 +69,10 @@ def _normalize_symbol_column(df: pd.DataFrame) -> pd.DataFrame:
         return df
     if "symbol" not in df.columns and "Symbol" in df.columns:
         df = df.rename(columns={"Symbol": "symbol"})
+    if "symbol" not in df.columns and "ticker" in df.columns:
+        df = df.rename(columns={"ticker": "symbol"})
+    if "date" not in df.columns and "obs_date" in df.columns:
+        df = df.rename(columns={"obs_date": "date"})
     if "symbol" in df.columns:
         df["symbol"] = df["symbol"].astype(str)
     return df
@@ -84,6 +88,8 @@ def _collapse_latest_by_symbol(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         return None
 
     if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"])
         df = df.sort_values("date")
     df = df.drop_duplicates(subset=["symbol"], keep="last").reset_index(drop=True)
     return df
@@ -254,7 +260,7 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
     whitelist_sources = _get_whitelist_sources_for_strategy(strategy)
     whitelist = _get_whitelist_intersection(whitelist_sources)
     if not whitelist:
-        write_line(f"No whitelist entries available for {strategy.name}.")
+        write_error(f"No whitelist entries available for {strategy.name}.")
         return pd.DataFrame()
 
     # Market features are the base for ranking inputs.
@@ -283,6 +289,21 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
     return base.reset_index(drop=True)
 
 
+def _load_existing_ranking_dates(strategy_name: str, container: str) -> Set[date]:
+    rankings = load_delta(container, "gold/rankings")
+    if rankings is None or rankings.empty:
+        return set()
+    if "strategy" not in rankings.columns or "date" not in rankings.columns:
+        raise ValueError("Ranking table is missing required columns: strategy/date")
+
+    subset = rankings[rankings["strategy"] == strategy_name].copy()
+    if subset.empty:
+        return set()
+
+    dates = pd.to_datetime(subset["date"], errors="coerce")
+    dates = dates.dropna()
+    return set(dates.dt.date.tolist())
+
 def _instantiate_strategies() -> List[AbstractStrategy]:
     # Pull thresholds from env to keep config consistent with job definitions.
     drawdown_threshold = float(os.environ["RANKING_BROKEN_DRAWDOWN_THRESHOLD"])
@@ -306,32 +327,58 @@ def main():
     strategies = _instantiate_strategies()
     write_line(f"Running {len(strategies)} ranking strategies.")
 
-    # Use UTC to keep ranking dates consistent across environments.
-    today = datetime.now(timezone.utc).date()
     if "AZURE_CONTAINER_RANKING" not in os.environ:
         raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
     ranking_container = cfg.AZURE_CONTAINER_RANKING
+
     for strategy in strategies:
         try:
             data = assemble_strategy_data(strategy)
             if data.empty:
-                write_line(f"No data available for {strategy.name}. Skipping.")
+                write_error(f"No data available for {strategy.name}.")
                 continue
+
+            if "date" not in data.columns:
+                write_error(f"{strategy.name} input missing required column: date")
+                continue
+
+            data["date"] = pd.to_datetime(data["date"], errors="coerce")
+            data = data.dropna(subset=["date"])
+            if data.empty:
+                write_error(f"{strategy.name} has no valid dated rows.")
+                continue
+
+            required_missing = [col for col in strategy.required_columns if col not in data.columns]
+            if required_missing:
+                write_error(f"{strategy.name} missing required columns: {required_missing}")
+                continue
+
+            available_dates = set(data["date"].dt.date.tolist())
+            existing_dates = _load_existing_ranking_dates(strategy.name, ranking_container)
+            missing_dates = sorted(available_dates - existing_dates)
+
+            if not missing_dates:
+                write_line(f"{strategy.name}: no missing ranking dates.")
+                continue
+
             write_line(
-                f"{strategy.name} input contains {len(data)} rows and {len(data.columns)} columns."
+                f"{strategy.name}: computing rankings for {len(missing_dates)} missing date(s)."
             )
-            missing = [col for col in strategy.required_columns if col not in data.columns]
-            if missing:
-                write_error(f"{strategy.name} missing required columns: {missing}")
-                continue
-            # Each strategy handles its own required column checks.
-            results = strategy.rank(data, today)
-            if results:
-                # Persist rankings per strategy.
-                save_rankings(results, container=ranking_container)
-                write_line(f"{strategy.name} produced {len(results)} rankings.")
-            else:
-                write_line(f"No results generated for strategy: {strategy.name}")
+
+            for ranking_date in missing_dates:
+                day_slice = data[data["date"].dt.date == ranking_date]
+                if day_slice.empty:
+                    write_error(f"{strategy.name}: no input rows for {ranking_date}. Skipping date.")
+                    continue
+
+                results = strategy.rank(day_slice, ranking_date)
+                if results:
+                    save_rankings(results, container=ranking_container)
+                    write_line(
+                        f"{strategy.name} saved {len(results)} rankings for {ranking_date}."
+                    )
+                else:
+                    write_line(f"{strategy.name}: no results for {ranking_date}.")
         except Exception as exc:
             write_line(f"Error executing strategy {strategy.name}: {exc}")
 
