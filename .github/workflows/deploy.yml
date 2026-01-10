@@ -120,8 +120,17 @@ jobs:
               --auth-mode login || true
           done
 
+      - name: Check Market Data Job Exists
+        id: market_data_job_check
+        run: |
+          if az containerapp job show --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Market Data Job
-        if: steps.changes.outputs.market_data == 'true'
+        if: steps.changes.outputs.market_data == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.MARKET_DATA_JOB }} not found. Creating..."
@@ -159,8 +168,17 @@ jobs:
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Market Feature Job Exists
+        id: market_feature_job_check
+        run: |
+          if az containerapp job show --name ${{ env.MARKET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Market Feature Job
-        if: steps.changes.outputs.market_data == 'true' || steps.changes.outputs.market_feature == 'true'
+        if: steps.changes.outputs.market_data == 'true' || steps.changes.outputs.market_feature == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.MARKET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.MARKET_FEATURE_JOB }} not found. Creating..."
@@ -197,8 +215,17 @@ jobs:
           az containerapp job start \
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
+      - name: Check Finance Data Job Exists
+        id: finance_data_job_check
+        run: |
+          if az containerapp job show --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Finance Data Job
-        if: steps.finance_changes.outputs.finance_data == 'true'
+        if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.FINANCE_DATA_JOB }} not found. Creating..."
@@ -235,8 +262,17 @@ jobs:
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Finance Feature Job Exists
+        id: finance_feature_job_check
+        run: |
+          if az containerapp job show --name ${{ env.FINANCE_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Finance Feature Job
-        if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_changes.outputs.finance_feature == 'true'
+        if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_changes.outputs.finance_feature == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.FINANCE_FEATURE_JOB }} not found. Creating..."
@@ -273,8 +309,17 @@ jobs:
           az containerapp job start \
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
+      - name: Check Price Target Job Exists
+        id: price_target_job_check
+        run: |
+          if az containerapp job show --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Price Target Job
-        if: steps.price_target_changes.outputs.price_target_data == 'true'
+        if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_JOB }} not found. Creating..."
@@ -311,8 +356,17 @@ jobs:
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Price Target Feature Job Exists
+        id: price_target_feature_job_check
+        run: |
+          if az containerapp job show --name ${{ env.PRICE_TARGET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Price Target Feature Job
-        if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_changes.outputs.price_target_feature == 'true'
+        if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_changes.outputs.price_target_feature == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_FEATURE_JOB }} not found. Creating..."
@@ -349,8 +403,17 @@ jobs:
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
+      - name: Check Earnings Data Job Exists
+        id: earnings_data_job_check
+        run: |
+          if az containerapp job show --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Earnings Data Job
-        if: steps.earnings_changes.outputs.earnings_data == 'true'
+        if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_DATA_JOB }} not found. Creating..."
@@ -387,8 +450,17 @@ jobs:
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Earnings Feature Job Exists
+        id: earnings_feature_job_check
+        run: |
+          if az containerapp job show --name ${{ env.EARNINGS_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Earnings Feature Job
-        if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_changes.outputs.earnings_feature == 'true'
+        if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_changes.outputs.earnings_feature == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_FEATURE_JOB }} not found. Creating..."
@@ -425,8 +497,17 @@ jobs:
           az containerapp job start \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
+      - name: Check Ranking Job Exists
+        id: ranking_job_check
+        run: |
+          if az containerapp job show --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "job_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update and Start Ranking Job
-        if: steps.ranking_changes.outputs.ranking_job == 'true'
+        if: steps.ranking_changes.outputs.ranking_job == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.RANKING_JOB }} not found. Creating..."
