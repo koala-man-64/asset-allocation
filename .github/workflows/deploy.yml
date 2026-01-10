@@ -97,7 +97,7 @@ jobs:
         with:
           filters: |
             ranking_job:
-              - "scripts/ranking/scaper.py"
+              - "scripts/ranking/runner.py"
               - "deploy/job_ranking.yaml"
 
       - name: Log change detection outputs
