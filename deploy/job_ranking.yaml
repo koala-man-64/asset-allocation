@@ -61,10 +61,7 @@ properties:
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: ranking-job
-      command: ["python"]
-      args:
-        - "-m"
-        - "scripts.ranking.runner"
+      command: ["python", "scripts/ranking/runner.py"]
       resources:
         cpu: 2.0
         memory: 4Gi
