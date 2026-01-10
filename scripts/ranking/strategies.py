@@ -27,6 +27,11 @@ class AbstractStrategy(ABC):
         """Delta source names required by this strategy (market data is implicit)."""
         return []
 
+    @property
+    def required_columns(self) -> List[str]:
+        """Columns required in the assembled dataset for this strategy."""
+        return []
+
     @abstractmethod
     def rank(self, data: pd.DataFrame, ranking_date: date) -> List[RankingResult]:
         """
@@ -57,6 +62,10 @@ class MomentumStrategy(AbstractStrategy):
     @property
     def name(self) -> str:
         return "Momentum_60D"
+
+    @property
+    def required_columns(self) -> List[str]:
+        return ["symbol", "return_60d"]
 
     @property
     def sources_used(self) -> List[str]:
@@ -97,6 +106,10 @@ class ValueStrategy(AbstractStrategy):
     @property
     def name(self) -> str:
         return "Value_PE"
+
+    @property
+    def required_columns(self) -> List[str]:
+        return ["symbol", "pe_ratio"]
 
     @property
     def sources_used(self) -> List[str]:
@@ -147,6 +160,20 @@ class BrokenGrowthImprovingInternalsStrategy(AbstractStrategy):
     @property
     def name(self) -> str:
         return "BrokenGrowthWithImprovingInternals"
+
+    @property
+    def required_columns(self) -> List[str]:
+        return [
+            "symbol",
+            "drawdown_1y",
+            "rev_yoy",
+            "rev_growth_slope_6q",
+            "ebitda_margin",
+            "margin_delta_qoq",
+            "tp_mean_change_30d",
+            "rev_net",
+            "disp_norm_change_30d",
+        ]
 
     @property
     def sources_used(self) -> List[str]:

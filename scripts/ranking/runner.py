@@ -11,7 +11,7 @@ import pandas as pd
 
 from scripts.common import config as cfg
 from scripts.common.blob_storage import BlobStorageClient
-from scripts.common.core import write_line
+from scripts.common.core import write_line, write_error
 from scripts.common import core as mdc
 from scripts.common.delta_core import load_delta
 from scripts.ranking.core import save_rankings
@@ -269,6 +269,9 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
             continue
         # Merge each auxiliary data set onto the market features.
         extra = _load_delta_source(source, whitelist)
+        if extra is None:
+            write_error(f"Required source '{source_name}' missing for {strategy.name}.")
+            return pd.DataFrame()
         base = _merge_source(base, extra, source["name"])
 
     # Apply whitelist post-merge for safety.
@@ -317,6 +320,10 @@ def main():
             write_line(
                 f"{strategy.name} input contains {len(data)} rows and {len(data.columns)} columns."
             )
+            missing = [col for col in strategy.required_columns if col not in data.columns]
+            if missing:
+                write_error(f"{strategy.name} missing required columns: {missing}")
+                continue
             # Each strategy handles its own required column checks.
             results = strategy.rank(data, today)
             if results:
