@@ -28,7 +28,7 @@ env:
   EARNINGS_FEATURE_CRON: "30 23 * * *"
   RANKING_JOB: ranking-job
   RANKING_CRON: "0 5 * * *"
-  RANKING_FINANCE_DELTA_PATH: "gold/finance_features"
+  RANKING_FINANCE_DELTA_PATH: "gold"
   RANKING_PRICE_DELTA_PATH: "gold/price_targets"
   RANKING_BROKEN_DRAWDOWN_THRESHOLD: "-0.3"
   RANKING_MARGIN_DELTA_THRESHOLD: "0.0"
@@ -51,9 +51,11 @@ jobs:
             market_data:
               - "scripts/market_data/scraper.py"
               - "deploy/job_market_data.yaml"
+              - ".github/workflows/deploy.yml"
             market_feature:
               - "scripts/market_data/feature_generator.py"
               - "deploy/job_market_data_features.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Finance Changes
         uses: dorny/paths-filter@v3
@@ -63,9 +65,11 @@ jobs:
             finance_data:
               - "scripts/finance_data/scraper.py"
               - "deploy/job_finance_data.yaml"
+              - ".github/workflows/deploy.yml"
             finance_feature:
               - "scripts/finance_data/feature_generator.py"
               - "deploy/job_finance_data_features.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Earnings Changes
         uses: dorny/paths-filter@v3
@@ -75,9 +79,11 @@ jobs:
             earnings_data:
               - "scripts/earnings_data/scraper.py"
               - "deploy/job_earnings_data.yaml"
+              - ".github/workflows/deploy.yml"
             earnings_feature:
               - "scripts/earnings_data/feature_generator.py"
               - "deploy/job_earnings_data_features.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Price Target Changes
         uses: dorny/paths-filter@v3
@@ -87,9 +93,11 @@ jobs:
             price_target_data:
               - "scripts/price_target_data/scraper.py"
               - "deploy/job_price_target_data.yaml"
+              - ".github/workflows/deploy.yml"
             price_target_feature:
               - "scripts/price_target_data/feature_generator.py"
               - "deploy/job_price_target_data_features.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Ranking Changes
         uses: dorny/paths-filter@v3
@@ -99,6 +107,7 @@ jobs:
             ranking_job:
               - "scripts/ranking/runner.py"
               - "deploy/job_ranking.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Log change detection outputs
         run: |
