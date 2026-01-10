@@ -97,6 +97,17 @@ jobs:
             ranking_job:
               - "scripts/ranking/**"
               - "deploy/job_ranking.yaml"
+      - name: Log change detection outputs
+        run: |
+          echo "market_data=${{ steps.changes.outputs.market_data }}"
+          echo "market_feature=${{ steps.changes.outputs.market_feature }}"
+          echo "finance_data=${{ steps.finance_changes.outputs.finance_data }}"
+          echo "finance_feature=${{ steps.finance_changes.outputs.finance_feature }}"
+          echo "earnings_data=${{ steps.earnings_changes.outputs.earnings_data }}"
+          echo "earnings_feature=${{ steps.earnings_changes.outputs.earnings_feature }}"
+          echo "price_target_data=${{ steps.price_target_changes.outputs.price_target_data }}"
+          echo "price_target_feature=${{ steps.price_target_changes.outputs.price_target_feature }}"
+          echo "ranking_job=${{ steps.ranking_changes.outputs.ranking_job }}"
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -132,6 +143,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Market Data job check
+        run: |
+          echo "market_data_job_exists=${{ steps.market_data_job_check.outputs.job_exists }}"
 
       - name: Update and Start Market Data Job
         if: steps.changes.outputs.market_data == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
@@ -180,6 +194,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Market Feature job check
+        run: |
+          echo "market_feature_job_exists=${{ steps.market_feature_job_check.outputs.job_exists }}"
 
       - name: Update and Start Market Feature Job
         if: steps.changes.outputs.market_data == 'true' || steps.changes.outputs.market_feature == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
@@ -227,6 +244,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Finance Data job check
+        run: |
+          echo "finance_data_job_exists=${{ steps.finance_data_job_check.outputs.job_exists }}"
 
       - name: Update and Start Finance Data Job
         if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
@@ -274,6 +294,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Finance Feature job check
+        run: |
+          echo "finance_feature_job_exists=${{ steps.finance_feature_job_check.outputs.job_exists }}"
 
       - name: Update and Start Finance Feature Job
         if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_changes.outputs.finance_feature == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
@@ -321,6 +344,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Price Target job check
+        run: |
+          echo "price_target_job_exists=${{ steps.price_target_job_check.outputs.job_exists }}"
 
       - name: Update and Start Price Target Job
         if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
@@ -368,6 +394,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Price Target Feature job check
+        run: |
+          echo "price_target_feature_job_exists=${{ steps.price_target_feature_job_check.outputs.job_exists }}"
 
       - name: Update and Start Price Target Feature Job
         if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_changes.outputs.price_target_feature == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
@@ -415,6 +444,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Earnings Data job check
+        run: |
+          echo "earnings_data_job_exists=${{ steps.earnings_data_job_check.outputs.job_exists }}"
 
       - name: Update and Start Earnings Data Job
         if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
@@ -462,6 +494,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Earnings Feature job check
+        run: |
+          echo "earnings_feature_job_exists=${{ steps.earnings_feature_job_check.outputs.job_exists }}"
 
       - name: Update and Start Earnings Feature Job
         if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_changes.outputs.earnings_feature == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
@@ -509,6 +544,9 @@ jobs:
           else
             echo "job_exists=false" >> $GITHUB_OUTPUT
           fi
+      - name: Log Ranking job check
+        run: |
+          echo "ranking_job_exists=${{ steps.ranking_job_check.outputs.job_exists }}"
 
       - name: Update and Start Ranking Job
         if: steps.ranking_changes.outputs.ranking_job == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
