@@ -580,7 +580,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --cron-expression "${{ env.RANKING_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking-job" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/ranking/runner.py"
           az containerapp job start \
             --name ${{ env.RANKING_JOB }} \
