@@ -36,6 +36,10 @@ properties:
         value: common-data
       - name: AZURE_CONTAINER_RANKING
         value: ranking
+      - name: AZURE_CONTAINER_FINANCE
+        value: finance-data
+      - name: AZURE_CONTAINER_TARGETS
+        value: price-targets
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD
@@ -46,6 +50,14 @@ properties:
         value: /tmp/downloads
       - name: PLAYWRIGHT_USER_DATA_DIR
         value: /tmp/playwright_userdata
+      - name: RANKING_FINANCE_DELTA_PATH
+        value: gold/finance_features
+      - name: RANKING_PRICE_DELTA_PATH
+        value: gold/price_targets
+      - name: RANKING_BROKEN_DRAWDOWN_THRESHOLD
+        value: "-0.30"
+      - name: RANKING_MARGIN_DELTA_THRESHOLD
+        value: "0.0"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: ranking-job

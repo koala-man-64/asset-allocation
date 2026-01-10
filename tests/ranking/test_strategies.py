@@ -1,52 +1,41 @@
-"""
-Unit tests for ranking strategies.
-"""
-import unittest
 from datetime import date
+
 import pandas as pd
-import numpy as np
 
-from scripts.ranking.strategies import MomentumStrategy, ValueStrategy
+from scripts.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
 
-class TestStrategies(unittest.TestCase):
-    def setUp(self):
-        self.ranking_date = date(2023, 1, 1)
-        self.data = pd.DataFrame({
-            'symbol': ['A', 'B', 'C', 'D'],
-            'return_60d': [0.1, 0.2, -0.05, float('nan')],
-            'pe_ratio': [20.0, 10.0, 50.0, -5.0] # D has negative PE often invalid or ignored by simple logic
-        })
 
-    def test_momentum_strategy(self):
-        strat = MomentumStrategy()
-        results = strat.rank(self.data, self.ranking_date)
-        
-        # Expecting A, B, C (D dropped due to NaN)
-        # Order: B (0.2), A (0.1), C (-0.05)
-        self.assertEqual(len(results), 3)
-        self.assertEqual(results[0].symbol, 'B')
-        self.assertEqual(results[0].rank, 1)
-        self.assertEqual(results[1].symbol, 'A')
-        self.assertEqual(results[2].symbol, 'C')
-        self.assertEqual(results[0].strategy, strat.name)
+def test_broken_growth_strategy_selects_valid_rows():
+    df = pd.DataFrame(
+        {
+            "symbol": ["TIN", "SILVER"],
+            "drawdown_1y": [-0.5, -0.1],
+            "rev_yoy": [0.2, 0.3],
+            "rev_growth_slope_6q": [0.05, 0.1],
+            "ebitda_margin": [0.25, 0.15],
+            "margin_delta_qoq": [0.01, -0.2],
+            "tp_mean_change_30d": [1.0, -0.5],
+            "rev_net": [25, -5],
+            "disp_norm_change_30d": [-0.05, 0.1],
+        }
+    )
 
-    def test_value_strategy(self):
-        strat = ValueStrategy()
-        results = strat.rank(self.data, self.ranking_date)
-        
-        # Expecting A, B, C. D ignored because negative PE in my mock logic or passed?
-        # ValueStrategy code: valid_data = data[(data['pe_ratio'] > 0)]
-        # So D (-5.0) should be dropped.
-        
-        # Order asc: B(10), A(20), C(50)
-        self.assertEqual(len(results), 3)
-        self.assertEqual(results[0].symbol, 'B')
-        self.assertEqual(results[0].rank, 1)
-        self.assertEqual(results[1].symbol, 'A')
-        self.assertEqual(results[2].symbol, 'C')
+    strategy = BrokenGrowthImprovingInternalsStrategy()
+    results = strategy.rank(df, date.today())
 
-    def test_missing_columns(self):
-        strat = MomentumStrategy()
-        bad_data = pd.DataFrame({'symbol': ['A'], 'foo': [1]})
-        results = strat.rank(bad_data, self.ranking_date)
-        self.assertEqual(len(results), 0)
+    assert len(results) == 1
+    ranking = results[0]
+    assert ranking.symbol == "TIN"
+    assert ranking.score == 5.0
+    assert ranking.meta["broken_drawdown"]
+    assert ranking.meta["improving_revenue"]
+    assert ranking.meta["margin_stable"]
+    assert ranking.meta["analysts_improving"]
+    assert ranking.meta["target_trending_up"]
+
+
+def test_broken_growth_strategy_skips_missing_columns():
+    df = pd.DataFrame({"symbol": ["X"]})
+    strategy = BrokenGrowthImprovingInternalsStrategy()
+    results = strategy.rank(df, date.today())
+    assert results == []

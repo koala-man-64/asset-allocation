@@ -40,4 +40,5 @@ jobs:
         AZURE_CONTAINER_TARGETS: "price-targets"
         AZURE_CONTAINER_COMMON: "common-data"
       run: |
+        pytest tests/ranking
         pytest

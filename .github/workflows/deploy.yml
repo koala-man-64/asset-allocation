@@ -28,6 +28,10 @@ env:
   EARNINGS_FEATURE_CRON: "30 23 * * *"
   RANKING_JOB: ranking-job
   RANKING_CRON: "0 5 * * *"
+  RANKING_FINANCE_DELTA_PATH: "gold/finance_features"
+  RANKING_PRICE_DELTA_PATH: "gold/price_targets"
+  RANKING_BROKEN_DRAWDOWN_THRESHOLD: "-0.3"
+  RANKING_MARGIN_DELTA_THRESHOLD: "0.0"
 
 jobs:
   build-and-deploy:
@@ -539,7 +543,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --cron-expression "${{ env.RANKING_CRON }}" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${{ env.RANKING_FINANCE_DELTA_PATH }}" "RANKING_PRICE_DELTA_PATH=${{ env.RANKING_PRICE_DELTA_PATH }}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${{ env.RANKING_BROKEN_DRAWDOWN_THRESHOLD }}" "RANKING_MARGIN_DELTA_THRESHOLD=${{ env.RANKING_MARGIN_DELTA_THRESHOLD }}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python -m scripts.ranking.runner"
           az containerapp job start \
             --name ${{ env.RANKING_JOB }} \
