@@ -35,7 +35,7 @@ properties:
       - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: AZURE_CONTAINER_RANKING
-        value: ranking
+        value: ranking-data
       - name: AZURE_CONTAINER_FINANCE
         value: finance-data
       - name: AZURE_CONTAINER_TARGETS
