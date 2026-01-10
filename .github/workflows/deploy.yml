@@ -26,6 +26,8 @@ env:
   FINANCE_FEATURE_CRON: "30 22 * * *"
   PRICE_TARGET_FEATURE_CRON: "30 12 * * *"
   EARNINGS_FEATURE_CRON: "30 23 * * *"
+  RANKING_JOB: ranking-job
+  RANKING_CRON: "0 5 * * *"
 
 jobs:
   build-and-deploy:
@@ -82,7 +84,15 @@ jobs:
               - "!scripts/price_target_data/feature_generator.py"
             price_target_feature:
               - "scripts/price_target_data/feature_generator.py"
-             
+              
+      - name: Detect Ranking Changes
+        uses: dorny/paths-filter@v3
+        id: ranking_changes
+        with:
+          filters: |
+            ranking_job:
+              - "scripts/ranking/**"
+              - "deploy/job_ranking.yaml"
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -414,6 +424,44 @@ jobs:
             --command "python" "scripts/earnings_data/feature_generator.py"
           az containerapp job start \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+      - name: Update and Start Ranking Job
+        if: steps.ranking_changes.outputs.ranking_job == 'true'
+        run: |
+          if ! az containerapp job show --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.RANKING_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.RANKING_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "${{ env.RANKING_CRON }}" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 2.0 --memory 4.0Gi \
+              --command "python" "-m" "scripts.ranking.runner"
+          fi
+
+          az containerapp job secret set \
+            --name ${{ env.RANKING_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.RANKING_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --cron-expression "${{ env.RANKING_CRON }}" \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "-m" "scripts.ranking.runner"
+          az containerapp job start \
+            --name ${{ env.RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       - name: Start Feature Jobs Post-Deploy
         run: |

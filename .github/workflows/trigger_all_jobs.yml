@@ -13,6 +13,7 @@ env:
   FINANCE_DATA_JOB: finance-data-job
   PRICE_TARGET_JOB: price-target-job
   EARNINGS_DATA_JOB: earnings-data-job
+  RANKING_JOB: ranking-job
 
 jobs:
   trigger-jobs:
@@ -44,3 +45,8 @@ jobs:
         run: |
           echo "Starting ${{ env.EARNINGS_DATA_JOB }}..."
           az containerapp job start --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Trigger Ranking Job
+        run: |
+          echo "Starting ${{ env.RANKING_JOB }}..."
+          az containerapp job start --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
