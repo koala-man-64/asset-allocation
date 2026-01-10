@@ -76,7 +76,7 @@ def test_transform_symbol_data_integration(storage_cleanup):
     # Assertions on Result
     assert res is not None
     assert not res.empty
-    assert res.iloc[0]['ticker'] == symbol
+    assert res.iloc[0]['symbol'] == symbol
     
     # Verify Data Persistence (Real Read)
     path = symbol
@@ -98,7 +98,7 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     
     # Create dummy DataFrame
     df = pd.DataFrame({
-        'ticker': [symbol],
+        'symbol': [symbol],
         'obs_date': [pd.Timestamp.now()],
         'tp_mean_est': [100.0]
     })

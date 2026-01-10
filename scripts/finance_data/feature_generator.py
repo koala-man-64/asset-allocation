@@ -70,6 +70,49 @@ def _snake_case_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     out.columns = unique
     return out
+ 
+ 
+def _rolling_slope(series: pd.Series, window: int) -> pd.Series:
+    """
+    Computes the slope of a linear regression over a rolling window.
+    X is assumed to be `range(window)`.
+    Slope formula: (N * sum(xy) - sum(x) * sum(y)) / (N * sum(x^2) - (sum(x))^2)
+    with x = 0, 1, ..., N-1.
+    """
+    if len(series) < window:
+        return pd.Series(np.nan, index=series.index)
+ 
+    y = series.rolling(window=window, min_periods=window)
+    
+    # Pre-calculated constants for x = 0, 1, ..., window-1
+    n = window
+    sum_x = (n * (n - 1)) // 2
+    sum_xx = (n * (n - 1) * (2 * n - 1)) // 6
+    denom = n * sum_xx - sum_x * sum_x
+    
+    # We need sum_y and sum_xy for each window
+    # sum_y is just rolling sum
+    sum_y = y.sum()
+    
+    # sum_xy is a bit trickier with rolling(). Warning: O(N*W) if done naively.
+    # Convolution approach: convolve series with [0, 1, ..., window-1]
+    # Pandas rolling doesn't support weighted sum directly easily without apply (slow).
+    # Optimization: sum_xy[t] = sum_xy[t-1] - sum_y[t-1] + y[t]*(window-1) + dropped_y * 0 ? No.
+    # Let's use stride_tricks or just apply for now as these datasets aren't huge (quarterly data).
+    # Since it's quarterly data, standard apply with numpy polyfit(deg=1) might be fast enough.
+    
+    def slope_1d(y_window):
+        if np.isnan(y_window).any():
+            return np.nan
+        # x is 0..window-1
+        # slope = (N*sum(xy) - sum(x)sum(y)) / denom
+        x = np.arange(window)
+        sum_xy = np.dot(x, y_window)
+        s_y = y_window.sum()
+        return (n * sum_xy - sum_x * s_y) / denom
+
+    return series.rolling(window=window, min_periods=window).apply(slope_1d, raw=True)
+
 
 
 def _resolve_column(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
@@ -238,6 +281,16 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         ],
     )
     market_cap_col = _resolve_column(out, ["Market Cap", "Market Cap (intraday)"])
+    ebitda_col = _resolve_column(out, ["EBITDA", "Normalized EBITDA"])
+    forward_pe_col = _resolve_column(out, ["Forward P/E", "Forward PE"])
+    ev_revenue_col = _resolve_column(
+        out,
+        [
+            "Enterprise Value/Revenue",
+            "EV/Revenue",
+            "EV / Revenue",
+        ],
+    )
 
     revenue = _coerce_numeric(out[revenue_col]) if revenue_col else pd.Series(np.nan, index=out.index)
     gross_profit = _coerce_numeric(out[gross_profit_col]) if gross_profit_col else pd.Series(np.nan, index=out.index)
@@ -251,6 +304,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     operating_cash_flow = (
         _coerce_numeric(out[operating_cash_flow_col]) if operating_cash_flow_col else pd.Series(np.nan, index=out.index)
     )
+    ebitda = _coerce_numeric(out[ebitda_col]) if ebitda_col else pd.Series(np.nan, index=out.index)
+    forward_pe = _coerce_numeric(out[forward_pe_col]) if forward_pe_col else pd.Series(np.nan, index=out.index)
+    ev_revenue = _coerce_numeric(out[ev_revenue_col]) if ev_revenue_col else pd.Series(np.nan, index=out.index)
 
     if revenue_col:
         out[revenue_col] = revenue
@@ -278,8 +334,18 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     current_liabilities = (
         _coerce_numeric(out[current_liabilities_col]) if current_liabilities_col else pd.Series(np.nan, index=out.index)
     )
-    shares_outstanding = (
         _coerce_numeric(out[shares_outstanding_col]) if shares_outstanding_col else pd.Series(np.nan, index=out.index)
+    )
+    cash_and_equivalents_col = _resolve_column(
+        out, 
+        [
+            "Cash And Cash Equivalents", 
+            "Cash & Cash Equivalents",
+            "Cash and Cash Equivalents"
+        ]
+    )
+    cash_and_equivalents = (
+        _coerce_numeric(out[cash_and_equivalents_col]) if cash_and_equivalents_col else pd.Series(np.nan, index=out.index)
     )
 
     if total_debt_col:
@@ -303,13 +369,27 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["rev_yoy"] = _safe_div(revenue, revenue.groupby(symbol_key, sort=False).shift(4)) - 1.0
     out["net_inc_yoy"] = _safe_div(net_income, net_income.groupby(symbol_key, sort=False).shift(4)) - 1.0
     out["fcf_yoy"] = _safe_div(free_cash_flow, free_cash_flow.groupby(symbol_key, sort=False).shift(4)) - 1.0
+    
+    # Slopes (6q window)
+    out["rev_growth_slope_6q"] = revenue.groupby(symbol_key, sort=False).apply(
+        lambda x: _rolling_slope(x, 6)
+    )
+    out["fcf_slope_6q"] = free_cash_flow.groupby(symbol_key, sort=False).apply(
+        lambda x: _rolling_slope(x, 6)
+    )
 
     out["gross_margin"] = _safe_div(gross_profit, revenue)
     out["op_margin"] = _safe_div(operating_income, revenue)
     out["fcf_margin"] = _safe_div(free_cash_flow, revenue)
+    out["ebitda_margin"] = _safe_div(ebitda, revenue)
+    
+    # Margin delta QoQ (using gross margin)
+    out["margin_delta_qoq"] = out["gross_margin"] - out["gross_margin"].groupby(symbol_key, sort=False).shift(1)
 
     out["debt_to_assets"] = _safe_div(total_debt, total_assets)
     out["current_ratio"] = _safe_div(current_assets, current_liabilities)
+    out["net_debt"] = total_debt - cash_and_equivalents
+    out["shares_change_yoy"] = _safe_div(shares_outstanding, shares_outstanding.groupby(symbol_key, sort=False).shift(4)) - 1.0
 
     # ------------------------------------------------------------------
     # Fundamentals: Piotroski F-score (aligned to canonical definitions)
@@ -370,6 +450,8 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["pe_ratio"] = pe_ratio
     out["ev_ebitda"] = ev_ebitda
     out["market_cap"] = market_cap
+    out["fpe"] = forward_pe
+    out["ev_rev"] = ev_revenue
 
     rev_yoy_positive = out["rev_yoy"].where(out["rev_yoy"] > 0)
     out["peg_proxy"] = _safe_div(out["pe_ratio"], rev_yoy_positive)

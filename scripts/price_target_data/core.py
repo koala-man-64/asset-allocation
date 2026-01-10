@@ -50,7 +50,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
     Transforms raw API data for a single symbol.
     """
     column_names = [
-        "ticker", "obs_date", "tp_mean_est", "tp_std_dev_est", 
+        "symbol", "obs_date", "tp_mean_est", "tp_std_dev_est", 
         "tp_high_est", "tp_low_est", "tp_cnt_est", 
         "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
     ]
@@ -75,7 +75,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
             target_price_data = target_price_data.ffill()
         
         # Ensure ticker column is set correctly
-        target_price_data['ticker'] = symbol
+        target_price_data['symbol'] = symbol
         
         # Ensure columns exist
         for col in column_names:
@@ -95,7 +95,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         target_price_data.reset_index(inplace=True)
         target_price_data = target_price_data.rename(columns={'index': 'obs_date'})
         
-        target_price_data['ticker'] = symbol
+        target_price_data['symbol'] = symbol
 
         # Merge with existing
         # Concatenate - handle empty to avoid FutureWarning
@@ -106,8 +106,8 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         else:
             updated_earnings = pd.concat([existing_price_targets, target_price_data], ignore_index=True)
         
-        updated_earnings = updated_earnings.drop_duplicates(subset=['obs_date', 'ticker'], keep='last')
-        updated_earnings = updated_earnings.sort_values(by=['obs_date', 'ticker']).reset_index(drop=True)
+        updated_earnings = updated_earnings.drop_duplicates(subset=['obs_date', 'symbol'], keep='last')
+        updated_earnings = updated_earnings.sort_values(by=['obs_date', 'symbol']).reset_index(drop=True)
 
         # Save
         delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
@@ -132,7 +132,7 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
         existing_data_map = {} # symbol -> existing_df
         
         column_names = [
-            "ticker", "obs_date", "tp_mean_est", "tp_std_dev_est", 
+            "symbol", "obs_date", "tp_mean_est", "tp_std_dev_est", 
             "tp_high_est", "tp_low_est", "tp_cnt_est", 
             "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
         ]
@@ -160,6 +160,9 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
                 existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
                 if existing_df is None or existing_df.empty:
                     existing_df = pd.DataFrame(columns=column_names)
+                else:
+                    if 'ticker' in existing_df.columns and 'symbol' not in existing_df.columns:
+                        existing_df = existing_df.rename(columns={'ticker': 'symbol'})
                 elif 'obs_date' in existing_df.columns:
                      existing_df['obs_date'] = pd.to_datetime(existing_df['obs_date'])
                 

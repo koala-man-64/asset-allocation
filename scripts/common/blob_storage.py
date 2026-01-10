@@ -17,7 +17,7 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(l
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
 class BlobStorageClient:
-    def __init__(self, account_name=None, connection_string=None, container_name='market-data'):
+    def __init__(self, account_name=None, connection_string=None, container_name='market-data', ensure_container_exists: bool = True):
         # 1. Try config/env for Account Name (Preferred)
         self.account_name = account_name or os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
         # 2. Try config/env for Connection String (Legacy)
@@ -48,12 +48,13 @@ class BlobStorageClient:
         self.container_client = self.blob_service_client.get_container_client(self.container_name)
         
         # Ensure container exists
-        try:
-            if not self.container_client.exists():
-                self.container_client.create_container()
-                logger.info(f"Created container: {self.container_name}")
-        except Exception as e:
-            logger.warning(f"Container creation/check might have failed (permissions/race): {e}")
+        if ensure_container_exists:
+            try:
+                if not self.container_client.exists():
+                    self.container_client.create_container()
+                    logger.info(f"Created container: {self.container_name}")
+            except Exception as e:
+                logger.warning(f"Container creation/check might have failed (permissions/race): {e}")
 
     def file_exists(self, remote_path: str) -> bool:
         blob_client = self.container_client.get_blob_client(remote_path)
@@ -68,6 +69,20 @@ class BlobStorageClient:
             return [b.name for b in blobs]
         except Exception as e:
             logger.error(f"Error listing files: {e}")
+            raise
+
+    def list_blob_infos(self, name_starts_with=None) -> list:
+        """
+        Lists blobs with basic metadata (name, last_modified, size).
+        """
+        try:
+            blobs = self.container_client.list_blobs(name_starts_with=name_starts_with)
+            return [
+                {"name": b.name, "last_modified": b.last_modified, "size": b.size}
+                for b in blobs
+            ]
+        except Exception as e:
+            logger.error(f"Error listing blob infos: {e}")
             raise
 
     def delete_file(self, remote_path: str):

@@ -176,6 +176,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["disp_norm_change_30d"] = out["disp_norm"] - out["disp_norm"].shift(30)
     out["tp_mean_change_30d"] = out["tp_mean_est"] - out["tp_mean_est"].shift(30)
 
+    # Dispersion Z-Score (252d)
+    disp_norm_mean_252 = out["disp_norm"].rolling(window=252, min_periods=252).mean()
+    disp_norm_std_252 = out["disp_norm"].rolling(window=252, min_periods=252).std()
+    out["disp_z"] = _safe_div(out["disp_norm"] - disp_norm_mean_252, disp_norm_std_252)
+
     out["tp_mean_slope_90d"] = _rolling_slope_fixed_window(out["tp_mean_est"], window=90)
 
     out = out.replace([np.inf, -np.inf], np.nan)

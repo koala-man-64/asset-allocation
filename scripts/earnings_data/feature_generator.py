@@ -65,6 +65,33 @@ def _snake_case_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _resample_daily_ffill(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    if date_col not in df.columns:
+        return df
+
+    out = df.copy()
+    out[date_col] = _coerce_datetime(out[date_col])
+    out = out.dropna(subset=[date_col]).copy()
+    if out.empty:
+        return out
+
+    out = out.sort_values(date_col).copy()
+    out = out.drop_duplicates(subset=[date_col], keep="last").copy()
+
+    out = out.set_index(date_col)
+    full_range = pd.date_range(start=out.index.min(), end=out.index.max(), freq="D")
+    out = out.reindex(full_range)
+    
+    # We want to fill feature columns forward, but some might be flags (handle separately if needed)
+    # For now, ffill everything, then fixing flags downstream is easier.
+    out = out.ffill()
+    out = out.reset_index().rename(columns={"index": date_col})
+    return out
+
+
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = _snake_case_columns(df)
 
@@ -98,6 +125,28 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["beat_rate_8q"] = beat.groupby(out["symbol"], sort=False).transform(
         lambda series: series.rolling(window=8, min_periods=8).mean()
     )
+
+    # -------------------------------------------------------------------------
+    # Conversion to Daily Time Series
+    # -------------------------------------------------------------------------
+    # 1. Mark the actual earnings day before resampling
+    out["is_earnings_day"] = 1.0
+    out["last_earnings_date"] = out["date"]
+
+    # 2. Resample daily (per ticker)
+    # Since we have multiple tickers mixed, apply per ticker
+    out = out.groupby("symbol", sort=False, group_keys=False).apply(
+        lambda x: _resample_daily_ffill(x, "date")
+    ).reset_index(drop=True)
+
+    # 3. Fix flags after ffill
+    # _resample_daily_ffill ffilled 'is_earnings_day', so it's 1 everywhere after first earnings.
+    # We want it to be 1 only on the original dates.
+    # Logic: if date == last_earnings_date, then 1, else 0
+    out["is_earnings_day"] = np.where(out["date"] == out["last_earnings_date"], 1.0, 0.0)
+
+    # 4. Calculate days since earnings
+    out["days_since_earnings"] = (out["date"] - out["last_earnings_date"]).dt.days
 
     out = out.replace([np.inf, -np.inf], np.nan)
     return out

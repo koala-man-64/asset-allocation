@@ -124,6 +124,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     )
     out["true_range"] = true_range_components.max(axis=1)
     out["atr_14d"] = out["true_range"].rolling(window=14, min_periods=14).mean()
+    out["gap_atr"] = _safe_div((out["open"] - prev_close).abs(), out["atr_14d"])
 
     # SMAs & cross-over state flags
     for window in (20, 50, 200):
@@ -131,6 +132,8 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     out["sma_20_gt_sma_50"] = (out["sma_20d"] > out["sma_50d"]).astype(int)
     out["sma_50_gt_sma_200"] = (out["sma_50d"] > out["sma_200d"]).astype(int)
+    out["trend_50_200"] = _safe_div(out["sma_50d"], out["sma_200d"]) - 1.0
+    out["above_sma_50"] = (close > out["sma_50d"]).astype(int)
 
     out["sma_20_crosses_above_sma_50"] = (out["sma_20_gt_sma_50"].diff() == 1).astype(int)
     out["sma_20_crosses_below_sma_50"] = (out["sma_20_gt_sma_50"].diff() == -1).astype(int)
@@ -144,6 +147,14 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     bb_lower_20 = bb_mid_20 - 2 * close_std_20
     out["bb_width_20d"] = _safe_div((bb_upper_20 - bb_lower_20), bb_mid_20)
     out["range_close"] = _safe_div((high - low), close)
+
+    # Range/Compression
+    high_20 = high.rolling(window=20, min_periods=20).max()
+    low_20 = low.rolling(window=20, min_periods=20).min()
+    out["range_20"] = _safe_div((high_20 - low_20), close)
+    out["compression_score"] = out["range_20"].rolling(window=252, min_periods=1).apply(
+        _percentile_rank_last, raw=True
+    )
 
     # Volume: z-score (20d) and percentile rank (252d)
     vol_mean_20 = volume.rolling(window=20, min_periods=20).mean()
