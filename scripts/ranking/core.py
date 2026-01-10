@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import List, Optional, Dict, Any, Union
 import pandas as pd
 import json
+import os
 
 from scripts.common import config as cfg
 from scripts.common.delta_core import store_delta, load_delta
@@ -41,9 +42,10 @@ def save_rankings(rankings: List[RankingResult], container: str = None):
         write_line("No rankings to save.")
         return
 
-    container = container or cfg.AZURE_CONTAINER_RANKING
     if not container:
-         container = "ranking"
+        if "AZURE_CONTAINER_RANKING" not in os.environ:
+            raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
+        container = cfg.AZURE_CONTAINER_RANKING
 
     # Convert to DataFrame
     data = [r.to_dict() for r in rankings]
@@ -73,7 +75,10 @@ def get_rankings(strategy: str, date_val: Optional[date] = None, container: str 
     """
     Retrieves rankings for a specific strategy and optionally a date.
     """
-    container = container or cfg.AZURE_CONTAINER_RANKING or "ranking"
+    if not container:
+        if "AZURE_CONTAINER_RANKING" not in os.environ:
+            raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
+        container = cfg.AZURE_CONTAINER_RANKING
     table_path = "gold/rankings"
     
     df = load_delta(container, table_path)

@@ -39,24 +39,21 @@ DELTA_SOURCES: List[DeltaSource] = [
         "name": "finance",
         "container": cfg.AZURE_CONTAINER_FINANCE,
         "path_env": "RANKING_FINANCE_DELTA_PATH",
-        "default_path": "gold/finance_features",
     },
     {
         "name": "price_targets",
         "container": cfg.AZURE_CONTAINER_TARGETS,
         "path_env": "RANKING_PRICE_DELTA_PATH",
-        "default_path": "gold/price_targets",
     },
 ]
 SOURCE_CONTAINER_MAP = {source["name"]: source["container"] for source in DELTA_SOURCES}
 SOURCE_LOOKUP = {source["name"]: source for source in DELTA_SOURCES}
 
 
-def _build_blob_client(container_name: str, label: str = "container") -> Optional[BlobStorageClient]:
+def _build_blob_client(container_name: str, label: str) -> Optional[BlobStorageClient]:
     # Keep container creation out of the ranking path; it should exist already.
     if not container_name:
-        write_line(f"Error: {label} not configured for ranking job.")
-        return None
+        raise ValueError(f"Missing required container configuration for {label}.")
     try:
         return BlobStorageClient(container_name=container_name, ensure_container_exists=False)
     except Exception as exc:
@@ -93,8 +90,7 @@ def _collapse_latest_by_symbol(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 def _collect_whitelist_tickers(container_name: Optional[str], context_prefix: str) -> List[str]:
     # Each data pipeline maintains its own whitelist in its container.
     if not container_name:
-        write_line(f"Warning: Missing container for {context_prefix} whitelist.")
-        return []
+        raise ValueError(f"Missing required container for {context_prefix} whitelist.")
 
     client = _build_blob_client(container_name, label=f"{context_prefix} container")
     if client is None:
@@ -151,8 +147,6 @@ def _get_market_feature_tickers(
 def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
     # Load per-ticker market features from the market container.
     client = _build_blob_client(cfg.AZURE_CONTAINER_MARKET, label="market container")
-    if client is None:
-        return pd.DataFrame()
 
     tickers = _get_market_feature_tickers(client, whitelist)
     if not tickers:
@@ -180,15 +174,17 @@ def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
 
 def _get_delta_path(source: Dict[str, str]) -> str:
     # Allow container-specific path overrides via env vars.
-    return os.environ.get(source["path_env"], source["default_path"])
+    path = os.environ.get(source["path_env"])
+    if not path:
+        raise ValueError(f"Missing required environment variable: {source['path_env']}")
+    return path
 
 
 def _load_delta_source(source: DeltaSource, whitelist: Optional[Set[str]]) -> Optional[pd.DataFrame]:
     # Load a single delta table and reduce to latest-per-symbol.
     container = source["container"]
     if not container:
-        write_line(f"Skipping {source['name']} source; container not configured.")
-        return None
+        raise ValueError(f"Missing required container for {source['name']} source.")
 
     path = _get_delta_path(source)
     write_line(f"Loading delta source '{source['name']}' from {container}/{path}")
@@ -224,8 +220,7 @@ def _get_whitelist_sources_for_strategy(strategy: AbstractStrategy) -> List[Whit
     for source_name in strategy.sources_used:
         container = SOURCE_CONTAINER_MAP.get(source_name)
         if not container:
-            write_line(f"Warning: Unknown source '{source_name}' for {strategy.name}.")
-            continue
+            raise ValueError(f"Missing required container for {strategy.name} source '{source_name}'.")
         sources.append((f"{source_name}_data", container))
     return sources
 
@@ -263,8 +258,8 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
 
 def _instantiate_strategies() -> List[AbstractStrategy]:
     # Pull thresholds from env to keep config consistent with job definitions.
-    drawdown_threshold = float(os.environ.get("RANKING_BROKEN_DRAWDOWN_THRESHOLD", "-0.3"))
-    margin_delta_threshold = float(os.environ.get("RANKING_MARGIN_DELTA_THRESHOLD", "0.0"))
+    drawdown_threshold = float(os.environ["RANKING_BROKEN_DRAWDOWN_THRESHOLD"])
+    margin_delta_threshold = float(os.environ["RANKING_MARGIN_DELTA_THRESHOLD"])
 
     return [
         MomentumStrategy(),
@@ -286,7 +281,9 @@ def main():
 
     # Use UTC to keep ranking dates consistent across environments.
     today = datetime.now(timezone.utc).date()
-    ranking_container = cfg.AZURE_CONTAINER_RANKING or "ranking-data"
+    if "AZURE_CONTAINER_RANKING" not in os.environ:
+        raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
+    ranking_container = cfg.AZURE_CONTAINER_RANKING
     for strategy in strategies:
         try:
             data = assemble_strategy_data(strategy)

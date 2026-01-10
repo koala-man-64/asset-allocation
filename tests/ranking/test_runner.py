@@ -73,6 +73,9 @@ def test_runner_invokes_save_rankings(monkeypatch):
     data = _build_sample_dataframe()
     calls = []
 
+    monkeypatch.setenv("RANKING_BROKEN_DRAWDOWN_THRESHOLD", "-0.3")
+    monkeypatch.setenv("RANKING_MARGIN_DELTA_THRESHOLD", "0.0")
+    monkeypatch.setenv("AZURE_CONTAINER_RANKING", "ranking-data")
     monkeypatch.setattr(runner, "assemble_strategy_data", lambda *_: data)
     monkeypatch.setattr(runner.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(runner, "write_line", lambda *args, **kwargs: None)
