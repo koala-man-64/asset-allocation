@@ -117,7 +117,7 @@ jobs:
       - name: Ensure Storage Containers Exist
         run: |
 
-          for container in market-data finance-data price-targets earnings-data common-data; do
+          for container in market-data finance-data price-targets earnings-data common-data ranking; do
             az storage container create \
               --name $container \
               --account-name assetallocstorage001 \

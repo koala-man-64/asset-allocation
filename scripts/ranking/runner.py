@@ -12,6 +12,7 @@ import pandas as pd
 from scripts.common import config as cfg
 from scripts.common.blob_storage import BlobStorageClient
 from scripts.common.core import load_parquet, write_line
+from scripts.common import core as mdc
 from scripts.common.delta_core import load_delta
 from scripts.ranking.core import save_rankings
 from scripts.ranking.strategies import (
@@ -151,6 +152,7 @@ def _instantiate_strategies() -> List[AbstractStrategy]:
 
 
 def main():
+    mdc.log_environment_diagnostics()
     write_line("Starting Ranking Runner...")
 
     data = assemble_ranking_data()
@@ -158,6 +160,7 @@ def main():
         write_line("No data available to rank.")
         return
 
+    write_line(f"Ranking input data contains {len(data)} rows and {len(data.columns)} columns.")
     strategies = _instantiate_strategies()
     write_line(f"Running {len(strategies)} ranking strategies.")
 
@@ -167,6 +170,7 @@ def main():
             results = strategy.rank(data, today)
             if results:
                 save_rankings(results)
+                write_line(f"{strategy.name} produced {len(results)} rankings.")
             else:
                 write_line(f"No results generated for strategy: {strategy.name}")
         except Exception as exc:
