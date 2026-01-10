@@ -82,8 +82,7 @@ jobs:
               - "!scripts/price_target_data/feature_generator.py"
             price_target_feature:
               - "scripts/price_target_data/feature_generator.py"
-              
-            
+             
       - name: Azure Login
         uses: azure/login@v2
         with:
