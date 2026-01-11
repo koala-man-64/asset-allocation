@@ -203,6 +203,49 @@
         text-transform: uppercase;
       }
 
+      details.columns {
+        margin-top: 20px;
+      }
+
+      details.columns > summary {
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      details.columns > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      details.columns > summary::after {
+        content: "▾";
+        color: var(--muted);
+        transition: transform 0.15s ease;
+      }
+
+      details.columns:not([open]) > summary::after {
+        transform: rotate(-90deg);
+      }
+
+      .columns-body {
+        margin-top: 12px;
+        padding: 12px 14px;
+        background: #fdf8f0;
+        border-radius: 14px;
+        border: 1px solid rgba(27, 27, 27, 0.06);
+        font-size: 13px;
+        color: var(--muted);
+        max-height: 140px;
+        overflow: auto;
+        word-break: break-word;
+        letter-spacing: normal;
+        text-transform: none;
+      }
+
       button {
         background: var(--accent);
         color: #ffffff;
@@ -333,7 +376,10 @@
             <select id="blob"></select>
           </div>
         </div>
-        <div class="column-list" id="available-columns">Columns: –</div>
+        <details class="columns" id="available-columns" open>
+          <summary class="column-list" id="available-columns-summary">Columns: –</summary>
+          <div class="columns-body" id="available-columns-body">–</div>
+        </details>
 
         <div class="meta" id="meta"></div>
 
@@ -366,7 +412,9 @@
       const emptyEl = document.getElementById("empty");
       const chartPlaceholder = document.getElementById("chart-placeholder");
       const chartCanvas = document.getElementById("preview-chart");
-      const availableColumnsLabel = document.getElementById("available-columns");
+      const columnsDetails = document.getElementById("available-columns");
+      const columnsSummary = document.getElementById("available-columns-summary");
+      const columnsBody = document.getElementById("available-columns-body");
 
       const chartColors = ["#16697a", "#f05d23", "#ffb703", "#0e4d5a", "#8ecae6", "#fb8500"];
 
@@ -456,14 +504,18 @@
       }
 
       function updateAvailableColumns(columns = previewState.columns) {
-        if (!availableColumnsLabel) {
+        if (!columnsSummary || !columnsBody) {
           return;
         }
         const available = (columns || [])
           .map((col, index) => (index === dateColumnIndex ? null : col))
           .filter(Boolean);
         const label = available.length ? available.join(", ") : "None";
-        availableColumnsLabel.textContent = `Columns: ${label}`;
+        columnsSummary.textContent = `Columns (${available.length})`;
+        columnsBody.textContent = label;
+        if (columnsDetails && available.length === 0) {
+          columnsDetails.open = false;
+        }
       }
 
       function renderTable() {

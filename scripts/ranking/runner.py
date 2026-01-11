@@ -15,6 +15,7 @@ from scripts.common.core import write_error, write_line
 from scripts.common import core as mdc
 from scripts.common.delta_core import load_delta
 from scripts.ranking.core import save_rankings
+from scripts.ranking.signals import DEFAULT_TOP_N, materialize_signals_for_year_month
 from scripts.ranking.strategies import (
     AbstractStrategy,
     BrokenGrowthImprovingInternalsStrategy,
@@ -334,17 +335,26 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
 
 
 def _load_existing_ranking_dates(strategy_name: str, container: str) -> Set[date]:
-    rankings = load_delta(container, "gold/rankings")
-    if rankings is None or rankings.empty:
-        return set()
-    if "strategy" not in rankings.columns or "date" not in rankings.columns:
-        raise ValueError("Ranking table is missing required columns: strategy/date")
+    filtered = load_delta(
+        container,
+        "gold/rankings",
+        columns=["date"],
+        filters=[("strategy", "=", strategy_name)],
+    )
+    if filtered is None:
+        rankings = load_delta(container, "gold/rankings", columns=["strategy", "date"])
+        if rankings is None or rankings.empty:
+            return set()
+        if "strategy" not in rankings.columns or "date" not in rankings.columns:
+            raise ValueError("Ranking table is missing required columns: strategy/date")
+        filtered = rankings[rankings["strategy"] == strategy_name].copy()
+        if filtered.empty:
+            return set()
 
-    subset = rankings[rankings["strategy"] == strategy_name].copy()
-    if subset.empty:
-        return set()
+    if "date" not in filtered.columns:
+        raise ValueError("Ranking table is missing required column: date")
 
-    dates = pd.to_datetime(subset["date"], errors="coerce")
+    dates = pd.to_datetime(filtered["date"], errors="coerce")
     dates = dates.dropna()
     return set(dates.dt.date.tolist())
 
@@ -374,6 +384,8 @@ def main():
     if "AZURE_CONTAINER_RANKING" not in os.environ:
         raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
     ranking_container = cfg.AZURE_CONTAINER_RANKING
+
+    touched_year_months: Set[str] = set()
 
     for strategy in strategies:
         try:
@@ -425,6 +437,7 @@ def main():
                 results = strategy.rank(day_slice, ranking_date)
                 if results:
                     save_rankings(results, container=ranking_container)
+                    touched_year_months.add(ranking_date.strftime("%Y-%m"))
                     write_line(
                         f"{strategy.name} {progress} saved {len(results)} rankings for {ranking_date}."
                     )
@@ -432,6 +445,18 @@ def main():
                     write_line(f"{strategy.name} {progress}: no results for {ranking_date}.")
         except Exception as exc:
             write_line(f"Error executing strategy {strategy.name}: {exc}")
+
+    if touched_year_months:
+        months = sorted(touched_year_months)
+        write_line(f"Materializing ranking signals for {len(months)} month(s): {', '.join(months)}")
+        for year_month in months:
+            result = materialize_signals_for_year_month(
+                container=ranking_container, year_month=year_month, top_n=DEFAULT_TOP_N
+            )
+            write_line(
+                f"Signals materialized for {year_month}: rankings_rows={result.rankings_rows} "
+                f"signals_rows={result.signals_rows} composite_rows={result.composite_rows}"
+            )
 
     write_line("Ranking process completed.")
 

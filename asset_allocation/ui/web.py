@@ -15,6 +15,7 @@ from starlette.requests import Request
 
 try:
     from scripts.common.blob_storage import BlobStorageClient
+    from scripts.common.delta_core import load_delta
 except ModuleNotFoundError as exc:
     if exc.name != "scripts":
         raise
@@ -22,6 +23,7 @@ except ModuleNotFoundError as exc:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
     from scripts.common.blob_storage import BlobStorageClient
+    from scripts.common.delta_core import load_delta
 
 logger = logging.getLogger("asset_allocation.ui")
 logging.basicConfig(level=os.environ.get("UI_LOG_LEVEL", "INFO"))
@@ -54,6 +56,7 @@ def _get_container_allowlist() -> List[str]:
             "AZURE_CONTAINER_FINANCE",
             "AZURE_CONTAINER_EARNINGS",
             "AZURE_CONTAINER_TARGETS",
+            "AZURE_CONTAINER_RANKING",
             "AZURE_CONTAINER_COMMON",
         ]
         for name in env_names:
@@ -218,6 +221,11 @@ def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/rankings", response_class=HTMLResponse)
+def rankings_explorer(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("rankings.html", {"request": request})
+
+
 @app.get("/healthz")
 def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok"})
@@ -235,6 +243,145 @@ def readyz() -> JSONResponse:
 def list_containers() -> JSONResponse:
     containers = _get_container_allowlist()
     return JSONResponse({"containers": containers})
+
+
+def _get_ranking_container() -> str:
+    container = os.environ.get("AZURE_CONTAINER_RANKING", "").strip()
+    if not container:
+        raise HTTPException(status_code=503, detail="Missing AZURE_CONTAINER_RANKING.")
+    return container
+
+
+def _get_strategy_names(year_month: str) -> List[str]:
+    container = _get_ranking_container()
+    strategies_df = load_delta(
+        container,
+        "gold/ranking_signals",
+        columns=["strategy"],
+        filters=[("year_month", "=", year_month)],
+    )
+    if strategies_df is None or strategies_df.empty or "strategy" not in strategies_df.columns:
+        return []
+    return sorted(strategies_df["strategy"].dropna().astype(str).unique().tolist())
+
+
+@app.get("/api/rankings/strategies")
+def rankings_strategies(date: Optional[str] = None) -> JSONResponse:
+    target = datetime.utcnow()
+    if date:
+        try:
+            target = pd.to_datetime(date).to_pydatetime()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid date '{date}'. Expected YYYY-MM-DD."
+            ) from exc
+    year_month = target.strftime("%Y-%m")
+    return JSONResponse({"year_month": year_month, "strategies": _get_strategy_names(year_month)})
+
+
+@app.get("/api/rankings/snapshot")
+def rankings_snapshot(
+    date: str,
+    top_n: int = Query(50, ge=1, le=500),
+    strategies: Optional[List[str]] = Query(None),
+) -> JSONResponse:
+    """
+    Returns top-N symbols for a given date with composite and per-strategy ranks.
+    Reads from Delta tables in the ranking container:
+    - gold/composite_signals
+    - gold/ranking_signals
+    """
+
+    try:
+        target_day = pd.to_datetime(date).normalize()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid date '{date}'. Expected YYYY-MM-DD.") from exc
+
+    year_month = target_day.strftime("%Y-%m")
+    day_start = target_day
+    day_end = target_day + pd.Timedelta(days=1)
+
+    selected_strategies = [s for s in (strategies or []) if s]
+
+    container = _get_ranking_container()
+
+    composite = load_delta(
+        container,
+        "gold/composite_signals",
+        filters=[
+            ("year_month", "=", year_month),
+            ("date", ">=", day_start.to_pydatetime()),
+            ("date", "<", day_end.to_pydatetime()),
+        ],
+    )
+    if composite is None or composite.empty:
+        raise HTTPException(status_code=404, detail=f"No composite rankings found for {target_day.date()}.")
+
+    composite = composite.sort_values("composite_rank", ascending=True)
+    composite = composite.head(top_n).copy()
+    symbols = composite["symbol"].astype(str).tolist()
+
+    signals = load_delta(
+        container,
+        "gold/ranking_signals",
+        filters=[
+            ("year_month", "=", year_month),
+            ("date", ">=", day_start.to_pydatetime()),
+            ("date", "<", day_end.to_pydatetime()),
+        ],
+        columns=["symbol", "strategy", "rank"],
+    )
+    if signals is None:
+        signals = pd.DataFrame()
+
+    if not signals.empty:
+        signals["symbol"] = signals["symbol"].astype(str)
+        signals["strategy"] = signals["strategy"].astype(str)
+        signals["rank"] = pd.to_numeric(signals["rank"], errors="coerce")
+        signals = signals.dropna(subset=["rank"])
+        signals["rank"] = signals["rank"].astype(int)
+        if not selected_strategies:
+            selected_strategies = sorted(signals["strategy"].dropna().unique().tolist())
+        signals = signals[signals["symbol"].isin(symbols) & signals["strategy"].isin(selected_strategies)]
+    else:
+        if not selected_strategies:
+            selected_strategies = _get_strategy_names(year_month)
+
+    pivot = (
+        signals.pivot(index="symbol", columns="strategy", values="rank")
+        if not signals.empty
+        else pd.DataFrame(index=pd.Index(symbols, name="symbol"))
+    )
+
+    rows = []
+    for _, row in composite.iterrows():
+        symbol = str(row["symbol"])
+        ranks = {strategy: None for strategy in selected_strategies}
+        if symbol in pivot.index:
+            for strategy in selected_strategies:
+                value = pivot.at[symbol, strategy] if strategy in pivot.columns else None
+                ranks[strategy] = None if pd.isna(value) else int(value)
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "composite_rank": int(row["composite_rank"]),
+                "composite_percentile": float(row["composite_percentile"]),
+                "strategies_present": int(row.get("strategies_present", 0)),
+                "strategies_hit": int(row.get("strategies_hit", 0)),
+                "ranks": ranks,
+            }
+        )
+
+    return JSONResponse(
+        {
+            "date": target_day.date().isoformat(),
+            "year_month": year_month,
+            "top_n": top_n,
+            "strategies": selected_strategies,
+            "rows": rows,
+        }
+    )
 
 
 @app.get("/api/files")

@@ -251,6 +251,7 @@ def store_delta(
     partition_by: list = None,
     merge_schema: bool = False,
     schema_mode: Optional[str] = None,
+    predicate: Optional[str] = None,
 ) -> None:
     """
     Writes a pandas DataFrame to a Delta table in Azure.
@@ -268,6 +269,7 @@ def store_delta(
             mode=mode,
             partition_by=partition_by,
             schema_mode=effective_schema_mode,
+            predicate=predicate,
             storage_options=opts
         )
         logger.info(f"Successfully wrote Delta table to {path}")
@@ -278,7 +280,13 @@ def store_delta(
             _log_delta_schema_mismatch(df, container, path)
         raise
 
-def load_delta(container: str, path: str, version: int = None) -> Optional[pd.DataFrame]:
+def load_delta(
+    container: str,
+    path: str,
+    version: int = None,
+    columns: Optional[List[str]] = None,
+    filters: Any = None,
+) -> Optional[pd.DataFrame]:
     """
     Reads a Delta table from Azure into a pandas DataFrame.
     Returns None if table does not exist or access fails.
@@ -288,7 +296,7 @@ def load_delta(container: str, path: str, version: int = None) -> Optional[pd.Da
         opts = get_delta_storage_options(container)
         
         dt = DeltaTable(uri, version=version, storage_options=opts)
-        return dt.to_pandas()
+        return dt.to_pandas(columns=columns, filters=filters)
     except Exception as e:
         # Check for specific "Not a Delta table" or "Not found" errors if possible
         # For now, log warning and return None to mimic load_parquet behavior
