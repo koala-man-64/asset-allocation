@@ -120,8 +120,12 @@ def _rolling_slope_fixed_window(values: pd.Series, window: int) -> pd.Series:
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = _snake_case_columns(df)
 
+    # Backward compatibility: older tables used `ticker` instead of `symbol`.
+    if "symbol" not in out.columns and "ticker" in out.columns:
+        out = out.rename(columns={"ticker": "symbol"})
+
     required = {
-        "ticker",
+        "symbol",
         "obs_date",
         "tp_mean_est",
         "tp_std_dev_est",
@@ -136,7 +140,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
 
     out["obs_date"] = _coerce_datetime(out["obs_date"])
-    out["ticker"] = out["ticker"].astype(str)
+    out["symbol"] = out["symbol"].astype(str)
 
     numeric_cols = [
         "tp_mean_est",
@@ -150,11 +154,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_cols:
         out[col] = pd.to_numeric(out[col], errors="coerce")
 
-    out = out.dropna(subset=["obs_date"]).sort_values(["ticker", "obs_date"]).reset_index(drop=True)
-    out = out.drop_duplicates(subset=["ticker", "obs_date"], keep="last").reset_index(drop=True)
+    out = out.dropna(subset=["obs_date"]).sort_values(["symbol", "obs_date"]).reset_index(drop=True)
+    out = out.drop_duplicates(subset=["symbol", "obs_date"], keep="last").reset_index(drop=True)
 
     out = _resample_daily_ffill(out, "obs_date")
-    out = out.dropna(subset=["obs_date"]).sort_values(["ticker", "obs_date"]).reset_index(drop=True)
+    out = out.dropna(subset=["obs_date"]).sort_values(["symbol", "obs_date"]).reset_index(drop=True)
 
     tp_mean = out["tp_mean_est"]
     tp_std = out["tp_std_dev_est"]
@@ -202,7 +206,7 @@ def _process_ticker(task: Tuple[str, str, str, str]) -> Dict[str, Any]:
         return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
 
     try:
-        delta_core.store_delta(df_features, targets_container, gold_path, mode="overwrite")
+        delta_core.store_delta(df_features, targets_container, gold_path, mode="overwrite", schema_mode="overwrite")
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
 

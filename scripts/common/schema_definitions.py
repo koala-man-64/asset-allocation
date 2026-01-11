@@ -121,7 +121,7 @@ EARNINGS_DATA_COLUMNS = [
 ]
 
 PRICE_TARGET_DATA_COLUMNS = [
-    "ticker", "tp_mean_est", "tp_std_dev_est", "tp_high_est", "tp_low_est",
+    "symbol", "tp_mean_est", "tp_std_dev_est", "tp_high_est", "tp_low_est",
     "tp_cnt_est", "tp_cnt_est_rev_up", "tp_cnt_est_rev_down", "disp_abs",
     "disp_norm", "disp_std_norm", "rev_net", "rev_ratio", "rev_intensity",
     "disp_norm_change_30d", "tp_mean_change_30d", "tp_mean_slope_90d",

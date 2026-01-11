@@ -2,7 +2,7 @@
 
 | Column Name | Description |
 | :--- | :--- |
-| **ticker** | Unique ticker identifier for the company. |
+| **symbol** | Unique ticker identifier for the company. |
 | **tp_mean_est** | The mean (average) target price estimate from all covering analysts. |
 | **tp_std_dev_est** | The standard deviation of the target price estimates, representing analyst disagreement. |
 | **tp_high_est** | The highest target price estimate among all analysts. |

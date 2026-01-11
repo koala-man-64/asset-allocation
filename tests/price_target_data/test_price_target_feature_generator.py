@@ -11,7 +11,7 @@ def _make_price_target_df(rows: int = 200, freq: str = "D") -> pd.DataFrame:
 
     return pd.DataFrame(
         {
-            "ticker": ["AAPL"] * rows,
+            "symbol": ["AAPL"] * rows,
             "obs_date": dates.astype(str),
             "tp_mean_est": mean_target,
             "tp_std_dev_est": mean_target * 0.05,
@@ -72,5 +72,10 @@ def test_compute_features_resamples_irregular_updates_to_daily():
 
 def test_compute_features_requires_expected_columns():
     with pytest.raises(ValueError, match="Missing required columns"):
-        compute_features(pd.DataFrame({"ticker": ["AAPL"], "obs_date": ["2020-01-01"]}))
+        compute_features(pd.DataFrame({"symbol": ["AAPL"], "obs_date": ["2020-01-01"]}))
 
+
+def test_compute_features_accepts_legacy_ticker_column():
+    df = _make_price_target_df(10).rename(columns={"symbol": "ticker"})
+    out = compute_features(df)
+    assert "symbol" in out.columns

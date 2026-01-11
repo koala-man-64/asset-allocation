@@ -249,7 +249,8 @@ def store_delta(
     path: str, 
     mode: str = 'overwrite', 
     partition_by: list = None,
-    merge_schema: bool = False
+    merge_schema: bool = False,
+    schema_mode: Optional[str] = None,
 ) -> None:
     """
     Writes a pandas DataFrame to a Delta table in Azure.
@@ -259,12 +260,14 @@ def store_delta(
         uri = get_delta_table_uri(container, path)
         opts = get_delta_storage_options(container)
         
+        effective_schema_mode = schema_mode or ("merge" if merge_schema else None)
+
         write_deltalake(
             uri,
             df,
             mode=mode,
             partition_by=partition_by,
-            schema_mode="merge" if merge_schema else None,
+            schema_mode=effective_schema_mode,
             storage_options=opts
         )
         logger.info(f"Successfully wrote Delta table to {path}")
