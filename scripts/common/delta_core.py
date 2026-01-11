@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +13,55 @@ from deltalake import DeltaTable, write_deltalake
 # Configure logger
 logger = logging.getLogger(__name__)
 _checked_containers = set()
+
+
+def _get_existing_delta_schema_columns(uri: str, storage_options: Dict[str, str]) -> Optional[List[str]]:
+    try:
+        dt = DeltaTable(uri, storage_options=storage_options)
+        return [field.name for field in dt.schema().fields]
+    except Exception as exc:
+        logger.warning(f"Failed to read Delta schema for {uri}: {exc}")
+        return None
+
+
+def _log_delta_schema_mismatch(df: pd.DataFrame, container: str, path: str) -> None:
+    """
+    Best-effort diagnostic logging for schema mismatches between an existing Delta table and a DataFrame.
+    """
+    try:
+        uri = get_delta_table_uri(container, path)
+        opts = get_delta_storage_options(container)
+        table_cols = _get_existing_delta_schema_columns(uri, opts)
+        if not table_cols:
+            logger.error(
+                "Delta schema mismatch diagnostics unavailable for %s (no existing schema found).",
+                path,
+            )
+            return
+
+        df_cols = [str(c) for c in df.columns.tolist()]
+        missing_in_df = [c for c in table_cols if c not in df_cols]
+        extra_in_df = [c for c in df_cols if c not in table_cols]
+        order_matches = df_cols == table_cols
+
+        logger.error(
+            "Delta schema mismatch for %s: df_cols=%d table_cols=%d missing_in_df=%s extra_in_df=%s order_matches=%s",
+            path,
+            len(df_cols),
+            len(table_cols),
+            missing_in_df,
+            extra_in_df,
+            order_matches,
+        )
+
+        # Helpful hint for the known rename (legacy -> current name).
+        if "drawdown_1y" in df_cols and "drawdown" in table_cols and "drawdown" not in df_cols:
+            logger.error(
+                "Delta schema hint for %s: existing table has 'drawdown' but DataFrame has 'drawdown_1y'.",
+                path,
+            )
+    except Exception as exc:
+        logger.warning(f"Failed to compute schema mismatch diagnostics for {path}: {exc}")
 
 def _parse_connection_string(conn_str: str) -> Dict[str, str]:
     """Parses Azure Storage Connection String into a dictionary."""
@@ -221,6 +270,9 @@ def store_delta(
         logger.info(f"Successfully wrote Delta table to {path}")
     except Exception as e:
         logger.error(f"Failed to write Delta table {path}: {e}")
+        error_text = str(e)
+        if "Cannot cast schema" in error_text or "number of fields does not match" in error_text:
+            _log_delta_schema_mismatch(df, container, path)
         raise
 
 def load_delta(container: str, path: str, version: int = None) -> Optional[pd.DataFrame]:

@@ -1,0 +1,495 @@
+name: Recreate Container Apps Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Job to recreate (use job key or `all` to recreate everything)
+        required: false
+        default: all
+      image_tag:
+        description: ACR image tag to use (e.g. `latest` or a git SHA)
+        required: false
+        default: latest
+      start_jobs:
+        description: Start recreated jobs immediately
+        type: boolean
+        required: false
+        default: false
+      confirm:
+        description: Type `RECREATE` to confirm deletion and recreation
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: assetallocationacr
+  RESOURCE_GROUP: AssetAllocationRG
+  CONTAINERAPPS_ENVIRONMENT: asset-allocation-env
+  IMAGE_NAME: asset-allocation-scraper
+
+  MARKET_DATA_JOB: market-data-job
+  MARKET_FEATURE_JOB: feature-engineering-market-job
+  FINANCE_DATA_JOB: finance-data-job
+  FINANCE_FEATURE_JOB: feature-engineering-finance-job
+  PRICE_TARGET_JOB: price-target-job
+  PRICE_TARGET_FEATURE_JOB: feature-engineering-targets-job
+  EARNINGS_DATA_JOB: earnings-data-job
+  EARNINGS_FEATURE_JOB: feature-engineering-earnings-job
+  RANKING_JOB: ranking-job
+
+  MARKET_DATA_CRON: "0 14-22 * * *"
+  MARKET_FEATURE_CRON: "30 14-22 * * *"
+  FINANCE_DATA_CRON: "0 22 * * *"
+  FINANCE_FEATURE_CRON: "30 22 * * *"
+  PRICE_TARGET_DATA_CRON: "0 12 * * *"
+  PRICE_TARGET_FEATURE_CRON: "30 12 * * *"
+  EARNINGS_DATA_CRON: "0 23 * * *"
+  EARNINGS_FEATURE_CRON: "30 23 * * *"
+  RANKING_CRON: "0 5 * * *"
+
+  RANKING_FINANCE_DELTA_PATH: "gold"
+  RANKING_PRICE_DELTA_PATH: "gold"
+  RANKING_BROKEN_DRAWDOWN_THRESHOLD: "-0.3"
+  RANKING_MARGIN_DELTA_THRESHOLD: "0.0"
+
+jobs:
+  recreate-jobs:
+    runs-on: ubuntu-latest
+    env:
+      START_JOBS: ${{ inputs.start_jobs }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate confirmation
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.inputs.confirm }}" != "RECREATE" ]; then
+            echo "Refusing to delete/recreate jobs without confirm=RECREATE."
+            exit 1
+          fi
+          if [ -z "${IMAGE_TAG}" ]; then
+            echo "image_tag is required (e.g. latest)."
+            exit 1
+          fi
+
+      - name: Fetch ACR password (masked)
+        run: |
+          set -euo pipefail
+          ACR_PASSWORD="$(az acr credential show --name "${ACR_NAME}" --query 'passwords[0].value' -o tsv)"
+          echo "::add-mask::${ACR_PASSWORD}"
+          echo "ACR_PASSWORD=${ACR_PASSWORD}" >> "${GITHUB_ENV}"
+
+      - name: Recreate Market Data Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'market-data' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${MARKET_DATA_JOB}..."
+          az containerapp job delete --name "${MARKET_DATA_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${MARKET_DATA_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${MARKET_DATA_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${MARKET_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${MARKET_DATA_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 1.0 --memory 2.0Gi \
+            --command "python" "scripts/market_data/scraper.py"
+          az containerapp job secret set \
+            --name "${MARKET_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${MARKET_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${MARKET_DATA_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "scripts/market_data/scraper.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${MARKET_DATA_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Market Feature Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'market-feature' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${MARKET_FEATURE_JOB}..."
+          az containerapp job delete --name "${MARKET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${MARKET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${MARKET_FEATURE_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${MARKET_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${MARKET_FEATURE_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 2.0 --memory 4.0Gi \
+            --command "python" "scripts/market_data/feature_generator.py"
+          az containerapp job secret set \
+            --name "${MARKET_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${MARKET_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${MARKET_FEATURE_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "scripts/market_data/feature_generator.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${MARKET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Finance Data Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'finance-data' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${FINANCE_DATA_JOB}..."
+          az containerapp job delete --name "${FINANCE_DATA_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${FINANCE_DATA_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${FINANCE_DATA_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${FINANCE_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${FINANCE_DATA_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 1.0 --memory 2.0Gi \
+            --command "python" "scripts/finance_data/scraper.py"
+          az containerapp job secret set \
+            --name "${FINANCE_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${FINANCE_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${FINANCE_DATA_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "scripts/finance_data/scraper.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${FINANCE_DATA_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Finance Feature Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'finance-feature' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${FINANCE_FEATURE_JOB}..."
+          az containerapp job delete --name "${FINANCE_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${FINANCE_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${FINANCE_FEATURE_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${FINANCE_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${FINANCE_FEATURE_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 2.0 --memory 4.0Gi \
+            --command "python" "scripts/finance_data/feature_generator.py"
+          az containerapp job secret set \
+            --name "${FINANCE_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${FINANCE_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${FINANCE_FEATURE_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "scripts/finance_data/feature_generator.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${FINANCE_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Price Target Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'price-target' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${PRICE_TARGET_JOB}..."
+          az containerapp job delete --name "${PRICE_TARGET_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${PRICE_TARGET_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${PRICE_TARGET_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${PRICE_TARGET_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${PRICE_TARGET_DATA_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 1.0 --memory 2.0Gi \
+            --command "python" "scripts/price_target_data/scraper.py"
+          az containerapp job secret set \
+            --name "${PRICE_TARGET_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${PRICE_TARGET_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${PRICE_TARGET_DATA_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "scripts/price_target_data/scraper.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${PRICE_TARGET_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Price Target Feature Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'price-target-feature' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${PRICE_TARGET_FEATURE_JOB}..."
+          az containerapp job delete --name "${PRICE_TARGET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${PRICE_TARGET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${PRICE_TARGET_FEATURE_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${PRICE_TARGET_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${PRICE_TARGET_FEATURE_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 2.0 --memory 4.0Gi \
+            --command "python" "scripts/price_target_data/feature_generator.py"
+          az containerapp job secret set \
+            --name "${PRICE_TARGET_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${PRICE_TARGET_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${PRICE_TARGET_FEATURE_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "scripts/price_target_data/feature_generator.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${PRICE_TARGET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Earnings Data Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'earnings-data' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${EARNINGS_DATA_JOB}..."
+          az containerapp job delete --name "${EARNINGS_DATA_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${EARNINGS_DATA_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${EARNINGS_DATA_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${EARNINGS_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${EARNINGS_DATA_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 1.0 --memory 2.0Gi \
+            --command "python" "scripts/earnings_data/scraper.py"
+          az containerapp job secret set \
+            --name "${EARNINGS_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${EARNINGS_DATA_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${EARNINGS_DATA_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "scripts/earnings_data/scraper.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${EARNINGS_DATA_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Earnings Feature Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'earnings-feature' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${EARNINGS_FEATURE_JOB}..."
+          az containerapp job delete --name "${EARNINGS_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${EARNINGS_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${EARNINGS_FEATURE_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${EARNINGS_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${EARNINGS_FEATURE_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 2.0 --memory 4.0Gi \
+            --command "python" "scripts/earnings_data/feature_generator.py"
+          az containerapp job secret set \
+            --name "${EARNINGS_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${EARNINGS_FEATURE_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${EARNINGS_FEATURE_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --command "python" "scripts/earnings_data/feature_generator.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${EARNINGS_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
+
+      - name: Recreate Ranking Job
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'ranking' }}
+        run: |
+          set -euo pipefail
+          echo "Recreating ${RANKING_JOB}..."
+          az containerapp job delete --name "${RANKING_JOB}" --resource-group "${RESOURCE_GROUP}" --yes || true
+          for _ in {1..30}; do
+            if az containerapp job show --name "${RANKING_JOB}" --resource-group "${RESOURCE_GROUP}" > /dev/null 2>&1; then
+              echo "Waiting for ${RANKING_JOB} deletion..."
+              sleep 10
+            else
+              break
+            fi
+          done
+          az containerapp job create \
+            --name "${RANKING_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --environment "${CONTAINERAPPS_ENVIRONMENT}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-username "${ACR_NAME}" \
+            --registry-password "${ACR_PASSWORD}" \
+            --trigger-type Schedule \
+            --cron-expression "${RANKING_CRON}" \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 1.0 --memory 2.0Gi \
+            --command "python" "scripts/ranking/runner.py"
+          az containerapp job secret set \
+            --name "${RANKING_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name "${RANKING_JOB}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --cron-expression "${RANKING_CRON}" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking-data" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${RANKING_FINANCE_DELTA_PATH}" "RANKING_PRICE_DELTA_PATH=${RANKING_PRICE_DELTA_PATH}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${RANKING_BROKEN_DRAWDOWN_THRESHOLD}" "RANKING_MARGIN_DELTA_THRESHOLD=${RANKING_MARGIN_DELTA_THRESHOLD}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --command "python" "scripts/ranking/runner.py"
+          if [ "${START_JOBS}" = "true" ]; then
+            az containerapp job start --name "${RANKING_JOB}" --resource-group "${RESOURCE_GROUP}"
+          fi
