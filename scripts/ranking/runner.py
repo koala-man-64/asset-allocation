@@ -40,15 +40,16 @@ DELTA_SOURCES: List[DeltaSource] = [
         "container": cfg.AZURE_CONTAINER_FINANCE,
         "path_env": "RANKING_FINANCE_DELTA_PATH",
         "per_symbol": True,
+        "whitelist_prefix": "finance_data",
     },
     {
         "name": "price_targets",
         "container": cfg.AZURE_CONTAINER_TARGETS,
         "path_env": "RANKING_PRICE_DELTA_PATH",
         "per_symbol": True,
+        "whitelist_prefix": "price_target_data",
     },
 ]
-SOURCE_CONTAINER_MAP = {source["name"]: source["container"] for source in DELTA_SOURCES}
 SOURCE_LOOKUP = {source["name"]: source for source in DELTA_SOURCES}
 
 
@@ -255,11 +256,47 @@ def _merge_source(
 def _get_whitelist_sources_for_strategy(strategy: AbstractStrategy) -> List[WhitelistSource]:
     sources: List[WhitelistSource] = [("market_data", cfg.AZURE_CONTAINER_MARKET)]
     for source_name in strategy.sources_used:
-        container = SOURCE_CONTAINER_MAP.get(source_name)
-        if not container:
-            raise ValueError(f"Missing required container for {strategy.name} source '{source_name}'.")
-        sources.append((f"{source_name}_data", container))
+        source = SOURCE_LOOKUP.get(source_name)
+        if not source:
+            raise ValueError(f"Missing required source definition for '{source_name}'.")
+        container = source.get("container")
+        whitelist_prefix = source.get("whitelist_prefix")
+        if not container or not whitelist_prefix:
+            raise ValueError(f"Missing required container/whitelist_prefix for source '{source_name}'.")
+        sources.append((whitelist_prefix, container))
     return sources
+
+
+def _format_value(value: Optional[str]) -> str:
+    return value if value else "<unset>"
+
+
+def _log_strategy_configuration(strategy: AbstractStrategy, ranking_container: str) -> None:
+    source_specs = []
+    whitelist_specs = [f"market_data@{_format_value(cfg.AZURE_CONTAINER_MARKET)}"]
+
+    for source_name in strategy.sources_used:
+        source = SOURCE_LOOKUP.get(source_name, {})
+        container = source.get("container")
+        base_path = os.environ.get(source.get("path_env", ""))
+        suffix = "/<symbol>" if source.get("per_symbol") else ""
+        source_specs.append(f"{source_name}={_format_value(container)}/{_format_value(base_path)}{suffix}")
+
+        whitelist_prefix = source.get("whitelist_prefix")
+        if whitelist_prefix:
+            whitelist_specs.append(f"{whitelist_prefix}@{_format_value(container)}")
+
+    containers_line = (
+        f"market={_format_value(cfg.AZURE_CONTAINER_MARKET)}, "
+        f"ranking_out={_format_value(ranking_container)}"
+    )
+    if strategy.sources_used:
+        containers_line = f"{containers_line}, sources={', '.join(source_specs)}"
+
+    write_line(f"Strategy={strategy.name} sources_used={strategy.sources_used}")
+    write_line(f"Strategy={strategy.name} required_columns={strategy.required_columns}")
+    write_line(f"Strategy={strategy.name} containers={containers_line}")
+    write_line(f"Strategy={strategy.name} whitelist_intersection={whitelist_specs}")
 
 
 def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
@@ -340,6 +377,7 @@ def main():
 
     for strategy in strategies:
         try:
+            _log_strategy_configuration(strategy, ranking_container)
             data = assemble_strategy_data(strategy)
             if data.empty:
                 write_error(f"No data available for {strategy.name}.")
