@@ -15,7 +15,7 @@
 | **vol_20d** | Annualized volatility calculated over a 20-day window. |
 | **vol_60d** | Annualized volatility calculated over a 60-day window. |
 | **rolling_max_252d** | The highest closing price observed over the last 252 trading days (~1 year). |
-| **drawdown** | The percentage decline from the `rolling_max_252d` to the current price. |
+| **drawdown_1y** | The percentage decline from the `rolling_max_252d` to the current price. |
 | **true_range** | The greatest of: current high-low, abs(current high - prev close), or abs(current low - prev close). |
 | **atr_14d** | Average True Range (14-day), a smoothing of the True Range values to measure volatility. |
 | **sma_20d** | Simple Moving Average of the close price over the last 20 days. |

@@ -110,7 +110,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Drawdown (vs rolling max)
     out["rolling_max_252d"] = close.rolling(window=252, min_periods=1).max()
-    out["drawdown"] = _safe_div(close, out["rolling_max_252d"]) - 1.0
+    out["drawdown_1y"] = _safe_div(close, out["rolling_max_252d"]) - 1.0
 
     # ATR (14d simple average)
     prev_close = close.shift(1)

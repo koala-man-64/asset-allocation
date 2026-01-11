@@ -6,7 +6,7 @@ Defines the columns for Market Data, Finance Data, Earnings Data, and Price Targ
 
 MARKET_DATA_COLUMNS = [
     "open", "high", "low", "close", "volume", "symbol", "return_1d", "return_5d",
-    "return_20d", "return_60d", "vol_20d", "vol_60d", "rolling_max_252d", "drawdown",
+    "return_20d", "return_60d", "vol_20d", "vol_60d", "rolling_max_252d", "drawdown_1y",
     "true_range", "atr_14d", "sma_20d", "sma_50d", "sma_200d", "sma_20_gt_sma_50",
     "sma_50_gt_sma_200", "sma_20_crosses_above_sma_50", "sma_20_crosses_below_sma_50",
     "sma_50_crosses_above_sma_200", "sma_50_crosses_below_sma_200", "bb_width_20d",

@@ -38,7 +38,7 @@ def test_compute_features_adds_expected_columns():
         "vol_20d",
         "vol_60d",
         "rolling_max_252d",
-        "drawdown",
+        "drawdown_1y",
         "true_range",
         "atr_14d",
         "sma_20d",
@@ -64,7 +64,7 @@ def test_compute_features_basic_sanity_on_monotonic_series():
     df = _make_market_df(300)
     out = compute_features(df)
 
-    assert out["drawdown"].fillna(0.0).abs().max() < 1e-9
+    assert out["drawdown_1y"].fillna(0.0).abs().max() < 1e-9
 
     last = out.iloc[-1]
     assert last["sma_20_gt_sma_50"] == 1
