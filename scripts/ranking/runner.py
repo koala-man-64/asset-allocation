@@ -161,13 +161,17 @@ def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
         write_line("Warning: No market feature tickers found.")
         return pd.DataFrame()
 
+    write_line(
+        f"Loading market features for {len(tickers)} ticker(s) from "
+        f"{cfg.AZURE_CONTAINER_MARKET}/gold/<ticker>..."
+    )
+
     from scripts.common.pipeline import DataPaths
 
     frames = []
     for ticker in tickers:
         # Each ticker's market features live under gold/<ticker>.
         path = DataPaths.get_gold_features_path(ticker)
-        write_line(f"Loading market features from {cfg.AZURE_CONTAINER_MARKET}/{path}")
         df = load_delta(cfg.AZURE_CONTAINER_MARKET, path)
         if df is None or df.empty:
             continue
@@ -200,10 +204,13 @@ def _load_delta_source(source: DeltaSource, whitelist: Optional[Set[str]]) -> Op
             write_line(f"No whitelist provided for '{source['name']}' source. Skipping.")
             return None
 
+        write_line(
+            f"Loading delta source '{source['name']}' for {len(whitelist)} ticker(s) from "
+            f"{container}/{path}/<symbol>..."
+        )
         frames = []
         for ticker in sorted(whitelist):
             ticker_path = f"{path.rstrip('/')}/{ticker}"
-            write_line(f"Loading delta source '{source['name']}' from {container}/{ticker_path}")
             df = load_delta(container, ticker_path)
             if df is None or df.empty:
                 continue
