@@ -372,20 +372,26 @@ def main():
                 f"{strategy.name}: computing rankings for {len(missing_dates)} missing date(s)."
             )
 
-            for ranking_date in missing_dates:
+            total_dates = len(missing_dates)
+            for idx, ranking_date in enumerate(missing_dates, start=1):
+                percent_complete = (idx / total_dates) * 100
+                progress = f"[{idx}/{total_dates} {percent_complete:.1f}%]"
+
                 day_slice = data[data["date"].dt.date == ranking_date]
                 if day_slice.empty:
-                    write_error(f"{strategy.name}: no input rows for {ranking_date}. Skipping date.")
+                    write_error(
+                        f"{strategy.name} {progress}: no input rows for {ranking_date}. Skipping date."
+                    )
                     continue
 
                 results = strategy.rank(day_slice, ranking_date)
                 if results:
                     save_rankings(results, container=ranking_container)
                     write_line(
-                        f"{strategy.name} saved {len(results)} rankings for {ranking_date}."
+                        f"{strategy.name} {progress} saved {len(results)} rankings for {ranking_date}."
                     )
                 else:
-                    write_line(f"{strategy.name}: no results for {ranking_date}.")
+                    write_line(f"{strategy.name} {progress}: no results for {ranking_date}.")
         except Exception as exc:
             write_line(f"Error executing strategy {strategy.name}: {exc}")
 
