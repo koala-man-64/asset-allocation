@@ -41,8 +41,8 @@ def _validate_environment() -> None:
             + ", ".join(missing)
         )
 
-    if not cfg.AZURE_CONTAINER_TARGETS:
-        raise ValueError("Environment variable 'AZURE_CONTAINER_TARGETS' is strictly required for Price Target Scraper.")
+    if not cfg.AZURE_CONTAINER_BRONZE:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required for Price Target Scraper.")
 
 def main():
     mdc.log_environment_diagnostics()

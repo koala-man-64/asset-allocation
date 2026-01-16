@@ -7,6 +7,7 @@ from scripts.finance_data import core as yc
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
+from scripts.common.pipeline import DataPaths
 
 # --- Helpers ---
 
@@ -20,7 +21,7 @@ def storage_cleanup(unique_ticker):
     Yields the ticker for the test, and cleans up associated blobs after.
     """
     # Setup: Ensure container exists 
-    container = cfg.AZURE_CONTAINER_FINANCE
+    container = cfg.AZURE_CONTAINER_BRONZE
     mdc.get_storage_client(container) 
     
     yield unique_ticker
@@ -36,7 +37,7 @@ def storage_cleanup(unique_ticker):
     # Or strict path construction
     folder = "Valuation"
     suffix = "quarterly_valuation_measures"
-    target_path = f"{folder.lower()}/{unique_ticker}_{suffix}"
+    target_path = DataPaths.get_finance_path(folder, unique_ticker, suffix)
     
     try:
         client = mdc.get_storage_client(container)
@@ -111,7 +112,7 @@ Total Liabilities,500,450
     
 
     # Initialize explicit client for test
-    client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
+    client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
     
     # Mock global list_manager in core
     mock_list_manager = MagicMock()
@@ -130,10 +131,10 @@ Total Liabilities,500,450
     assert success is True
     
     # 5. Verify Cloud Persistence
-    cloud_path = f"valuation/{symbol}_quarterly_valuation_measures"
+    cloud_path = DataPaths.get_finance_path("Valuation", symbol, "quarterly_valuation_measures")
     print(f"Verifying read from {cloud_path}...")
     
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_FINANCE, cloud_path)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, cloud_path)
     
     assert loaded_df is not None
     assert not loaded_df.empty

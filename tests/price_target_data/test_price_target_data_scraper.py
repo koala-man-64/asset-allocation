@@ -10,6 +10,7 @@ from scripts.price_target_data import core as pta
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
+from scripts.common.pipeline import DataPaths
 
 # --- Helpers ---
 
@@ -24,15 +25,15 @@ def storage_cleanup(unique_ticker):
     Yields the ticker for the test, and cleans up associated blobs after.
     """
     # Setup: Ensure container exists (Safe fallback for non-existent containers during tests)
-    container = cfg.AZURE_CONTAINER_TARGETS
+    container = cfg.AZURE_CONTAINER_BRONZE
     mdc.get_storage_client(container) # This initializes Client which auto-checks/creates container
     
     yield unique_ticker
     
     # Teardown
     print(f"\nCleaning up storage for {unique_ticker}...")
-    container = cfg.AZURE_CONTAINER_TARGETS
-    prefix = unique_ticker
+    container = cfg.AZURE_CONTAINER_BRONZE
+    prefix = DataPaths.get_price_target_path(unique_ticker)
     
     try:
         client = mdc.get_storage_client(container)
@@ -79,9 +80,9 @@ def test_transform_symbol_data_integration(storage_cleanup):
     assert res.iloc[0]['symbol'] == symbol
     
     # Verify Data Persistence (Real Read)
-    path = symbol
+    path = DataPaths.get_price_target_path(symbol)
     print(f"Verifying read from {path}...")
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, path)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, path)
     
     assert loaded_df is not None
     assert not loaded_df.empty
@@ -94,7 +95,7 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     symbol = storage_cleanup
     
     # 1. Setup: Write "Fresh" Data
-    path = symbol
+    path = DataPaths.get_price_target_path(symbol)
     
     # Create dummy DataFrame
     df = pd.DataFrame({
@@ -104,7 +105,7 @@ def test_process_symbols_batch_fresh_integration(mock_nasdaq, storage_cleanup):
     })
     
     print(f"Pre-seeding fresh data for {symbol}...")
-    delta_core.store_delta(df, cfg.AZURE_CONTAINER_TARGETS, path)
+    delta_core.store_delta(df, cfg.AZURE_CONTAINER_BRONZE, path)
     
     # 2. Execute Batch (Async wrapper)
     async def run_test():
@@ -148,8 +149,8 @@ def test_process_symbols_batch_stale_integration(mock_nasdaq, storage_cleanup):
     mock_nasdaq.get_table.assert_called()
     
     # Verify data was written to cloud
-    path = symbol
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, path)
+    path = DataPaths.get_price_target_path(symbol)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, path)
     assert loaded_df is not None
     assert not loaded_df.empty
     assert loaded_df.iloc[0]['tp_mean_est'] == 50.0

@@ -38,6 +38,8 @@ properties:
         value: finance-data
       - name: AZURE_CONTAINER_COMMON
         value: common-data
+      - name: AZURE_CONTAINER_BRONZE
+        value: bronze-data
       - name: NASDAQ_API_KEY
         secretRef: nasdaq-api-key
       - name: YAHOO_USERNAME

@@ -41,8 +41,8 @@ def _validate_environment() -> None:
             + ", ".join(missing)
         )
     
-    if not cfg.AZURE_CONTAINER_FINANCE:
-        raise ValueError("Environment variable 'AZURE_CONTAINER_FINANCE' is strictly required for Finance Data Scraper.")
+    if not cfg.AZURE_CONTAINER_BRONZE:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required for Finance Data Scraper.")
 
 async def main_async():
     mdc.log_environment_diagnostics()

@@ -41,6 +41,8 @@ properties:
         value: market-data
       - name: AZURE_CONTAINER_COMMON
         value: common-data
+      - name: AZURE_CONTAINER_BRONZE
+        value: bronze-data
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD

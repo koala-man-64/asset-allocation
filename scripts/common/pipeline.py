@@ -15,7 +15,7 @@ class DataPaths:
 
     @staticmethod
     def get_market_data_path(ticker: str) -> str:
-        return f"{ticker.replace('.', '-')}"
+        return f"market-data/{ticker.replace('.', '-')}"
 
     @staticmethod
     def get_gold_features_path(ticker: str) -> str:
@@ -35,11 +35,11 @@ class DataPaths:
 
     @staticmethod
     def get_price_target_path(ticker: str) -> str:
-        return f"{ticker}"
+        return f"price-target-data/{ticker}"
 
     @staticmethod
     def get_earnings_path(ticker: str) -> str:
-        return f"{ticker}"
+        return f"earnings-data/{ticker}"
 
     @staticmethod
     def get_finance_path(folder: str, ticker: str, file_suffix: str) -> str:
@@ -47,17 +47,17 @@ class DataPaths:
         folder: e.g. 'Balance Sheet' -> 'balance_sheet'
         """
         clean_folder = folder.lower().replace(' ', '_')
-        return f"{clean_folder}/{ticker}_{file_suffix}"
+        return f"finance-data/{clean_folder}/{ticker}_{file_suffix}"
 
 
 class ListManager:
     """
     Manages Whitelist and Blacklist for a specific scraper context.
     """
-    def __init__(self, client, context_prefix: str):
+    def __init__(self, client, folder: str = ""):
         self.client = client
-        self.whitelist_file = f"{context_prefix}_whitelist.csv"
-        self.blacklist_file = f"{context_prefix}_blacklist.csv"
+        self.whitelist_file = f"{folder}/whitelist.csv" if folder else "whitelist.csv"
+        self.blacklist_file = f"{folder}/blacklist.csv" if folder else "blacklist.csv"
         
         self.whitelist: Set[str] = set()
         self.blacklist: Set[str] = set()

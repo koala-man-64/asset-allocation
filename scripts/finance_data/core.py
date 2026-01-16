@@ -71,11 +71,10 @@ list_manager = None
 def _require_fin_client():
     global fin_client, list_manager
     if fin_client is None:
-        fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_FINANCE)
-        # Initialize ListManager here
-        if fin_client:
-            list_manager = ListManager(fin_client, "finance_data")
-            
+        fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+    if list_manager is None:
+        list_manager = ListManager(fin_client, "finance-data")
+             
     if fin_client is None:
         raise RuntimeError("Finance storage client failed to initialize.")
     return fin_client
@@ -233,7 +232,7 @@ async def process_report_cloud(playwright_params, report, client):
                              df_clean = transpose_dataframe(df, ticker)
                              
                              # 7. Upload to Azure (Delta)
-                             delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_FINANCE, cloud_path)
+                             delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_BRONZE, cloud_path)
                              mdc.write_line(f"Uploaded {cloud_path} (Delta)")
                              
                              list_manager.add_to_whitelist(ticker)
@@ -343,7 +342,7 @@ async def refresh_finance_data_async(df_symbols: pd.DataFrame):
             should_refresh = True
             
             # Use delta_core for freshness
-            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_FINANCE, cloud_path)
+            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_BRONZE, cloud_path)
             
             if last_ts:
                 dt_last = datetime.datetime.fromtimestamp(last_ts, timezone.utc)

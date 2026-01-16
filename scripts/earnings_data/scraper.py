@@ -38,8 +38,8 @@ def _validate_environment() -> None:
             + ", ".join(missing)
         )
 
-    if not cfg.AZURE_CONTAINER_EARNINGS:
-        raise ValueError("Environment variable 'AZURE_CONTAINER_EARNINGS' is strictly required for Earnings Data Scraper.")
+    if not cfg.AZURE_CONTAINER_BRONZE:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required for Earnings Data Scraper.")
 
 def main():
     if sys.platform == 'win32':

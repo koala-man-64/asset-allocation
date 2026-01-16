@@ -26,7 +26,10 @@ os.environ.setdefault("TEST_MODE", "True")
 containers = [
     "AZURE_CONTAINER_MARKET", "AZURE_CONTAINER_FINANCE", 
     "AZURE_CONTAINER_EARNINGS", "AZURE_CONTAINER_TARGETS", 
-    "AZURE_CONTAINER_COMMON"
+    "AZURE_CONTAINER_COMMON",
+    "AZURE_CONTAINER_BRONZE",
+    "AZURE_CONTAINER_SILVER",
+    "AZURE_CONTAINER_GOLD",
 ]
 for container in containers:
     os.environ.setdefault(container, "test-container")

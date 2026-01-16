@@ -14,8 +14,8 @@ from scripts.market_data import core as malib
 from scripts.market_data import config as cfg
 
 def _validate_environment():
-    if not cfg.AZURE_CONTAINER_MARKET:
-        raise ValueError("Environment variable 'AZURE_CONTAINER_MARKET' is strictly required for Market Data Scraper.")
+    if not cfg.AZURE_CONTAINER_BRONZE:
+        raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required for Market Data Scraper.")
 
 # Suppress warnings
 warnings.filterwarnings('ignore')

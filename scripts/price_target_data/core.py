@@ -1,5 +1,4 @@
 
-
 import sys
 import os
 import warnings
@@ -32,9 +31,9 @@ def get_client():
     """Lazy loader for the Azure Storage Client."""
     global _pt_client, list_manager
     if _pt_client is None:
-        _pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_TARGETS)
-        if _pt_client:
-            list_manager = ListManager(_pt_client, "price_target_data")
+        _pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+    if list_manager is None:
+        list_manager = ListManager(_pt_client, "price-target-data")
     return _pt_client
 
 def setup_nasdaq_key():
@@ -110,7 +109,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'symbol']).reset_index(drop=True)
 
         # Save
-        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
+        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
 
         return updated_earnings
 
@@ -142,7 +141,7 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
             price_target_cloud_path = DataPaths.get_price_target_path(symbol)
             is_fresh = False
             
-            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
+            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
             if last_ts:
                  now_ts = datetime.now(timezone.utc).timestamp()
                  # Compare seconds from epoch
@@ -150,14 +149,14 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
                      is_fresh = True
             
             if is_fresh:
-                loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
+                loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
                 if loaded_df is not None:
                     if 'obs_date' in loaded_df.columns:
                         loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
                     results.append(symbol)
             else:
                 stale_symbols.append(symbol)
-                existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, price_target_cloud_path)
+                existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
                 if existing_df is None or existing_df.empty:
                     existing_df = pd.DataFrame(columns=column_names)
                 else:
@@ -274,7 +273,7 @@ def run_interactive_mode(df=None):
             break
             
         file_path = DataPaths.get_price_target_path(user_symbol)
-        symbol_df = delta_core.load_delta(cfg.AZURE_CONTAINER_TARGETS, file_path)
+        symbol_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, file_path)
         
         if symbol_df is None:
              print(f"No local data found for {user_symbol}")
@@ -293,4 +292,3 @@ def run_interactive_mode(df=None):
                  print("No API data.")
         except Exception as e:
             print(f"Error: {e}")
-

@@ -6,6 +6,7 @@ from scripts.market_data import core as mdc_core
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
+from scripts.common.pipeline import DataPaths
 import os
 
 # --- Helpers ---
@@ -21,7 +22,7 @@ def storage_cleanup(unique_ticker):
     Yields the ticker for the test, and cleans up associated blobs after.
     """
     # Setup: Ensure container exists (Safe fallback)
-    container = cfg.AZURE_CONTAINER_MARKET
+    container = cfg.AZURE_CONTAINER_BRONZE
     mdc.get_storage_client(container) 
     
     yield unique_ticker
@@ -29,7 +30,7 @@ def storage_cleanup(unique_ticker):
     # Teardown
     print(f"\nCleaning up storage for {unique_ticker}...")
     print(f"\nCleaning up storage for {unique_ticker}...")
-    prefix = f"{unique_ticker}"
+    prefix = DataPaths.get_market_data_path(unique_ticker)
     
     try:
         client = mdc.get_storage_client(container)
@@ -79,7 +80,7 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     
     # 2. Setup Inputs
     df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
-    ticker_file_path = f"{symbol}"
+    ticker_file_path = DataPaths.get_market_data_path(symbol)
     period1 = 1672531200 # Dummy timestamp
 
     # 3. Execute
@@ -103,7 +104,7 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     
     # 5. Verify Persistence (Delta) - Should be redirected to local via conftest
     print(f"Verifying Delta table at {ticker_file_path}...")
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_MARKET, ticker_file_path)
+    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, ticker_file_path)
     
     assert loaded_df is not None
     assert len(loaded_df) == 2

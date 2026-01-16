@@ -42,6 +42,12 @@ AZURE_STORAGE_ACCOUNT_NAME = require_env('AZURE_STORAGE_ACCOUNT_NAME')
 AZURE_STORAGE_CONNECTION_STRING = require_env('AZURE_STORAGE_CONNECTION_STRING') 
 AZURE_CONTAINER_COMMON = require_env("AZURE_CONTAINER_COMMON")
 
+# Optional lake/medallion containers (may be unused depending on deployment contract).
+# Kept optional to preserve backward compatibility for environments that still use per-domain containers.
+AZURE_CONTAINER_BRONZE = os.environ.get("AZURE_CONTAINER_BRONZE")
+AZURE_CONTAINER_SILVER = os.environ.get("AZURE_CONTAINER_SILVER")
+AZURE_CONTAINER_GOLD = os.environ.get("AZURE_CONTAINER_GOLD")
+
 # Yahoo Credentials
 YAHOO_USERNAME = require_env("YAHOO_USERNAME")
 YAHOO_PASSWORD = require_env("YAHOO_PASSWORD")

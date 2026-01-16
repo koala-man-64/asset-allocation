@@ -1,63 +1,99 @@
-from playwright.sync_api import sync_playwright
-from typing import Tuple, Optional
 import asyncio
-from playwright.sync_api import Playwright, Browser, BrowserContext, Page, Download, TimeoutError as PlaywrightTimeout
-from typing import (
-    Optional,
-    Tuple,
-    Union,
-    Coroutine,
-    Literal,
-    Any,
-)
-from playwright.async_api import (
-    Page,
-    Download,
-    TimeoutError as PlaywrightTimeoutError,
-)
-
-from pathlib import Path
-
-# sync types
-from playwright.sync_api import (
-    Playwright as SyncPlaywright,
-    Browser as SyncBrowser,
-    BrowserContext as SyncBrowserContext,
-    Page as SyncPage,
-    sync_playwright,
-    TimeoutError
-)
-# async types
-from playwright.async_api import (
-    Playwright as AsyncPlaywright,
-    Browser as AsyncBrowser,
-    BrowserContext as AsyncBrowserContext,
-    Page as AsyncPage,
-    async_playwright,
-    TimeoutError as PlaywrightTimeoutError
-)
-import json
-import warnings
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from bs4 import BeautifulSoup
-import re
-import pytz
 import datetime
-from datetime import timedelta
-import hashlib
-import os
-import time
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-from filelock import FileLock
-import pandas as pd
 import glob
+import hashlib
+import json
+import os
 import random
-from playwright.sync_api import Error          # generic base class
-from playwright.sync_api import TimeoutError   # subclass for time-outs
+import re
+import threading
+import time
+import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
+from pathlib import Path
+from typing import Any, Coroutine, Dict, List, Literal, Optional, Tuple, Union
+
+import pandas as pd
+import pytz
+try:
+    from bs4 import BeautifulSoup
+except ModuleNotFoundError:
+    if not ("PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TEST_MODE")):
+        raise
+    BeautifulSoup = None  # type: ignore[assignment]
+
+try:
+    from filelock import FileLock
+except ModuleNotFoundError:
+    if not ("PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TEST_MODE")):
+        raise
+    FileLock = None  # type: ignore[assignment]
+
+_PLAYWRIGHT_AVAILABLE = True
+try:
+    # sync API/types
+    from playwright.sync_api import (
+        Browser,
+        BrowserContext,
+        Download,
+        Error,
+        Page,
+        Playwright,
+        TimeoutError as PlaywrightTimeout,
+        TimeoutError,
+        sync_playwright,
+    )
+    from playwright.sync_api import (
+        Playwright as SyncPlaywright,
+        Browser as SyncBrowser,
+        BrowserContext as SyncBrowserContext,
+        Page as SyncPage,
+    )
+
+    # async API/types
+    from playwright.async_api import (
+        Playwright as AsyncPlaywright,
+        Browser as AsyncBrowser,
+        BrowserContext as AsyncBrowserContext,
+        Page as AsyncPage,
+        Download as AsyncDownload,
+        TimeoutError as PlaywrightTimeoutError,
+        async_playwright,
+    )
+except ModuleNotFoundError:
+    _PLAYWRIGHT_AVAILABLE = False
+
+    if not ("PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TEST_MODE")):
+        raise
+
+    # Lightweight fallbacks for test environments that patch Playwright calls.
+    class Error(Exception):
+        pass
+
+    class TimeoutError(Exception):
+        pass
+
+    class PlaywrightTimeout(TimeoutError):
+        pass
+
+    class PlaywrightTimeoutError(TimeoutError):
+        pass
+
+    Playwright = Browser = BrowserContext = Page = Download = Any  # type: ignore[assignment]
+    SyncPlaywright = SyncBrowser = SyncBrowserContext = SyncPage = Any  # type: ignore[assignment]
+    AsyncPlaywright = AsyncBrowser = AsyncBrowserContext = AsyncPage = AsyncDownload = Any  # type: ignore[assignment]
+
+    def sync_playwright(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("Playwright is not installed. Install 'playwright' to use browser automation.")
+
+    async def async_playwright(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("Playwright is not installed. Install 'playwright' to use browser automation.")
+
 from scripts.common import config as cfg
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
+
 from scripts.common import core as mdc
 
 

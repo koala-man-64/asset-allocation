@@ -34,6 +34,9 @@ def _has_storage_config() -> bool:
     return val
 
 def _init_storage_client(container_name: str, error_context: str, error_types) -> Optional[BlobStorageClient]:
+    # In tests we avoid creating real Azure clients to prevent network calls and auth flakiness.
+    if "PYTEST_CURRENT_TEST" in os.environ or "TEST_MODE" in os.environ:
+        return None
     if not _has_storage_config():
         return None
     try:
