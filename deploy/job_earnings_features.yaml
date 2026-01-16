@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "0 0 * * *"
+      cronExpression: "30 23 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -48,4 +48,3 @@ properties:
         cpu: 2.0
         memory: 4Gi
   workloadProfileName: Consumption
-

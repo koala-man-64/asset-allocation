@@ -190,7 +190,7 @@ jobs:
               --registry-username ${{ env.ACR_NAME }} \
               --registry-password "$ACR_PASSWORD" \
               --trigger-type Schedule \
-              --cron-expression "0 15 * * *" \
+              --cron-expression "0 14-22 * * *" \
               --replica-timeout 1800 \
               --replica-retry-limit 0 \
               --parallelism 1 \
@@ -206,10 +206,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --cron-expression "0 14-22 * * *" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
-            --command "python" "scripts/market_data/scraper.py"
+            --yaml "deploy/job_market_data.yaml"
+          az containerapp job update \
+            --name ${{ env.MARKET_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -256,10 +257,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --cron-expression "${{ env.MARKET_FEATURE_CRON }}" \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "scripts/market_data/feature_generator.py"
+            --yaml "deploy/job_market_data_features.yaml"
+          az containerapp job update \
+            --name ${{ env.MARKET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -302,13 +304,15 @@ jobs:
           az containerapp job secret set \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --secrets "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
           az containerapp job update \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
-            --command "python" "scripts/finance_data/scraper.py"
+            --yaml "deploy/job_finance_data.yaml"
+          az containerapp job update \
+            --name ${{ env.FINANCE_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -355,10 +359,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --cron-expression "${{ env.FINANCE_FEATURE_CRON }}" \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "scripts/finance_data/feature_generator.py"
+            --yaml "deploy/job_finance_features.yaml"
+          az containerapp job update \
+            --name ${{ env.FINANCE_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -405,9 +410,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
-            --command "python" "scripts/price_target_data/scraper.py"
+            --yaml "deploy/job_price_targets.yaml"
+          az containerapp job update \
+            --name ${{ env.PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -454,10 +461,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --cron-expression "${{ env.PRICE_TARGET_FEATURE_CRON }}" \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "scripts/price_target_data/feature_generator.py"
+            --yaml "deploy/job_price_target_features.yaml"
+          az containerapp job update \
+            --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -504,9 +512,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
-            --command "python" "scripts/earnings_data/scraper.py"
+            --yaml "deploy/job_earnings_data.yaml"
+          az containerapp job update \
+            --name ${{ env.EARNINGS_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -553,10 +563,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --cron-expression "${{ env.EARNINGS_FEATURE_CRON }}" \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
-            --command "python" "scripts/earnings_data/feature_generator.py"
+            --yaml "deploy/job_earnings_features.yaml"
+          az containerapp job update \
+            --name ${{ env.EARNINGS_FEATURE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -603,10 +614,11 @@ jobs:
           az containerapp job update \
             --name ${{ env.RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --cron-expression "${{ env.RANKING_CRON }}" \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking-data" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${{ env.RANKING_FINANCE_DELTA_PATH }}" "RANKING_PRICE_DELTA_PATH=${{ env.RANKING_PRICE_DELTA_PATH }}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${{ env.RANKING_BROKEN_DRAWDOWN_THRESHOLD }}" "RANKING_MARGIN_DELTA_THRESHOLD=${{ env.RANKING_MARGIN_DELTA_THRESHOLD }}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
-            --command "python" "scripts/ranking/runner.py"
+            --yaml "deploy/job_ranking.yaml"
+          az containerapp job update \
+            --name ${{ env.RANKING_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}

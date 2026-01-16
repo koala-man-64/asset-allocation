@@ -51,11 +51,11 @@ properties:
       - name: PLAYWRIGHT_USER_DATA_DIR
         value: /tmp/playwright_userdata
       - name: RANKING_FINANCE_DELTA_PATH
-        value: gold/finance_features
+        value: gold
       - name: RANKING_PRICE_DELTA_PATH
-        value: gold/price_targets
+        value: gold
       - name: RANKING_BROKEN_DRAWDOWN_THRESHOLD
-        value: "-0.30"
+        value: "-0.3"
       - name: RANKING_MARGIN_DELTA_THRESHOLD
         value: "0.0"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
@@ -63,6 +63,6 @@ properties:
       name: ranking-job
       command: ["python", "scripts/ranking/runner.py"]
       resources:
-        cpu: 2.0
-        memory: 4Gi
+        cpu: 1.0
+        memory: 2Gi
   workloadProfileName: Consumption
