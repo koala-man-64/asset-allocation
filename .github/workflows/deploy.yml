@@ -49,11 +49,13 @@ jobs:
         with:
           filters: |
             market_data:
-              - "scripts/market_data/scraper.py"
+              - "scripts/common/**"
+              - "scripts/market_data/**"
               - "deploy/job_market_data.yaml"
               - ".github/workflows/deploy.yml"
             market_feature:
-              - "scripts/market_data/feature_generator.py"
+              - "scripts/common/**"
+              - "scripts/market_data/**"
               - "deploy/job_market_data_features.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -63,12 +65,14 @@ jobs:
         with:
           filters: |
             finance_data:
-              - "scripts/finance_data/scraper.py"
+              - "scripts/common/**"
+              - "scripts/finance_data/**"
               - "deploy/job_finance_data.yaml"
               - ".github/workflows/deploy.yml"
             finance_feature:
-              - "scripts/finance_data/feature_generator.py"
-              - "deploy/job_finance_data_features.yaml"
+              - "scripts/common/**"
+              - "scripts/finance_data/**"
+              - "deploy/job_finance_features.yaml"
               - ".github/workflows/deploy.yml"
 
       - name: Detect Earnings Changes
@@ -77,12 +81,14 @@ jobs:
         with:
           filters: |
             earnings_data:
-              - "scripts/earnings_data/scraper.py"
+              - "scripts/common/**"
+              - "scripts/earnings_data/**"
               - "deploy/job_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
             earnings_feature:
-              - "scripts/earnings_data/feature_generator.py"
-              - "deploy/job_earnings_data_features.yaml"
+              - "scripts/common/**"
+              - "scripts/earnings_data/**"
+              - "deploy/job_earnings_features.yaml"
               - ".github/workflows/deploy.yml"
 
       - name: Detect Price Target Changes
@@ -91,12 +97,14 @@ jobs:
         with:
           filters: |
             price_target_data:
-              - "scripts/price_target_data/scraper.py"
-              - "deploy/job_price_target_data.yaml"
+              - "scripts/common/**"
+              - "scripts/price_target_data/**"
+              - "deploy/job_price_targets.yaml"
               - ".github/workflows/deploy.yml"
             price_target_feature:
-              - "scripts/price_target_data/feature_generator.py"
-              - "deploy/job_price_target_data_features.yaml"
+              - "scripts/common/**"
+              - "scripts/price_target_data/**"
+              - "deploy/job_price_target_features.yaml"
               - ".github/workflows/deploy.yml"
 
       - name: Detect Ranking Changes
@@ -105,7 +113,8 @@ jobs:
         with:
           filters: |
             ranking_job:
-              - "scripts/ranking/runner.py"
+              - "scripts/common/**"
+              - "scripts/ranking/**"
               - "deploy/job_ranking.yaml"
               - ".github/workflows/deploy.yml"
 

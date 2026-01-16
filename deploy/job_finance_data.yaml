@@ -29,9 +29,6 @@ properties:
     - env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
-
-      - name: AZURE_STORAGE_ACCOUNT_NAME
-        value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
       - name: AZURE_CONTAINER_FINANCE
