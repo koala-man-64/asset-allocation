@@ -49,7 +49,8 @@ def redirect_storage(tmp_path_factory):
     def mock_get_uri(container, path, account_name=None):
         full_path = temp_storage_root / container / path
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        return str(full_path)
+        uri = full_path.as_uri()
+        return uri
 
     with patch("scripts.common.delta_core.get_delta_table_uri", side_effect=mock_get_uri), \
          patch("scripts.common.delta_core.get_delta_storage_options", return_value={}), \

@@ -4,6 +4,7 @@ import uuid
 from unittest.mock import MagicMock, AsyncMock, patch
 from scripts.market_data import core as mdc_core
 from scripts.common import config as cfg
+from scripts.market_data import config as md_cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
 from scripts.common.pipeline import DataPaths
@@ -28,7 +29,6 @@ def storage_cleanup(unique_ticker):
     yield unique_ticker
     
     # Teardown
-    print(f"\nCleaning up storage for {unique_ticker}...")
     print(f"\nCleaning up storage for {unique_ticker}...")
     prefix = DataPaths.get_market_data_path(unique_ticker)
     
@@ -86,28 +86,38 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     # 3. Execute
     print(f"Executing download_and_process for {symbol}...")
     
-    # Mock global list_manager
+    # Mock global list_manager and store_raw_bytes
     mock_list_manager = MagicMock()
     mock_list_manager.is_whitelisted.return_value = False
     mock_list_manager.is_blacklisted.return_value = False
     
-    with patch('scripts.market_data.core.list_manager', mock_list_manager):
+    # Patch config to ensure we are testing the write to SILVER and BRONZE separately
+    # patch.multiple is great for this
+    with patch.multiple(md_cfg, AZURE_CONTAINER_BRONZE="test-bronze", AZURE_CONTAINER_SILVER="test-silver"), \
+         patch.multiple(cfg, AZURE_CONTAINER_BRONZE="test-bronze", AZURE_CONTAINER_SILVER="test-silver"), \
+         patch('scripts.market_data.core.list_manager', mock_list_manager), \
+         patch('scripts.common.core.store_raw_bytes') as mock_store_raw:
+
         res_df, res_path = await mdc_core.download_and_process_yahoo_data(
             symbol, df_ticker, ticker_file_path, mock_page, period1
         )
-    
+        
+        # Verify Raw Store was called (Bronze Layer)
+        assert mock_store_raw.called, "store_raw_bytes should have been called for Bronze layer"
+
     # 4. Verify Local Result
     assert res_df is not None
     assert len(res_df) == 2
     assert res_df.iloc[0]['Symbol'] == symbol
     assert res_path == ticker_file_path
     
-    # 5. Verify Persistence (Delta) - Should be redirected to local via conftest
-    print(f"Verifying Delta table at {ticker_file_path}...")
-    loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, ticker_file_path)
+    # 5. Verify Persistence (Delta) - Checks SILVER container
+    print(f"Verifying Delta table at {ticker_file_path} in SILVER...")
+    
+    # Load from the "test-silver" container (which conftest redirects to tmp_path/"test-silver")
+    loaded_df = delta_core.load_delta("test-silver", ticker_file_path)
     
     assert loaded_df is not None
     assert len(loaded_df) == 2
     assert 'Close' in loaded_df.columns
     assert loaded_df.iloc[1]['Close'] == 105.0
-

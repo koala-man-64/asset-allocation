@@ -69,7 +69,8 @@ is_weekend = mdc.is_weekend
 
 # Initialize specific client for Market Data
 market_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-list_manager = ListManager(market_client, "market-data")
+silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
+list_manager = ListManager(silver_client, "market-data")
 
 async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whitelist=None, df_blacklist=None) -> tuple[pd.DataFrame, str]:
     # Load df_ticker
@@ -77,7 +78,7 @@ async def get_historical_data_async(ticker, drop_prior, get_latest, page, df_whi
     # Unified path from DataPaths
     ticker_file_path = DataPaths.get_market_data_path(ticker)
     
-    df_ticker = load_delta(cfg.AZURE_CONTAINER_BRONZE, ticker_file_path)    
+    df_ticker = load_delta(cfg.AZURE_CONTAINER_SILVER, ticker_file_path)    
     if df_ticker is None:
         df_ticker = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol'])
     
@@ -154,6 +155,16 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
         path = download_path
         if os.path.exists(download_path):
                 df_response = pd.read_csv(path)
+                
+                # Save Raw to Bronze (Snapshot)
+                try:
+                     with open(path, 'rb') as f:
+                         raw_bytes = f.read()
+                     mdc.store_raw_bytes(raw_bytes, f"market-data/{ticker}.csv", client=market_client)
+                     write_line(f"Saved raw {ticker}.csv to Bronze.")
+                except Exception as e:
+                     write_error(f"Failed to save raw bronze for {ticker}: {e}")
+
                 delete_files_with_string('C:/Users/rdpro/Downloads', ticker, 'csv')
                 if "Adj Close" in df_response.columns:
                     df_response = df_response.drop('Adj Close', axis=1)
@@ -189,7 +200,7 @@ async def download_and_process_yahoo_data(ticker, df_ticker, ticker_file_path, p
                 columns_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
                 df_ticker = df_ticker.drop(columns=[col for col in columns_to_drop if col in df_ticker.columns])
 
-                store_delta(df_ticker, cfg.AZURE_CONTAINER_BRONZE, ticker_file_path)
+                store_delta(df_ticker, cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
                 
                 # Auto-whitelist on success
                 list_manager.add_to_whitelist(ticker)

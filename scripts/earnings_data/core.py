@@ -28,11 +28,12 @@ list_manager = None
 
 def get_client():
     """Lazy loader for the Azure Storage Client."""
-    global _earn_client, list_manager
+    global _earn_client, list_manager, silver_client
     if _earn_client is None:
         _earn_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+        silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
     if list_manager is None:
-        list_manager = ListManager(_earn_client, "earnings-data")
+        list_manager = ListManager(silver_client, "earnings-data")
     return _earn_client
 
 async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
@@ -48,7 +49,7 @@ async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
         cloud_path = DataPaths.get_earnings_path(symbol)
         
         # Check Freshness via Delta Metadata
-        last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_BRONZE, cloud_path)
+        last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, cloud_path)
         
         today = pd.to_datetime(datetime.now().date())
         one_year_ago = today - pd.DateOffset(years=1)
@@ -56,7 +57,7 @@ async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
         # Load existing to check logic
         df_symbol_earnings = None
         if last_ts:
-            df_symbol_earnings = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, cloud_path)
+            df_symbol_earnings = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
 
         should_fetch = True
         
@@ -90,9 +91,17 @@ async def fetch_earnings_for_symbol(symbol: str, context, semaphore):
                 # Cleanup columns
                 df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors='ignore')
                 
+                # Save Raw to Bronze (Snapshot)
+                try:
+                     raw_json = df_new.to_json(orient='records').encode('utf-8')
+                     mdc.store_raw_bytes(raw_json, f"earnings-data/{symbol}.json", client=_earn_client)
+                     mdc.write_line(f"Saved raw earnings for {symbol} to Bronze.")
+                except Exception as e:
+                     mdc.write_error(f"Failed to save raw bronze for {symbol}: {e}")
+
                 # Save to Cloud (Delta)
-                delta_core.store_delta(df_new, cfg.AZURE_CONTAINER_BRONZE, cloud_path)
-                mdc.write_line(f"Saved earnings for {symbol} to {cfg.AZURE_CONTAINER_BRONZE}/{cloud_path}")
+                delta_core.store_delta(df_new, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+                mdc.write_line(f"Saved earnings for {symbol} to {cfg.AZURE_CONTAINER_SILVER}/{cloud_path}")
                 
                 # Whitelist on success
                 list_manager.add_to_whitelist(symbol)

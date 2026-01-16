@@ -69,11 +69,12 @@ fin_client = None
 list_manager = None
 
 def _require_fin_client():
-    global fin_client, list_manager
+    global fin_client, list_manager, silver_client
     if fin_client is None:
         fin_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+        silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
     if list_manager is None:
-        list_manager = ListManager(fin_client, "finance-data")
+        list_manager = ListManager(silver_client, "finance-data")
              
     if fin_client is None:
         raise RuntimeError("Finance storage client failed to initialize.")
@@ -228,11 +229,21 @@ async def process_report_cloud(playwright_params, report, client):
                          
                          # 6. Read & Transpose
                          try:
+                             # Save Raw to Bronze (Snapshot)
+                             try:
+                                 with open(download_path, 'rb') as f:
+                                     raw_bytes = f.read()
+                                 raw_blob_path = f"finance-data/{report['folder']}/{ticker}_{report['file_suffix']}.csv"
+                                 mdc.store_raw_bytes(raw_bytes, raw_blob_path, client=fin_client)
+                                 mdc.write_line(f"Saved raw {ticker} finance data to Bronze.")
+                             except Exception as e:
+                                 mdc.write_error(f"Failed to save raw bronze for {ticker}: {e}")
+
                              df = pd.read_csv(download_path)
                              df_clean = transpose_dataframe(df, ticker)
                              
                              # 7. Upload to Azure (Delta)
-                             delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_BRONZE, cloud_path)
+                             delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, cloud_path)
                              mdc.write_line(f"Uploaded {cloud_path} (Delta)")
                              
                              list_manager.add_to_whitelist(ticker)
@@ -342,7 +353,7 @@ async def refresh_finance_data_async(df_symbols: pd.DataFrame):
             should_refresh = True
             
             # Use delta_core for freshness
-            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_BRONZE, cloud_path)
+            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, cloud_path)
             
             if last_ts:
                 dt_last = datetime.datetime.fromtimestamp(last_ts, timezone.utc)

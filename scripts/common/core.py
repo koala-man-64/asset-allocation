@@ -621,3 +621,22 @@ class JobLock:
                 self.lease_client.release()
             except Exception as e:
                 write_error(f"Error releasing lock: {e}")
+
+def store_raw_bytes(
+    data: bytes, 
+    file_path: Union[str, Path], 
+    client: Optional[BlobStorageClient] = None,
+    overwrite: bool = True
+) -> str:
+    """
+    Stores raw bytes to Azure Blob Storage.
+    file_path: Remote path.
+    client: Specific client to use.
+    """
+    remote_path = get_remote_path(file_path)
+
+    if client is None:
+        raise RuntimeError("Azure Storage Client not provided. Cannot store raw bytes.")
+
+    client.upload_data(remote_path, data, overwrite=overwrite)
+    return remote_path

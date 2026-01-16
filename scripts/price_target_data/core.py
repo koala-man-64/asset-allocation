@@ -29,11 +29,12 @@ list_manager = None
 
 def get_client():
     """Lazy loader for the Azure Storage Client."""
-    global _pt_client, list_manager
+    global _pt_client, list_manager, silver_client
     if _pt_client is None:
         _pt_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+        silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
     if list_manager is None:
-        list_manager = ListManager(_pt_client, "price-target-data")
+        list_manager = ListManager(silver_client, "price-target-data")
     return _pt_client
 
 def setup_nasdaq_key():
@@ -54,6 +55,15 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
     ]
     price_target_cloud_path = DataPaths.get_price_target_path(symbol)
+    
+    # Save Raw to Bronze (Snapshot)
+    try:
+        if not target_price_data.empty:
+            # Drop index to avoid issues with default index, keeping it clean
+            raw_parquet = target_price_data.to_parquet(index=False)
+            mdc.store_raw_bytes(raw_parquet, f"price-target-data/{symbol}.parquet", client=_pt_client)
+    except Exception as e:
+        mdc.write_error(f"Failed to save raw bronze for {symbol}: {e}")
 
     try:
         # Ensure timestamp
@@ -109,7 +119,7 @@ def transform_symbol_data(symbol: str, target_price_data: pd.DataFrame, existing
         updated_earnings = updated_earnings.sort_values(by=['obs_date', 'symbol']).reset_index(drop=True)
 
         # Save
-        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
+        delta_core.store_delta(updated_earnings, cfg.AZURE_CONTAINER_SILVER, price_target_cloud_path)
 
         return updated_earnings
 
@@ -141,7 +151,7 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
             price_target_cloud_path = DataPaths.get_price_target_path(symbol)
             is_fresh = False
             
-            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
+            last_ts = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, price_target_cloud_path)
             if last_ts:
                  now_ts = datetime.now(timezone.utc).timestamp()
                  # Compare seconds from epoch
@@ -149,14 +159,14 @@ async def process_batch_async(symbols: List[str], semaphore: asyncio.Semaphore) 
                      is_fresh = True
             
             if is_fresh:
-                loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
+                loaded_df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, price_target_cloud_path)
                 if loaded_df is not None:
                     if 'obs_date' in loaded_df.columns:
                         loaded_df['obs_date'] = pd.to_datetime(loaded_df['obs_date'])
                     results.append(symbol)
             else:
                 stale_symbols.append(symbol)
-                existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_BRONZE, price_target_cloud_path)
+                existing_df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, price_target_cloud_path)
                 if existing_df is None or existing_df.empty:
                     existing_df = pd.DataFrame(columns=column_names)
                 else:
