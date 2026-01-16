@@ -38,7 +38,7 @@ properties:
       - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: AZURE_CONTAINER_BRONZE
-        value: bronze-data
+        value: bronze
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD

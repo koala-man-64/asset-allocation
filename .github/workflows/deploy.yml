@@ -156,7 +156,7 @@ jobs:
       - name: Ensure Storage Containers Exist
         run: |
 
-          for container in market-data finance-data price-targets earnings-data common-data ranking-data; do
+          for container in bronze silver gold platinum; do
             az storage container create \
               --name $container \
               --account-name assetallocstorage001 \

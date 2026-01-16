@@ -33,7 +33,7 @@ properties:
       - name: AZURE_CONTAINER_COMMON
         value: common-data
       - name: AZURE_CONTAINER_BRONZE
-        value: bronze-data
+        value: bronze
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
       - name: AZURE_CONTAINER_EARNINGS
