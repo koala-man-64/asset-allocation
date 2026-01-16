@@ -38,7 +38,7 @@ jobs:
         AZURE_CONTAINER_FINANCE: "finance-data"
         AZURE_CONTAINER_EARNINGS: "earnings-data"
         AZURE_CONTAINER_TARGETS: "price-targets"
-        AZURE_CONTAINER_COMMON: "common-data"
+        AZURE_CONTAINER_COMMON: "common"
       run: |
         pytest tests/ranking
         pytest

@@ -36,7 +36,7 @@ properties:
       - name: NASDAQ_API_KEY
         secretRef: nasdaq-api-key
       - name: AZURE_CONTAINER_COMMON
-        value: common-data
+        value: common
       - name: AZURE_CONTAINER_BRONZE
         value: bronze
       - name: YAHOO_USERNAME

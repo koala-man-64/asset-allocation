@@ -128,7 +128,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${MARKET_DATA_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/market_data/scraper.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${MARKET_DATA_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -173,7 +173,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${MARKET_FEATURE_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common" "HEADLESS_MODE=True" \
             --command "python" "scripts/market_data/feature_generator.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${MARKET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -218,7 +218,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${FINANCE_DATA_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/finance_data/scraper.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${FINANCE_DATA_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -263,7 +263,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${FINANCE_FEATURE_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_COMMON=common" "HEADLESS_MODE=True" \
             --command "python" "scripts/finance_data/feature_generator.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${FINANCE_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -308,7 +308,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${PRICE_TARGET_DATA_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "NASDAQ_API_KEY=secretref:nasdaq-api-key" "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/price_target_data/scraper.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${PRICE_TARGET_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -353,7 +353,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${PRICE_TARGET_FEATURE_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_TARGETS=price-targets" "AZURE_CONTAINER_COMMON=common" "HEADLESS_MODE=True" \
             --command "python" "scripts/price_target_data/feature_generator.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${PRICE_TARGET_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -398,7 +398,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${EARNINGS_DATA_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/earnings_data/scraper.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${EARNINGS_DATA_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -443,7 +443,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${EARNINGS_FEATURE_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common-data" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_EARNINGS=earnings-data" "AZURE_CONTAINER_COMMON=common" "HEADLESS_MODE=True" \
             --command "python" "scripts/earnings_data/feature_generator.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${EARNINGS_FEATURE_JOB}" --resource-group "${RESOURCE_GROUP}"
@@ -488,7 +488,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${RANKING_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common-data" "AZURE_CONTAINER_RANKING=ranking-data" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${RANKING_FINANCE_DELTA_PATH}" "RANKING_PRICE_DELTA_PATH=${RANKING_PRICE_DELTA_PATH}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${RANKING_BROKEN_DRAWDOWN_THRESHOLD}" "RANKING_MARGIN_DELTA_THRESHOLD=${RANKING_MARGIN_DELTA_THRESHOLD}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common" "AZURE_CONTAINER_RANKING=ranking-data" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${RANKING_FINANCE_DELTA_PATH}" "RANKING_PRICE_DELTA_PATH=${RANKING_PRICE_DELTA_PATH}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${RANKING_BROKEN_DRAWDOWN_THRESHOLD}" "RANKING_MARGIN_DELTA_THRESHOLD=${RANKING_MARGIN_DELTA_THRESHOLD}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/ranking/runner.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${RANKING_JOB}" --resource-group "${RESOURCE_GROUP}"

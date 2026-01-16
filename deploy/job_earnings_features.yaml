@@ -33,7 +33,7 @@ properties:
       - name: AZURE_CONTAINER_EARNINGS
         value: earnings-data
       - name: AZURE_CONTAINER_COMMON
-        value: common-data
+        value: common
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD

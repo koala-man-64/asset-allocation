@@ -31,7 +31,7 @@ properties:
       - name: AZURE_CONTAINER_NAME
         value: earnings-data
       - name: AZURE_CONTAINER_COMMON
-        value: common-data
+        value: common
       - name: AZURE_CONTAINER_BRONZE
         value: bronze
       - name: AZURE_STORAGE_CONNECTION_STRING
