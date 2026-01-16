@@ -5,12 +5,19 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_redeploy:
+        description: Force redeploy/update all jobs (ignore change filters)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
   contents: read
 
 env:
+  FORCE_REDEPLOY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true' }}
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
@@ -169,7 +176,7 @@ jobs:
           echo "market_data_job_exists=${{ steps.market_data_job_check.outputs.job_exists }}"
 
       - name: Update and Start Market Data Job
-        if: steps.market_changes.outputs.market_data == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.market_data == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.MARKET_DATA_JOB }} not found. Creating..."
@@ -219,7 +226,7 @@ jobs:
         run: |
           echo "market_feature_job_exists=${{ steps.market_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Market Feature Job
-        if: steps.market_changes.outputs.market_feature == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.market_feature == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.MARKET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.MARKET_FEATURE_JOB }} not found. Creating..."
@@ -269,7 +276,7 @@ jobs:
         run: |
           echo "finance_data_job_exists=${{ steps.finance_data_job_check.outputs.job_exists }}"
       - name: Update and Start Finance Data Job
-        if: steps.finance_changes.outputs.finance_data == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.finance_data == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.FINANCE_DATA_JOB }} not found. Creating..."
@@ -318,7 +325,7 @@ jobs:
         run: |
           echo "finance_feature_job_exists=${{ steps.finance_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Finance Feature Job
-        if: steps.finance_changes.outputs.finance_feature == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.finance_feature == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.FINANCE_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.FINANCE_FEATURE_JOB }} not found. Creating..."
@@ -368,7 +375,7 @@ jobs:
         run: |
           echo "price_target_job_exists=${{ steps.price_target_job_check.outputs.job_exists }}"
       - name: Update and Start Price Target Job
-        if: steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_JOB }} not found. Creating..."
@@ -417,7 +424,7 @@ jobs:
         run: |
           echo "price_target_feature_job_exists=${{ steps.price_target_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Price Target Feature Job
-        if: steps.price_target_changes.outputs.price_target_feature == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.price_target_feature == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.PRICE_TARGET_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PRICE_TARGET_FEATURE_JOB }} not found. Creating..."
@@ -467,7 +474,7 @@ jobs:
         run: |
           echo "earnings_data_job_exists=${{ steps.earnings_data_job_check.outputs.job_exists }}"
       - name: Update and Start Earnings Data Job
-        if: steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_DATA_JOB }} not found. Creating..."
@@ -516,7 +523,7 @@ jobs:
         run: |
           echo "earnings_feature_job_exists=${{ steps.earnings_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Earnings Feature Job
-        if: steps.earnings_changes.outputs.earnings_feature == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.earnings_feature == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.EARNINGS_FEATURE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.EARNINGS_FEATURE_JOB }} not found. Creating..."
@@ -566,7 +573,7 @@ jobs:
         run: |
           echo "ranking_job_exists=${{ steps.ranking_job_check.outputs.job_exists }}"
       - name: Update and Start Ranking Job
-        if: steps.ranking_changes.outputs.ranking_job == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
+        if: env.FORCE_REDEPLOY == 'true' || steps.ranking_changes.outputs.ranking_job == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
         run: |
           if ! az containerapp job show --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.RANKING_JOB }} not found. Creating..."
