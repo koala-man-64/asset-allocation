@@ -76,7 +76,7 @@ DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Playwright Configuration
 # STRICT ENFORCEMENT: HEADLESS_MODE must be explicit (True/False)
-_headless_str = require_env("HEADLESS_MODE").lower()
+_headless_str = os.environ.get("HEADLESS_MODE").lower()
 if _headless_str not in ['true', 'false']:
     raise ValueError("HEADLESS_MODE must be 'true' or 'false'")
 HEADLESS_MODE = _headless_str == "true"
