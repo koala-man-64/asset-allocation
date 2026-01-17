@@ -22,13 +22,13 @@ env:
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
   MARKET_DATA_JOB: bronze-market-job
-  FINANCE_DATA_JOB: branze-finance-job
-  PRICE_TARGET_JOB: price-target-job
+  FINANCE_DATA_JOB: bronze-finance-job
+  PRICE_TARGET_JOB: bronze-price-target-job
   EARNINGS_DATA_JOB: bronze-earnings-job
-  MARKET_FEATURE_JOB: silver-market-job
-  FINANCE_FEATURE_JOB: silver-finance-job
-  PRICE_TARGET_FEATURE_JOB: silver-targets-job
-  EARNINGS_FEATURE_JOB: silver-earnings-job
+  MARKET_FEATURE_JOB: gold-market-job
+  FINANCE_FEATURE_JOB: gold-finance-job
+  PRICE_TARGET_FEATURE_JOB: gold-price-target-job
+  EARNINGS_FEATURE_JOB: gold-earnings-job
   MARKET_FEATURE_CRON: "30 14-22 * * *"
   FINANCE_FEATURE_CRON: "30 22 * * *"
   PRICE_TARGET_FEATURE_CRON: "30 12 * * *"
@@ -39,9 +39,9 @@ env:
   RANKING_PRICE_DELTA_PATH: "gold"
   RANKING_BROKEN_DRAWDOWN_THRESHOLD: "-0.3"
   MARKET_SILVER_JOB: silver-market-job
-  FINANCE_SILVER_JOB: finance-silver-job
-  PRICE_TARGET_SILVER_JOB: price-target-silver-job
-  EARNINGS_SILVER_JOB: earnings-silver-job
+  FINANCE_SILVER_JOB: silver-finance-job
+  PRICE_TARGET_SILVER_JOB: silver-price-target-job
+  EARNINGS_SILVER_JOB: silver-earnings-job
   RANKING_MARGIN_DELTA_THRESHOLD: "0.0"
 
 jobs:

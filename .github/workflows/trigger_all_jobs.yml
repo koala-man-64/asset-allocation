@@ -15,8 +15,8 @@ permissions:
 env:
   RESOURCE_GROUP: AssetAllocationRG
   MARKET_DATA_JOB: bronze-market-job
-  FINANCE_DATA_JOB: branze-finance-job
-  PRICE_TARGET_JOB: price-target-job
+  FINANCE_DATA_JOB: bronze-finance-job
+  PRICE_TARGET_JOB: bronze-price-target-job
   EARNINGS_DATA_JOB: bronze-earnings-job
   RANKING_JOB: ranking-job
 
