@@ -1,5 +1,5 @@
 location: East US
-name: feature-engineering-market-job
+name: bronze-market-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "30 14-22 * * *"
+      cronExpression: "0 14-22 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -34,18 +34,23 @@ properties:
         value: market-data
       - name: AZURE_CONTAINER_COMMON
         value: common
+      - name: AZURE_CONTAINER_BRONZE
+        value: bronze
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD
         secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
+      - name: DOWNLOADS_PATH
+        value: "/tmp/downloads"
+      - name: PLAYWRIGHT_USER_DATA_DIR
+        value: "/tmp/playwright_userdata"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: feature-engineering-market-job
-      command: ["python", "-m", "scripts.market_data.feature_generator"]
+      name: bronze-market-job
+      command: ["python", "-m", "scripts.market_data.bronze_market_data"]
       resources:
-        cpu: 2.0
-        memory: 4Gi
+        cpu: 1.0
+        memory: 2Gi
   workloadProfileName: Consumption
-

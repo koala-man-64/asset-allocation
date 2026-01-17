@@ -1,5 +1,5 @@
 location: East US
-name: feature-engineering-earnings-job
+name: gold-finance-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "30 23 * * *"
+      cronExpression: "30 22 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -30,8 +30,8 @@ properties:
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
-      - name: AZURE_CONTAINER_EARNINGS
-        value: earnings-data
+      - name: AZURE_CONTAINER_FINANCE
+        value: finance-data
       - name: AZURE_CONTAINER_COMMON
         value: common
       - name: YAHOO_USERNAME
@@ -42,8 +42,8 @@ properties:
         value: 'True'
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: feature-engineering-earnings-job
-      command: ["python", "-m", "scripts.earnings_data.feature_generator"]
+      name: gold-finance-job
+      command: ["python", "-m", "scripts.finance_data.gold_finance_data"]
       resources:
         cpu: 2.0
         memory: 4Gi

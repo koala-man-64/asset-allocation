@@ -1,0 +1,58 @@
+location: East US
+name: bronze-earnings-job
+type: Microsoft.App/jobs
+identity:
+  type: SystemAssigned
+properties:
+  configuration:
+    triggerType: Schedule
+    scheduleTriggerConfig:
+      cronExpression: "0 23 * * *"
+      parallelism: 1
+      replicaCompletionCount: 1
+    registries:
+    - identity: ''
+      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
+      server: assetallocationacr.azurecr.io
+      username: assetallocationacr
+    replicaRetryLimit: 0
+    replicaTimeout: 1800
+    secrets:
+    - name: assetallocationacrazurecrio-assetallocationacr
+    - name: yahoo-username
+    - name: yahoo-password
+    - name: azure-storage-connection-string
+  environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  template:
+    containers:
+    - env:
+      - name: AZURE_STORAGE_ACCOUNT_NAME
+        value: assetallocstorage001
+      - name: AZURE_CONTAINER_NAME
+        value: earnings-data
+      - name: AZURE_CONTAINER_COMMON
+        value: common
+      - name: AZURE_CONTAINER_BRONZE
+        value: bronze
+      - name: AZURE_STORAGE_CONNECTION_STRING
+        secretRef: azure-storage-connection-string
+      - name: AZURE_CONTAINER_EARNINGS
+        value: earnings-data
+      - name: YAHOO_USERNAME
+        secretRef: yahoo-username
+      - name: YAHOO_PASSWORD
+        secretRef: yahoo-password
+      - name: HEADLESS_MODE
+        value: 'True'
+      - name: DOWNLOADS_PATH
+        value: "/tmp/downloads"
+      - name: PLAYWRIGHT_USER_DATA_DIR
+        value: "/tmp/playwright_userdata"
+      image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
+      imageType: ContainerImage
+      name: bronze-earnings-job
+      command: ["python", "-m", "scripts.earnings_data.bronze_earnings_data"]
+      resources:
+        cpu: 1.0
+        memory: 2Gi
+  workloadProfileName: Consumption

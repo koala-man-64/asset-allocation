@@ -1,5 +1,5 @@
 location: East US
-name: feature-engineering-finance-job
+name: silver-finance-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "30 22 * * *"
+      cronExpression: "30 0 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -19,8 +19,6 @@ properties:
     replicaTimeout: 1800
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
-    - name: yahoo-username
-    - name: yahoo-password
     - name: azure-storage-connection-string
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
@@ -30,21 +28,17 @@ properties:
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
-      - name: AZURE_CONTAINER_FINANCE
-        value: finance-data
+      - name: AZURE_CONTAINER_BRONZE
+        value: bronze
+      - name: AZURE_CONTAINER_SILVER
+        value: silver
       - name: AZURE_CONTAINER_COMMON
         value: common
-      - name: YAHOO_USERNAME
-        secretRef: yahoo-username
-      - name: YAHOO_PASSWORD
-        secretRef: yahoo-password
-      - name: HEADLESS_MODE
-        value: 'True'
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: feature-engineering-finance-job
-      command: ["python", "-m", "scripts.finance_data.feature_generator"]
+      name: silver-finance-job
+      command: ["python", "-m", "scripts.finance_data.silver_finance_data"]
       resources:
-        cpu: 2.0
-        memory: 4Gi
+        cpu: 1.0
+        memory: 2Gi
   workloadProfileName: Consumption

@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import uuid
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.market_data import core as mdc_core
+from scripts.market_data import silver_market_data as mdc_core
 from scripts.common import config as cfg
 from scripts.market_data import config as md_cfg
 from scripts.common import core as mdc
@@ -95,7 +95,7 @@ async def test_download_and_process_integration(mock_download, unique_ticker, st
     # patch.multiple is great for this
     with patch.multiple(md_cfg, AZURE_CONTAINER_BRONZE="test-bronze", AZURE_CONTAINER_SILVER="test-silver"), \
          patch.multiple(cfg, AZURE_CONTAINER_BRONZE="test-bronze", AZURE_CONTAINER_SILVER="test-silver"), \
-         patch('scripts.market_data.core.list_manager', mock_list_manager), \
+         patch('scripts.market_data.silver_market_data.list_manager', mock_list_manager), \
          patch('scripts.common.core.store_raw_bytes') as mock_store_raw:
 
         res_df, res_path = await mdc_core.download_and_process_yahoo_data(

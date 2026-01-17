@@ -3,7 +3,7 @@ import pandas as pd
 import uuid
 import os
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.finance_data import core as yc
+from scripts.finance_data import silver_finance_data as yc
 from scripts.common import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
@@ -61,7 +61,7 @@ def storage_cleanup(unique_ticker):
 import asyncio
 
 
-@patch('scripts.finance_data.core.pl')
+@patch('scripts.finance_data.silver_finance_data.pl')
 def test_process_report_cloud_integration(mock_pl, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies process_report_cloud:
@@ -119,7 +119,7 @@ Total Liabilities,500,450
     mock_list_manager.is_whitelisted.return_value = False
     
     async def run_test():
-        with patch('scripts.finance_data.core.list_manager', mock_list_manager):
+        with patch('scripts.finance_data.silver_finance_data.list_manager', mock_list_manager):
             return await yc.process_report_cloud(
                 playwright_params, 
                 report, 

@@ -1,5 +1,5 @@
 location: East US
-name: price-target-job
+name: gold-price-target-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "0 12 * * *"
+      cronExpression: "30 12 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -19,7 +19,6 @@ properties:
     replicaTimeout: 1800
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
-    - name: nasdaq-api-key
     - name: yahoo-username
     - name: yahoo-password
     - name: azure-storage-connection-string
@@ -33,27 +32,19 @@ properties:
         secretRef: azure-storage-connection-string
       - name: AZURE_CONTAINER_TARGETS
         value: price-targets
-      - name: NASDAQ_API_KEY
-        secretRef: nasdaq-api-key
       - name: AZURE_CONTAINER_COMMON
         value: common
-      - name: AZURE_CONTAINER_BRONZE
-        value: bronze
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD
         secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
-      - name: DOWNLOADS_PATH
-        value: "/tmp/downloads"
-      - name: PLAYWRIGHT_USER_DATA_DIR
-        value: "/tmp/playwright_userdata"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: price-target-job
-      command: ["python", "-m", "scripts.price_target_data.scraper"]
+      name: gold-price-target-job
+      command: ["python", "-m", "scripts.price_target_data.gold_price_target_data"]
       resources:
-        cpu: 1.0
-        memory: 2Gi
+        cpu: 2.0
+        memory: 4Gi
   workloadProfileName: Consumption

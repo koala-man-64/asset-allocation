@@ -38,6 +38,10 @@ env:
   RANKING_FINANCE_DELTA_PATH: "gold"
   RANKING_PRICE_DELTA_PATH: "gold"
   RANKING_BROKEN_DRAWDOWN_THRESHOLD: "-0.3"
+  MARKET_SILVER_JOB: silver-market-job
+  FINANCE_SILVER_JOB: finance-silver-job
+  PRICE_TARGET_SILVER_JOB: price-target-silver-job
+  EARNINGS_SILVER_JOB: earnings-silver-job
   RANKING_MARGIN_DELTA_THRESHOLD: "0.0"
 
 jobs:
@@ -196,7 +200,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/market_data/scraper.py"
+              --command "python" "scripts/market_data/bronze_market_data.py"
           fi
           
           az containerapp job secret set \
@@ -206,9 +210,61 @@ jobs:
           az containerapp job update \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_market_data.yaml"
+            --yaml "deploy/job_bronze_market_data.yaml"
           az containerapp job update \
             --name ${{ env.MARKET_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Market Silver Job Exists
+        id: market_silver_job_check
+        run: |
+          if az containerapp job show --name ${{ env.MARKET_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Market Silver job check
+        run: |
+          echo "market_silver_job_exists=${{ steps.market_silver_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Market Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.market_data == 'true' || steps.market_silver_job_check.outputs.job_exists == 'false'
+        run: |
+          if ! az containerapp job show --name ${{ env.MARKET_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.MARKET_SILVER_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.MARKET_SILVER_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "30 14-23 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "scripts/market_data/silver_market_data.py"
+          fi
+          
+          az containerapp job secret set \
+            --name ${{ env.MARKET_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.MARKET_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "deploy/job_silver_market_data.yaml"
+          az containerapp job update \
+            --name ${{ env.MARKET_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.MARKET_SILVER_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
@@ -247,7 +303,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/market_data/feature_generator.py"
+              --command "python" "scripts/market_data/gold_market_data.py"
           fi
 
           az containerapp job secret set \
@@ -257,7 +313,7 @@ jobs:
           az containerapp job update \
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_market_data_features.yaml"
+            --yaml "deploy/job_gold_market_data.yaml"
           az containerapp job update \
             --name ${{ env.MARKET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -298,7 +354,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/finance_data/scraper.py"
+              --command "python" "scripts/finance_data/bronze_finance_data.py"
           fi
 
           az containerapp job secret set \
@@ -308,13 +364,65 @@ jobs:
           az containerapp job update \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_finance_data.yaml"
+            --yaml "deploy/job_bronze_finance_data.yaml"
           az containerapp job update \
             --name ${{ env.FINANCE_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.FINANCE_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Finance Silver Job Exists
+        id: finance_silver_job_check
+        run: |
+          if az containerapp job show --name ${{ env.FINANCE_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Finance Silver job check
+        run: |
+          echo "finance_silver_job_exists=${{ steps.finance_silver_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Finance Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.finance_data == 'true' || steps.finance_silver_job_check.outputs.job_exists == 'false'
+        run: |
+          if ! az containerapp job show --name ${{ env.FINANCE_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.FINANCE_SILVER_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.FINANCE_SILVER_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "30 0 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "scripts/finance_data/silver_finance_data.py"
+          fi
+          
+          az containerapp job secret set \
+            --name ${{ env.FINANCE_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.FINANCE_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "deploy/job_silver_finance_data.yaml"
+          az containerapp job update \
+            --name ${{ env.FINANCE_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.FINANCE_SILVER_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Finance Feature Job Exists
@@ -349,7 +457,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/finance_data/feature_generator.py"
+              --command "python" "scripts/finance_data/gold_finance_data.py"
           fi
 
           az containerapp job secret set \
@@ -359,7 +467,7 @@ jobs:
           az containerapp job update \
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_finance_features.yaml"
+            --yaml "deploy/job_gold_finance_data.yaml"
           az containerapp job update \
             --name ${{ env.FINANCE_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -502,7 +610,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/earnings_data/scraper.py"
+              --command "python" "scripts/earnings_data/bronze_earnings_data.py"
           fi
 
           az containerapp job secret set \
@@ -512,13 +620,65 @@ jobs:
           az containerapp job update \
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_earnings_data.yaml"
+            --yaml "deploy/job_bronze_earnings_data.yaml"
           az containerapp job update \
             --name ${{ env.EARNINGS_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.EARNINGS_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Earnings Silver Job Exists
+        id: earnings_silver_job_check
+        run: |
+          if az containerapp job show --name ${{ env.EARNINGS_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Earnings Silver job check
+        run: |
+          echo "earnings_silver_job_exists=${{ steps.earnings_silver_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Earnings Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.earnings_data == 'true' || steps.earnings_silver_job_check.outputs.job_exists == 'false'
+        run: |
+          if ! az containerapp job show --name ${{ env.EARNINGS_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.EARNINGS_SILVER_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.EARNINGS_SILVER_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "30 23 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "scripts/earnings_data/silver_earnings_data.py"
+          fi
+          
+          az containerapp job secret set \
+            --name ${{ env.EARNINGS_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.EARNINGS_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "deploy/job_silver_earnings_data.yaml"
+          az containerapp job update \
+            --name ${{ env.EARNINGS_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.EARNINGS_SILVER_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Earnings Feature Job Exists
@@ -553,7 +713,8 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/earnings_data/feature_generator.py"
+              --cpu 2.0 --memory 4.0Gi \
+              --command "python" "scripts/earnings_data/gold_earnings_data.py"
           fi
 
           az containerapp job secret set \
@@ -563,7 +724,7 @@ jobs:
           az containerapp job update \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_earnings_features.yaml"
+            --yaml "deploy/job_gold_earnings_data.yaml"
           az containerapp job update \
             --name ${{ env.EARNINGS_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \

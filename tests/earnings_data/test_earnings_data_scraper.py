@@ -5,7 +5,7 @@ import uuid
 import os
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.earnings_data import core as earn_core
+from scripts.earnings_data import silver_earnings_data as earn_core
 from scripts.earnings_data import config as cfg
 from scripts.common import core as mdc
 from scripts.common import delta_core
@@ -27,7 +27,7 @@ def storage_cleanup(unique_ticker):
 # --- Integration Tests ---
 
 @pytest.mark.asyncio
-@patch('scripts.earnings_data.core.pl.get_yahoo_earnings_data')
+@patch('scripts.earnings_data.silver_earnings_data.pl.get_yahoo_earnings_data')
 @patch('scripts.common.core.get_storage_client')
 @patch('scripts.common.delta_core.write_deltalake')
 @patch('scripts.common.delta_core._ensure_container_exists')
@@ -67,7 +67,7 @@ async def test_earnings_migration_integration(mock_ensure_container, mock_write_
     df_symbols = pd.DataFrame({'Symbol': [symbol]})
     
     # 3. Execute
-    with patch('scripts.earnings_data.core.pl.get_playwright_browser') as mock_browser_init:
+    with patch('scripts.earnings_data.silver_earnings_data.pl.get_playwright_browser') as mock_browser_init:
         # Mock browser components
         mock_page = AsyncMock()
         mock_context = AsyncMock()
@@ -78,7 +78,7 @@ async def test_earnings_migration_integration(mock_ensure_container, mock_write_
         mock_browser_init.return_value = (mock_playwright, mock_browser, mock_context, mock_page)
         
         # Mock the new centralized authentication
-        with patch('scripts.earnings_data.core.pl.authenticate_yahoo_async') as mock_auth, \
+        with patch('scripts.earnings_data.silver_earnings_data.pl.authenticate_yahoo_async') as mock_auth, \
              patch('scripts.earnings_data.config.DEBUG_SYMBOLS', []):
              await earn_core.run_earnings_refresh(df_symbols)
 

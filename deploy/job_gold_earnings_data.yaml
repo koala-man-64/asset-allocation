@@ -1,5 +1,5 @@
 location: East US
-name: finance-data-job
+name: gold-earnings-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "0 22 * * *"
+      cronExpression: "30 23 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -19,7 +19,6 @@ properties:
     replicaTimeout: 1800
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
-    - name: nasdaq-api-key
     - name: yahoo-username
     - name: yahoo-password
     - name: azure-storage-connection-string
@@ -31,29 +30,21 @@ properties:
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
-      - name: AZURE_CONTAINER_FINANCE
-        value: finance-data
+      - name: AZURE_CONTAINER_EARNINGS
+        value: earnings-data
       - name: AZURE_CONTAINER_COMMON
         value: common
-      - name: AZURE_CONTAINER_BRONZE
-        value: bronze
-      - name: NASDAQ_API_KEY
-        secretRef: nasdaq-api-key
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD
         secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
-      - name: DOWNLOADS_PATH
-        value: "/tmp/downloads"
-      - name: PLAYWRIGHT_USER_DATA_DIR
-        value: "/tmp/playwright_userdata"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: finance-data-job
-      command: ["python", "-m", "scripts.finance_data.scraper"]
+      name: gold-earnings-job
+      command: ["python", "-m", "scripts.earnings_data.gold_earnings_data"]
       resources:
-        cpu: 1.0
-        memory: 2Gi
+        cpu: 2.0
+        memory: 4Gi
   workloadProfileName: Consumption
