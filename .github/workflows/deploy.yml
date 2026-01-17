@@ -21,10 +21,10 @@ env:
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
-  MARKET_DATA_JOB: market-data-job
-  FINANCE_DATA_JOB: finance-data-job
+  MARKET_DATA_JOB: bronze-market-job
+  FINANCE_DATA_JOB: branze-finance-job
   PRICE_TARGET_JOB: price-target-job
-  EARNINGS_DATA_JOB: earnings-data-job
+  EARNINGS_DATA_JOB: bronze-earnings-job
   MARKET_FEATURE_JOB: feature-engineering-market-job
   FINANCE_FEATURE_JOB: feature-engineering-finance-job
   PRICE_TARGET_FEATURE_JOB: feature-engineering-targets-job

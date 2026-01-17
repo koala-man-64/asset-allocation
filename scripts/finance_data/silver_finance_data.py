@@ -132,6 +132,6 @@ def main():
     mdc.write_line(f"Processed {count} blobs.")
 
 if __name__ == "__main__":
-    job_name = 'finance-data-job-silver'
+    job_name = 'branze-finance-job-silver'
     with mdc.JobLock(job_name):
         main()

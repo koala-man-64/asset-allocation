@@ -119,6 +119,6 @@ def main():
         process_blob(blob)
 
 if __name__ == "__main__":
-    job_name = 'price-target-data-job-silver'
+    job_name = 'bronze-price-target-job-silver'
     with mdc.JobLock(job_name):
         main()

@@ -30,13 +30,13 @@ env:
   CONTAINERAPPS_ENVIRONMENT: asset-allocation-env
   IMAGE_NAME: asset-allocation-scraper
 
-  MARKET_DATA_JOB: market-data-job
+  MARKET_DATA_JOB: bronze-market-job
   MARKET_FEATURE_JOB: feature-engineering-market-job
-  FINANCE_DATA_JOB: finance-data-job
+  FINANCE_DATA_JOB: branze-finance-job
   FINANCE_FEATURE_JOB: feature-engineering-finance-job
   PRICE_TARGET_JOB: price-target-job
   PRICE_TARGET_FEATURE_JOB: feature-engineering-targets-job
-  EARNINGS_DATA_JOB: earnings-data-job
+  EARNINGS_DATA_JOB: bronze-earnings-job
   EARNINGS_FEATURE_JOB: feature-engineering-earnings-job
   RANKING_JOB: ranking-job
 
