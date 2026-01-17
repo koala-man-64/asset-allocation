@@ -14,11 +14,11 @@ permissions:
 
 env:
   RESOURCE_GROUP: AssetAllocationRG
-  MARKET_DATA_JOB: bronze-market-job
-  FINANCE_DATA_JOB: bronze-finance-job
-  PRICE_TARGET_JOB: bronze-price-target-job
-  EARNINGS_DATA_JOB: bronze-earnings-job
-  RANKING_JOB: platinum-ranking-job
+  BRONZE_MARKET_JOB: bronze-market-job
+  BRONZE_FINANCE_JOB: bronze-finance-job
+  BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
+  BRONZE_EARNINGS_JOB: bronze-earnings-job
+  PLATINUM_RANKING_JOB: platinum-ranking-job
 
 jobs:
   trigger-jobs:
@@ -34,29 +34,29 @@ jobs:
       - name: Trigger Market Bronze Job
         if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'market-data' }}
         run: |
-          echo "Starting ${{ env.MARKET_DATA_JOB }}..."
-          az containerapp job start --name ${{ env.MARKET_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+          echo "Starting ${{ env.BRONZE_MARKET_JOB }}..."
+          az containerapp job start --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Finance Bronze Job
         if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'finance-data' }}
         run: |
-          echo "Starting ${{ env.FINANCE_DATA_JOB }}..."
-          az containerapp job start --name ${{ env.FINANCE_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+          echo "Starting ${{ env.BRONZE_FINANCE_JOB }}..."
+          az containerapp job start --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Price Target Job
         if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'price-target' }}
         run: |
-          echo "Starting ${{ env.PRICE_TARGET_JOB }}..."
-          az containerapp job start --name ${{ env.PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+          echo "Starting ${{ env.BRONZE_PRICE_TARGET_JOB }}..."
+          az containerapp job start --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Earnings Bronze Job
         if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'earnings-data' }}
         run: |
-          echo "Starting ${{ env.EARNINGS_DATA_JOB }}..."
-          az containerapp job start --name ${{ env.EARNINGS_DATA_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+          echo "Starting ${{ env.BRONZE_EARNINGS_JOB }}..."
+          az containerapp job start --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Ranking Job
         if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'ranking' }}
         run: |
-          echo "Starting ${{ env.RANKING_JOB }}..."
-          az containerapp job start --name ${{ env.RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
+          echo "Starting ${{ env.PLATINUM_RANKING_JOB }}..."
+          az containerapp job start --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
