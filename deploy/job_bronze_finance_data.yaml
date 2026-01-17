@@ -19,10 +19,15 @@ properties:
     replicaTimeout: 1800
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
+      value: ${ACR_PASSWORD}
     - name: nasdaq-api-key
+      value: ${NASDAQ_API_KEY}
     - name: yahoo-username
+      value: ${YAHOO_USERNAME}
     - name: yahoo-password
+      value: ${YAHOO_PASSWORD}
     - name: azure-storage-connection-string
+      value: ${AZURE_STORAGE_CONNECTION_STRING}
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
     containers:
