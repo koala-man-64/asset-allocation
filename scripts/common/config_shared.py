@@ -76,9 +76,9 @@ DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Playwright Configuration
 # STRICT ENFORCEMENT: HEADLESS_MODE must be explicit (True/False)
-_headless_str = os.environ.get("HEADLESS_MODE").lower()
-if _headless_str not in ['true', 'false']:
-    raise ValueError("HEADLESS_MODE must be 'true' or 'false'")
+_headless_str = os.environ.get("HEADLESS_MODE")
+if _headless_str not in ['true', 'false', '', None]:
+    raise ValueError("HEADLESS_MODE must be 'true' or 'false' or '' or None")
 HEADLESS_MODE = _headless_str == "true"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
