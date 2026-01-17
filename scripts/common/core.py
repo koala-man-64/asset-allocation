@@ -622,6 +622,21 @@ class JobLock:
             except Exception as e:
                 write_error(f"Error releasing lock: {e}")
 
+def read_raw_bytes(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> bytes:
+    """
+    Retrieves raw bytes from Azure Blob Storage.
+    file_path: Remote path.
+    client: Specific client to use.
+    """
+    if client:
+        blob_name = get_remote_path(file_path)
+        content_bytes = client.download_data(blob_name)
+        if content_bytes:
+            return content_bytes
+    
+    logger.warning(f"Failed to load bytes from {file_path} (client={client is not None}).")
+    return b""
+
 def store_raw_bytes(
     data: bytes, 
     file_path: Union[str, Path], 
