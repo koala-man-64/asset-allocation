@@ -60,7 +60,7 @@ properties:
         value: "0.0"
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: ranking-job
+      name: platinum-ranking-job
       command: ["python", "scripts/ranking/runner.py"]
       resources:
         cpu: 1.0
