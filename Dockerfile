@@ -14,4 +14,4 @@ COPY scripts/ scripts/
 ENV PYTHONPATH=/app
 
 # Default entrypoint (will be overridden by ACA Job command)
-CMD ["python", "-m", "scripts.market_data.scraper"]
+CMD ["python", "-m", "scripts.market_data.bronze_market_data"]
