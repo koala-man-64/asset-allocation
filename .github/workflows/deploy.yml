@@ -514,7 +514,7 @@ jobs:
           az containerapp job secret set \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
