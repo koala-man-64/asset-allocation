@@ -502,29 +502,81 @@ jobs:
               --registry-username ${{ env.ACR_NAME }} \
               --registry-password "$ACR_PASSWORD" \
               --trigger-type Schedule \
-              --cron-expression "0 12 * * *" \
+              --cron-expression "0 1 * * *" \
               --replica-timeout 1800 \
               --replica-retry-limit 0 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/price_target_data/scraper.py"
+              --command "python" "scripts/price_target_data/bronze_price_target_data.py"
           fi
 
           az containerapp job secret set \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "yahoo-username=${{ secrets.YAHOO_USERNAME }}" "yahoo-password=${{ secrets.YAHOO_PASSWORD }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+            --secrets "nasdaq-api-key=${{ secrets.NASDAQ_API_KEY }}" "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_price_targets.yaml"
+            --yaml "deploy/job_bronze_price_target_data.yaml"
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Price Target Silver Job Exists
+        id: price_target_silver_job_check
+        run: |
+          if az containerapp job show --name ${{ env.PRICE_TARGET_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Price Target Silver job check
+        run: |
+          echo "price_target_silver_job_exists=${{ steps.price_target_silver_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Price Target Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.price_target_data == 'true' || steps.price_target_silver_job_check.outputs.job_exists == 'false'
+        run: |
+          if ! az containerapp job show --name ${{ env.PRICE_TARGET_SILVER_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.PRICE_TARGET_SILVER_JOB }} not found. Creating..."
+            ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+            az containerapp job create \
+              --name ${{ env.PRICE_TARGET_SILVER_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "$ACR_PASSWORD" \
+              --trigger-type Schedule \
+              --cron-expression "30 1 * * *" \
+              --replica-timeout 1800 \
+              --replica-retry-limit 0 \
+              --parallelism 1 \
+              --replica-completion-count 1 \
+              --cpu 1.0 --memory 2.0Gi \
+              --command "python" "scripts/price_target_data/silver_price_target_data.py"
+          fi
+          
+          az containerapp job secret set \
+            --name ${{ env.PRICE_TARGET_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets "azure-storage-connection-string=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az containerapp job update \
+            --name ${{ env.PRICE_TARGET_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "deploy/job_silver_price_target_data.yaml"
+          az containerapp job update \
+            --name ${{ env.PRICE_TARGET_SILVER_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.PRICE_TARGET_SILVER_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Price Target Feature Job Exists
@@ -559,7 +611,7 @@ jobs:
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/price_target_data/feature_generator.py"
+              --command "python" "scripts/price_target_data/gold_price_target_data.py"
           fi
 
           az containerapp job secret set \
@@ -569,7 +621,7 @@ jobs:
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_price_target_features.yaml"
+            --yaml "deploy/job_gold_price_target_data.yaml"
           az containerapp job update \
             --name ${{ env.PRICE_TARGET_FEATURE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
