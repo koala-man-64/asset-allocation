@@ -33,7 +33,7 @@ env:
   FINANCE_FEATURE_CRON: "30 22 * * *"
   PRICE_TARGET_FEATURE_CRON: "30 12 * * *"
   EARNINGS_FEATURE_CRON: "30 23 * * *"
-  RANKING_JOB: ranking-job
+  RANKING_JOB: platinum-ranking-job
   RANKING_CRON: "0 5 * * *"
   RANKING_FINANCE_DELTA_PATH: "gold"
   RANKING_PRICE_DELTA_PATH: "gold"
@@ -146,7 +146,7 @@ jobs:
             ranking_job:
               - "scripts/common/**"
               - "scripts/ranking/**"
-              - "deploy/job_ranking.yaml"
+              - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 
       - name: Log change detection outputs
@@ -851,7 +851,7 @@ jobs:
           az containerapp job update \
             --name ${{ env.RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "deploy/job_ranking.yaml"
+            --yaml "deploy/job_platinum_ranking.yaml"
           az containerapp job update \
             --name ${{ env.RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \

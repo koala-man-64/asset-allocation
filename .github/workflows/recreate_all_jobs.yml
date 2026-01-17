@@ -38,7 +38,7 @@ env:
   PRICE_TARGET_FEATURE_JOB: gold-price-target-job
   EARNINGS_DATA_JOB: bronze-earnings-job
   EARNINGS_FEATURE_JOB: gold-earnings-job
-  RANKING_JOB: ranking-job
+  RANKING_JOB: platinum-ranking-job
 
   MARKET_DATA_CRON: "0 14-22 * * *"
   MARKET_FEATURE_CRON: "30 14-22 * * *"
@@ -488,7 +488,7 @@ jobs:
             --resource-group "${RESOURCE_GROUP}" \
             --cron-expression "${RANKING_CRON}" \
             --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common" "AZURE_CONTAINER_RANKING=ranking-data" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${RANKING_FINANCE_DELTA_PATH}" "RANKING_PRICE_DELTA_PATH=${RANKING_PRICE_DELTA_PATH}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${RANKING_BROKEN_DRAWDOWN_THRESHOLD}" "RANKING_MARGIN_DELTA_THRESHOLD=${RANKING_MARGIN_DELTA_THRESHOLD}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
+            --set-env-vars "YAHOO_USERNAME=secretref:yahoo-username" "YAHOO_PASSWORD=secretref:yahoo-password" "AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string" "AZURE_STORAGE_ACCOUNT_NAME=assetallocstorage001" "AZURE_CONTAINER_MARKET=market-data" "AZURE_CONTAINER_COMMON=common" "AZURE_CONTAINER_RANKING=platinum/ranking-data" "AZURE_CONTAINER_FINANCE=finance-data" "AZURE_CONTAINER_TARGETS=price-targets" "RANKING_FINANCE_DELTA_PATH=${RANKING_FINANCE_DELTA_PATH}" "RANKING_PRICE_DELTA_PATH=${RANKING_PRICE_DELTA_PATH}" "RANKING_BROKEN_DRAWDOWN_THRESHOLD=${RANKING_BROKEN_DRAWDOWN_THRESHOLD}" "RANKING_MARGIN_DELTA_THRESHOLD=${RANKING_MARGIN_DELTA_THRESHOLD}" "DOWNLOADS_PATH=/tmp/downloads" "PLAYWRIGHT_USER_DATA_DIR=/tmp/playwright_userdata" "HEADLESS_MODE=True" \
             --command "python" "scripts/ranking/runner.py"
           if [ "${START_JOBS}" = "true" ]; then
             az containerapp job start --name "${RANKING_JOB}" --resource-group "${RESOURCE_GROUP}"

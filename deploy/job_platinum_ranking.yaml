@@ -1,5 +1,5 @@
 location: East US
-name: ranking-job
+name: platinum-ranking-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned

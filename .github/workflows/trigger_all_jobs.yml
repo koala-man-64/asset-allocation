@@ -18,7 +18,7 @@ env:
   FINANCE_DATA_JOB: bronze-finance-job
   PRICE_TARGET_JOB: bronze-price-target-job
   EARNINGS_DATA_JOB: bronze-earnings-job
-  RANKING_JOB: ranking-job
+  RANKING_JOB: platinum-ranking-job
 
 jobs:
   trigger-jobs:
