@@ -31,13 +31,13 @@ env:
   IMAGE_NAME: asset-allocation-scraper
 
   MARKET_DATA_JOB: bronze-market-job
-  MARKET_FEATURE_JOB: feature-engineering-market-job
+  MARKET_FEATURE_JOB: silver-market-job
   FINANCE_DATA_JOB: branze-finance-job
-  FINANCE_FEATURE_JOB: feature-engineering-finance-job
+  FINANCE_FEATURE_JOB: silver-finance-job
   PRICE_TARGET_JOB: price-target-job
-  PRICE_TARGET_FEATURE_JOB: feature-engineering-targets-job
+  PRICE_TARGET_FEATURE_JOB: silver-targets-job
   EARNINGS_DATA_JOB: bronze-earnings-job
-  EARNINGS_FEATURE_JOB: feature-engineering-earnings-job
+  EARNINGS_FEATURE_JOB: silver-earnings-job
   RANKING_JOB: ranking-job
 
   MARKET_DATA_CRON: "0 14-22 * * *"

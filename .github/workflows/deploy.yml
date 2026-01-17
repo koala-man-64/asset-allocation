@@ -25,10 +25,10 @@ env:
   FINANCE_DATA_JOB: branze-finance-job
   PRICE_TARGET_JOB: price-target-job
   EARNINGS_DATA_JOB: bronze-earnings-job
-  MARKET_FEATURE_JOB: feature-engineering-market-job
-  FINANCE_FEATURE_JOB: feature-engineering-finance-job
-  PRICE_TARGET_FEATURE_JOB: feature-engineering-targets-job
-  EARNINGS_FEATURE_JOB: feature-engineering-earnings-job
+  MARKET_FEATURE_JOB: silver-market-job
+  FINANCE_FEATURE_JOB: silver-finance-job
+  PRICE_TARGET_FEATURE_JOB: silver-targets-job
+  EARNINGS_FEATURE_JOB: silver-earnings-job
   MARKET_FEATURE_CRON: "30 14-22 * * *"
   FINANCE_FEATURE_CRON: "30 22 * * *"
   PRICE_TARGET_FEATURE_CRON: "30 12 * * *"
