@@ -32,6 +32,8 @@ properties:
         value: bronze
       - name: AZURE_CONTAINER_SILVER
         value: silver
+      - name: AZURE_CONTAINER_TARGETS
+        value: price-targets
       - name: AZURE_CONTAINER_COMMON
         value: common
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest

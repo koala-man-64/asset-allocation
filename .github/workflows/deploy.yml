@@ -33,20 +33,14 @@ env:
   GOLD_FINANCE_JOB: gold-finance-job
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
   GOLD_EARNINGS_JOB: gold-earnings-job
-  GOLD_MARKET_CRON: "30 14-22 * * *"
-  GOLD_FINANCE_CRON: "30 22 * * *"
-  GOLD_PRICE_TARGET_CRON: "30 12 * * *"
-  GOLD_EARNINGS_CRON: "30 23 * * *"
+
   PLATINUM_RANKING_JOB: platinum-ranking-job
-  RANKING_CRON: "0 5 * * *"
-  RANKING_FINANCE_DELTA_PATH: "gold"
-  RANKING_PRICE_DELTA_PATH: "gold"
-  RANKING_BROKEN_DRAWDOWN_THRESHOLD: "-0.3"
+
   SILVER_MARKET_JOB: silver-market-job
   SILVER_FINANCE_JOB: silver-finance-job
   SILVER_PRICE_TARGET_JOB: silver-price-target-job
   SILVER_EARNINGS_JOB: silver-earnings-job
-  RANKING_MARGIN_DELTA_THRESHOLD: "0.0"
+
 
 jobs:
   build-and-deploy:
@@ -217,18 +211,10 @@ jobs:
               --name ${{ env.BRONZE_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_bronze_market_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "0 14-22 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/market_data/bronze_market_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
           
           az containerapp job secret set \
@@ -269,18 +255,10 @@ jobs:
               --name ${{ env.SILVER_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_silver_market_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "30 14-23 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/market_data/silver_market_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
           
           az containerapp job secret set \
@@ -324,18 +302,10 @@ jobs:
               --name ${{ env.GOLD_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_gold_market_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "${{ env.GOLD_MARKET_CRON }}" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/market_data/gold_market_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -375,18 +345,10 @@ jobs:
               --name ${{ env.BRONZE_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_bronze_finance_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "0 22 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/finance_data/bronze_finance_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -427,18 +389,10 @@ jobs:
               --name ${{ env.SILVER_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_silver_finance_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "30 0 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/finance_data/silver_finance_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
           
           az containerapp job secret set \
@@ -478,18 +432,10 @@ jobs:
               --name ${{ env.GOLD_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_gold_finance_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "${{ env.GOLD_FINANCE_CRON }}" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/finance_data/gold_finance_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -529,18 +475,10 @@ jobs:
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_bronze_price_target_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "0 1 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/price_target_data/bronze_price_target_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -581,18 +519,10 @@ jobs:
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_silver_price_target_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "30 1 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/price_target_data/silver_price_target_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
           
           az containerapp job secret set \
@@ -632,18 +562,10 @@ jobs:
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_gold_price_target_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "${{ env.GOLD_PRICE_TARGET_CRON }}" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/price_target_data/gold_price_target_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -683,18 +605,10 @@ jobs:
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_bronze_earnings_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "0 23 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/earnings_data/bronze_earnings_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -735,18 +649,10 @@ jobs:
               --name ${{ env.SILVER_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_silver_earnings_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "30 23 * * *" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/earnings_data/silver_earnings_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
           
           az containerapp job secret set \
@@ -786,18 +692,10 @@ jobs:
               --name ${{ env.GOLD_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_gold_earnings_data.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "${{ env.GOLD_EARNINGS_CRON }}" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 2.0 --memory 4.0Gi \
-              --command "python" "scripts/earnings_data/gold_earnings_data.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
@@ -837,18 +735,10 @@ jobs:
               --name ${{ env.PLATINUM_RANKING_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+              --yaml "deploy/job_platinum_ranking.yaml" \
               --registry-server ${{ env.ACR_NAME }}.azurecr.io \
               --registry-username ${{ env.ACR_NAME }} \
-              --registry-password "$ACR_PASSWORD" \
-              --trigger-type Schedule \
-              --cron-expression "${{ env.RANKING_CRON }}" \
-              --replica-timeout 1800 \
-              --replica-retry-limit 2 \
-              --parallelism 1 \
-              --replica-completion-count 1 \
-              --cpu 1.0 --memory 2.0Gi \
-              --command "python" "scripts/ranking/runner.py"
+              --registry-password "$ACR_PASSWORD"
           fi
 
           az containerapp job secret set \
