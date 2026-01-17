@@ -12,6 +12,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   id-token: write
   contents: read
@@ -46,16 +50,16 @@ env:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Detect Market Changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: market_changes
         with:
           filters: |
@@ -76,7 +80,7 @@ jobs:
               - ".github/workflows/deploy.yml"
 
       - name: Detect Finance Changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: finance_changes
         with:
           filters: |
@@ -97,7 +101,7 @@ jobs:
               - ".github/workflows/deploy.yml"
 
       - name: Detect Earnings Changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: earnings_changes
         with:
           filters: |
@@ -118,7 +122,7 @@ jobs:
               - ".github/workflows/deploy.yml"
 
       - name: Detect Price Target Changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: price_target_changes
         with:
           filters: |
@@ -139,7 +143,7 @@ jobs:
               - ".github/workflows/deploy.yml"
 
       - name: Detect Ranking Changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: ranking_changes
         with:
           filters: |
@@ -165,7 +169,7 @@ jobs:
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
           echo "ranking_job=${{ steps.ranking_changes.outputs.ranking_job }}"
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -183,12 +187,12 @@ jobs:
 
       - name: Ensure Storage Containers Exist
         run: |
-
+          set -euo pipefail
           for container in bronze silver gold platinum; do
             az storage container create \
               --name $container \
               --account-name assetallocstorage001 \
-              --auth-mode login || true
+              --auth-mode login
           done
 
       - name: Check Market Bronze Job Exists
@@ -220,7 +224,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "0 14-22 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -236,6 +240,10 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --yaml "deploy/job_bronze_market_data.yaml"
           az containerapp job update \
+            --name ${{ env.MARKET_DATA_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
             --name ${{ env.MARKET_DATA_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
@@ -268,7 +276,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "30 14-23 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -323,7 +331,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "${{ env.MARKET_FEATURE_CRON }}" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
@@ -374,7 +382,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "0 22 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -426,7 +434,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "30 0 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -477,7 +485,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "${{ env.FINANCE_FEATURE_CRON }}" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
@@ -528,7 +536,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "0 1 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -580,7 +588,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "30 1 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -631,7 +639,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "${{ env.PRICE_TARGET_FEATURE_CRON }}" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 2.0 --memory 4.0Gi \
@@ -682,7 +690,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "0 23 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -734,7 +742,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "30 23 * * *" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -785,10 +793,9 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "${{ env.EARNINGS_FEATURE_CRON }}" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
-              --cpu 2.0 --memory 4.0Gi \
               --cpu 2.0 --memory 4.0Gi \
               --command "python" "scripts/earnings_data/gold_earnings_data.py"
           fi
@@ -837,7 +844,7 @@ jobs:
               --trigger-type Schedule \
               --cron-expression "${{ env.RANKING_CRON }}" \
               --replica-timeout 1800 \
-              --replica-retry-limit 0 \
+              --replica-retry-limit 2 \
               --parallelism 1 \
               --replica-completion-count 1 \
               --cpu 1.0 --memory 2.0Gi \
@@ -859,7 +866,63 @@ jobs:
           az containerapp job start \
             --name ${{ env.RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
-      
+
+      - name: Verify Updated Job Images
+        run: |
+          set -euo pipefail
+          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+          check_job() {
+            local job_name="$1"
+            local actual_image
+            actual_image=$(az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
+            if [ "$actual_image" != "$expected_image" ]; then
+              echo "Image mismatch for $job_name: expected $expected_image, got $actual_image"
+              exit 1
+            fi
+            echo "Verified $job_name image $actual_image"
+          }
+
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.market_changes.outputs.bronze_market }}" = "true" ] || [ "${{ steps.market_data_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.MARKET_DATA_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.market_changes.outputs.silver_market }}" = "true" ] || [ "${{ steps.market_silver_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.MARKET_SILVER_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.market_changes.outputs.gold_market }}" = "true" ] || [ "${{ steps.market_feature_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.MARKET_FEATURE_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.bronze_finance }}" = "true" ] || [ "${{ steps.finance_data_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.FINANCE_DATA_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.silver_finance }}" = "true" ] || [ "${{ steps.finance_silver_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.FINANCE_SILVER_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.gold_finance }}" = "true" ] || [ "${{ steps.finance_feature_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.FINANCE_FEATURE_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.bronze_price_target }}" = "true" ] || [ "${{ steps.price_target_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.PRICE_TARGET_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.silver_price_target }}" = "true" ] || [ "${{ steps.price_target_silver_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.PRICE_TARGET_SILVER_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.gold_price_target }}" = "true" ] || [ "${{ steps.price_target_feature_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.PRICE_TARGET_FEATURE_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.bronze_earnings }}" = "true" ] || [ "${{ steps.earnings_data_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.EARNINGS_DATA_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.silver_earnings }}" = "true" ] || [ "${{ steps.earnings_silver_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.EARNINGS_SILVER_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.gold_earnings }}" = "true" ] || [ "${{ steps.earnings_feature_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.EARNINGS_FEATURE_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.ranking_changes.outputs.ranking_job }}" = "true" ] || [ "${{ steps.ranking_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.RANKING_JOB }}"
+          fi
+
       - name: Update and Start Feature Jobs Post-Deploy
         run: |
           echo "All feature jobs are started in their respective update steps."
