@@ -20,8 +20,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
-list_manager = ListManager(silver_client, "finance-data")
+list_manager = ListManager(bronze_client, "finance-data")
 
 REPORT_CONFIG = [
     {"name": "Quarterly Balance Sheet", "folder": "Balance Sheet", "file_suffix": "quarterly_balance-sheet", "url_template": 'https://finance.yahoo.com/quote/{ticker}/balance-sheet?p={ticker}', "period": "quarterly"},

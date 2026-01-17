@@ -20,9 +20,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-# Usage of silver_client for ListManager to maintain state with existing lists
-silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER) 
-list_manager = ListManager(silver_client, "market-data")
+list_manager = ListManager(bronze_client, "market-data")
 
 def _validate_environment():
     if not cfg.AZURE_CONTAINER_BRONZE:

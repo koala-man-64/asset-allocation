@@ -20,10 +20,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
-# Maintain list state in Silver as per convention, or move to Common? 
-# Using Silver client for lists to avoid state loss.
-list_manager = ListManager(silver_client, "earnings-data")
+list_manager = ListManager(bronze_client, "earnings-data")
 
 def _validate_environment() -> None:
     required = [

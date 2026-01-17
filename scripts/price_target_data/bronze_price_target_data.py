@@ -20,8 +20,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER) 
-list_manager = ListManager(silver_client, "price-target-data")
+list_manager = ListManager(bronze_client, "price-target-data")
 
 BATCH_SIZE = 50
 
