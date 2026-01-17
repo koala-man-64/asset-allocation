@@ -204,12 +204,12 @@ jobs:
       - name: Update and Start Market Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.bronze_market == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Bronze Market Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_bronze_market_data.yaml > deploy/job_bronze_market_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -249,11 +249,12 @@ jobs:
           echo "market_silver_job_exists=${{ steps.market_silver_job_check.outputs.job_exists }}"
 
       - name: Update and Start Market Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.silver_market == 'true' || steps.market_silver_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Silver Market Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_silver_market_data.yaml > deploy/job_silver_market_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -295,13 +296,14 @@ jobs:
         run: |
           echo "market_feature_job_exists=${{ steps.market_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Market Gold Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.gold_market == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Gold Market Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_gold_market_data.yaml > deploy/job_gold_market_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -342,13 +344,13 @@ jobs:
       - name: Update and Start Finance Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.bronze_finance == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Bronze Finance Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_bronze_finance_data.yaml > deploy/job_bronze_finance_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -388,11 +390,12 @@ jobs:
           echo "finance_silver_job_exists=${{ steps.finance_silver_job_check.outputs.job_exists }}"
 
       - name: Update and Start Finance Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.silver_finance == 'true' || steps.finance_silver_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Silver Finance Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_silver_finance_data.yaml > deploy/job_silver_finance_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -431,13 +434,14 @@ jobs:
         run: |
           echo "finance_feature_job_exists=${{ steps.finance_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Finance Gold Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.gold_finance == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Gold Finance Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_gold_finance_data.yaml > deploy/job_gold_finance_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -476,14 +480,15 @@ jobs:
         run: |
           echo "price_target_job_exists=${{ steps.price_target_job_check.outputs.job_exists }}"
       - name: Update and Start Price Target Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.bronze_price_target == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Bronze Price Target Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_bronze_price_target_data.yaml > deploy/job_bronze_price_target_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -523,11 +528,12 @@ jobs:
           echo "price_target_silver_job_exists=${{ steps.price_target_silver_job_check.outputs.job_exists }}"
 
       - name: Update and Start Price Target Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.silver_price_target == 'true' || steps.price_target_silver_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Silver Price Target Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_silver_price_target_data.yaml > deploy/job_silver_price_target_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -566,13 +572,14 @@ jobs:
         run: |
           echo "price_target_feature_job_exists=${{ steps.price_target_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Price Target Gold Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.gold_price_target == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Gold Price Target Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_gold_price_target_data.yaml > deploy/job_gold_price_target_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -611,13 +618,14 @@ jobs:
         run: |
           echo "earnings_data_job_exists=${{ steps.earnings_data_job_check.outputs.job_exists }}"
       - name: Update and Start Earnings Bronze Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.bronze_earnings == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Bronze Earnings Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_bronze_earnings_data.yaml > deploy/job_bronze_earnings_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -657,11 +665,12 @@ jobs:
           echo "earnings_silver_job_exists=${{ steps.earnings_silver_job_check.outputs.job_exists }}"
 
       - name: Update and Start Earnings Silver Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.silver_earnings == 'true' || steps.earnings_silver_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Silver Earnings Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_silver_earnings_data.yaml > deploy/job_silver_earnings_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -700,13 +709,14 @@ jobs:
         run: |
           echo "earnings_feature_job_exists=${{ steps.earnings_feature_job_check.outputs.job_exists }}"
       - name: Update and Start Earnings Gold Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.gold_earnings == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Gold Earnings Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_gold_earnings_data.yaml > deploy/job_gold_earnings_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
@@ -745,13 +755,14 @@ jobs:
         run: |
           echo "ranking_job_exists=${{ steps.ranking_job_check.outputs.job_exists }}"
       - name: Update and Start Ranking Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.ranking_changes.outputs.PLATINUM_RANKING_JOB == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
         env:
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           echo "Deploying Platinum Ranking Job from YAML..."
+          export ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
