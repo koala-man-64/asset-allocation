@@ -4,13 +4,14 @@ import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Optional
 
 import numpy as np
 import pandas as pd
 
 from asset_allocation.backtest.models import PortfolioSnapshot
 from asset_allocation.backtest.strategy import StrategyDecision
+from asset_allocation.backtest.optimization import Optimizer
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,9 @@ class TargetWeights:
 
 
 class Sizer(ABC):
+    def __init__(self, optimizer: Optional[Optimizer] = None):
+        self.optimizer = optimizer
+
     @abstractmethod
     def size(
         self,
@@ -32,7 +36,8 @@ class Sizer(ABC):
 
 
 class EqualWeightSizer(Sizer):
-    def __init__(self, *, max_positions: int = 10):
+    def __init__(self, *, max_positions: int = 10, optimizer: Optional[Optimizer] = None):
+        super().__init__(optimizer=optimizer)
         self._max_positions = int(max_positions)
 
     def size(
@@ -51,6 +56,65 @@ class EqualWeightSizer(Sizer):
         return TargetWeights(weights={symbol: weight for symbol in selected_list})
 
 
+class OptimizationSizer(Sizer):
+    """
+    Sizer that uses an Optimizer to determine weights.
+    Requires Strategy to provide Expected Returns (scores) and optionally Covariance.
+    """
+    def __init__(self, optimizer: Optimizer, lookback_days: int = 252):
+        super().__init__(optimizer=optimizer)
+        if optimizer is None:
+            raise ValueError("OptimizationSizer requires an optimizer instance.")
+        self.lookback_days = int(lookback_days)
+
+    def size(
+        self,
+        as_of: date,
+        *,
+        decision: StrategyDecision,
+        prices: pd.DataFrame,
+        portfolio: PortfolioSnapshot,
+    ) -> TargetWeights:
+        # Filter universe to symbols with positive scores (Long Only for now)
+        universe = [s for s, score in decision.scores.items() if score is not None]
+        if not universe:
+            return TargetWeights(weights={})
+
+        # Estimate Expected Returns (from Strategy Scores)
+        # We treat the raw strategy scores as 'Alpha' or 'Expected Return' for MVO
+        expected_returns = pd.Series({s: decision.scores[s] for s in universe})
+
+        # Estimate Covariance Matrix (Historical)
+        # Filter prices to universe and lookback window
+        window_start = as_of - pd.Timedelta(days=self.lookback_days * 2) # buffer for holidays
+        recent_prices = prices[
+            (prices["date"] >= pd.Timestamp(window_start)) & 
+            (prices["date"] <= pd.Timestamp(as_of)) &
+            (prices["symbol"].isin(universe))
+        ]
+        
+        # pivot to wide format: Date x Symbol
+        pivot_prices = recent_prices.pivot(index="date", columns="symbol", values="close")
+        if pivot_prices.empty:
+            return TargetWeights(weights={})
+            
+        returns = pivot_prices.pct_change().dropna()
+        if returns.empty:
+            return TargetWeights(weights={})
+            
+        cov_matrix = returns.cov()
+
+        # Run Optimization
+        target_weights = self.optimizer.optimize(
+            universe=universe,
+            expected_returns=expected_returns,
+            covariance_matrix=cov_matrix,
+            current_weights=portfolio.positions  # Pass current positions for turnover logic (future)
+        )
+
+        return TargetWeights(weights=target_weights)
+
+
 def _safe_float(value: object) -> float | None:
     try:
         out = float(value)  # type: ignore[arg-type]
@@ -62,6 +126,9 @@ def _safe_float(value: object) -> float | None:
 
 
 def _build_mu(decision: StrategyDecision, *, mu_scale: float) -> pd.Series:
+    """Conventionalize scores into a vector of return expectations."""
+    # This helper was likely from a previous version, preserved for compatibility if needed.
+    return pd.Series(decision.scores) * mu_scale
     rows = {}
     for symbol, score in (decision.scores or {}).items():
         score_f = _safe_float(score)

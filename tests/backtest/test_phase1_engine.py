@@ -58,6 +58,7 @@ def test_phase1_buy_and_hold_artifacts_and_execution_timing(tmp_path: Path) -> N
     assert (run_dir / "trades.csv").exists()
     assert (run_dir / "daily_metrics.csv").exists()
     assert (run_dir / "metrics_timeseries.parquet").exists()
+    assert (run_dir / "metrics_rolling.parquet").exists()
     assert (run_dir / "daily_positions.parquet").exists()
     assert (run_dir / "monthly_returns.csv").exists()
     assert (run_dir / "returns_monthly.csv").exists()
@@ -79,6 +80,9 @@ def test_phase1_buy_and_hold_artifacts_and_execution_timing(tmp_path: Path) -> N
     assert metrics["date"].tolist() == ["2020-01-01", "2020-01-02", "2020-01-03"]
     assert metrics.loc[0, "portfolio_value"] == pytest.approx(1000.0)
     assert metrics.loc[2, "portfolio_value"] == pytest.approx(1171.171171, rel=1e-6)
+
+    metrics_ts = pd.read_parquet(run_dir / "metrics_timeseries.parquet")
+    assert "n_trades" in metrics_ts.columns
 
     positions = pd.read_parquet(run_dir / "daily_positions.parquet")
     assert positions["date"].nunique() == 3

@@ -1,0 +1,50 @@
+run_name: "PLATINUM-PULLBACK-FAILURE-SHORT"
+start_date: "2024-01-01"
+end_date: "2024-12-31"
+initial_cash: 100000.0
+
+universe:
+  symbols:
+    - "AAPL"
+    - "MSFT"
+
+data:
+  price_source: "ADLS"
+  price_path: "silver/market-data/{symbol}"
+  signal_path: "platinum/signals/daily"
+  frequency: "Daily"
+
+strategy:
+  class: "LongShortTopNStrategy"
+  parameters:
+    signal_column: "pullback_short_score"
+    k_long: 0
+    k_short: 10
+    long_if_high: false
+    rebalance: "weekly"
+    trailing_ma_days: 20
+
+sizing:
+  class: "LongShortScoreSizer"
+  parameters:
+    max_longs: 0
+    max_shorts: 10
+    gross_target: 1.0
+    net_target: -1.0
+    weight_mode: "equal"
+    sticky_holdings: true
+
+constraints:
+  allow_short: true
+  max_leverage: 1.0
+  max_position_size: 0.10
+  max_turnover: 0.75
+  min_weight_change: 0.002
+
+broker:
+  commission: 0.0005
+  slippage_bps: 2.0
+  fill_policy: "next_open"
+
+output:
+  local_dir: "./backtest_results"

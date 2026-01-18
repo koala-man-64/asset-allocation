@@ -3,18 +3,20 @@ from __future__ import annotations
 import json
 import math
 import calendar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 from filelock import FileLock
 
 from asset_allocation.backtest.config import BacktestConfig
 from asset_allocation.backtest.constraints import ConstraintHit
-from asset_allocation.backtest.models import BacktestSummary, TradeFill
+from asset_allocation.backtest.models import BacktestSummary, TradeFill, PortfolioSnapshot
 from asset_allocation.backtest.portfolio import Portfolio
+from asset_allocation.backtest.risk_model import RiskModel
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -46,6 +48,22 @@ def _sharpe(daily_returns: pd.Series, *, periods_per_year: int = 252) -> Optiona
         return None
     mean = float(daily_returns.mean())
     return (mean / std) * math.sqrt(periods_per_year)
+
+
+def _rolling_max_drawdown(values: "pd.Series | list[float]") -> float:
+    peak = None
+    worst = 0.0
+    for raw in values:
+        v = _safe_float(raw)
+        if v is None:
+            continue
+        if peak is None or v > peak:
+            peak = v
+        if peak and peak > 0:
+            dd = v / peak - 1.0
+            if dd < worst:
+                worst = dd
+    return float(worst)
 
 
 @dataclass
@@ -95,6 +113,7 @@ class Reporter:
         turnover: float,
         commission: float,
         slippage_cost: float,
+        n_trades: int = 0,
     ) -> None:
         self._days.append(
             {
@@ -109,6 +128,7 @@ class Reporter:
                 "turnover": float(turnover),
                 "commission": float(commission),
                 "slippage_cost": float(slippage_cost),
+                "n_trades": int(n_trades),
             }
         )
 
@@ -179,6 +199,8 @@ class Reporter:
 
         if self.config.output.save_metrics_parquet:
             daily_df.to_parquet(self.output_dir / "metrics_timeseries.parquet", index=False)
+            rolling_df = self._compute_rolling_metrics(daily_df)
+            rolling_df.to_parquet(self.output_dir / "metrics_rolling.parquet", index=False)
 
         if self.config.output.save_positions_snapshot:
             positions_df = pd.DataFrame(self._positions)
@@ -248,6 +270,67 @@ class Reporter:
                 client.upload_file(str(index_path), remote_path)
 
         return summary
+
+    def _compute_rolling_metrics(self, daily_df: pd.DataFrame) -> pd.DataFrame:
+        if daily_df is None or daily_df.empty:
+            return pd.DataFrame()
+
+        working = daily_df.copy()
+        working["date"] = pd.to_datetime(working["date"], errors="coerce")
+        working = working.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        if working.empty:
+            return pd.DataFrame()
+
+        working["daily_return"] = pd.to_numeric(working.get("daily_return"), errors="coerce").fillna(0.0)
+        working["portfolio_value"] = pd.to_numeric(working.get("portfolio_value"), errors="coerce")
+        working["turnover"] = pd.to_numeric(working.get("turnover"), errors="coerce").fillna(0.0)
+        working["commission"] = pd.to_numeric(working.get("commission"), errors="coerce").fillna(0.0)
+        working["slippage_cost"] = pd.to_numeric(working.get("slippage_cost"), errors="coerce").fillna(0.0)
+        working["n_trades"] = pd.to_numeric(working.get("n_trades"), errors="coerce").fillna(0.0)
+        working["gross_exposure"] = pd.to_numeric(working.get("gross_exposure"), errors="coerce").fillna(0.0)
+        working["net_exposure"] = pd.to_numeric(working.get("net_exposure"), errors="coerce").fillna(0.0)
+
+        # Long-form rolling metrics: one row per (date, window_days).
+        windows = [21, 63, 126, 252]
+        dr = working["daily_return"].astype(float)
+        pv = working["portfolio_value"].astype(float)
+
+        rows: List[pd.DataFrame] = []
+        for window in windows:
+            w = int(window)
+            if w <= 1:
+                continue
+
+            compounded = (1.0 + dr).rolling(w).apply(lambda x: float(np.prod(x)), raw=True) - 1.0
+            vol = dr.rolling(w).std(ddof=0) * math.sqrt(252)
+            mean = dr.rolling(w).mean() * 252
+            sharpe = mean / (vol.replace(0.0, pd.NA))
+
+            max_dd = pv.rolling(w).apply(_rolling_max_drawdown, raw=False)
+
+            out = pd.DataFrame(
+                {
+                    "date": working["date"].dt.date.astype(str),
+                    "window_days": w,
+                    "rolling_return": compounded.astype(float),
+                    "rolling_volatility": vol.astype(float),
+                    "rolling_sharpe": pd.to_numeric(sharpe, errors="coerce"),
+                    "rolling_max_drawdown": pd.to_numeric(max_dd, errors="coerce"),
+                    "turnover_sum": working["turnover"].rolling(w).sum().astype(float),
+                    "commission_sum": working["commission"].rolling(w).sum().astype(float),
+                    "slippage_cost_sum": working["slippage_cost"].rolling(w).sum().astype(float),
+                    "n_trades_sum": working["n_trades"].rolling(w).sum().astype(float),
+                    "gross_exposure_avg": working["gross_exposure"].rolling(w).mean().astype(float),
+                    "net_exposure_avg": working["net_exposure"].rolling(w).mean().astype(float),
+                }
+            )
+            rows.append(out)
+
+        if not rows:
+            return pd.DataFrame()
+
+        combined = pd.concat(rows, ignore_index=True)
+        return combined.sort_values(["date", "window_days"]).reset_index(drop=True)
 
     def _write_periodic_returns(self, daily_df: pd.DataFrame) -> None:
         if "date" not in daily_df.columns or "portfolio_value" not in daily_df.columns:

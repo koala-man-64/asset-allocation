@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Dict
 
 from asset_allocation.backtest.config import BacktestConfig
-from asset_allocation.backtest.data_access import load_backtest_inputs
 from asset_allocation.backtest.runner import run_backtest
 from asset_allocation.backtest.service.adls_uploader import upload_run_artifacts
 from asset_allocation.backtest.service.run_store import RunStore
@@ -46,11 +45,8 @@ class JobManager:
                 # Ensure artifacts reflect the effective output base dir in config.yaml.
                 effective = replace(config, output=replace(config.output, local_dir=str(self._output_base_dir)))
 
-                prices, signals = load_backtest_inputs(effective)
                 result = run_backtest(
                     effective,
-                    prices=prices,
-                    signals=signals,
                     run_id=run_id,
                     output_base_dir=self._output_base_dir,
                 )

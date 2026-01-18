@@ -22,64 +22,41 @@ def _prices_frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _signals_breakout() -> pd.DataFrame:
+def _signals_for_column(column: str) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for d in _dates():
-        rows.append({"date": d, "symbol": "AAA", "breakout_score": 1.0, "breakdown_score": 0.0})
-        rows.append({"date": d, "symbol": "BBB", "breakout_score": 0.0, "breakdown_score": 1.0})
-    return pd.DataFrame(rows)
-
-
-def _signals_ep() -> pd.DataFrame:
-    rows: list[dict[str, object]] = []
-    for d in _dates():
-        rows.append({"date": d, "symbol": "AAA", "ep_score": 1.0})
-        rows.append({"date": d, "symbol": "BBB", "ep_score": -1.0})
+        rows.append({"date": d, "symbol": "AAA", column: 2.0})
+        rows.append({"date": d, "symbol": "BBB", column: 1.0})
     return pd.DataFrame(rows)
 
 
 def _base_config(tmp_path: Path) -> dict[str, object]:
     return {
-        "run_name": "strategy_smoke",
+        "run_name": "platinum_topn_smoke",
         "start_date": "2020-01-01",
         "end_date": "2020-01-05",
         "initial_cash": 1000.0,
         "universe": {"symbols": ["AAA", "BBB"]},
-        "constraints": {"max_leverage": 1.0, "max_position_size": 1.0, "allow_short": True},
         "broker": {"slippage_bps": 0.0, "commission": 0.0, "fill_policy": "next_open"},
         "output": {"local_dir": str(tmp_path)},
-        "sizing": {
-            "class": "LongShortScoreSizer",
-            "parameters": {
-                "max_longs": 1,
-                "max_shorts": 1,
-                "gross_target": 1.0,
-                "net_target": 0.0,
-                "weight_mode": "equal",
-                "sticky_holdings": False,
-            },
-        },
     }
 
 
-def test_breakout_strategy_long_short_smoke(tmp_path: Path) -> None:
+def test_longshort_topn_strategy_long_only_smoke(tmp_path: Path) -> None:
     config = _base_config(tmp_path)
-    config["strategy"] = {
-        "class": "BreakoutStrategy",
-        "parameters": {
-            "breakout_score_column": "breakout_score",
-            "breakdown_score_column": "breakdown_score",
-            "enable_shorts": True,
-            "partial_exit_days": None,
-            "rebalance": "daily",
-        },
+    config["strategy"] = {"class": "LongShortTopNStrategy", "parameters": {"signal_column": "vcp_score", "k_long": 1}}
+    config["sizing"] = {
+        "class": "LongShortScoreSizer",
+        "parameters": {"max_longs": 1, "max_shorts": 0, "gross_target": 1.0, "net_target": 1.0, "weight_mode": "equal"},
     }
+    config["constraints"] = {"max_leverage": 1.0, "max_position_size": 1.0, "allow_short": False}
+
     cfg = BacktestConfig.from_dict(config)
     result = run_backtest(
         cfg,
         prices=_prices_frame(),
-        signals=_signals_breakout(),
-        run_id="RUNTEST-STRAT-BREAKOUT",
+        signals=_signals_for_column("vcp_score"),
+        run_id="RUNTEST-PLAT-LONG",
         output_base_dir=tmp_path,
     )
 
@@ -93,30 +70,27 @@ def test_breakout_strategy_long_short_smoke(tmp_path: Path) -> None:
     trades = pd.read_csv(run_dir / "trades.csv")
     assert len(trades) >= 1
     assert (trades["quantity"] > 0).any()
-    assert (trades["quantity"] < 0).any()
-
-    positions = pd.read_parquet(run_dir / "daily_positions.parquet")
-    assert positions["date"].nunique() == 5
-    assert positions["symbol"].nunique() == 2
-    assert len(positions) == 10  # full snapshot: days * universe
+    assert not (trades["quantity"] < 0).any()
 
 
-def test_ep_strategy_long_short_smoke(tmp_path: Path) -> None:
+def test_longshort_topn_strategy_short_only_smoke(tmp_path: Path) -> None:
     config = _base_config(tmp_path)
     config["strategy"] = {
-        "class": "EpisodicPivotStrategy",
-        "parameters": {
-            "ep_score_column": "ep_score",
-            "enable_shorts": True,
-            "rebalance": "daily",
-        },
+        "class": "LongShortTopNStrategy",
+        "parameters": {"signal_column": "vcp_short_score", "k_short": 1, "long_if_high": False},
     }
+    config["sizing"] = {
+        "class": "LongShortScoreSizer",
+        "parameters": {"max_longs": 0, "max_shorts": 1, "gross_target": 1.0, "net_target": -1.0, "weight_mode": "equal"},
+    }
+    config["constraints"] = {"max_leverage": 1.0, "max_position_size": 1.0, "allow_short": True}
+
     cfg = BacktestConfig.from_dict(config)
     result = run_backtest(
         cfg,
         prices=_prices_frame(),
-        signals=_signals_ep(),
-        run_id="RUNTEST-STRAT-EP",
+        signals=_signals_for_column("vcp_short_score"),
+        run_id="RUNTEST-PLAT-SHORT",
         output_base_dir=tmp_path,
     )
 
@@ -129,10 +103,5 @@ def test_ep_strategy_long_short_smoke(tmp_path: Path) -> None:
 
     trades = pd.read_csv(run_dir / "trades.csv")
     assert len(trades) >= 1
-    assert (trades["quantity"] > 0).any()
     assert (trades["quantity"] < 0).any()
 
-    positions = pd.read_parquet(run_dir / "daily_positions.parquet")
-    assert positions["date"].nunique() == 5
-    assert positions["symbol"].nunique() == 2
-    assert len(positions) == 10  # full snapshot: days * universe

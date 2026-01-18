@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from asset_allocation.backtest.config import BacktestConfig
-from asset_allocation.backtest.data_access import load_backtest_inputs
 from asset_allocation.backtest.runner import run_backtest
 
 
@@ -34,13 +33,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         cfg = BacktestConfig.from_yaml(args.config, strict=bool(args.strict))
-        prices, signals = load_backtest_inputs(cfg)
 
         output_dir = Path(args.output_dir) if args.output_dir else None
         result = run_backtest(
             cfg,
-            prices=prices,
-            signals=signals,
             run_id=args.run_id,
             output_base_dir=output_dir,
         )

@@ -48,7 +48,17 @@ _STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
     "data": {"price_source", "price_path", "signal_path", "price_fields", "frequency"},
     "strategy": {"class", "class_name", "module", "parameters"},
     "sizing": {"class", "class_name", "module", "parameters"},
-    "constraints": {"max_leverage", "max_position_size", "allow_short", "stop_loss", "max_turnover", "max_net_exposure"},
+    "constraints": {
+        "max_leverage",
+        "max_position_size",
+        "allow_short",
+        "stop_loss",
+        "max_turnover",
+        "max_net_exposure",
+        "net_exposure_min",
+        "net_exposure_max",
+        "min_weight_change",
+    },
     "broker": {"slippage_bps", "commission", "fill_policy"},
     "output": {
         "local_dir",
@@ -183,6 +193,9 @@ class ConstraintsConfig:
     stop_loss: Optional[float] = None
     max_turnover: Optional[float] = None
     max_net_exposure: Optional[float] = None
+    net_exposure_min: Optional[float] = None
+    net_exposure_max: Optional[float] = None
+    min_weight_change: Optional[float] = None
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "ConstraintsConfig":
@@ -198,6 +211,15 @@ class ConstraintsConfig:
         max_net_exposure = data.get("max_net_exposure")
         if max_net_exposure is not None:
             max_net_exposure = float(max_net_exposure)
+        net_exposure_min = data.get("net_exposure_min")
+        if net_exposure_min is not None:
+            net_exposure_min = float(net_exposure_min)
+        net_exposure_max = data.get("net_exposure_max")
+        if net_exposure_max is not None:
+            net_exposure_max = float(net_exposure_max)
+        min_weight_change = data.get("min_weight_change")
+        if min_weight_change is not None:
+            min_weight_change = float(min_weight_change)
         return ConstraintsConfig(
             max_leverage=max_leverage,
             max_position_size=max_position_size,
@@ -205,6 +227,9 @@ class ConstraintsConfig:
             stop_loss=stop_loss,
             max_turnover=max_turnover,
             max_net_exposure=max_net_exposure,
+            net_exposure_min=net_exposure_min,
+            net_exposure_max=net_exposure_max,
+            min_weight_change=min_weight_change,
         )
 
     def validate(self) -> None:
@@ -218,6 +243,18 @@ class ConstraintsConfig:
             raise ValueError("constraints.max_turnover must be in (0, 10] when set.")
         if self.max_net_exposure is not None and not (0 <= float(self.max_net_exposure) <= 10.0):
             raise ValueError("constraints.max_net_exposure must be in [0, 10] when set.")
+        if self.net_exposure_min is not None and not (-10.0 <= float(self.net_exposure_min) <= 10.0):
+            raise ValueError("constraints.net_exposure_min must be in [-10, 10] when set.")
+        if self.net_exposure_max is not None and not (-10.0 <= float(self.net_exposure_max) <= 10.0):
+            raise ValueError("constraints.net_exposure_max must be in [-10, 10] when set.")
+        if (
+            self.net_exposure_min is not None
+            and self.net_exposure_max is not None
+            and float(self.net_exposure_min) > float(self.net_exposure_max)
+        ):
+            raise ValueError("constraints.net_exposure_min must be <= constraints.net_exposure_max when both are set.")
+        if self.min_weight_change is not None and not (0.0 <= float(self.min_weight_change) <= 10.0):
+            raise ValueError("constraints.min_weight_change must be in [0, 10] when set.")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -227,6 +264,9 @@ class ConstraintsConfig:
             "stop_loss": self.stop_loss,
             "max_turnover": self.max_turnover,
             "max_net_exposure": self.max_net_exposure,
+            "net_exposure_min": self.net_exposure_min,
+            "net_exposure_max": self.net_exposure_max,
+            "min_weight_change": self.min_weight_change,
         }
 
 

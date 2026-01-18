@@ -154,6 +154,7 @@ class BacktestEngine:
 
             day_commission = float(costs.commission) if costs else 0.0
             day_slippage = float(costs.slippage_cost) if costs else 0.0
+            day_n_trades = int(len(fills)) if fills else 0
             day_turnover = 0.0
             if fills and prev_equity:
                 traded_value = sum(abs(f.notional) for f in fills)
@@ -171,6 +172,7 @@ class BacktestEngine:
                 turnover=day_turnover,
                 commission=day_commission,
                 slippage_cost=day_slippage,
+                n_trades=day_n_trades,
             )
             self.reporter.record_positions_snapshot(
                 current_date,

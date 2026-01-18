@@ -33,3 +33,6 @@ httpx==0.27.2
 
 # Backtest config (YAML)
 pyyaml==6.0.2
+
+# Optional dependencies for Advanced Portfolio Features
+cvxpy>=1.4.0

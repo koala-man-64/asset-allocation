@@ -100,8 +100,49 @@ class Constraints:
             _hit("max_leverage", before=gross, after=max_lev, scale=scale)
             weights = {s: w * scale for s, w in weights.items() if abs(w * scale) >= 1e-12}
 
-        # Optional net exposure cap (absolute).
-        if self.config.max_net_exposure is not None and weights:
+        # Net exposure constraints:
+        # - If net_exposure_min/max are set, enforce a band.
+        # - Otherwise, use max_net_exposure (absolute cap) if provided.
+        net_min = self.config.net_exposure_min
+        net_max = self.config.net_exposure_max
+
+        if weights and (net_min is not None or net_max is not None):
+            net = sum(weights.values())
+            long_sum = sum(w for w in weights.values() if w > 0)
+            short_sum = sum(w for w in weights.values() if w < 0)  # negative
+
+            if net_min is not None and net < float(net_min):
+                # Increase net by reducing short exposure (safe: never increases gross).
+                if short_sum < 0:
+                    desired = float(net_min)
+                    factor = (desired - long_sum) / short_sum  # short_sum < 0
+                    factor = max(0.0, min(1.0, float(factor)))
+                    new_weights = {s: (w * factor if w < 0 else w) for s, w in weights.items()}
+                    new_net = sum(new_weights.values())
+                    _hit("net_exposure_min", before=net, after=new_net, min_net=desired, factor=factor)
+                    weights = {s: w for s, w in new_weights.items() if abs(w) >= 1e-12}
+                else:
+                    _hit("net_exposure_min_unachievable", before=net, after=net, min_net=float(net_min))
+
+            if net_max is not None and weights:
+                net = sum(weights.values())
+                long_sum = sum(w for w in weights.values() if w > 0)
+                short_sum = sum(w for w in weights.values() if w < 0)
+                if net > float(net_max):
+                    # Decrease net by reducing long exposure (safe: never increases gross).
+                    if long_sum > 0:
+                        desired = float(net_max)
+                        factor = (desired - short_sum) / long_sum
+                        factor = max(0.0, min(1.0, float(factor)))
+                        new_weights = {s: (w * factor if w > 0 else w) for s, w in weights.items()}
+                        new_net = sum(new_weights.values())
+                        _hit("net_exposure_max", before=net, after=new_net, max_net=desired, factor=factor)
+                        weights = {s: w for s, w in new_weights.items() if abs(w) >= 1e-12}
+                    else:
+                        _hit("net_exposure_max_unachievable", before=net, after=net, max_net=float(net_max))
+
+        # Optional net exposure cap (absolute), preserved for backwards compatibility.
+        if net_min is None and net_max is None and self.config.max_net_exposure is not None and weights:
             net = sum(weights.values())
             cap = float(self.config.max_net_exposure)
             if abs(net) > cap and abs(net) > 0:
@@ -110,7 +151,7 @@ class Constraints:
                 weights = {s: w * scale for s, w in weights.items() if abs(w * scale) >= 1e-12}
 
         # Optional turnover cap (approximate, using close prices and equity at close).
-        if self.config.max_turnover is not None and weights and portfolio and close_prices:
+        if (self.config.min_weight_change is not None or self.config.max_turnover is not None) and weights and portfolio and close_prices:
             equity = float(portfolio.equity)
             if equity > 0:
                 current_weights: Dict[str, float] = {}
@@ -120,27 +161,50 @@ class Constraints:
                         continue
                     current_weights[str(sym)] = (float(shares) * float(px)) / equity
 
-                all_symbols = set(current_weights.keys()) | set(weights.keys())
-                turnover = 0.0
-                deltas: Dict[str, float] = {}
-                for sym in all_symbols:
-                    cur = float(current_weights.get(sym, 0.0))
-                    tgt = float(weights.get(sym, 0.0))
-                    delta = tgt - cur
-                    deltas[sym] = delta
-                    turnover += abs(delta)
+                # Optional drift threshold: suppress tiny per-symbol weight changes.
+                if self.config.min_weight_change is not None and weights:
+                    threshold = float(self.config.min_weight_change)
+                    if threshold > 0:
+                        all_symbols = set(current_weights.keys()) | set(weights.keys())
+                        clipped = 0
+                        adjusted: Dict[str, float] = {}
+                        for sym in all_symbols:
+                            cur = float(current_weights.get(sym, 0.0))
+                            tgt = float(weights.get(sym, 0.0))
+                            if abs(tgt - cur) < threshold:
+                                if abs(tgt - cur) >= 1e-12:
+                                    clipped += 1
+                                new = cur
+                            else:
+                                new = tgt
+                            if abs(new) >= 1e-12:
+                                adjusted[sym] = float(new)
+                        if clipped:
+                            _hit("min_weight_change", threshold=threshold, clipped=clipped)
+                        weights = adjusted
 
-                cap = float(self.config.max_turnover)
-                if turnover > cap and turnover > 0:
-                    factor = cap / turnover
-                    _hit("max_turnover", before=turnover, after=cap, factor=factor)
-                    constrained: Dict[str, float] = {}
-                    for sym, delta in deltas.items():
+                if self.config.max_turnover is not None and weights:
+                    all_symbols = set(current_weights.keys()) | set(weights.keys())
+                    turnover = 0.0
+                    deltas: Dict[str, float] = {}
+                    for sym in all_symbols:
                         cur = float(current_weights.get(sym, 0.0))
-                        new = cur + factor * float(delta)
-                        if abs(new) >= 1e-12:
-                            constrained[sym] = float(new)
-                    weights = constrained
+                        tgt = float(weights.get(sym, 0.0))
+                        delta = tgt - cur
+                        deltas[sym] = delta
+                        turnover += abs(delta)
+
+                    cap = float(self.config.max_turnover)
+                    if turnover > cap and turnover > 0:
+                        factor = cap / turnover
+                        _hit("max_turnover", before=turnover, after=cap, factor=factor)
+                        constrained: Dict[str, float] = {}
+                        for sym, delta in deltas.items():
+                            cur = float(current_weights.get(sym, 0.0))
+                            new = cur + factor * float(delta)
+                            if abs(new) >= 1e-12:
+                                constrained[sym] = float(new)
+                        weights = constrained
 
         return ConstraintResult(weights=weights, hits=hits)
 

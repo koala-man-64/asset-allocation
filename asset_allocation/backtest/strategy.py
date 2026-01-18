@@ -319,6 +319,270 @@ class TopNSignalStrategy(Strategy):
         return StrategyDecision(scores={row["symbol"]: float(row["signal"]) for _, row in df.iterrows()})
 
 
+class LongShortTopNStrategy(Strategy):
+    """
+    Generic Platinum-driven long/short strategy using a single score column.
+
+    - Signals are used as-is (no recomputation).
+    - Targets are generated at close(T) and executed at open(T+1) by the engine.
+    - Produces signed scores:
+        - long candidates => positive scores
+        - short candidates => negative scores
+
+    Selection rules (per rebalance date):
+      - If long_if_high=True: longs from highest scores, shorts from lowest scores.
+      - If long_if_high=False: longs from lowest scores, shorts from highest scores.
+
+    Exits are evaluated on daily bars using prices (close/T+0):
+      - optional trailing moving average
+      - optional stop loss
+      - optional max holding period (trading days)
+
+    Partial exits (v1) are expressed as per-symbol scaling via StrategyDecision.scales.
+    """
+
+    def __init__(
+        self,
+        *,
+        signal_column: str,
+        k_long: int = 0,
+        k_short: int = 0,
+        long_if_high: bool = True,
+        min_abs_score: float = 0.0,
+        trailing_ma_days: Optional[int] = None,
+        stop_loss_pct: Optional[float] = None,
+        use_low_for_stop: bool = True,
+        partial_exit_days: Optional[int] = None,
+        partial_exit_fraction: float = 0.5,
+        max_hold_days: Optional[int] = None,
+        rebalance: str | int = "daily",
+    ):
+        super().__init__(rebalance=rebalance)
+        self._signal_column = str(signal_column)
+        self._k_long = int(k_long)
+        self._k_short = int(k_short)
+        self._long_if_high = bool(long_if_high)
+        self._min_abs_score = float(min_abs_score)
+        self._trailing_ma_days = int(trailing_ma_days) if trailing_ma_days is not None else None
+        self._stop_loss_pct = float(stop_loss_pct) if stop_loss_pct is not None else None
+        self._use_low_for_stop = bool(use_low_for_stop)
+        self._partial_exit_days = int(partial_exit_days) if partial_exit_days is not None else None
+        self._partial_exit_fraction = float(partial_exit_fraction)
+        self._max_hold_days = int(max_hold_days) if max_hold_days is not None else None
+
+        self._entry_date: Dict[str, date] = {}
+        self._entry_price: Dict[str, float] = {}
+        self._entry_side: Dict[str, int] = {}
+        self._scales: Dict[str, float] = {}
+        self._last_score: Dict[str, float] = {}
+
+    def _sync_positions(self, as_of: date, *, prices: pd.DataFrame, portfolio: PortfolioSnapshot) -> None:
+        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
+
+        for sym in list(self._entry_date.keys()):
+            if sym not in held:
+                self._entry_date.pop(sym, None)
+                self._entry_price.pop(sym, None)
+                self._entry_side.pop(sym, None)
+                self._scales.pop(sym, None)
+                self._last_score.pop(sym, None)
+
+        for sym, shares in held.items():
+            side = 1 if shares > 0 else -1
+            if self._entry_side.get(sym) != side:
+                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
+                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+                entry_px = open_px if open_px is not None else close_px
+                if entry_px is not None:
+                    self._entry_date[sym] = as_of
+                    self._entry_price[sym] = float(entry_px)
+                    self._entry_side[sym] = side
+                    self._scales[sym] = 1.0
+
+    def _should_exit(self, *, as_of: date, symbol: str, side: int, prices: pd.DataFrame) -> bool:
+        close_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["close", "Close"])
+        if close_px is None:
+            return False
+
+        if self._trailing_ma_days is not None and self._trailing_ma_days > 0:
+            ma = _moving_average_close(prices, symbol=symbol, window=self._trailing_ma_days)
+            if ma is not None:
+                if side > 0 and close_px < ma:
+                    return True
+                if side < 0 and close_px > ma:
+                    return True
+
+        if self._max_hold_days is not None and self._max_hold_days > 0:
+            entry_date = self._entry_date.get(symbol)
+            if entry_date is not None:
+                held_days = _trading_days_held(prices, symbol=symbol, entry_date=entry_date, as_of=as_of)
+                if held_days >= self._max_hold_days:
+                    return True
+
+        if self._stop_loss_pct is None:
+            return False
+
+        entry_px = self._entry_price.get(symbol)
+        if entry_px is None:
+            return False
+
+        if side > 0:
+            trigger_px = close_px
+            if self._use_low_for_stop:
+                low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
+                if low_px is not None:
+                    trigger_px = low_px
+            return trigger_px <= float(entry_px) * (1.0 - float(self._stop_loss_pct))
+
+        trigger_px = close_px
+        high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
+        if high_px is not None:
+            trigger_px = high_px
+        return trigger_px >= float(entry_px) * (1.0 + float(self._stop_loss_pct))
+
+    @staticmethod
+    def _coerce_signal_map(signals: Optional[pd.DataFrame], *, signal_column: str) -> Dict[str, float]:
+        if signals is None or signals.empty:
+            return {}
+        if "symbol" not in signals.columns:
+            raise ValueError("signals must include 'symbol'.")
+        if signal_column not in signals.columns:
+            raise ValueError(f"signals missing required column: {signal_column!r}")
+
+        df = signals[["symbol", signal_column]].copy()
+        df["symbol"] = df["symbol"].astype(str)
+        df["signal"] = pd.to_numeric(df[signal_column], errors="coerce")
+        df = df.dropna(subset=["signal"]).drop_duplicates(subset=["symbol"], keep="last")
+        if df.empty:
+            return {}
+        return {str(row["symbol"]): float(row["signal"]) for _, row in df.iterrows()}
+
+    @staticmethod
+    def _select_topn(
+        signals: pd.DataFrame,
+        *,
+        k_long: int,
+        k_short: int,
+        long_if_high: bool,
+        min_abs_score: float,
+    ) -> Dict[str, float]:
+        if signals is None or signals.empty:
+            return {}
+
+        df = signals.copy()
+        df["symbol"] = df["symbol"].astype(str)
+        df["signal"] = pd.to_numeric(df["signal"], errors="coerce")
+        df = df.dropna(subset=["signal"]).drop_duplicates(subset=["symbol"], keep="last")
+        if df.empty:
+            return {}
+
+        if min_abs_score > 0:
+            df = df[df["signal"].abs() >= float(min_abs_score)]
+            if df.empty:
+                return {}
+
+        # Select longs first, then shorts from remaining universe to prevent overlap.
+        out: Dict[str, float] = {}
+
+        if k_long > 0:
+            long_sorted = df.sort_values("signal", ascending=not long_if_high)
+            long_df = long_sorted.head(int(k_long))
+            for _, row in long_df.iterrows():
+                sym = str(row["symbol"])
+                value = _safe_float(row["signal"])
+                if value is None:
+                    continue
+                out[sym] = abs(float(value))
+            df = df[~df["symbol"].isin(set(long_df["symbol"].tolist()))]
+
+        if k_short > 0 and not df.empty:
+            short_sorted = df.sort_values("signal", ascending=long_if_high)
+            short_df = short_sorted.head(int(k_short))
+            for _, row in short_df.iterrows():
+                sym = str(row["symbol"])
+                value = _safe_float(row["signal"])
+                if value is None:
+                    continue
+                out[sym] = -abs(float(value))
+
+        return out
+
+    def on_bar(
+        self,
+        as_of: date,
+        *,
+        prices: pd.DataFrame,
+        signals: Optional[pd.DataFrame],
+        portfolio: PortfolioSnapshot,
+    ) -> Optional[StrategyDecision]:
+        self._sync_positions(as_of, prices=prices, portfolio=portfolio)
+
+        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
+        kept: Dict[str, float] = {}
+        scales: Dict[str, float] = {}
+        changed_non_rebalance = False
+
+        signal_map = self._coerce_signal_map(signals, signal_column=self._signal_column)
+
+        for sym, shares in held.items():
+            side = 1 if shares > 0 else -1
+            if self._should_exit(as_of=as_of, symbol=sym, side=side, prices=prices):
+                changed_non_rebalance = True
+                continue
+
+            # Refresh held score from today's signal if available (keeps ranking current at rebalance).
+            sig = signal_map.get(sym)
+            if sig is not None:
+                score = abs(float(sig)) * (1.0 if side > 0 else -1.0)
+            else:
+                score = self._last_score.get(sym)
+                if score is None:
+                    score = float(side)
+                else:
+                    score = float(score)
+                    if side > 0 and score <= 0:
+                        score = abs(score) or 1.0
+                    if side < 0 and score >= 0:
+                        score = -(abs(score) or 1.0)
+            kept[sym] = float(score)
+
+            scale = float(self._scales.get(sym, 1.0))
+            if self._partial_exit_days is not None and scale >= 0.999:
+                entry_date = self._entry_date.get(sym)
+                if entry_date is not None:
+                    held_days = _trading_days_held(prices, symbol=sym, entry_date=entry_date, as_of=as_of)
+                    if held_days >= int(self._partial_exit_days):
+                        remaining = max(0.0, 1.0 - float(self._partial_exit_fraction))
+                        if abs(remaining - scale) > 1e-12:
+                            scale = remaining
+                            self._scales[sym] = scale
+                            changed_non_rebalance = True
+            if abs(scale - 1.0) > 1e-12:
+                scales[sym] = scale
+
+        is_rebalance = self.check_rebalance(as_of)
+        if not is_rebalance and not changed_non_rebalance:
+            return None
+
+        candidates: Dict[str, float] = {}
+        if is_rebalance and signal_map:
+            df = pd.DataFrame({"symbol": list(signal_map.keys()), "signal": list(signal_map.values())})
+            candidates = self._select_topn(
+                df,
+                k_long=max(0, self._k_long),
+                k_short=max(0, self._k_short),
+                long_if_high=self._long_if_high,
+                min_abs_score=self._min_abs_score,
+            )
+
+        merged = dict(kept)
+        merged.update(candidates)
+        for sym, score in merged.items():
+            self._last_score[sym] = float(score)
+
+        return StrategyDecision(scores=merged, scales=scales)
+
+
 class StaticUniverseStrategy(Strategy):
     """
     Allocates equal signals relative to all symbols in the provided list.

@@ -15,6 +15,7 @@ from asset_allocation.backtest.strategy import (
     BreakoutStrategy,
     BuyAndHoldStrategy,
     EpisodicPivotStrategy,
+    LongShortTopNStrategy,
     StaticUniverseStrategy,
     Strategy,
     TopNSignalStrategy,
@@ -61,6 +62,27 @@ def _build_strategy(config: BacktestConfig) -> Strategy:
             if "partial_exit_days" in params and params["partial_exit_days"] is not None
             else None,
             partial_exit_fraction=float(params.get("partial_exit_fraction", 0.5)),
+            rebalance=params.get("rebalance", "daily"),
+        )
+    if name == "LongShortTopNStrategy":
+        return LongShortTopNStrategy(
+            signal_column=str(params.get("signal_column") or "composite_percentile"),
+            k_long=int(params.get("k_long", 0)),
+            k_short=int(params.get("k_short", 0)),
+            long_if_high=bool(params.get("long_if_high", True)),
+            min_abs_score=float(params.get("min_abs_score", 0.0)),
+            trailing_ma_days=int(params["trailing_ma_days"])
+            if "trailing_ma_days" in params and params["trailing_ma_days"] is not None
+            else None,
+            stop_loss_pct=float(params["stop_loss_pct"])
+            if "stop_loss_pct" in params and params["stop_loss_pct"] is not None
+            else None,
+            use_low_for_stop=bool(params.get("use_low_for_stop", True)),
+            partial_exit_days=int(params["partial_exit_days"])
+            if "partial_exit_days" in params and params["partial_exit_days"] is not None
+            else None,
+            partial_exit_fraction=float(params.get("partial_exit_fraction", 0.5)),
+            max_hold_days=int(params["max_hold_days"]) if "max_hold_days" in params and params["max_hold_days"] is not None else None,
             rebalance=params.get("rebalance", "daily"),
         )
     if name == "EpisodicPivotStrategy":
@@ -114,17 +136,41 @@ def _build_sizer(config: BacktestConfig) -> Sizer:
             lookback_days=int(params.get("lookback_days", 20)),
             mu_scale=float(params["mu_scale"]),
         )
+    if name == "OptimizationSizer":
+        # Lazy import to avoid hard dependency on optional modules
+        from asset_allocation.backtest.optimization import MeanVarianceOptimizer
+        from asset_allocation.backtest.sizer import OptimizationSizer
+        
+        # Instantiate Optional Optimizer
+        # For now, we assume MeanVarianceOptimizer is the default if this sizer is chosen.
+        # Params for optimizer could be extracted from sizing.parameters if needed.
+        optimizer = MeanVarianceOptimizer(
+            risk_aversion=float(params.get("risk_aversion", 1.0))
+        )
+        return OptimizationSizer(
+            optimizer=optimizer,
+            lookback_days=int(params.get("lookback_days", 252))
+        )
+
     raise ValueError(f"Unknown sizing.class '{name}' (registry is strict).")
 
 
 def run_backtest(
     config: BacktestConfig,
     *,
-    prices: pd.DataFrame,
+    prices: Optional[pd.DataFrame] = None,
     signals: Optional[pd.DataFrame] = None,
     run_id: Optional[str] = None,
     output_base_dir: Optional[Path] = None,
 ) -> BacktestRunResult:
+    if prices is None:
+        from asset_allocation.backtest.data_access import load_backtest_inputs
+
+        loaded_prices, loaded_signals = load_backtest_inputs(config)
+        prices = loaded_prices
+        if signals is None:
+            signals = loaded_signals
+
     resolved_run_id = run_id or generate_run_id()
     reporter = Reporter.create(config, run_id=resolved_run_id, output_dir=output_base_dir)
 
