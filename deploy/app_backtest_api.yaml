@@ -23,7 +23,7 @@ properties:
     - name: az-cs
       value: ${AZURE_STORAGE_CONNECTION_STRING}
     - name: api-key
-      value: ${BACKTEST_API_KEY}
+      value: "${BACKTEST_API_KEY}"
   template:
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-backtest-api:${IMAGE_TAG}
