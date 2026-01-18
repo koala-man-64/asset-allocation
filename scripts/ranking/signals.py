@@ -21,7 +21,7 @@ from scripts.common.delta_core import load_delta, store_delta
 
 
 DEFAULT_TOP_N = 50
-CANONICAL_RANKINGS_PATH = "gold/rankings"
+CANONICAL_RANKINGS_PATH = "platinum/rankings"
 RANKING_SIGNALS_PATH = "gold/ranking_signals"
 COMPOSITE_SIGNALS_PATH = "gold/composite_signals"
 

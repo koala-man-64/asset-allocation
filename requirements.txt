@@ -29,3 +29,6 @@ pytest-asyncio
 fastapi==0.115.8
 jinja2==3.1.5
 uvicorn==0.34.0
+
+# Backtest config (YAML)
+pyyaml==6.0.2

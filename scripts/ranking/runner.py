@@ -346,12 +346,12 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
 def _load_existing_ranking_dates(strategy_name: str, container: str) -> Set[date]:
     filtered = load_delta(
         container,
-        "gold/rankings",
+        "platinum/rankings",
         columns=["date"],
         filters=[("strategy", "=", strategy_name)],
     )
     if filtered is None:
-        rankings = load_delta(container, "gold/rankings", columns=["strategy", "date"])
+        rankings = load_delta(container, "platinum/rankings", columns=["strategy", "date"])
         if rankings is None or rankings.empty:
             return set()
         if "strategy" not in rankings.columns or "date" not in rankings.columns:

@@ -527,8 +527,8 @@ def _get_max_workers() -> int:
 
 
 def _build_job_config() -> FeatureJobConfig:
-    silver_container = os.environ.get("AZURE_CONTAINER_SILVER") or "silver"
-    gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or "gold"
+    silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
+    gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
 
     from scripts.common import core as mdc
     from scripts.common import config as common_cfg
