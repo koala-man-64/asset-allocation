@@ -2,7 +2,6 @@
 import asyncio
 import logging
 from typing import List, Callable, Optional, Set, Any
-from pathlib import Path
 
 from scripts.common import core as mdc
 

@@ -124,14 +124,6 @@ def navigate_container(client: BlobServiceClient, container_name: str):
             return
 
         # Separate folders and files
-        folders = [i.name for i in items if hasattr(i, 'prefix')] # returns parsed names? No, walk_blobs returns items with 'name' (full path) usually
-        # Actually Azure SDK walk_blobs:
-        # separate directories and blobs
-        # Items are mix of BlobProperties and naming dicts?
-        # Let's verify SDK behavior: walk_blobs returns generator. 
-        # For folders, it returns BlobPrefix object (name ends in /). 
-        # For files, BlobProperties.
-        
         dir_list = []
         file_list = []
         
@@ -141,9 +133,6 @@ def navigate_container(client: BlobServiceClient, container_name: str):
                 # Remove prefix for display
                 rel_name = name[len(current_prefix):]
                 
-                # Check if it's a directory (BlobPrefix has 'name' too in some versions, but let's check delimiter)
-                # But wait, walk_blobs yields BlobProperties OR dict-like objects for prefixes
-                # safely check type or endsWith
                 if name.endswith('/'):
                     dir_list.append(rel_name)
                 else:

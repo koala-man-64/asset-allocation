@@ -4,7 +4,7 @@ Orchestrates data loading, strategy execution, and result saving.
 """
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
