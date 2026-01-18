@@ -243,7 +243,9 @@ jobs:
           if ! az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
              echo "App ${{ env.BACKTEST_API_APP }} not found. Creating..."
              az containerapp create \
+               --name ${{ env.BACKTEST_API_APP }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
+               --environment asset-allocation-env \
                --yaml "deploy/app_backtest_api.tmp.yaml"
           else
              echo "App ${{ env.BACKTEST_API_APP }} found. Updating..."
