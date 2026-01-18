@@ -22,7 +22,7 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
 def process_blob(blob):
-    blob_name = blob.name # price-target-data/{symbol}.parquet
+    blob_name = blob['name'] # price-target-data/{symbol}.parquet
     if not blob_name.endswith('.parquet'):
         return
         
@@ -32,7 +32,7 @@ def process_blob(blob):
     silver_path = DataPaths.get_price_target_path(ticker)
     
     # Freshness Check
-    bronze_lm = blob.last_modified.timestamp()
+    bronze_lm = blob['last_modified'].timestamp()
     silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
     
     if silver_lm and (silver_lm > bronze_lm):
@@ -110,7 +110,7 @@ def process_blob(blob):
 def main():
     mdc.log_environment_diagnostics()
     mdc.write_line("Listing Bronze Price Target files...")
-    blobs = bronze_client.list_blobs(name_starts_with="price-target-data/")
+    blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     
     blob_list = list(blobs)
     mdc.write_line(f"Found {len(blob_list)} blobs. Processing...")

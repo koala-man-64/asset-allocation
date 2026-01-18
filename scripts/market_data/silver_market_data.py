@@ -86,10 +86,10 @@ def main():
     # azure.storage.blob.ContainerClient.list_blobs
     
     mdc.write_line("Listing Bronze files...")
-    blobs = bronze_client.list_blobs(name_starts_with="market-data/")
+    blobs = bronze_client.list_files(name_starts_with="market-data/")
     
     # Convert to list to enable progress tracking/filtering
-    blob_list = [b.name for b in blobs if b.name.endswith('.csv')]
+    blob_list = [b for b in blobs if b.endswith('.csv')]
     
     # Debug Filter
     if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:

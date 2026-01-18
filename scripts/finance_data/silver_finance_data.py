@@ -39,7 +39,7 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return df_t
 
 def process_blob(blob):
-    blob_name = blob.name 
+    blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
     # e.g. finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.csv
     
@@ -84,7 +84,7 @@ def process_blob(blob):
     
     # Check freshness
     # Bronze blob last_modified
-    bronze_lm = blob.last_modified.timestamp()
+    bronze_lm = blob['last_modified'].timestamp()
     
     silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
     
@@ -122,7 +122,7 @@ def main():
     
     mdc.write_line("Listing Bronze Finance files...")
     # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
-    blobs = bronze_client.list_blobs(name_starts_with="finance-data/")
+    blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
     
     count = 0 
     for blob in blobs:

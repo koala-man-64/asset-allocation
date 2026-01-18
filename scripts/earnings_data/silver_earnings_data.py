@@ -73,8 +73,9 @@ def main():
     mdc.log_environment_diagnostics()
     
     mdc.write_line("Listing Bronze files...")
-    blobs = bronze_client.list_blobs(name_starts_with="earnings-data/")
-    blob_list = [b.name for b in blobs if b.name.endswith('.json')]
+    mdc.write_line("Listing Bronze files...")
+    blobs = bronze_client.list_files(name_starts_with="earnings-data/")
+    blob_list = [b for b in blobs if b.endswith('.json')]
     
     if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Filtering for {cfg.DEBUG_SYMBOLS}")
