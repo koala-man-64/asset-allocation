@@ -250,6 +250,7 @@ jobs:
           else
              echo "App ${{ env.BACKTEST_API_APP }} found. Updating..."
              az containerapp update \
+               --name ${{ env.BACKTEST_API_APP }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
                --yaml "deploy/app_backtest_api.tmp.yaml"
           fi
