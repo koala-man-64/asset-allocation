@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY asset_allocation/ asset_allocation/
+COPY scripts/ scripts/
+
+ENV PYTHONPATH=/app
+ENV BACKTEST_OUTPUT_DIR=/app/backtest_results
+ENV BACKTEST_DB_PATH=/app/backtest_results/runs.sqlite3
+
+EXPOSE 8000
+
+CMD ["uvicorn", "asset_allocation.backtest.service.app:app", "--host", "0.0.0.0", "--port", "8000"]
+

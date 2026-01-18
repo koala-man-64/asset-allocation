@@ -1,0 +1,57 @@
+location: East US
+name: backtest-api
+type: Microsoft.App/containerApps
+identity:
+  type: SystemAssigned
+properties:
+  managedEnvironmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: ${INGRESS_EXTERNAL}
+      targetPort: 8000
+      transport: auto
+      allowInsecure: false
+    registries:
+    - identity: ''
+      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
+      server: assetallocationacr.azurecr.io
+      username: assetallocationacr
+    secrets:
+    - name: assetallocationacrazurecrio-assetallocationacr
+      value: ${ACR_PASSWORD}
+    - name: az-cs
+      value: ${AZURE_STORAGE_CONNECTION_STRING}
+    - name: api-key
+      value: ${BACKTEST_API_KEY}
+  template:
+    containers:
+    - image: assetallocationacr.azurecr.io/asset-allocation-backtest-api:${IMAGE_TAG}
+      imageType: ContainerImage
+      name: backtest-api
+      env:
+      - name: AZURE_STORAGE_ACCOUNT_NAME
+        value: assetallocstorage001
+      - name: AZURE_STORAGE_CONNECTION_STRING
+        secretRef: az-cs
+      - name: BACKTEST_API_KEY
+        secretRef: api-key
+      - name: BACKTEST_MAX_CONCURRENT
+        value: "1"
+      - name: BACKTEST_ALLOW_LOCAL_DATA
+        value: "false"
+      - name: BACKTEST_OUTPUT_DIR
+        value: "/tmp/backtest_results"
+      - name: BACKTEST_DB_PATH
+        value: "/tmp/backtest_results/runs.sqlite3"
+      - name: BACKTEST_ADLS_CONTAINER_ALLOWLIST
+        value: "bronze,silver,gold,platinum,ranking-data,common"
+      - name: LOG_FORMAT
+        value: "JSON"
+      resources:
+        cpu: 1.0
+        memory: 2Gi
+      probes: []
+    scale:
+      minReplicas: 0
+      maxReplicas: 10

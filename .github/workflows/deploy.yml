@@ -25,6 +25,8 @@ env:
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
+  BACKTEST_API_IMAGE_NAME: asset-allocation-backtest-api
+  BACKTEST_API_APP: backtest-api
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -147,6 +149,17 @@ jobs:
               - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 
+      - name: Detect Backtest API Changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: backtest_api_changes
+        with:
+          filters: |
+            backtest_api:
+              - "asset_allocation/backtest/**"
+              - "Dockerfile.backtest_api"
+              - "requirements.txt"
+              - ".github/workflows/deploy.yml"
+
       - name: Log change detection outputs
         run: |
           echo "bronze_market=${{ steps.market_changes.outputs.bronze_market }}"
@@ -162,6 +175,7 @@ jobs:
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
+          echo "backtest_api=${{ steps.backtest_api_changes.outputs.backtest_api }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
@@ -179,6 +193,14 @@ jobs:
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
 
+      - name: Build and Push Backtest API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
+        run: |
+          docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+
       - name: Ensure Storage Containers Exist
         run: |
           set -euo pipefail
@@ -188,6 +210,64 @@ jobs:
               --account-name assetallocstorage001 \
               --auth-mode login
           done
+
+      - name: Check Backtest API App Exists
+        id: backtest_api_app_check
+        run: |
+          if az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "app_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy Backtest API App
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+        run: |
+          set -euo pipefail
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          export IMAGE_TAG="${{ github.sha }}"
+          
+          export INGRESS_EXTERNAL="true"
+          if [ -z "${BACKTEST_API_KEY:-}" ]; then
+            echo "WARNING: BACKTEST_API_KEY secret is not set. Deploying with internal ingress and no auth."
+            export INGRESS_EXTERNAL="false"
+          fi
+
+          echo "Deploying Backtest API (App) from YAML..."
+          envsubst < deploy/app_backtest_api.yaml > deploy/app_backtest_api.tmp.yaml
+
+          if ! az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+             echo "App ${{ env.BACKTEST_API_APP }} not found. Creating..."
+             az containerapp create \
+               --name ${{ env.BACKTEST_API_APP }} \
+               --resource-group ${{ env.RESOURCE_GROUP }} \
+               --environment asset-allocation-env \
+               --yaml "deploy/app_backtest_api.tmp.yaml"
+          else
+             echo "App ${{ env.BACKTEST_API_APP }} found. Updating..."
+             az containerapp update \
+               --name ${{ env.BACKTEST_API_APP }} \
+               --resource-group ${{ env.RESOURCE_GROUP }} \
+               --yaml "deploy/app_backtest_api.tmp.yaml"
+          fi
+          
+          rm deploy/app_backtest_api.tmp.yaml
+
+      - name: Verify Backtest API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
+        run: |
+          set -euo pipefail
+          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}"
+          actual_image=$(az containerapp show --name "${{ env.BACKTEST_API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
+          if [ "$actual_image" != "$expected_image" ]; then
+            echo "Image mismatch for ${{ env.BACKTEST_API_APP }}: expected $expected_image, got $actual_image"
+            exit 1
+          fi
+          echo "Verified ${{ env.BACKTEST_API_APP }} image $actual_image"
 
       - name: Check Market Bronze Job Exists
         id: market_data_job_check

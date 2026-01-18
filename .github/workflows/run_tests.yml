@@ -39,5 +39,8 @@ jobs:
         AZURE_CONTAINER_EARNINGS: "earnings-data"
         AZURE_CONTAINER_TARGETS: "price-targets"
         AZURE_CONTAINER_COMMON: "common"
+        AZURE_CONTAINER_RANKING: "ranking-data"
+        AZURE_CONTAINER_BRONZE: "bronze"
+        AZURE_CONTAINER_SILVER: "silver"
       run: |
         pytest

@@ -24,7 +24,7 @@ properties:
       value: ${YAHOO_USERNAME}
     - name: yahoo-password
       value: ${YAHOO_PASSWORD}
-    - name: azure-storage-connection-string
+    - name: az-cs
       value: ${AZURE_STORAGE_CONNECTION_STRING}
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
@@ -39,7 +39,7 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
-        secretRef: azure-storage-connection-string
+        secretRef: az-cs
       - name: AZURE_CONTAINER_MARKET
         value: gold
       - name: AZURE_CONTAINER_COMMON
