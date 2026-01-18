@@ -103,43 +103,13 @@ def log_environment_diagnostics():
 # Logging Utilities
 # ------------------------------------------------------------------------------
 
+from scripts.common.logging_config import configure_logging
+
+# Ensure logging is configured on import
+configure_logging()
+
 def write_line(msg: str):
     """Log a line with info level."""
-    # Basic fall back if logging isn't configured upstream
-    # Configure logging with separate streams if no handlers exist
-    if not logging.getLogger().handlers:
-        formatter = logging.Formatter('%(asctime)s: %(message)s')
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-
-        # stdout handler for INFO and below (technically all, but we'll see)
-        # Actually standard practice: stdout for everything, or filters. 
-        # Simplest consistent with container best practice:
-        # stdout: INFO, DEBUG
-        # stderr: WARNING, ERROR, CRITICAL
-        
-        # Handler for stdout
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stdout_handler.setLevel(logging.INFO)
-        # Filter to ensure only INFO and DEBUG go here if we want strict separation, 
-        # but typically stdout having everything + stderr having errors is also common (duplication).
-        # Let's do strict separation for cleaner logs.
-        class MaxLevelFilter(logging.Filter):
-            def __init__(self, max_level):
-                self.max_level = max_level
-            def filter(self, record):
-                return record.levelno <= self.max_level
-
-        stdout_handler.addFilter(MaxLevelFilter(logging.INFO))
-        stdout_handler.setFormatter(formatter)
-        root_logger.addHandler(stdout_handler)
-
-        # Handler for stderr
-        stderr_handler = logging.StreamHandler(sys.stderr)
-        stderr_handler.setLevel(logging.WARNING)
-        stderr_handler.setFormatter(formatter)
-        root_logger.addHandler(stderr_handler)
-
     logger.info(msg)
 
 def write_error(msg: str):
