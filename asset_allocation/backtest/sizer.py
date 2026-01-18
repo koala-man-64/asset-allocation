@@ -185,3 +185,173 @@ class KellySizer(Sizer):
                 continue
             out[str(symbol)] = w
         return TargetWeights(weights=out)
+
+
+class LongShortScoreSizer(Sizer):
+    """
+    Long/short sizing using signed strategy scores:
+      - score > 0 => long candidate
+      - score < 0 => short candidate
+
+    Produces target weights that (when both sides are present) approximately match:
+      long_gross  = (gross_target + net_target) / 2
+      short_gross = (gross_target - net_target) / 2
+
+    Within each side, weights can be equal-weighted or score-weighted.
+    Optional StrategyDecision.scales can reduce exposure for specific symbols (e.g., partial exits).
+    """
+
+    def __init__(
+        self,
+        *,
+        max_longs: int = 10,
+        max_shorts: int = 10,
+        gross_target: float = 1.0,
+        net_target: float = 0.0,
+        weight_mode: str = "equal",
+        sticky_holdings: bool = True,
+        score_power: float = 1.0,
+        min_abs_score: float = 0.0,
+    ):
+        self._max_longs = int(max_longs)
+        self._max_shorts = int(max_shorts)
+
+        gross = float(gross_target)
+        net = float(net_target)
+        if math.isnan(gross) or math.isinf(gross) or gross <= 0:
+            raise ValueError("gross_target must be > 0.")
+        if math.isnan(net) or math.isinf(net) or abs(net) > gross:
+            raise ValueError("net_target must be finite and satisfy abs(net_target) <= gross_target.")
+        self._gross_target = gross
+        self._net_target = net
+
+        mode = str(weight_mode).strip().lower()
+        if mode not in {"equal", "score"}:
+            raise ValueError("weight_mode must be 'equal' or 'score'.")
+        self._weight_mode = mode
+        self._sticky_holdings = bool(sticky_holdings)
+
+        sp = float(score_power)
+        if math.isnan(sp) or math.isinf(sp) or sp <= 0:
+            raise ValueError("score_power must be > 0.")
+        self._score_power = sp
+
+        mas = float(min_abs_score)
+        if math.isnan(mas) or math.isinf(mas) or mas < 0:
+            raise ValueError("min_abs_score must be >= 0.")
+        self._min_abs_score = mas
+
+    def size(
+        self,
+        as_of: date,
+        *,
+        decision: StrategyDecision,
+        prices: pd.DataFrame,
+        portfolio: PortfolioSnapshot,
+    ) -> TargetWeights:
+        scores = decision.scores or {}
+        scales = decision.scales or {}
+
+        long_items: list[tuple[str, float]] = []
+        short_items: list[tuple[str, float]] = []
+
+        for symbol, score in scores.items():
+            score_f = _safe_float(score)
+            if score_f is None or abs(score_f) <= 0:
+                continue
+            if abs(score_f) < self._min_abs_score:
+                continue
+            sym = str(symbol)
+            if score_f > 0:
+                long_items.append((sym, score_f))
+            else:
+                short_items.append((sym, score_f))
+
+        long_items.sort(key=lambda x: x[1], reverse=True)
+        short_items.sort(key=lambda x: x[1])  # more negative first
+
+        def _select_side(
+            *,
+            candidates: list[tuple[str, float]],
+            held: set[str],
+            max_positions: int,
+            side: str,
+        ) -> list[tuple[str, float]]:
+            if max_positions <= 0:
+                return []
+            if not self._sticky_holdings or not held:
+                return candidates[:max_positions]
+
+            pinned: list[tuple[str, float]] = []
+            remainder: list[tuple[str, float]] = []
+            held = {str(s) for s in held}
+            for sym, score_val in candidates:
+                if sym in held:
+                    pinned.append((sym, score_val))
+                else:
+                    remainder.append((sym, score_val))
+
+            # If we have more pinned holdings than capacity, keep the strongest.
+            if len(pinned) > max_positions:
+                if side == "long":
+                    pinned.sort(key=lambda x: x[1], reverse=True)
+                else:
+                    pinned.sort(key=lambda x: x[1])  # more negative first
+                return pinned[:max_positions]
+
+            slots = max_positions - len(pinned)
+            return pinned + remainder[:slots]
+
+        held_longs = {s for s, sh in (portfolio.positions or {}).items() if float(sh) > 0}
+        held_shorts = {s for s, sh in (portfolio.positions or {}).items() if float(sh) < 0}
+
+        long_selected = _select_side(
+            candidates=long_items, held=held_longs, max_positions=max(0, self._max_longs), side="long"
+        )
+        short_selected = _select_side(
+            candidates=short_items, held=held_shorts, max_positions=max(0, self._max_shorts), side="short"
+        )
+
+        long_gross = (self._gross_target + self._net_target) / 2.0
+        short_gross = (self._gross_target - self._net_target) / 2.0
+        long_gross = max(0.0, float(long_gross))
+        short_gross = max(0.0, float(short_gross))
+
+        weights: Dict[str, float] = {}
+
+        def _alloc_side(
+            *,
+            items: list[tuple[str, float]],
+            gross_budget: float,
+            side: str,
+        ) -> Dict[str, float]:
+            if gross_budget <= 0 or not items:
+                return {}
+
+            raw: Dict[str, float] = {}
+            for sym, score_val in items:
+                scale = _safe_float(scales.get(sym, 1.0))
+                if scale is None:
+                    scale = 1.0
+                if scale <= 0:
+                    continue
+                if self._weight_mode == "equal":
+                    base = 1.0
+                else:
+                    base = abs(float(score_val)) ** self._score_power
+                raw[sym] = base * float(scale)
+
+            total = sum(raw.values())
+            if total <= 0:
+                return {}
+
+            if side == "long":
+                return {s: (v / total) * gross_budget for s, v in raw.items()}
+            return {s: -(v / total) * gross_budget for s, v in raw.items()}
+
+        weights.update(_alloc_side(items=long_selected, gross_budget=long_gross, side="long"))
+        weights.update(_alloc_side(items=short_selected, gross_budget=short_gross, side="short"))
+
+        # Drop tiny weights to reduce churn.
+        weights = {s: float(w) for s, w in weights.items() if abs(float(w)) >= 1e-12}
+        return TargetWeights(weights=weights)

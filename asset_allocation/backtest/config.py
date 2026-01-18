@@ -48,9 +48,21 @@ _STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
     "data": {"price_source", "price_path", "signal_path", "price_fields", "frequency"},
     "strategy": {"class", "class_name", "module", "parameters"},
     "sizing": {"class", "class_name", "module", "parameters"},
-    "constraints": {"max_leverage", "max_position_size", "allow_short", "stop_loss"},
+    "constraints": {"max_leverage", "max_position_size", "allow_short", "stop_loss", "max_turnover", "max_net_exposure"},
     "broker": {"slippage_bps", "commission", "fill_policy"},
-    "output": {"local_dir", "adls_dir", "save_trades", "save_daily_metrics", "save_plots"},
+    "output": {
+        "local_dir",
+        "adls_dir",
+        "save_trades",
+        "save_daily_metrics",
+        "save_plots",
+        "save_positions_snapshot",
+        "save_metrics_parquet",
+        "save_resolved_config_json",
+        "save_metrics_json",
+        "save_constraint_hits",
+        "save_run_index_parquet",
+    },
 }
 
 
@@ -169,6 +181,8 @@ class ConstraintsConfig:
     max_position_size: float = 1.0
     allow_short: bool = False
     stop_loss: Optional[float] = None
+    max_turnover: Optional[float] = None
+    max_net_exposure: Optional[float] = None
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "ConstraintsConfig":
@@ -178,11 +192,19 @@ class ConstraintsConfig:
         stop_loss = data.get("stop_loss")
         if stop_loss is not None:
             stop_loss = float(stop_loss)
+        max_turnover = data.get("max_turnover")
+        if max_turnover is not None:
+            max_turnover = float(max_turnover)
+        max_net_exposure = data.get("max_net_exposure")
+        if max_net_exposure is not None:
+            max_net_exposure = float(max_net_exposure)
         return ConstraintsConfig(
             max_leverage=max_leverage,
             max_position_size=max_position_size,
             allow_short=allow_short,
             stop_loss=stop_loss,
+            max_turnover=max_turnover,
+            max_net_exposure=max_net_exposure,
         )
 
     def validate(self) -> None:
@@ -192,6 +214,10 @@ class ConstraintsConfig:
             raise ValueError("constraints.max_position_size must be in (0, 1].")
         if self.stop_loss is not None and not (0 < self.stop_loss < 1.0):
             raise ValueError("constraints.stop_loss must be in (0, 1) when set.")
+        if self.max_turnover is not None and not (0 < float(self.max_turnover) <= 10.0):
+            raise ValueError("constraints.max_turnover must be in (0, 10] when set.")
+        if self.max_net_exposure is not None and not (0 <= float(self.max_net_exposure) <= 10.0):
+            raise ValueError("constraints.max_net_exposure must be in [0, 10] when set.")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -199,6 +225,8 @@ class ConstraintsConfig:
             "max_position_size": self.max_position_size,
             "allow_short": self.allow_short,
             "stop_loss": self.stop_loss,
+            "max_turnover": self.max_turnover,
+            "max_net_exposure": self.max_net_exposure,
         }
 
 
@@ -239,6 +267,12 @@ class OutputConfig:
     save_trades: bool = True
     save_daily_metrics: bool = True
     save_plots: bool = False
+    save_positions_snapshot: bool = True
+    save_metrics_parquet: bool = True
+    save_resolved_config_json: bool = True
+    save_metrics_json: bool = True
+    save_constraint_hits: bool = True
+    save_run_index_parquet: bool = True
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "OutputConfig":
@@ -248,6 +282,12 @@ class OutputConfig:
             save_trades=bool(data.get("save_trades", True)),
             save_daily_metrics=bool(data.get("save_daily_metrics", True)),
             save_plots=bool(data.get("save_plots", False)),
+            save_positions_snapshot=bool(data.get("save_positions_snapshot", True)),
+            save_metrics_parquet=bool(data.get("save_metrics_parquet", True)),
+            save_resolved_config_json=bool(data.get("save_resolved_config_json", True)),
+            save_metrics_json=bool(data.get("save_metrics_json", True)),
+            save_constraint_hits=bool(data.get("save_constraint_hits", True)),
+            save_run_index_parquet=bool(data.get("save_run_index_parquet", True)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -256,6 +296,12 @@ class OutputConfig:
             "save_trades": self.save_trades,
             "save_daily_metrics": self.save_daily_metrics,
             "save_plots": self.save_plots,
+            "save_positions_snapshot": self.save_positions_snapshot,
+            "save_metrics_parquet": self.save_metrics_parquet,
+            "save_resolved_config_json": self.save_resolved_config_json,
+            "save_metrics_json": self.save_metrics_json,
+            "save_constraint_hits": self.save_constraint_hits,
+            "save_run_index_parquet": self.save_run_index_parquet,
         }
         if self.adls_dir:
             out["adls_dir"] = self.adls_dir

@@ -54,11 +54,20 @@ def test_phase1_buy_and_hold_artifacts_and_execution_timing(tmp_path: Path) -> N
     assert run_dir.name == "RUNTEST-000001"
 
     assert (run_dir / "config.yaml").exists()
+    assert (run_dir / "config.resolved.json").exists()
     assert (run_dir / "trades.csv").exists()
     assert (run_dir / "daily_metrics.csv").exists()
+    assert (run_dir / "metrics_timeseries.parquet").exists()
+    assert (run_dir / "daily_positions.parquet").exists()
     assert (run_dir / "monthly_returns.csv").exists()
+    assert (run_dir / "returns_monthly.csv").exists()
+    assert (run_dir / "returns_quarterly.csv").exists()
+    assert (run_dir / "returns_yearly.csv").exists()
     assert (run_dir / "summary.json").exists()
+    assert (run_dir / "metrics.json").exists()
+    assert (run_dir / "constraint_hits.json").exists()
     assert (tmp_path / "run_index.csv").exists()
+    assert (tmp_path / "runs" / "_index" / "runs.parquet").exists()
 
     trades = pd.read_csv(run_dir / "trades.csv")
     assert len(trades) == 1
@@ -70,6 +79,11 @@ def test_phase1_buy_and_hold_artifacts_and_execution_timing(tmp_path: Path) -> N
     assert metrics["date"].tolist() == ["2020-01-01", "2020-01-02", "2020-01-03"]
     assert metrics.loc[0, "portfolio_value"] == pytest.approx(1000.0)
     assert metrics.loc[2, "portfolio_value"] == pytest.approx(1171.171171, rel=1e-6)
+
+    positions = pd.read_parquet(run_dir / "daily_positions.parquet")
+    assert positions["date"].nunique() == 3
+    assert positions["symbol"].nunique() == 1
+    assert len(positions) == 3  # full snapshot: days * universe
 
 
 class _NoLookaheadStrategy(Strategy):

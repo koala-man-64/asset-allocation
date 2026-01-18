@@ -77,6 +77,7 @@ def _poll_status(client: TestClient, run_id: str, *, timeout_s: float = 10.0, ap
 def test_service_rejects_local_data_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
     monkeypatch.delenv("BACKTEST_ALLOW_LOCAL_DATA", raising=False)
     monkeypatch.delenv("BACKTEST_ALLOWED_DATA_DIRS", raising=False)
 
@@ -93,6 +94,7 @@ def test_service_runs_backtest_and_serves_artifacts(tmp_path: Path, monkeypatch:
     out_dir = tmp_path / "out"
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
     monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "true")
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
 
@@ -173,6 +175,7 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
     out_dir = tmp_path / "out"
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
     monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "true")
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
 

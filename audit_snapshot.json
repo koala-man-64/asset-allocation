@@ -1,0 +1,95 @@
+{
+  "generated_at_utc": "2026-01-18T16:51:35.395333+00:00",
+  "git": {
+    "branch": "main",
+    "commit": "7a7e2e45403d7130fa09649fb0409af869364e44",
+    "status_porcelain": "M asset_allocation/backtest/config.py\n M asset_allocation/backtest/constraints.py\n M asset_allocation/backtest/engine.py\n M asset_allocation/backtest/reporter.py\n M asset_allocation/backtest/runner.py\n M asset_allocation/backtest/sizer.py\n M asset_allocation/backtest/strategy.py\n M tests/backtest/test_phase1_engine.py\n M tests/backtest/test_phase3_service_api.py\n?? docs/backtesting_architecture.jpg\n?? tests/backtest/test_breakout_and_ep_strategies.py\n?? tests/backtest/test_long_short_sizer.py"
+  },
+  "github": {
+    ".github/workflows": true,
+    ".github/workflows/deploy.yml": true,
+    ".github/workflows/run_tests.yml": true
+  },
+  "instruction_files": {
+    "AGENTS.md": [],
+    "CONTRIBUTING.md": [],
+    "SECURITY.md": []
+  },
+  "project_files": {
+    ".editorconfig": false,
+    ".github/CODEOWNERS": false,
+    ".github/dependabot.yml": false,
+    ".pre-commit-config.yaml": false,
+    "CODEOWNERS": false,
+    "Dockerfile": true,
+    "LICENSE": false,
+    "Makefile": false,
+    "README.md": false,
+    "docker-compose.yml": false,
+    "pyproject.toml": false,
+    "requirements-dev.txt": false,
+    "requirements.txt": true
+  },
+  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation",
+  "workflows": {
+    "files": [
+      {
+        "path": ".github/workflows/deploy.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/lint_workflows.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/run_tests.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/trigger_all_jobs.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      }
+    ],
+    "path": ".github/workflows"
+  }
+}

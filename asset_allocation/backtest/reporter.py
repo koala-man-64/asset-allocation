@@ -12,6 +12,7 @@ import pandas as pd
 from filelock import FileLock
 
 from asset_allocation.backtest.config import BacktestConfig
+from asset_allocation.backtest.constraints import ConstraintHit
 from asset_allocation.backtest.models import BacktestSummary, TradeFill
 from asset_allocation.backtest.portfolio import Portfolio
 
@@ -55,6 +56,8 @@ class Reporter:
     submitted_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _trades: List[Dict[str, Any]] = field(default_factory=list)
     _days: List[Dict[str, Any]] = field(default_factory=list)
+    _positions: List[Dict[str, Any]] = field(default_factory=list)
+    _constraint_hits: List[Dict[str, Any]] = field(default_factory=list)
 
     @staticmethod
     def create(config: BacktestConfig, *, run_id: str, output_dir: Optional[Path] = None) -> "Reporter":
@@ -109,7 +112,56 @@ class Reporter:
             }
         )
 
+    def record_positions_snapshot(
+        self,
+        as_of: date,
+        *,
+        portfolio: Portfolio,
+        equity: float,
+        close_prices: Dict[str, float],
+    ) -> None:
+        universe = list(self.config.universe.symbols)
+        for symbol in universe:
+            shares = float(portfolio.shares(symbol))
+            close_px = close_prices.get(symbol)
+            position_value = None if close_px is None else shares * float(close_px)
+            weight = (position_value / float(equity)) if (position_value is not None and equity) else 0.0
+            side = "long" if shares > 0 else "short" if shares < 0 else "flat"
+            self._positions.append(
+                {
+                    "date": as_of.isoformat(),
+                    "symbol": str(symbol),
+                    "shares": shares,
+                    "close": float(close_px) if close_px is not None else None,
+                    "position_value": float(position_value) if position_value is not None else None,
+                    "weight": float(weight),
+                    "side": side,
+                }
+            )
+
+    def record_constraint_hits(self, hits: List[ConstraintHit]) -> None:
+        for hit in hits:
+            self._constraint_hits.append(
+                {
+                    "as_of": hit.as_of,
+                    "constraint": hit.constraint,
+                    "symbol": hit.symbol,
+                    "before": hit.before,
+                    "after": hit.after,
+                    "details": hit.details,
+                }
+            )
+
     def write_artifacts(self) -> BacktestSummary:
+        if self.config.output.save_resolved_config_json:
+            resolved = self.config.to_dict()
+            resolved["run_id"] = self.run_id
+            resolved["submitted_at"] = self.submitted_at.isoformat()
+            (self.output_dir / "config.resolved.json").write_text(
+                json.dumps(resolved, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+
         self.config.to_yaml(self.output_dir / "config.yaml")
 
         trades_df = pd.DataFrame(self._trades)
@@ -123,7 +175,20 @@ class Reporter:
         if daily_df.empty:
             raise ValueError("No daily metrics were recorded; cannot summarize.")
 
-        self._write_monthly_returns(daily_df)
+        self._write_periodic_returns(daily_df)
+
+        if self.config.output.save_metrics_parquet:
+            daily_df.to_parquet(self.output_dir / "metrics_timeseries.parquet", index=False)
+
+        if self.config.output.save_positions_snapshot:
+            positions_df = pd.DataFrame(self._positions)
+            positions_df.to_parquet(self.output_dir / "daily_positions.parquet", index=False)
+
+        if self.config.output.save_constraint_hits:
+            (self.output_dir / "constraint_hits.json").write_text(
+                json.dumps(self._constraint_hits, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
 
         initial_cash = float(self.config.initial_cash)
         final_equity = float(daily_df["portfolio_value"].iloc[-1])
@@ -156,11 +221,35 @@ class Reporter:
             json.dumps(summary.__dict__, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        if self.config.output.save_metrics_json:
+            (self.output_dir / "metrics.json").write_text(
+                json.dumps(summary.__dict__, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
 
         self._update_run_index(summary)
+        if self.config.output.save_run_index_parquet:
+            self._update_run_index_parquet(summary)
+
+        if self.config.output.adls_dir:
+            # Optional artifact upload for CLI/local runs.
+            from asset_allocation.backtest.service.adls_uploader import upload_run_artifacts
+            from asset_allocation.backtest.service.security import parse_container_and_path
+            from scripts.common.blob_storage import BlobStorageClient
+
+            upload_run_artifacts(run_id=self.run_id, run_dir=self.output_dir, adls_dir=str(self.config.output.adls_dir))
+
+            # Best-effort: upload run index parquet for cross-run search.
+            index_path = self.output_dir.parent / "runs" / "_index" / "runs.parquet"
+            if self.config.output.save_run_index_parquet and index_path.exists():
+                container, prefix = parse_container_and_path(str(self.config.output.adls_dir))
+                client = BlobStorageClient(container_name=container, ensure_container_exists=True)
+                remote_path = f"{prefix.rstrip('/')}/_index/runs.parquet".lstrip("/")
+                client.upload_file(str(index_path), remote_path)
+
         return summary
 
-    def _write_monthly_returns(self, daily_df: pd.DataFrame) -> None:
+    def _write_periodic_returns(self, daily_df: pd.DataFrame) -> None:
         if "date" not in daily_df.columns or "portfolio_value" not in daily_df.columns:
             return
 
@@ -190,6 +279,25 @@ class Reporter:
         pivot.reset_index(drop=True, inplace=True)
 
         pivot.to_csv(self.output_dir / "monthly_returns.csv", index=False)
+        pivot.to_csv(self.output_dir / "returns_monthly.csv", index=False)
+
+        # Quarterly returns (pivot)
+        working["quarter"] = ((working["date"].dt.month - 1) // 3 + 1).astype(int)
+        q_start = working.groupby(["year", "quarter"])["portfolio_value"].first()
+        q_end = working.groupby(["year", "quarter"])["portfolio_value"].last()
+        q_ret = (q_end / q_start - 1.0).reset_index(name="return")
+        q_pivot = q_ret.pivot(index="year", columns="quarter", values="return").reindex(columns=range(1, 5))
+        q_pivot.columns = [f"Q{q}" for q in q_pivot.columns]
+        q_pivot.insert(0, "Year", q_pivot.index)
+        q_pivot["Yearly"] = q_pivot["Year"].map(yearly_return)
+        q_pivot.reset_index(drop=True, inplace=True)
+        q_pivot.to_csv(self.output_dir / "returns_quarterly.csv", index=False)
+
+        # Yearly returns (long form)
+        y_df = pd.DataFrame({"year": list(yearly_return.keys()), "return": list(yearly_return.values())}).sort_values(
+            "year"
+        )
+        y_df.to_csv(self.output_dir / "returns_yearly.csv", index=False)
 
     def _update_run_index(self, summary: BacktestSummary) -> None:
         index_path = self.output_dir.parent / "run_index.csv"
@@ -215,3 +323,32 @@ class Reporter:
             else:
                 df = pd.DataFrame([row])
             df.to_csv(index_path, index=False)
+
+    def _update_run_index_parquet(self, summary: BacktestSummary) -> None:
+        index_dir = self.output_dir.parent / "runs" / "_index"
+        index_dir.mkdir(parents=True, exist_ok=True)
+        index_path = index_dir / "runs.parquet"
+        lock = FileLock(str(index_path) + ".lock")
+        row = {
+            "run_id": summary.run_id,
+            "run_name": summary.run_name or "",
+            "submitted_at": self.submitted_at.isoformat(),
+            "strategy": self.config.strategy.class_name,
+            "sizing": self.config.sizing.class_name,
+            "start_date": summary.start_date,
+            "end_date": summary.end_date,
+            "total_return": summary.total_return,
+            "sharpe_ratio": summary.sharpe_ratio if summary.sharpe_ratio is not None else None,
+            "max_drawdown": summary.max_drawdown,
+            "final_equity": summary.final_equity,
+            "trades": summary.trades,
+            "output_dir": str(self.output_dir),
+        }
+
+        with lock:
+            if index_path.exists():
+                df = pd.read_parquet(index_path)
+                df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+            else:
+                df = pd.DataFrame([row])
+            df.to_parquet(index_path, index=False)

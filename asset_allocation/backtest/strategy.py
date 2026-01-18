@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -13,6 +14,9 @@ from asset_allocation.backtest.models import PortfolioSnapshot
 @dataclass(frozen=True)
 class StrategyDecision:
     scores: Dict[str, float]
+    # Optional per-symbol scaling applied by sizers (e.g., partial exits).
+    # 1.0 = unchanged, 0.5 = half-sized relative to peers, 0.0 = treated as removed.
+    scales: Dict[str, float] = field(default_factory=dict)
 
 
 class Strategy(ABC):
@@ -178,3 +182,494 @@ class StaticUniverseStrategy(Strategy):
         if not self.check_rebalance(as_of):
             return None
         return StrategyDecision(scores={s: 1.0 for s in self._symbols})
+
+
+def _safe_float(value: object) -> Optional[float]:
+    try:
+        out = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(out) or math.isinf(out):
+        return None
+    return out
+
+
+def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    cols = list(df.columns)
+    lower_map = {str(c).lower(): str(c) for c in cols}
+    for candidate in candidates:
+        if candidate in cols:
+            return candidate
+        mapped = lower_map.get(str(candidate).lower())
+        if mapped:
+            return mapped
+    return None
+
+
+def _latest_bar_value(prices: pd.DataFrame, *, as_of: date, symbol: str, columns: List[str]) -> Optional[float]:
+    if prices is None or prices.empty:
+        return None
+    df = prices[(prices["symbol"].astype(str) == str(symbol)) & (prices["date"] == as_of)]
+    if df.empty:
+        return None
+    col = _find_column(df, columns)
+    if not col:
+        return None
+    value = df.iloc[-1][col]
+    return _safe_float(value)
+
+
+def _moving_average_close(prices: pd.DataFrame, *, symbol: str, window: int) -> Optional[float]:
+    if prices is None or prices.empty:
+        return None
+    df = prices[prices["symbol"].astype(str) == str(symbol)]
+    if df.empty:
+        return None
+    close_col = _find_column(df, ["close", "Close"])
+    if not close_col:
+        return None
+    series = pd.to_numeric(df[close_col], errors="coerce").dropna()
+    if len(series) < int(window) or int(window) <= 0:
+        return None
+    return float(series.tail(int(window)).mean())
+
+
+def _trading_days_held(prices: pd.DataFrame, *, symbol: str, entry_date: date, as_of: date) -> int:
+    if prices is None or prices.empty:
+        return 0
+    df = prices[(prices["symbol"].astype(str) == str(symbol)) & (prices["date"] >= entry_date) & (prices["date"] <= as_of)]
+    if df.empty:
+        return 0
+    return int(df["date"].nunique())
+
+
+class BreakoutStrategy(Strategy):
+    """
+    Breakout strategy (Platinum-first).
+
+    - Entries: uses Platinum `breakout_score` (and optional `breakdown_score` for shorts).
+    - Exits: trailing MA and optional stop-loss, evaluated on daily bars.
+    - Partial exits: optional size reduction after N trading days held.
+    """
+
+    def __init__(
+        self,
+        *,
+        breakout_score_column: str = "breakout_score",
+        breakdown_score_column: Optional[str] = "breakdown_score",
+        enable_shorts: bool = True,
+        short_from_breakout: bool = False,
+        allow_price_fallback: bool = False,
+        fallback_lookback_days: int = 20,
+        min_abs_score: float = 0.0,
+        trailing_ma_days: int = 10,
+        stop_loss_pct: Optional[float] = None,
+        use_low_for_stop: bool = True,
+        partial_exit_days: Optional[int] = 4,
+        partial_exit_fraction: float = 0.5,
+        rebalance: str | int = "daily",
+    ):
+        super().__init__(rebalance=rebalance)
+        self._breakout_col = str(breakout_score_column)
+        self._breakdown_col = str(breakdown_score_column) if breakdown_score_column else None
+        self._enable_shorts = bool(enable_shorts)
+        self._short_from_breakout = bool(short_from_breakout)
+        self._allow_price_fallback = bool(allow_price_fallback)
+        self._fallback_lookback_days = int(fallback_lookback_days)
+        self._min_abs_score = float(min_abs_score)
+        self._trailing_ma_days = int(trailing_ma_days)
+        self._stop_loss_pct = float(stop_loss_pct) if stop_loss_pct is not None else None
+        self._use_low_for_stop = bool(use_low_for_stop)
+        self._partial_exit_days = int(partial_exit_days) if partial_exit_days is not None else None
+        self._partial_exit_fraction = float(partial_exit_fraction)
+
+        self._entry_date: Dict[str, date] = {}
+        self._entry_price: Dict[str, float] = {}
+        self._entry_side: Dict[str, int] = {}
+        self._scales: Dict[str, float] = {}
+        self._last_score: Dict[str, float] = {}
+
+    def _fallback_scores_from_prices(self, *, prices: pd.DataFrame, as_of: date) -> Dict[str, float]:
+        """
+        Minimal interim fallback when Platinum breakout columns are unavailable.
+
+        This is intentionally simple and should be replaced by Platinum-provided breakout fields.
+        """
+        if prices is None or prices.empty:
+            return {}
+        close_col = _find_column(prices, ["close", "Close"])
+        if not close_col:
+            return {}
+
+        lookback = max(2, int(self._fallback_lookback_days))
+        df = prices[prices["date"] <= as_of][["date", "symbol", close_col]].copy()
+        df["symbol"] = df["symbol"].astype(str)
+        df["close"] = pd.to_numeric(df[close_col], errors="coerce")
+        df = df.dropna(subset=["close"])
+        if df.empty:
+            return {}
+
+        out: Dict[str, float] = {}
+        for sym, group in df.groupby("symbol", sort=False):
+            series = group.sort_values("date")["close"]
+            if len(series) < lookback + 1:
+                continue
+            close_today = float(series.iloc[-1])
+            prev = series.iloc[-(lookback + 1) : -1]
+            prev_high = float(prev.max())
+            prev_low = float(prev.min())
+            if prev_high <= 0 or prev_low <= 0 or close_today <= 0:
+                continue
+
+            breakout_strength = max(0.0, close_today / prev_high - 1.0)
+            breakdown_strength = max(0.0, prev_low / close_today - 1.0)
+
+            if breakout_strength > 0:
+                out[str(sym)] = float(breakout_strength)
+                continue
+            if self._enable_shorts and breakdown_strength > 0:
+                out[str(sym)] = -float(breakdown_strength)
+        return out
+
+    def _sync_positions(self, as_of: date, *, prices: pd.DataFrame, portfolio: PortfolioSnapshot) -> None:
+        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
+
+        for sym in list(self._entry_date.keys()):
+            if sym not in held:
+                self._entry_date.pop(sym, None)
+                self._entry_price.pop(sym, None)
+                self._entry_side.pop(sym, None)
+                self._scales.pop(sym, None)
+                self._last_score.pop(sym, None)
+
+        for sym, shares in held.items():
+            side = 1 if shares > 0 else -1
+            if self._entry_side.get(sym) != side:
+                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
+                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+                entry_px = open_px if open_px is not None else close_px
+                if entry_px is not None:
+                    self._entry_date[sym] = as_of
+                    self._entry_price[sym] = float(entry_px)
+                    self._entry_side[sym] = side
+                    self._scales[sym] = 1.0
+
+    def _should_exit(
+        self,
+        *,
+        as_of: date,
+        symbol: str,
+        side: int,
+        prices: pd.DataFrame,
+    ) -> bool:
+        close_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["close", "Close"])
+        if close_px is None:
+            return False
+
+        ma = _moving_average_close(prices, symbol=symbol, window=self._trailing_ma_days)
+        if ma is not None:
+            if side > 0 and close_px < ma:
+                return True
+            if side < 0 and close_px > ma:
+                return True
+
+        if self._stop_loss_pct is None:
+            return False
+
+        entry_px = self._entry_price.get(symbol)
+        if entry_px is None:
+            return False
+
+        if side > 0:
+            trigger_px = close_px
+            if self._use_low_for_stop:
+                low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
+                if low_px is not None:
+                    trigger_px = low_px
+            return trigger_px <= float(entry_px) * (1.0 - float(self._stop_loss_pct))
+
+        trigger_px = close_px
+        high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
+        if high_px is not None:
+            trigger_px = high_px
+        return trigger_px >= float(entry_px) * (1.0 + float(self._stop_loss_pct))
+
+    def on_bar(
+        self,
+        as_of: date,
+        *,
+        prices: pd.DataFrame,
+        signals: Optional[pd.DataFrame],
+        portfolio: PortfolioSnapshot,
+    ) -> Optional[StrategyDecision]:
+        self._sync_positions(as_of, prices=prices, portfolio=portfolio)
+
+        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
+        kept: Dict[str, float] = {}
+        scales: Dict[str, float] = {}
+        changed_non_rebalance = False
+
+        for sym, shares in held.items():
+            side = 1 if shares > 0 else -1
+            if self._should_exit(as_of=as_of, symbol=sym, side=side, prices=prices):
+                changed_non_rebalance = True
+                continue
+
+            score = self._last_score.get(sym)
+            if score is None:
+                score = float(side)
+            else:
+                score = float(score)
+                if side > 0 and score <= 0:
+                    score = abs(score) or 1.0
+                if side < 0 and score >= 0:
+                    score = -(abs(score) or 1.0)
+            kept[sym] = score
+
+            scale = float(self._scales.get(sym, 1.0))
+            if self._partial_exit_days is not None and scale >= 0.999:
+                entry_date = self._entry_date.get(sym)
+                if entry_date is not None:
+                    held_days = _trading_days_held(prices, symbol=sym, entry_date=entry_date, as_of=as_of)
+                    if held_days >= int(self._partial_exit_days):
+                        remaining = max(0.0, 1.0 - float(self._partial_exit_fraction))
+                        if abs(remaining - scale) > 1e-12:
+                            scale = remaining
+                            self._scales[sym] = scale
+                            changed_non_rebalance = True
+            if abs(scale - 1.0) > 1e-12:
+                scales[sym] = scale
+
+        is_rebalance = self.check_rebalance(as_of)
+        if not is_rebalance and not changed_non_rebalance:
+            return None
+
+        candidates: Dict[str, float] = {}
+        if signals is not None and not signals.empty:
+            if "symbol" not in signals.columns:
+                raise ValueError("signals must include 'symbol'.")
+            df = signals.copy()
+            df["symbol"] = df["symbol"].astype(str)
+            df = df.drop_duplicates(subset=["symbol"], keep="last")
+
+            if self._breakout_col not in df.columns:
+                if self._allow_price_fallback:
+                    candidates = self._fallback_scores_from_prices(prices=prices, as_of=as_of)
+                    df = pd.DataFrame({"symbol": list(candidates.keys()), "score": list(candidates.values())})
+                    df["symbol"] = df["symbol"].astype(str)
+                    df["breakout"] = pd.to_numeric(df["score"], errors="coerce")
+                    df["breakdown"] = pd.NA
+                else:
+                    raise ValueError(f"signals missing required column: {self._breakout_col!r}")
+            else:
+                df["breakout"] = pd.to_numeric(df[self._breakout_col], errors="coerce")
+                if self._breakdown_col and self._breakdown_col in df.columns:
+                    df["breakdown"] = pd.to_numeric(df[self._breakdown_col], errors="coerce")
+                else:
+                    df["breakdown"] = pd.NA
+
+            for _, row in df.iterrows():
+                sym = str(row["symbol"])
+                breakout = _safe_float(row["breakout"])
+                breakdown = _safe_float(row["breakdown"])
+                best: Optional[float] = None
+                if breakout is not None:
+                    best = breakout
+                if self._enable_shorts:
+                    short_score = None
+                    if breakdown is not None:
+                        short_score = -abs(breakdown)
+                    elif self._short_from_breakout and breakout is not None:
+                        short_score = -abs(breakout)
+                    if short_score is not None and (best is None or abs(short_score) > abs(best)):
+                        best = short_score
+
+                if best is None:
+                    continue
+                if abs(float(best)) < float(self._min_abs_score):
+                    continue
+                candidates[sym] = float(best)
+
+        # Merge held + candidates (candidates may update held scores on rebalance dates).
+        merged = dict(kept)
+        merged.update(candidates)
+        for sym, score in merged.items():
+            self._last_score[sym] = float(score)
+
+        return StrategyDecision(scores=merged, scales=scales)
+
+
+class EpisodicPivotStrategy(Strategy):
+    """
+    Episodic Pivot (EP) strategy (Platinum-first).
+
+    Entries are driven by Platinum `ep_score` (or a deterministic combination of raw EP fields).
+    Exits use a trailing moving average and optional stop-loss using daily bars.
+    """
+
+    def __init__(
+        self,
+        *,
+        ep_score_column: str = "ep_score",
+        min_ep_score: float = 0.0,
+        enable_shorts: bool = False,
+        trailing_ma_days: int = 20,
+        stop_loss_pct: Optional[float] = None,
+        use_low_for_stop: bool = True,
+        allow_raw_fields: bool = True,
+        rebalance: str | int = "daily",
+    ):
+        super().__init__(rebalance=rebalance)
+        self._ep_col = str(ep_score_column)
+        self._min_ep_score = float(min_ep_score)
+        self._enable_shorts = bool(enable_shorts)
+        self._trailing_ma_days = int(trailing_ma_days)
+        self._stop_loss_pct = float(stop_loss_pct) if stop_loss_pct is not None else None
+        self._use_low_for_stop = bool(use_low_for_stop)
+        self._allow_raw_fields = bool(allow_raw_fields)
+
+        self._entry_date: Dict[str, date] = {}
+        self._entry_price: Dict[str, float] = {}
+        self._entry_side: Dict[str, int] = {}
+        self._last_score: Dict[str, float] = {}
+
+    def _sync_positions(self, as_of: date, *, prices: pd.DataFrame, portfolio: PortfolioSnapshot) -> None:
+        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
+        for sym in list(self._entry_date.keys()):
+            if sym not in held:
+                self._entry_date.pop(sym, None)
+                self._entry_price.pop(sym, None)
+                self._entry_side.pop(sym, None)
+                self._last_score.pop(sym, None)
+
+        for sym, shares in held.items():
+            side = 1 if shares > 0 else -1
+            if self._entry_side.get(sym) != side:
+                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
+                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+                entry_px = open_px if open_px is not None else close_px
+                if entry_px is not None:
+                    self._entry_date[sym] = as_of
+                    self._entry_price[sym] = float(entry_px)
+                    self._entry_side[sym] = side
+
+    def _should_exit(self, *, as_of: date, symbol: str, side: int, prices: pd.DataFrame) -> bool:
+        close_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["close", "Close"])
+        if close_px is None:
+            return False
+
+        ma = _moving_average_close(prices, symbol=symbol, window=self._trailing_ma_days)
+        if ma is not None:
+            if side > 0 and close_px < ma:
+                return True
+            if side < 0 and close_px > ma:
+                return True
+
+        if self._stop_loss_pct is None:
+            return False
+
+        entry_px = self._entry_price.get(symbol)
+        if entry_px is None:
+            return False
+
+        if side > 0:
+            trigger_px = close_px
+            if self._use_low_for_stop:
+                low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
+                if low_px is not None:
+                    trigger_px = low_px
+            return trigger_px <= float(entry_px) * (1.0 - float(self._stop_loss_pct))
+
+        trigger_px = close_px
+        high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
+        if high_px is not None:
+            trigger_px = high_px
+        return trigger_px >= float(entry_px) * (1.0 + float(self._stop_loss_pct))
+
+    def on_bar(
+        self,
+        as_of: date,
+        *,
+        prices: pd.DataFrame,
+        signals: Optional[pd.DataFrame],
+        portfolio: PortfolioSnapshot,
+    ) -> Optional[StrategyDecision]:
+        self._sync_positions(as_of, prices=prices, portfolio=portfolio)
+
+        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
+        kept: Dict[str, float] = {}
+        changed_non_rebalance = False
+
+        for sym, shares in held.items():
+            side = 1 if shares > 0 else -1
+            if self._should_exit(as_of=as_of, symbol=sym, side=side, prices=prices):
+                changed_non_rebalance = True
+                continue
+            score = self._last_score.get(sym)
+            if score is None:
+                score = float(side)
+            else:
+                score = float(score)
+                if side > 0 and score <= 0:
+                    score = abs(score) or 1.0
+                if side < 0 and score >= 0:
+                    score = -(abs(score) or 1.0)
+            kept[sym] = score
+
+        is_rebalance = self.check_rebalance(as_of)
+        if not is_rebalance and not changed_non_rebalance:
+            return None
+
+        candidates: Dict[str, float] = {}
+        if signals is not None and not signals.empty:
+            if "symbol" not in signals.columns:
+                raise ValueError("signals must include 'symbol'.")
+            df = signals.copy()
+            df["symbol"] = df["symbol"].astype(str)
+            df = df.drop_duplicates(subset=["symbol"], keep="last")
+
+            if self._ep_col in df.columns:
+                df["ep_score"] = pd.to_numeric(df[self._ep_col], errors="coerce")
+            elif self._allow_raw_fields:
+                gap = _find_column(df, ["gap_pct", "gap", "gapPercent", "gap_percent"])
+                vol = _find_column(df, ["vol_ratio", "volume_ratio", "volRatio"])
+                if not gap or not vol:
+                    raise ValueError(f"signals missing required column: {self._ep_col!r}")
+                df["gap_pct"] = pd.to_numeric(df[gap], errors="coerce")
+                df["vol_ratio"] = pd.to_numeric(df[vol], errors="coerce")
+                # Optional catalyst fields (treated as additive boosters if present).
+                for src, dst in [
+                    ("earnings_surprise", "earnings_surprise"),
+                    ("rev_yoy", "rev_yoy"),
+                    ("eps_yoy", "eps_yoy"),
+                ]:
+                    col = _find_column(df, [src])
+                    df[dst] = pd.to_numeric(df[col], errors="coerce") if col else 0.0
+                df["ep_score"] = (
+                    df["gap_pct"].fillna(0.0)
+                    + 0.5 * df["vol_ratio"].fillna(0.0)
+                    + 0.1 * df["earnings_surprise"].fillna(0.0)
+                    + 0.05 * df["rev_yoy"].fillna(0.0)
+                    + 0.05 * df["eps_yoy"].fillna(0.0)
+                )
+            else:
+                raise ValueError(f"signals missing required column: {self._ep_col!r}")
+
+            for _, row in df.iterrows():
+                sym = str(row["symbol"])
+                score = _safe_float(row["ep_score"])
+                if score is None:
+                    continue
+                if float(score) < float(self._min_ep_score) and not self._enable_shorts:
+                    continue
+                if self._enable_shorts and float(score) < -float(self._min_ep_score):
+                    candidates[sym] = float(score)  # negative score => short
+                elif float(score) >= float(self._min_ep_score):
+                    candidates[sym] = float(score)  # positive => long
+
+        merged = dict(kept)
+        merged.update(candidates)
+        for sym, score in merged.items():
+            self._last_score[sym] = float(score)
+
+        return StrategyDecision(scores=merged)

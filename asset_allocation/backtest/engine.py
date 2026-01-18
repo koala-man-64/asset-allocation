@@ -172,6 +172,12 @@ class BacktestEngine:
                 commission=day_commission,
                 slippage_cost=day_slippage,
             )
+            self.reporter.record_positions_snapshot(
+                current_date,
+                portfolio=portfolio,
+                equity=equity,
+                close_prices=close_prices,
+            )
 
             prev_equity = equity
 
@@ -230,4 +236,11 @@ class BacktestEngine:
                 prices=price_slice,
                 portfolio=snapshot,
             )
-            pending_targets = self.constraints.apply(current_date, target.weights)
+            constraint_result = self.constraints.apply(
+                current_date,
+                target.weights,
+                portfolio=snapshot,
+                close_prices=close_prices,
+            )
+            self.reporter.record_constraint_hits(constraint_result.hits)
+            pending_targets = constraint_result.weights
