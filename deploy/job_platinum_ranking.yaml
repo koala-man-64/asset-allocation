@@ -57,11 +57,11 @@ properties:
       - name: PLAYWRIGHT_USER_DATA_DIR
         value: /tmp/playwright_userdata
       - name: RANKING_FINANCE_DELTA_PATH
-        value: gold/finance
+        value: finance
       - name: RANKING_PRICE_DELTA_PATH
-        value: gold/targets
+        value: targets
       - name: RANKING_EARNINGS_DELTA_PATH
-        value: gold/earnings
+        value: earnings
       - name: RANKING_BROKEN_DRAWDOWN_THRESHOLD
         value: "-0.3"
       - name: RANKING_MARGIN_DELTA_THRESHOLD

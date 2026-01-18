@@ -139,24 +139,23 @@ def _get_market_feature_tickers(
     client: BlobStorageClient, whitelist: Optional[set[str]]
 ) -> List[str]:
     # Resolve available market features, then apply whitelist if present.
-    # Updated to look in gold/market directory
     write_line(
         "Listing market feature blobs from "
-        f"{cfg.AZURE_CONTAINER_MARKET}/gold/market/<ticker>..."
+        f"{cfg.AZURE_CONTAINER_MARKET}/market/<ticker>..."
     )
     try:
-        blobs = client.list_files(name_starts_with="gold/market/")
+        blobs = client.list_files(name_starts_with="market/")
     except Exception as exc:
         write_line(f"Warning: Failed to list market feature blobs: {exc}")
         return sorted(whitelist) if whitelist else []
 
-    # Market feature deltas are stored as gold/market/<ticker>/...
+    # Market feature deltas are stored as market/<ticker>/...
     available = set()
     for name in blobs:
         parts = name.split("/")
-        # Expected: gold/market/ticker/part-files...
-        if len(parts) >= 3 and parts[0] == "gold" and parts[1] == "market":
-            available.add(parts[2])
+        # Expected: market/ticker/part-files...
+        if len(parts) >= 2 and parts[0] == "market":
+            available.add(parts[1])
 
     if whitelist:
         return sorted(available.intersection(whitelist))
