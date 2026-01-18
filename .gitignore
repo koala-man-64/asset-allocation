@@ -1,14 +1,37 @@
-Data/
-.vscode/
+# --- Python ---
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
 .venv/
-
-# Secrets
-nasdaq_key.txt
-.env
-pw_cookies.json
-scripts/common/nasdaq_key.txt
-
+venv/
+*.spec
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+# --- VS Code / IDE ---
+.vscode/
+.idea/
+# --- OS ---
+.DS_Store
+Thumbs.db
+# --- Logs & Secrets ---
 # Logs
 *.log
 scripts/common/Yahoo/
+# Secrets (Do not commit)
+.env
+nasdaq_key.txt
+scripts/common/nasdaq_key.txt
+pw_cookies.json
+local.settings.json
+# --- Project Specific ---
+# Data Directory
+data/
+# Backtest Artifacts
+backtest_results/

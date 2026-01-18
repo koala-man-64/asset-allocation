@@ -10,8 +10,8 @@ from asset_allocation.backtest.config import BacktestConfig, generate_run_id
 from asset_allocation.backtest.constraints import Constraints
 from asset_allocation.backtest.engine import BacktestEngine
 from asset_allocation.backtest.reporter import Reporter
-from asset_allocation.backtest.sizer import EqualWeightSizer, Sizer
-from asset_allocation.backtest.strategy import BuyAndHoldStrategy, Strategy, TopNSignalStrategy
+from asset_allocation.backtest.sizer import EqualWeightSizer, KellySizer, Sizer
+from asset_allocation.backtest.strategy import BuyAndHoldStrategy, StaticUniverseStrategy, Strategy, TopNSignalStrategy
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,16 @@ def _build_strategy(config: BacktestConfig) -> Strategy:
             min_signal=float(params["min_signal"]) if "min_signal" in params and params["min_signal"] is not None else None,
             higher_is_better=bool(params.get("higher_is_better", True)),
         )
+    if name == "StaticUniverseStrategy":
+        symbols = params.get("symbols")
+        if not symbols or not isinstance(symbols, list):
+            # Fallback to config universe if not provided?
+            # Or strict. Let's be strict or use universe.
+            symbols = config.universe.symbols
+        return StaticUniverseStrategy(
+            symbols=[str(s) for s in symbols],
+            rebalance=params.get("rebalance", "daily"),
+        )
     raise ValueError(f"Unknown strategy.class '{name}' (registry is strict).")
 
 
@@ -43,6 +53,14 @@ def _build_sizer(config: BacktestConfig) -> Sizer:
     params = config.sizing.parameters or {}
     if name == "EqualWeightSizer":
         return EqualWeightSizer(max_positions=int(params.get("max_positions", 10)))
+    if name == "KellySizer":
+        if "mu_scale" not in params:
+            raise ValueError("KellySizer requires sizing.parameters.mu_scale (expected daily return per score unit).")
+        return KellySizer(
+            kelly_fraction=float(params.get("kelly_fraction", 0.5)),
+            lookback_days=int(params.get("lookback_days", 20)),
+            mu_scale=float(params["mu_scale"]),
+        )
     raise ValueError(f"Unknown sizing.class '{name}' (registry is strict).")
 
 

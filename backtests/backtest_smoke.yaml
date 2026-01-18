@@ -1,0 +1,41 @@
+run_name: "SMOKE-TEST-001"
+start_date: "2024-01-01"
+end_date: "2024-01-31"
+initial_cash: 100000.0
+
+universe:
+  symbols:
+    - "AAPL"
+
+data:
+  price_source: "ADLS"
+  price_path: "silver/market-data/{symbol}"
+  # Using a known-empty or dummy signal path to ensure we rely on BuyAndHold/Price logic primarily for this smoke test
+  # functionality if signals aren't critical for BuyAndHold
+  signal_path: null 
+
+strategy:
+  class: "BuyAndHoldStrategy"
+  parameters:
+    symbol: "AAPL" # Buy and hold AAPL specifically
+
+sizing:
+  class: "EqualWeightSizer"
+  parameters:
+    max_positions: 5
+
+constraints:
+  max_leverage: 1.0
+  max_position_size: 1.0
+  allow_short: false
+
+broker:
+  slippage_bps: 1.0
+  commission: 0.005
+  fill_policy: "next_open"
+
+output:
+  local_dir: "./backtest_results"
+  save_trades: true
+  save_daily_metrics: true
+  save_plots: false

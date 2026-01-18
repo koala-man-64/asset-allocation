@@ -1,0 +1,33 @@
+run_name: "DAILY-REBAL-2024"
+start_date: "2024-01-01"
+end_date: "2024-12-31"
+initial_cash: 100000.0
+universe:
+  symbols:
+    - "AAPL"
+    - "MSFT"
+
+data:
+  price_source: "ADLS"
+  price_path: "silver/market-data/{symbol}"
+  frequency: "Daily"
+
+strategy:
+  class: StaticUniverseStrategy
+  parameters:
+    symbols: ["AAPL", "MSFT"]
+    rebalance: "daily"
+
+sizing:
+  class: EqualWeightSizer
+  parameters:
+    max_positions: 10
+
+broker:
+  commission: 0.0005
+  slippage_bps: 2.0
+
+output:
+  local_dir: "./backtest_results"
+  save_trades: true
+  save_daily_metrics: true
