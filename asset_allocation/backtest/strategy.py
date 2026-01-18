@@ -20,9 +20,34 @@ class StrategyDecision:
 
 
 class Strategy(ABC):
-    def __init__(self, *, rebalance: str | int = "daily"):
+    def __init__(
+        self,
+        *,
+        rebalance: str | int = "daily",
+        stop_loss_pct: Optional[float] = None,
+        take_profit_pct: Optional[float] = None,
+        trailing_stop_pct: Optional[float] = None,
+        time_stop_days: Optional[int] = None,
+        trailing_ma_days: Optional[int] = None,
+        use_low_for_stop: bool = True,
+    ):
         self._rebalance = rebalance
         self._last_rebalance_date: Optional[date] = None
+
+        # Standard Risk Parameters
+        self._stop_loss_pct = float(stop_loss_pct) if stop_loss_pct is not None else None
+        self._take_profit_pct = float(take_profit_pct) if take_profit_pct is not None else None
+        self._trailing_stop_pct = float(trailing_stop_pct) if trailing_stop_pct is not None else None
+        self._time_stop_days = int(time_stop_days) if time_stop_days is not None else None
+        self._trailing_ma_days = int(trailing_ma_days) if trailing_ma_days is not None else None
+        self._use_low_for_stop = bool(use_low_for_stop)
+
+        # State Tracking
+        self._entry_price: Dict[str, float] = {}
+        self._entry_date: Dict[str, date] = {}
+        self._entry_side: Dict[str, int] = {}
+        self._high_water_marks: Dict[str, float] = {}
+        self._low_water_marks: Dict[str, float] = {}
 
     def check_rebalance(self, current_date: date) -> bool:
         """
@@ -65,6 +90,139 @@ class Strategy(ABC):
         if should_run:
             self._last_rebalance_date = current_date
             return True
+        return False
+
+    def _sync_risk_state(self, as_of: date, *, prices: pd.DataFrame, portfolio: PortfolioSnapshot) -> None:
+        """
+        Syncs internal risk state (entry prices, dates, HWM) with the current portfolio.
+        Must be called at the start of on_bar().
+        """
+        held_symbols = set(portfolio.positions.keys()) if portfolio.positions else set()
+        # Cleanup closed positions
+        for sym in list(self._entry_date.keys()):
+            if sym not in held_symbols or abs(float(portfolio.positions.get(sym, 0.0))) < 1e-12:
+                self._entry_date.pop(sym, None)
+                self._entry_price.pop(sym, None)
+                self._entry_side.pop(sym, None)
+                self._high_water_marks.pop(sym, None)
+                self._low_water_marks.pop(sym, None)
+
+        # Register new entries & Update HWM/LWM
+        for sym, shares in (portfolio.positions or {}).items():
+            if abs(shares) < 1e-12:
+                continue
+            
+            side = 1 if shares > 0 else -1
+            current_side = self._entry_side.get(sym)
+
+            # Check if this is a new position or side flip
+            if current_side != side:
+                # Attempt to get execution price (Open or Close)
+                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
+                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+                entry_px = open_px if open_px is not None else close_px
+                
+                if entry_px is not None:
+                    self._entry_date[sym] = as_of
+                    self._entry_price[sym] = float(entry_px)
+                    self._entry_side[sym] = side
+                    self._high_water_marks[sym] = float(entry_px)
+                    self._low_water_marks[sym] = float(entry_px)
+            else:
+                # Update High/Low Water Marks for existing positions
+                high_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["high", "High"])
+                low_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["low", "Low"])
+                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+
+                if high_px is not None:
+                    curr_hwm = self._high_water_marks.get(sym, -1e9)
+                    self._high_water_marks[sym] = max(curr_hwm, high_px)
+                
+                if low_px is not None:
+                    curr_lwm = self._low_water_marks.get(sym, 1e9)
+                    self._low_water_marks[sym] = min(curr_lwm, low_px)
+
+    def _check_risk_exits(self, *, as_of: date, symbol: str, prices: pd.DataFrame) -> bool:
+        """
+        Checks all risk management conditions (SL, TP, Trailing, Time, MA).
+        Returns True if the position should be exited.
+        """
+        side = self._entry_side.get(symbol)
+        if side is None:
+            return False
+
+        close_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["close", "Close"])
+        if close_px is None:
+            return False
+        
+        entry_px = self._entry_price.get(symbol)
+        if entry_px is None:
+            return False
+
+        # 1. Trailing Moving Average Exit (Trend Following)
+        if self._trailing_ma_days is not None:
+            ma = _moving_average_close(prices, symbol=symbol, window=self._trailing_ma_days)
+            if ma is not None:
+                if side > 0 and close_px < ma:
+                    return True
+                if side < 0 and close_px > ma:
+                    return True
+
+        # 2. Time Stop
+        if self._time_stop_days is not None:
+            entry_date = self._entry_date.get(symbol)
+            if entry_date:
+                held_days = _trading_days_held(prices, symbol=symbol, entry_date=entry_date, as_of=as_of)
+                if held_days >= self._time_stop_days:
+                    return True
+
+        # 3. Stop Loss (Fixed %)
+        if self._stop_loss_pct is not None:
+            trigger_px = close_px
+            if side > 0:
+                if self._use_low_for_stop:
+                    low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
+                    if low_px is not None: trigger_px = low_px
+                if trigger_px <= entry_px * (1.0 - self._stop_loss_pct):
+                    return True
+            else: # Short
+                high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
+                if high_px is not None: trigger_px = high_px
+                if trigger_px >= entry_px * (1.0 + self._stop_loss_pct):
+                    return True
+
+        # 4. Take Profit (Fixed %)
+        if self._take_profit_pct is not None:
+            trigger_px = close_px
+            if side > 0:
+                high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
+                if high_px is not None: trigger_px = high_px
+                if trigger_px >= entry_px * (1.0 + self._take_profit_pct):
+                    return True
+            else: # Short
+                low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
+                if low_px is not None: trigger_px = low_px
+                if trigger_px <= entry_px * (1.0 - self._take_profit_pct):
+                    return True
+
+        # 5. Trailing Stop (%)
+        if self._trailing_stop_pct is not None:
+            if side > 0:
+                hwm = self._high_water_marks.get(symbol, entry_px)
+                trigger_px = close_px
+                if self._use_low_for_stop:
+                     low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
+                     if low_px is not None: trigger_px = low_px
+                if trigger_px <= hwm * (1.0 - self._trailing_stop_pct):
+                    return True
+            else: # Short
+                lwm = self._low_water_marks.get(symbol, entry_px)
+                trigger_px = close_px
+                high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
+                if high_px is not None: trigger_px = high_px
+                if trigger_px >= lwm * (1.0 + self._trailing_stop_pct):
+                    return True
+
         return False
 
     @abstractmethod
@@ -264,12 +422,23 @@ class BreakoutStrategy(Strategy):
         min_abs_score: float = 0.0,
         trailing_ma_days: int = 10,
         stop_loss_pct: Optional[float] = None,
+        take_profit_pct: Optional[float] = None,
+        trailing_stop_pct: Optional[float] = None,
+        time_stop_days: Optional[int] = None,
         use_low_for_stop: bool = True,
         partial_exit_days: Optional[int] = 4,
         partial_exit_fraction: float = 0.5,
         rebalance: str | int = "daily",
     ):
-        super().__init__(rebalance=rebalance)
+        super().__init__(
+            rebalance=rebalance,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            trailing_stop_pct=trailing_stop_pct,
+            time_stop_days=time_stop_days,
+            trailing_ma_days=trailing_ma_days,
+            use_low_for_stop=use_low_for_stop,
+        )
         self._breakout_col = str(breakout_score_column)
         self._breakdown_col = str(breakdown_score_column) if breakdown_score_column else None
         self._enable_shorts = bool(enable_shorts)
@@ -277,15 +446,9 @@ class BreakoutStrategy(Strategy):
         self._allow_price_fallback = bool(allow_price_fallback)
         self._fallback_lookback_days = int(fallback_lookback_days)
         self._min_abs_score = float(min_abs_score)
-        self._trailing_ma_days = int(trailing_ma_days)
-        self._stop_loss_pct = float(stop_loss_pct) if stop_loss_pct is not None else None
-        self._use_low_for_stop = bool(use_low_for_stop)
         self._partial_exit_days = int(partial_exit_days) if partial_exit_days is not None else None
         self._partial_exit_fraction = float(partial_exit_fraction)
 
-        self._entry_date: Dict[str, date] = {}
-        self._entry_price: Dict[str, float] = {}
-        self._entry_side: Dict[str, int] = {}
         self._scales: Dict[str, float] = {}
         self._last_score: Dict[str, float] = {}
 
@@ -331,69 +494,6 @@ class BreakoutStrategy(Strategy):
                 out[str(sym)] = -float(breakdown_strength)
         return out
 
-    def _sync_positions(self, as_of: date, *, prices: pd.DataFrame, portfolio: PortfolioSnapshot) -> None:
-        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
-
-        for sym in list(self._entry_date.keys()):
-            if sym not in held:
-                self._entry_date.pop(sym, None)
-                self._entry_price.pop(sym, None)
-                self._entry_side.pop(sym, None)
-                self._scales.pop(sym, None)
-                self._last_score.pop(sym, None)
-
-        for sym, shares in held.items():
-            side = 1 if shares > 0 else -1
-            if self._entry_side.get(sym) != side:
-                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
-                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
-                entry_px = open_px if open_px is not None else close_px
-                if entry_px is not None:
-                    self._entry_date[sym] = as_of
-                    self._entry_price[sym] = float(entry_px)
-                    self._entry_side[sym] = side
-                    self._scales[sym] = 1.0
-
-    def _should_exit(
-        self,
-        *,
-        as_of: date,
-        symbol: str,
-        side: int,
-        prices: pd.DataFrame,
-    ) -> bool:
-        close_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["close", "Close"])
-        if close_px is None:
-            return False
-
-        ma = _moving_average_close(prices, symbol=symbol, window=self._trailing_ma_days)
-        if ma is not None:
-            if side > 0 and close_px < ma:
-                return True
-            if side < 0 and close_px > ma:
-                return True
-
-        if self._stop_loss_pct is None:
-            return False
-
-        entry_px = self._entry_price.get(symbol)
-        if entry_px is None:
-            return False
-
-        if side > 0:
-            trigger_px = close_px
-            if self._use_low_for_stop:
-                low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
-                if low_px is not None:
-                    trigger_px = low_px
-            return trigger_px <= float(entry_px) * (1.0 - float(self._stop_loss_pct))
-
-        trigger_px = close_px
-        high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
-        if high_px is not None:
-            trigger_px = high_px
-        return trigger_px >= float(entry_px) * (1.0 + float(self._stop_loss_pct))
-
     def on_bar(
         self,
         as_of: date,
@@ -402,7 +502,7 @@ class BreakoutStrategy(Strategy):
         signals: Optional[pd.DataFrame],
         portfolio: PortfolioSnapshot,
     ) -> Optional[StrategyDecision]:
-        self._sync_positions(as_of, prices=prices, portfolio=portfolio)
+        self._sync_risk_state(as_of, prices=prices, portfolio=portfolio)
 
         held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
         kept: Dict[str, float] = {}
@@ -410,11 +510,12 @@ class BreakoutStrategy(Strategy):
         changed_non_rebalance = False
 
         for sym, shares in held.items():
-            side = 1 if shares > 0 else -1
-            if self._should_exit(as_of=as_of, symbol=sym, side=side, prices=prices):
+            # Check Risk Exits (SL, TP, TSL, etc) from Base Class
+            if self._check_risk_exits(as_of=as_of, symbol=sym, prices=prices):
                 changed_non_rebalance = True
                 continue
 
+            side = 1 if shares > 0 else -1
             score = self._last_score.get(sym)
             if score is None:
                 score = float(side)
@@ -426,6 +527,7 @@ class BreakoutStrategy(Strategy):
                     score = -(abs(score) or 1.0)
             kept[sym] = score
 
+            # Partial Exits logic (kept here as it scales position rather than exiting)
             scale = float(self._scales.get(sym, 1.0))
             if self._partial_exit_days is not None and scale >= 0.999:
                 entry_date = self._entry_date.get(sym)
@@ -515,76 +617,28 @@ class EpisodicPivotStrategy(Strategy):
         enable_shorts: bool = False,
         trailing_ma_days: int = 20,
         stop_loss_pct: Optional[float] = None,
+        take_profit_pct: Optional[float] = None,
+        trailing_stop_pct: Optional[float] = None,
+        time_stop_days: Optional[int] = None,
         use_low_for_stop: bool = True,
         allow_raw_fields: bool = True,
         rebalance: str | int = "daily",
     ):
-        super().__init__(rebalance=rebalance)
+        super().__init__(
+            rebalance=rebalance,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            trailing_stop_pct=trailing_stop_pct,
+            time_stop_days=time_stop_days,
+            trailing_ma_days=trailing_ma_days,
+            use_low_for_stop=use_low_for_stop,
+        )
         self._ep_col = str(ep_score_column)
         self._min_ep_score = float(min_ep_score)
         self._enable_shorts = bool(enable_shorts)
-        self._trailing_ma_days = int(trailing_ma_days)
-        self._stop_loss_pct = float(stop_loss_pct) if stop_loss_pct is not None else None
-        self._use_low_for_stop = bool(use_low_for_stop)
         self._allow_raw_fields = bool(allow_raw_fields)
 
-        self._entry_date: Dict[str, date] = {}
-        self._entry_price: Dict[str, float] = {}
-        self._entry_side: Dict[str, int] = {}
         self._last_score: Dict[str, float] = {}
-
-    def _sync_positions(self, as_of: date, *, prices: pd.DataFrame, portfolio: PortfolioSnapshot) -> None:
-        held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
-        for sym in list(self._entry_date.keys()):
-            if sym not in held:
-                self._entry_date.pop(sym, None)
-                self._entry_price.pop(sym, None)
-                self._entry_side.pop(sym, None)
-                self._last_score.pop(sym, None)
-
-        for sym, shares in held.items():
-            side = 1 if shares > 0 else -1
-            if self._entry_side.get(sym) != side:
-                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
-                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
-                entry_px = open_px if open_px is not None else close_px
-                if entry_px is not None:
-                    self._entry_date[sym] = as_of
-                    self._entry_price[sym] = float(entry_px)
-                    self._entry_side[sym] = side
-
-    def _should_exit(self, *, as_of: date, symbol: str, side: int, prices: pd.DataFrame) -> bool:
-        close_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["close", "Close"])
-        if close_px is None:
-            return False
-
-        ma = _moving_average_close(prices, symbol=symbol, window=self._trailing_ma_days)
-        if ma is not None:
-            if side > 0 and close_px < ma:
-                return True
-            if side < 0 and close_px > ma:
-                return True
-
-        if self._stop_loss_pct is None:
-            return False
-
-        entry_px = self._entry_price.get(symbol)
-        if entry_px is None:
-            return False
-
-        if side > 0:
-            trigger_px = close_px
-            if self._use_low_for_stop:
-                low_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["low", "Low"])
-                if low_px is not None:
-                    trigger_px = low_px
-            return trigger_px <= float(entry_px) * (1.0 - float(self._stop_loss_pct))
-
-        trigger_px = close_px
-        high_px = _latest_bar_value(prices, as_of=as_of, symbol=symbol, columns=["high", "High"])
-        if high_px is not None:
-            trigger_px = high_px
-        return trigger_px >= float(entry_px) * (1.0 + float(self._stop_loss_pct))
 
     def on_bar(
         self,
@@ -594,17 +648,18 @@ class EpisodicPivotStrategy(Strategy):
         signals: Optional[pd.DataFrame],
         portfolio: PortfolioSnapshot,
     ) -> Optional[StrategyDecision]:
-        self._sync_positions(as_of, prices=prices, portfolio=portfolio)
+        self._sync_risk_state(as_of, prices=prices, portfolio=portfolio)
 
         held = {s: float(sh) for s, sh in (portfolio.positions or {}).items() if abs(float(sh)) >= 1e-12}
         kept: Dict[str, float] = {}
         changed_non_rebalance = False
 
         for sym, shares in held.items():
-            side = 1 if shares > 0 else -1
-            if self._should_exit(as_of=as_of, symbol=sym, side=side, prices=prices):
+            if self._check_risk_exits(as_of=as_of, symbol=sym, prices=prices):
                 changed_non_rebalance = True
                 continue
+            
+            side = 1 if shares > 0 else -1
             score = self._last_score.get(sym)
             if score is None:
                 score = float(side)

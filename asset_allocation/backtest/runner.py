@@ -53,6 +53,9 @@ def _build_strategy(config: BacktestConfig) -> Strategy:
             min_abs_score=float(params.get("min_abs_score", 0.0)),
             trailing_ma_days=int(params.get("trailing_ma_days", 10)),
             stop_loss_pct=float(params["stop_loss_pct"]) if "stop_loss_pct" in params and params["stop_loss_pct"] is not None else None,
+            take_profit_pct=float(params["take_profit_pct"]) if "take_profit_pct" in params and params["take_profit_pct"] is not None else None,
+            trailing_stop_pct=float(params["trailing_stop_pct"]) if "trailing_stop_pct" in params and params["trailing_stop_pct"] is not None else None,
+            time_stop_days=int(params["time_stop_days"]) if "time_stop_days" in params and params["time_stop_days"] is not None else None,
             use_low_for_stop=bool(params.get("use_low_for_stop", True)),
             partial_exit_days=int(params["partial_exit_days"])
             if "partial_exit_days" in params and params["partial_exit_days"] is not None
@@ -67,6 +70,9 @@ def _build_strategy(config: BacktestConfig) -> Strategy:
             enable_shorts=bool(params.get("enable_shorts", False)),
             trailing_ma_days=int(params.get("trailing_ma_days", 20)),
             stop_loss_pct=float(params["stop_loss_pct"]) if "stop_loss_pct" in params and params["stop_loss_pct"] is not None else None,
+            take_profit_pct=float(params["take_profit_pct"]) if "take_profit_pct" in params and params["take_profit_pct"] is not None else None,
+            trailing_stop_pct=float(params["trailing_stop_pct"]) if "trailing_stop_pct" in params and params["trailing_stop_pct"] is not None else None,
+            time_stop_days=int(params["time_stop_days"]) if "time_stop_days" in params and params["time_stop_days"] is not None else None,
             use_low_for_stop=bool(params.get("use_low_for_stop", True)),
             allow_raw_fields=bool(params.get("allow_raw_fields", True)),
             rebalance=params.get("rebalance", "daily"),
