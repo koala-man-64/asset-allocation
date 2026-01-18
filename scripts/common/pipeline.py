@@ -19,19 +19,19 @@ class DataPaths:
 
     @staticmethod
     def get_gold_features_path(ticker: str) -> str:
-        return f"gold/{ticker}"
+        return f"gold/market/{ticker}"
 
     @staticmethod
     def get_gold_earnings_path(ticker: str) -> str:
-        return f"gold/{ticker}"
+        return f"gold/earnings/{ticker}"
 
     @staticmethod
     def get_gold_finance_path(ticker: str) -> str:
-        return f"gold/{ticker}"
+        return f"gold/finance/{ticker}"
 
     @staticmethod
     def get_gold_price_targets_path(ticker: str) -> str:
-        return f"gold/{ticker}"
+        return f"gold/targets/{ticker}"
 
     @staticmethod
     def get_price_target_path(ticker: str) -> str:

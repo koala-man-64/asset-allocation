@@ -50,6 +50,13 @@ DELTA_SOURCES: List[DeltaSource] = [
         "per_symbol": True,
         "whitelist_prefix": "price_target_data",
     },
+    {
+        "name": "earnings",
+        "container": cfg.AZURE_CONTAINER_EARNINGS,
+        "path_env": "RANKING_EARNINGS_DELTA_PATH",
+        "per_symbol": True,
+        "whitelist_prefix": "earnings_data",
+    },
 ]
 SOURCE_LOOKUP = {source["name"]: source for source in DELTA_SOURCES}
 
@@ -132,22 +139,24 @@ def _get_market_feature_tickers(
     client: BlobStorageClient, whitelist: Optional[set[str]]
 ) -> List[str]:
     # Resolve available market features, then apply whitelist if present.
+    # Updated to look in gold/market directory
     write_line(
         "Listing market feature blobs from "
-        f"{cfg.AZURE_CONTAINER_MARKET}/gold/<ticker>..."
+        f"{cfg.AZURE_CONTAINER_MARKET}/gold/market/<ticker>..."
     )
     try:
-        blobs = client.list_files(name_starts_with="gold/")
+        blobs = client.list_files(name_starts_with="gold/market/")
     except Exception as exc:
         write_line(f"Warning: Failed to list market feature blobs: {exc}")
         return sorted(whitelist) if whitelist else []
 
-    # Market feature deltas are stored as gold/<ticker>/...
+    # Market feature deltas are stored as gold/market/<ticker>/...
     available = set()
     for name in blobs:
         parts = name.split("/")
-        if len(parts) >= 2 and parts[0] == "gold":
-            available.add(parts[1])
+        # Expected: gold/market/ticker/part-files...
+        if len(parts) >= 3 and parts[0] == "gold" and parts[1] == "market":
+            available.add(parts[2])
 
     if whitelist:
         return sorted(available.intersection(whitelist))
