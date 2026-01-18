@@ -30,6 +30,18 @@ properties:
   template:
     containers:
     - env:
+      - name: AZURE_CONTAINER_MARKET
+        value: gold
+      - name: AZURE_CONTAINER_FINANCE
+        value: gold
+      - name: AZURE_CONTAINER_TARGETS
+        value: gold
+      - name: AZURE_CONTAINER_RANKING
+        value: ranking-data
+      - name: AZURE_CONTAINER_SILVER
+        value: silver
+      - name: LOG_FORMAT
+        value: JSON
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_CONTAINER_NAME
