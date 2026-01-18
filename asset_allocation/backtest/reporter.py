@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import calendar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -122,6 +123,8 @@ class Reporter:
         if daily_df.empty:
             raise ValueError("No daily metrics were recorded; cannot summarize.")
 
+        self._write_monthly_returns(daily_df)
+
         initial_cash = float(self.config.initial_cash)
         final_equity = float(daily_df["portfolio_value"].iloc[-1])
         total_return = final_equity / initial_cash - 1.0
@@ -157,6 +160,37 @@ class Reporter:
         self._update_run_index(summary)
         return summary
 
+    def _write_monthly_returns(self, daily_df: pd.DataFrame) -> None:
+        if "date" not in daily_df.columns or "portfolio_value" not in daily_df.columns:
+            return
+
+        working = daily_df[["date", "portfolio_value"]].copy()
+        working["date"] = pd.to_datetime(working["date"], errors="coerce")
+        working["portfolio_value"] = pd.to_numeric(working["portfolio_value"], errors="coerce")
+        working = working.dropna(subset=["date", "portfolio_value"]).sort_values("date")
+        if working.empty:
+            return
+
+        working["year"] = working["date"].dt.year
+        working["month"] = working["date"].dt.month
+
+        month_start = working.groupby(["year", "month"])["portfolio_value"].first()
+        month_end = working.groupby(["year", "month"])["portfolio_value"].last()
+        monthly_return = (month_end / month_start - 1.0).reset_index(name="return")
+
+        pivot = monthly_return.pivot(index="year", columns="month", values="return").reindex(columns=range(1, 13))
+        pivot.columns = [calendar.month_abbr[m] for m in pivot.columns]
+
+        year_start = working.groupby("year")["portfolio_value"].first()
+        year_end = working.groupby("year")["portfolio_value"].last()
+        yearly_return = (year_end / year_start - 1.0).to_dict()
+
+        pivot.insert(0, "Year", pivot.index)
+        pivot["Yearly"] = pivot.index.map(yearly_return)
+        pivot.reset_index(drop=True, inplace=True)
+
+        pivot.to_csv(self.output_dir / "monthly_returns.csv", index=False)
+
     def _update_run_index(self, summary: BacktestSummary) -> None:
         index_path = self.output_dir.parent / "run_index.csv"
         lock = FileLock(str(index_path) + ".lock")
@@ -181,4 +215,3 @@ class Reporter:
             else:
                 df = pd.DataFrame([row])
             df.to_csv(index_path, index=False)
-

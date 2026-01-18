@@ -29,6 +29,54 @@ def generate_run_id(*, now: Optional[datetime] = None, suffix_len: int = 6) -> s
     suffix = secrets.token_hex(max(1, suffix_len // 2))[:suffix_len]
     return f"RUN{date_part}-{suffix}"
 
+_STRICT_ALLOWED_TOP_LEVEL_KEYS = {
+    "run_name",
+    "start_date",
+    "end_date",
+    "initial_cash",
+    "universe",
+    "data",
+    "strategy",
+    "sizing",
+    "constraints",
+    "broker",
+    "output",
+}
+
+_STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
+    "universe": {"symbols", "asset_class", "currency"},
+    "data": {"price_source", "price_path", "signal_path", "price_fields", "frequency"},
+    "strategy": {"class", "class_name", "module", "parameters"},
+    "sizing": {"class", "class_name", "module", "parameters"},
+    "constraints": {"max_leverage", "max_position_size", "allow_short", "stop_loss"},
+    "broker": {"slippage_bps", "commission", "fill_policy"},
+    "output": {"local_dir", "adls_dir", "save_trades", "save_daily_metrics", "save_plots"},
+}
+
+
+def validate_config_dict_strict(data: Dict[str, Any]) -> None:
+    """
+    Best-effort strict validation to catch YAML typos early.
+
+    Only validates known keys; full semantic validation still occurs in BacktestConfig.validate().
+    """
+    if not isinstance(data, dict):
+        raise ValueError("BacktestConfig must be an object.")
+
+    unknown_top = set(data.keys()) - _STRICT_ALLOWED_TOP_LEVEL_KEYS
+    if unknown_top:
+        raise ValueError(f"Unknown top-level config field(s): {sorted(unknown_top)}")
+
+    for section, allowed in _STRICT_ALLOWED_SECTIONS.items():
+        if section not in data or data[section] is None:
+            continue
+        payload = data[section]
+        if not isinstance(payload, dict):
+            raise ValueError(f"{section} must be an object.")
+        unknown = set(payload.keys()) - allowed
+        if unknown:
+            raise ValueError(f"Unknown {section} field(s): {sorted(unknown)}")
+
 
 @dataclass(frozen=True)
 class UniverseConfig:
@@ -174,7 +222,7 @@ class BrokerConfig:
         if self.commission < 0:
             raise ValueError("broker.commission must be >= 0.")
         if self.fill_policy != "next_open":
-            raise ValueError("broker.fill_policy only supports 'next_open' in Phase 1.")
+            raise ValueError("broker.fill_policy only supports 'next_open' in the current engine.")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -187,6 +235,7 @@ class BrokerConfig:
 @dataclass(frozen=True)
 class OutputConfig:
     local_dir: str = "./backtest_results"
+    adls_dir: Optional[str] = None
     save_trades: bool = True
     save_daily_metrics: bool = True
     save_plots: bool = False
@@ -195,18 +244,22 @@ class OutputConfig:
     def from_dict(data: Dict[str, Any]) -> "OutputConfig":
         return OutputConfig(
             local_dir=str(data.get("local_dir") or "./backtest_results"),
+            adls_dir=str(data.get("adls_dir")) if data.get("adls_dir") else None,
             save_trades=bool(data.get("save_trades", True)),
             save_daily_metrics=bool(data.get("save_daily_metrics", True)),
             save_plots=bool(data.get("save_plots", False)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "local_dir": self.local_dir,
             "save_trades": self.save_trades,
             "save_daily_metrics": self.save_daily_metrics,
             "save_plots": self.save_plots,
         }
+        if self.adls_dir:
+            out["adls_dir"] = self.adls_dir
+        return out
 
 
 @dataclass(frozen=True)
@@ -258,9 +311,11 @@ class BacktestConfig:
         return cfg
 
     @staticmethod
-    def from_yaml(path: str | Path) -> "BacktestConfig":
+    def from_yaml(path: str | Path, *, strict: bool = False) -> "BacktestConfig":
         raw = Path(path).read_text(encoding="utf-8")
         data = yaml.safe_load(raw) or {}
+        if strict:
+            validate_config_dict_strict(data)
         return BacktestConfig.from_dict(data)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -293,4 +348,3 @@ class BacktestConfig:
             raise ValueError("initial_cash must be > 0.")
         self.constraints.validate()
         self.broker.validate()
-

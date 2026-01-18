@@ -56,6 +56,7 @@ def test_phase1_buy_and_hold_artifacts_and_execution_timing(tmp_path: Path) -> N
     assert (run_dir / "config.yaml").exists()
     assert (run_dir / "trades.csv").exists()
     assert (run_dir / "daily_metrics.csv").exists()
+    assert (run_dir / "monthly_returns.csv").exists()
     assert (run_dir / "summary.json").exists()
     assert (tmp_path / "run_index.csv").exists()
 

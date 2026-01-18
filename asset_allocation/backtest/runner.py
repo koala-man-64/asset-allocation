@@ -11,7 +11,7 @@ from asset_allocation.backtest.constraints import Constraints
 from asset_allocation.backtest.engine import BacktestEngine
 from asset_allocation.backtest.reporter import Reporter
 from asset_allocation.backtest.sizer import EqualWeightSizer, Sizer
-from asset_allocation.backtest.strategy import BuyAndHoldStrategy, Strategy
+from asset_allocation.backtest.strategy import BuyAndHoldStrategy, Strategy, TopNSignalStrategy
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,14 @@ def _build_strategy(config: BacktestConfig) -> Strategy:
         if not symbol:
             raise ValueError("BuyAndHoldStrategy requires a 'symbol' parameter or a non-empty universe.")
         return BuyAndHoldStrategy(symbol=symbol)
-    raise ValueError(f"Unknown strategy.class '{name}' (Phase 1 registry is strict).")
+    if name == "TopNSignalStrategy":
+        return TopNSignalStrategy(
+            signal_column=str(params.get("signal_column") or "composite_percentile"),
+            top_n=int(params.get("top_n", 10)),
+            min_signal=float(params["min_signal"]) if "min_signal" in params and params["min_signal"] is not None else None,
+            higher_is_better=bool(params.get("higher_is_better", True)),
+        )
+    raise ValueError(f"Unknown strategy.class '{name}' (registry is strict).")
 
 
 def _build_sizer(config: BacktestConfig) -> Sizer:
@@ -36,7 +43,7 @@ def _build_sizer(config: BacktestConfig) -> Sizer:
     params = config.sizing.parameters or {}
     if name == "EqualWeightSizer":
         return EqualWeightSizer(max_positions=int(params.get("max_positions", 10)))
-    raise ValueError(f"Unknown sizing.class '{name}' (Phase 1 registry is strict).")
+    raise ValueError(f"Unknown sizing.class '{name}' (registry is strict).")
 
 
 def run_backtest(
@@ -67,4 +74,3 @@ def run_backtest(
     reporter.write_artifacts()
 
     return BacktestRunResult(run_id=resolved_run_id, output_dir=reporter.output_dir)
-
