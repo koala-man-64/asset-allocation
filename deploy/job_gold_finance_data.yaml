@@ -34,8 +34,10 @@ properties:
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
-      - name: AZURE_CONTAINER_FINANCE
-        value: finance-data
+      - name: AZURE_CONTAINER_SILVER
+        value: silver
+      - name: AZURE_CONTAINER_GOLD
+        value: gold
       - name: AZURE_CONTAINER_COMMON
         value: common
       - name: YAHOO_USERNAME

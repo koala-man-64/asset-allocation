@@ -18,7 +18,8 @@ if project_root not in sys.path:
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
-    targets_container: str
+    silver_container: str
+    gold_container: str
     max_workers: int
     tickers: Sequence[str]
 
@@ -191,12 +192,12 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _process_ticker(task: Tuple[str, str, str, str]) -> Dict[str, Any]:
+def _process_ticker(task: Tuple[str, str, str, str, str]) -> Dict[str, Any]:
     from scripts.common import delta_core
 
-    ticker, raw_path, gold_path, targets_container = task
+    ticker, raw_path, gold_path, silver_container, gold_container = task
 
-    df_raw = delta_core.load_delta(targets_container, raw_path)
+    df_raw = delta_core.load_delta(silver_container, raw_path)
     if df_raw is None or df_raw.empty:
         return {"ticker": ticker, "status": "skipped_no_data", "raw_path": raw_path}
 
@@ -206,7 +207,7 @@ def _process_ticker(task: Tuple[str, str, str, str]) -> Dict[str, Any]:
         return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
 
     try:
-        delta_core.store_delta(df_features, targets_container, gold_path, mode="overwrite", schema_mode="overwrite")
+        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite", schema_mode="overwrite")
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
 
@@ -233,9 +234,8 @@ def _get_max_workers() -> int:
 
 
 def _build_job_config() -> FeatureJobConfig:
-    targets_container = os.environ.get("AZURE_CONTAINER_TARGETS") or ""
-    if not targets_container:
-        raise RuntimeError("Missing required environment variable: AZURE_CONTAINER_TARGETS")
+    silver_container = os.environ.get("AZURE_CONTAINER_SILVER") or "silver"
+    gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or "gold"
 
     from scripts.common import core as mdc
     from scripts.common import config as common_cfg
@@ -256,7 +256,8 @@ def _build_job_config() -> FeatureJobConfig:
     mdc.write_line(f"Price target feature engineering configured for {len(tickers)} tickers (max_workers={max_workers})")
 
     return FeatureJobConfig(
-        targets_container=targets_container,
+        silver_container=silver_container,
+        gold_container=gold_container,
         max_workers=max_workers,
         tickers=tickers,
     )
@@ -273,7 +274,7 @@ def main() -> int:
     for ticker in job_cfg.tickers:
         raw_path = DataPaths.get_price_target_path(ticker)
         gold_path = DataPaths.get_gold_price_targets_path(ticker)
-        tasks.append((ticker, raw_path, gold_path, job_cfg.targets_container))
+        tasks.append((ticker, raw_path, gold_path, job_cfg.silver_container, job_cfg.gold_container))
 
     mp_context = mp.get_context("spawn")
     results: List[Dict[str, Any]] = []

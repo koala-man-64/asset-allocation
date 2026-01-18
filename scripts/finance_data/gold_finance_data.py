@@ -18,7 +18,8 @@ if project_root not in sys.path:
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
-    finance_container: str
+    silver_container: str
+    gold_container: str
     max_workers: int
     tickers: Sequence[str]
 
@@ -461,16 +462,16 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _process_ticker(task: Tuple[str, str, str, str, str, str, str]) -> Dict[str, Any]:
+def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str]) -> Dict[str, Any]:
     from scripts.common import delta_core
 
-    ticker, income_path, balance_path, cashflow_path, valuation_path, gold_path, finance_container = task
+    ticker, income_path, balance_path, cashflow_path, valuation_path, gold_path, silver_container, gold_container = task
 
-    df_income = _prepare_table(delta_core.load_delta(finance_container, income_path), ticker)
-    df_balance = _prepare_table(delta_core.load_delta(finance_container, balance_path), ticker)
-    df_cashflow = _prepare_table(delta_core.load_delta(finance_container, cashflow_path), ticker)
+    df_income = _prepare_table(delta_core.load_delta(silver_container, income_path), ticker)
+    df_balance = _prepare_table(delta_core.load_delta(silver_container, balance_path), ticker)
+    df_cashflow = _prepare_table(delta_core.load_delta(silver_container, cashflow_path), ticker)
 
-    df_valuation_raw = delta_core.load_delta(finance_container, valuation_path)
+    df_valuation_raw = delta_core.load_delta(silver_container, valuation_path)
     df_valuation = _prepare_table(df_valuation_raw, ticker) if df_valuation_raw is not None else None
 
     if not any([df_income is not None, df_balance is not None, df_cashflow is not None, df_valuation is not None]):
@@ -499,7 +500,7 @@ def _process_ticker(task: Tuple[str, str, str, str, str, str, str]) -> Dict[str,
         return {"ticker": ticker, "status": "failed_compute", "error": str(exc)}
 
     try:
-        delta_core.store_delta(df_features, finance_container, gold_path, mode="overwrite")
+        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
 
@@ -526,9 +527,8 @@ def _get_max_workers() -> int:
 
 
 def _build_job_config() -> FeatureJobConfig:
-    finance_container = os.environ.get("AZURE_CONTAINER_FINANCE") or ""
-    if not finance_container:
-        raise RuntimeError("Missing required environment variable: AZURE_CONTAINER_FINANCE")
+    silver_container = os.environ.get("AZURE_CONTAINER_SILVER") or "silver"
+    gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or "gold"
 
     from scripts.common import core as mdc
     from scripts.common import config as common_cfg
@@ -549,7 +549,8 @@ def _build_job_config() -> FeatureJobConfig:
     mdc.write_line(f"Finance feature engineering configured for {len(tickers)} tickers (max_workers={max_workers})")
 
     return FeatureJobConfig(
-        finance_container=finance_container,
+        silver_container=silver_container,
+        gold_container=gold_container,
         max_workers=max_workers,
         tickers=tickers,
     )
@@ -577,7 +578,8 @@ def main() -> int:
                 cashflow_path,
                 valuation_path,
                 gold_path,
-                job_cfg.finance_container,
+                job_cfg.silver_container,
+                job_cfg.gold_container,
             )
         )
 
