@@ -35,3 +35,9 @@ local.settings.json
 data/
 # Backtest Artifacts
 backtest_results/
+
+# --- Node / Frontend ---
+node_modules/
+**/node_modules/
+asset_allocation/ui2.0/dist/
+asset_allocation/ui2.0/.vite/

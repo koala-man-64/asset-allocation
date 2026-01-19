@@ -11,3 +11,7 @@ Tests
 .github
 *.md
 !README.md
+node_modules
+**/node_modules
+asset_allocation/ui2.0/dist
+asset_allocation/ui2.0/.vite
