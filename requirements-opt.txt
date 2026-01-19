@@ -1,0 +1,14 @@
+#
+# Optional dependencies (install only if you need these features).
+#
+# Optimization sizing (cvxpy)
+cvxpy>=1.4.0
+scikit-learn
+
+# Distributed execution / scaling (not required for core backtests)
+dask
+distributed
+
+# Market calendars / indicators (not required for core backtests)
+pandas_market_calendars
+ta

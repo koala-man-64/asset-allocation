@@ -1,12 +1,8 @@
 
-import sys
 import os
 import pandas as pd
 import warnings
 from io import BytesIO
-
-# Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from scripts.common import core as mdc
 from scripts.common import delta_core

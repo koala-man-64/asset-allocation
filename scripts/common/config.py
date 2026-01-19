@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 # Initialize colorama
 init(autoreset=True)
 
-# Load environment variables from .env file
-# Load environment variables from .env file
-load_dotenv(override=True)
+# Load environment variables from .env file for local development.
+# CI/tests can disable this via DISABLE_DOTENV=true.
+if os.environ.get("DISABLE_DOTENV", "").strip().lower() not in {"1", "true", "yes"}:
+    load_dotenv(override=False)
 
 # --- Constants & Configuration ---
 

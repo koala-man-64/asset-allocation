@@ -18,12 +18,16 @@ import pandas as pd
 
 from scripts.common.core import write_line
 from scripts.common.delta_core import load_delta, store_delta
+from scripts.common.data_contract import (
+    CANONICAL_RANKINGS_PATH,
+    CANONICAL_RANKING_SIGNALS_PATH,
+    CANONICAL_COMPOSITE_SIGNALS_PATH,
+)
 
 
 DEFAULT_TOP_N = 50
-CANONICAL_RANKINGS_PATH = "platinum/rankings"
-RANKING_SIGNALS_PATH = "gold/ranking_signals"
-COMPOSITE_SIGNALS_PATH = "gold/composite_signals"
+RANKING_SIGNALS_PATH = CANONICAL_RANKING_SIGNALS_PATH
+COMPOSITE_SIGNALS_PATH = CANONICAL_COMPOSITE_SIGNALS_PATH
 
 
 def _ensure_required_columns(df: pd.DataFrame, required: Sequence[str], label: str) -> None:
@@ -220,8 +224,8 @@ def materialize_signals_for_year_month(
 ) -> MaterializeResult:
     """
     Materializes:
-    - gold/ranking_signals (long, fixed schema)
-    - gold/composite_signals (long, fixed schema)
+    - platinum/signals/ranking_signals (long, fixed schema)
+    - platinum/signals/daily (composite, fixed schema)
 
     Overwrites only the given year_month partition (safe because year_month is the partition column).
     """
@@ -271,4 +275,3 @@ def materialize_signals_for_year_month(
         signals_rows=len(signals),
         composite_rows=len(composite),
     )
-

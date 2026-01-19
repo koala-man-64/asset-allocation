@@ -11,7 +11,7 @@ universe:
 data:
   price_source: "ADLS"
   price_path: "silver/market-data/{symbol}"
-  signal_path: "platinum/signals/daily"
+  signal_path: "ranking-data/platinum/signals/daily"
   frequency: "Daily"
 
 strategy:

@@ -116,14 +116,20 @@ class Strategy(ABC):
             current_side = self._entry_side.get(sym)
 
             # Check if this is a new position or side flip
-            if current_side != side:
-                # Attempt to get execution price (Open or Close)
-                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
-                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
-                entry_px = open_px if open_px is not None else close_px
-                
+            state = portfolio.position_states.get(sym) if portfolio.position_states else None
+            state_entry_date = state.entry_date if state else None
+            state_entry_px = state.avg_entry_price if state else None
+
+            if current_side != side or (state_entry_date is not None and self._entry_date.get(sym) != state_entry_date):
+                # Prefer broker-provided entry price (executed at open), with a price fallback.
+                entry_px = state_entry_px
+                if entry_px is None:
+                    open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
+                    close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+                    entry_px = open_px if open_px is not None else close_px
+
                 if entry_px is not None:
-                    self._entry_date[sym] = as_of
+                    self._entry_date[sym] = state_entry_date or as_of
                     self._entry_price[sym] = float(entry_px)
                     self._entry_side[sym] = side
                     self._high_water_marks[sym] = float(entry_px)
@@ -132,7 +138,6 @@ class Strategy(ABC):
                 # Update High/Low Water Marks for existing positions
                 high_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["high", "High"])
                 low_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["low", "Low"])
-                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
 
                 if high_px is not None:
                     curr_hwm = self._high_water_marks.get(sym, -1e9)
@@ -389,12 +394,19 @@ class LongShortTopNStrategy(Strategy):
 
         for sym, shares in held.items():
             side = 1 if shares > 0 else -1
-            if self._entry_side.get(sym) != side:
-                open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
-                close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
-                entry_px = open_px if open_px is not None else close_px
+            state = portfolio.position_states.get(sym) if portfolio.position_states else None
+            state_entry_date = state.entry_date if state else None
+            state_entry_px = state.avg_entry_price if state else None
+
+            if self._entry_side.get(sym) != side or (state_entry_date is not None and self._entry_date.get(sym) != state_entry_date):
+                entry_px = state_entry_px
+                if entry_px is None:
+                    open_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["open", "Open"])
+                    close_px = _latest_bar_value(prices, as_of=as_of, symbol=sym, columns=["close", "Close"])
+                    entry_px = open_px if open_px is not None else close_px
+
                 if entry_px is not None:
-                    self._entry_date[sym] = as_of
+                    self._entry_date[sym] = state_entry_date or as_of
                     self._entry_price[sym] = float(entry_px)
                     self._entry_side[sym] = side
                     self._scales[sym] = 1.0

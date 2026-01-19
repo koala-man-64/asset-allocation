@@ -1,13 +1,9 @@
-
-import sys
 import os
 import argparse
 import pandas as pd
 from azure.storage.blob import BlobServiceClient
 from deltalake import DeltaTable
 
-# Add project root to path
-sys.path.append(os.getcwd())
 try:
     from scripts.common import config as cfg
 except ImportError:

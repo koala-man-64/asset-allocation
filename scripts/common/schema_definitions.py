@@ -1,8 +1,7 @@
-
-\"\"\"
+"""
 Schema definitions for the Asset Allocation project.
 Defines the columns for Market Data, Finance Data, Earnings Data, and Price Target Data.
-\"\"\"
+"""
 
 MARKET_DATA_COLUMNS = [
     "open", "high", "low", "close", "volume", "symbol", "return_1d", "return_5d",

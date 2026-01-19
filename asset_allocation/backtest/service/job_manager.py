@@ -43,7 +43,15 @@ class JobManager:
                 self._store.update_run(run_id, status="running", started_at=started_at)
 
                 # Ensure artifacts reflect the effective output base dir in config.yaml.
-                effective = replace(config, output=replace(config.output, local_dir=str(self._output_base_dir)))
+                requested_adls_dir = config.output.adls_dir
+                effective = replace(
+                    config,
+                    output=replace(
+                        config.output,
+                        local_dir=str(self._output_base_dir),
+                        adls_dir=None,
+                    ),
+                )
 
                 result = run_backtest(
                     effective,
@@ -52,11 +60,11 @@ class JobManager:
                 )
 
                 # Optional artifact upload.
-                if effective.output.adls_dir:
+                if requested_adls_dir:
                     upload = upload_run_artifacts(
                         run_id=run_id,
                         run_dir=result.output_dir,
-                        adls_dir=effective.output.adls_dir,
+                        adls_dir=requested_adls_dir,
                     )
                     self._store.update_run(
                         run_id,

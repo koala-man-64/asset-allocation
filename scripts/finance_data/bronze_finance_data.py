@@ -1,15 +1,11 @@
 
 import os
-import sys
 import asyncio
 import warnings
 import datetime
 from pathlib import Path
 import shutil
 from datetime import timezone
-
-# Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from scripts.common import core as mdc
 from scripts.common import playwright_lib as pl

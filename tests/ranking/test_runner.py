@@ -3,6 +3,7 @@ import pytest
 
 from scripts.ranking import runner
 from scripts.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
+from scripts.common import delta_core
 
 
 class DummyClient:
@@ -87,3 +88,26 @@ def test_runner_invokes_save_rankings(monkeypatch):
 
     assert calls
     assert all(results for results in calls)
+
+
+def test_load_market_data_prefers_wide_table(monkeypatch):
+    monkeypatch.setenv("RANKING_MARKET_WIDE_DELTA_PATH", "market_by_date")
+
+    wide = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2023-01-01")],
+            "symbol": ["ALPHA"],
+            "return_60d": [0.15],
+        }
+    )
+
+    delta_core.store_delta(
+        wide,
+        container=runner.cfg.AZURE_CONTAINER_MARKET,
+        path="market_by_date",
+        mode="overwrite",
+    )
+
+    loaded = runner._load_market_data({"ALPHA"})
+    assert not loaded.empty
+    assert loaded["symbol"].astype(str).unique().tolist() == ["ALPHA"]

@@ -1,17 +1,8 @@
 import pytest
 import os
-import sys
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-# Add project root to sys.path if not picked up by pythonpath
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# Load environment variables from .env file (if not already done)
-from dotenv import load_dotenv
-load_dotenv(os.path.join(project_root, '.env'), override=True)
+os.environ.setdefault("DISABLE_DOTENV", "true")
 
 # Mock Environment Variables for Testing (Set fallbacks if missing)
 # Note: NASDAQ_API_KEY should be in .env for actual data fetching.
@@ -27,14 +18,13 @@ containers = [
     "AZURE_CONTAINER_MARKET", "AZURE_CONTAINER_FINANCE", 
     "AZURE_CONTAINER_EARNINGS", "AZURE_CONTAINER_TARGETS", 
     "AZURE_CONTAINER_COMMON",
+    "AZURE_CONTAINER_RANKING",
     "AZURE_CONTAINER_BRONZE",
     "AZURE_CONTAINER_SILVER",
     "AZURE_CONTAINER_GOLD",
 ]
 for container in containers:
     os.environ.setdefault(container, "test-container")
-
-from scripts.common import config as cfg
 from scripts.common.blob_storage import BlobStorageClient
 
 @pytest.fixture(scope="session", autouse=True)

@@ -28,6 +28,9 @@ universe:
 data:
   price_source: "ADLS"       # or "local"
   price_path: "silver/market-data/{symbol}"
+  # Optional: Delta signals table (container/path) used by signal-driven strategies.
+  # Ranking composite signals (canonical): "ranking-data/platinum/signals/daily"
+  signal_path: "ranking-data/platinum/signals/daily"
   frequency: "Daily"
 
 strategy:
@@ -60,6 +63,8 @@ output:
 ```
 
 ### Key Parameters
+*   **`data.signal_path`**: Optional signals input table (Delta `container/path` or local file path when `price_source: local`).
+    *   If using ranking-derived signals, set `signal_path: "ranking-data/platinum/signals/daily"` and use `signal_column: "composite_percentile"` in your strategy.
 *   **`strategy.parameters.rebalance`**: Controls trading frequency.
     *   `daily`: Checks every bar (default).
     *   `weekly`: First trading day of the week.

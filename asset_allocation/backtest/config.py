@@ -59,7 +59,19 @@ _STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
         "net_exposure_max",
         "min_weight_change",
     },
-    "broker": {"slippage_bps", "commission", "fill_policy"},
+    "broker": {
+        "slippage_bps",
+        "spread_bps",
+        "commission",
+        "fill_policy",
+        "allow_fractional_shares",
+        "lot_size",
+        "rounding_mode",
+        "min_trade_notional",
+        "min_trade_shares",
+        "on_missing_price",
+        "max_participation_rate",
+    },
     "output": {
         "local_dir",
         "adls_dir",
@@ -273,30 +285,71 @@ class ConstraintsConfig:
 @dataclass(frozen=True)
 class BrokerConfig:
     slippage_bps: float = 0.0
+    spread_bps: float = 0.0
     commission: float = 0.0
     fill_policy: str = "next_open"
+    allow_fractional_shares: bool = True
+    lot_size: int = 1
+    rounding_mode: str = "toward_zero"
+    min_trade_notional: float = 0.0
+    min_trade_shares: float = 0.0
+    on_missing_price: Literal["skip", "reject"] = "skip"
+    max_participation_rate: Optional[float] = None
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "BrokerConfig":
+        max_participation_rate = data.get("max_participation_rate")
+        if max_participation_rate is not None:
+            max_participation_rate = float(max_participation_rate)
         return BrokerConfig(
             slippage_bps=float(data.get("slippage_bps", 0.0)),
+            spread_bps=float(data.get("spread_bps", 0.0)),
             commission=float(data.get("commission", 0.0)),
             fill_policy=str(data.get("fill_policy") or "next_open"),
+            allow_fractional_shares=bool(data.get("allow_fractional_shares", True)),
+            lot_size=int(data.get("lot_size", 1)),
+            rounding_mode=str(data.get("rounding_mode") or "toward_zero"),
+            min_trade_notional=float(data.get("min_trade_notional", 0.0)),
+            min_trade_shares=float(data.get("min_trade_shares", 0.0)),
+            on_missing_price=str(data.get("on_missing_price") or "skip"),
+            max_participation_rate=max_participation_rate,
         )
 
     def validate(self) -> None:
         if self.slippage_bps < 0:
             raise ValueError("broker.slippage_bps must be >= 0.")
+        if self.spread_bps < 0:
+            raise ValueError("broker.spread_bps must be >= 0.")
         if self.commission < 0:
             raise ValueError("broker.commission must be >= 0.")
         if self.fill_policy != "next_open":
             raise ValueError("broker.fill_policy only supports 'next_open' in the current engine.")
+        if self.lot_size <= 0:
+            raise ValueError("broker.lot_size must be > 0.")
+        if self.rounding_mode not in {"toward_zero", "nearest", "floor", "ceil"}:
+            raise ValueError("broker.rounding_mode must be one of: toward_zero, nearest, floor, ceil.")
+        if self.min_trade_notional < 0:
+            raise ValueError("broker.min_trade_notional must be >= 0.")
+        if self.min_trade_shares < 0:
+            raise ValueError("broker.min_trade_shares must be >= 0.")
+        if self.on_missing_price not in {"skip", "reject"}:
+            raise ValueError("broker.on_missing_price must be 'skip' or 'reject'.")
+        if self.max_participation_rate is not None and not (0.0 < float(self.max_participation_rate) <= 1.0):
+            raise ValueError("broker.max_participation_rate must be in (0, 1] when set.")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "slippage_bps": self.slippage_bps,
+            "spread_bps": self.spread_bps,
             "commission": self.commission,
             "fill_policy": self.fill_policy,
+            "allow_fractional_shares": self.allow_fractional_shares,
+            "lot_size": self.lot_size,
+            "rounding_mode": self.rounding_mode,
+            "min_trade_notional": self.min_trade_notional,
+            "min_trade_shares": self.min_trade_shares,
+            "on_missing_price": self.on_missing_price,
+            "max_participation_rate": self.max_participation_rate,
         }
 
 

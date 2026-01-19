@@ -1,6 +1,5 @@
 import os
 import re
-import sys
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -8,12 +7,6 @@ from typing import Sequence, Tuple, Dict, Any, List, Optional
 
 import numpy as np
 import pandas as pd
-
-# Add project root to sys.path to ensure absolute imports work
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
-if project_root not in sys.path:
-    sys.path.append(project_root)
 
 
 @dataclass(frozen=True)

@@ -1,12 +1,8 @@
 
-import sys
 import os
 import asyncio
 import warnings
 from pathlib import Path
-
-# Adjust path to find 'scripts' when running directly
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from scripts.common import core as mdc
 from scripts.earnings_data import config as cfg

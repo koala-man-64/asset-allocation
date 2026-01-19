@@ -91,7 +91,7 @@ def test_load_backtest_inputs_delta_supports_per_symbol_prices(tmp_path: Path) -
             "composite_percentile": [1.0, 0.0],
         }
     )
-    delta_core.store_delta(signals, container="ranking-data", path="gold/composite_signals", mode="overwrite")
+    delta_core.store_delta(signals, container="ranking-data", path="platinum/signals/daily", mode="overwrite")
 
     cfg = BacktestConfig.from_dict(
         {
@@ -103,7 +103,7 @@ def test_load_backtest_inputs_delta_supports_per_symbol_prices(tmp_path: Path) -
             "data": {
                 "price_source": "ADLS",
                 "price_path": "silver/market-data/{symbol}",
-                "signal_path": "ranking-data/gold/composite_signals",
+                "signal_path": "ranking-data/platinum/signals/daily",
             },
             "strategy": {"class": "TopNSignalStrategy", "parameters": {"signal_column": "composite_percentile", "top_n": 1}},
             "sizing": {"class": "EqualWeightSizer"},

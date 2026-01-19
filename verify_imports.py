@@ -1,40 +1,68 @@
+from __future__ import annotations
 
-import sys
-import os
+import importlib
+from typing import Iterable
 
-# Add project root to path
-sys.path.append(os.getcwd())
 
-print("Verifying imports...")
+def _check_group(label: str, modules: Iterable[str]) -> bool:
+    ok = True
+    for name in modules:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:
+            ok = False
+            print(f"{label} import FAILED: {name} ({exc})")
+    if ok:
+        print(f"{label} imports: OK")
+    return ok
 
-try:
-    from scripts.market_data import bronze_market_data
-    from scripts.market_data import silver_market_data
-    from scripts.market_data import gold_market_data
-    print("Market Data imports: OK")
-except Exception as e:
-    print(f"Market Data imports FAILED: {e}")
 
-try:
-    from scripts.finance_data import bronze_finance_data
-    from scripts.finance_data import silver_finance_data
-    from scripts.finance_data import gold_finance_data
-    print("Finance Data imports: OK")
-except Exception as e:
-    print(f"Finance Data imports FAILED: {e}")
+def main() -> int:
+    print("Verifying imports...")
+    checks = [
+        (
+            "Market Data",
+            [
+                "scripts.market_data.bronze_market_data",
+                "scripts.market_data.silver_market_data",
+                "scripts.market_data.gold_market_data",
+            ],
+        ),
+        (
+            "Finance Data",
+            [
+                "scripts.finance_data.bronze_finance_data",
+                "scripts.finance_data.silver_finance_data",
+                "scripts.finance_data.gold_finance_data",
+            ],
+        ),
+        (
+            "Earnings Data",
+            [
+                "scripts.earnings_data.bronze_earnings_data",
+                "scripts.earnings_data.silver_earnings_data",
+                "scripts.earnings_data.gold_earnings_data",
+            ],
+        ),
+        (
+            "Price Target Data",
+            [
+                "scripts.price_target_data.bronze_price_target_data",
+                "scripts.price_target_data.silver_price_target_data",
+                "scripts.price_target_data.gold_price_target_data",
+            ],
+        ),
+    ]
 
-try:
-    from scripts.earnings_data import bronze_earnings_data
-    from scripts.earnings_data import silver_earnings_data
-    from scripts.earnings_data import gold_earnings_data
-    print("Earnings Data imports: OK")
-except Exception as e:
-    print(f"Earnings Data imports FAILED: {e}")
+    ok = True
+    for label, modules in checks:
+        ok = _check_group(label, modules) and ok
 
-try:
-    from scripts.price_target_data import bronze_price_target_data
-    from scripts.price_target_data import silver_price_target_data
-    from scripts.price_target_data import gold_price_target_data
-    print("Price Target Data imports: OK")
-except Exception as e:
-    print(f"Price Target Data imports FAILED: {e}")
+    if not ok:
+        print("One or more imports failed. Ensure the project is installed (e.g. `pip install -e .`).")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

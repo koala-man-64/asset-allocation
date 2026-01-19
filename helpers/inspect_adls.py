@@ -5,12 +5,10 @@ import pandas as pd
 from azure.storage.blob import BlobServiceClient
 from typing import List, Optional
 
-# Add project root to path
-sys.path.append(os.getcwd())
 try:
     from scripts.common import delta_core, config as cfg
 except ImportError:
-    print("Error: Could not import project scripts. Make sure you are running from the project root.")
+    print("Error: Could not import project scripts. Install the project (e.g. `pip install -e .`).")
     sys.exit(1)
 
 def clear_screen():

@@ -3,7 +3,6 @@ Main Runner for the Ranking Framework.
 Orchestrates data loading, strategy execution, and result saving.
 """
 import os
-import sys
 from datetime import date, datetime
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -14,6 +13,7 @@ from scripts.common.blob_storage import BlobStorageClient
 from scripts.common.core import write_error, write_line
 from scripts.common import core as mdc
 from scripts.common.delta_core import load_delta
+from scripts.common.data_contract import CANONICAL_RANKINGS_PATH
 from scripts.ranking.core import save_rankings
 from scripts.ranking.signals import DEFAULT_TOP_N, materialize_signals_for_year_month
 from scripts.ranking.strategies import (
@@ -22,13 +22,6 @@ from scripts.ranking.strategies import (
     MomentumStrategy,
     ValueStrategy,
 )
-
-
-# Ensure project root is in path for CLI/container execution.
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 
 DeltaSource = Dict[str, str]
@@ -163,7 +156,24 @@ def _get_market_feature_tickers(
 
 
 def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
-    # Load per-ticker market features from the market container.
+    from scripts.common.pipeline import DataPaths
+
+    wide_path = os.environ.get("RANKING_MARKET_WIDE_DELTA_PATH", "").strip().lstrip("/")
+    if wide_path:
+        wide = load_delta(cfg.AZURE_CONTAINER_MARKET, wide_path)
+        if wide is not None and not wide.empty:
+            wide = _normalize_symbol_column(wide)
+            if whitelist:
+                wide = wide[wide["symbol"].isin(whitelist)]
+            if wide.empty:
+                return pd.DataFrame()
+            write_line(
+                f"Loaded market features from wide table {cfg.AZURE_CONTAINER_MARKET}/{wide_path} "
+                f"(rows={len(wide)})"
+            )
+            return wide.reset_index(drop=True)
+
+    # Fallback: load per-ticker market features from the market container.
     client = _build_blob_client(cfg.AZURE_CONTAINER_MARKET, label="market container")
 
     tickers = _get_market_feature_tickers(client, whitelist)
@@ -175,8 +185,6 @@ def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
         f"Loading market features for {len(tickers)} ticker(s) from "
         f"{cfg.AZURE_CONTAINER_MARKET}/gold/<ticker>..."
     )
-
-    from scripts.common.pipeline import DataPaths
 
     frames = []
     for ticker in tickers:
@@ -345,12 +353,12 @@ def assemble_strategy_data(strategy: AbstractStrategy) -> pd.DataFrame:
 def _load_existing_ranking_dates(strategy_name: str, container: str) -> Set[date]:
     filtered = load_delta(
         container,
-        "platinum/rankings",
+        CANONICAL_RANKINGS_PATH,
         columns=["date"],
         filters=[("strategy", "=", strategy_name)],
     )
     if filtered is None:
-        rankings = load_delta(container, "platinum/rankings", columns=["strategy", "date"])
+        rankings = load_delta(container, CANONICAL_RANKINGS_PATH, columns=["strategy", "date"])
         if rankings is None or rankings.empty:
             return set()
         if "strategy" not in rankings.columns or "date" not in rankings.columns:

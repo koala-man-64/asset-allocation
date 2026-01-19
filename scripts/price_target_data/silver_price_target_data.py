@@ -1,14 +1,10 @@
 
-import sys
 import os
 import warnings
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 from io import BytesIO
-
-# Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from scripts.common import core as mdc
 from scripts.common import delta_core

@@ -1,13 +1,9 @@
 
 import os
-import sys
 import asyncio
 import pandas as pd
 from datetime import datetime
 import warnings
-
-# Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from scripts.market_data import config as cfg
 from scripts.common import core as mdc

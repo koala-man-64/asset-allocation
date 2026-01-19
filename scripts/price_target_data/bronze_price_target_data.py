@@ -1,5 +1,4 @@
 
-import sys
 import os
 import asyncio
 import warnings
@@ -8,9 +7,6 @@ import nasdaqdatalink
 from datetime import datetime, date, timezone
 from pathlib import Path
 from typing import List
-
-# Adjust path to find 'scripts' when running directly
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from scripts.common import core as mdc
 from scripts.price_target_data import config as cfg

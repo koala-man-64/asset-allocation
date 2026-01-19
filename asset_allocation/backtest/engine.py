@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Dict, List, Optional
@@ -9,7 +10,7 @@ import pandas as pd
 from asset_allocation.backtest.broker import SimulatedBroker
 from asset_allocation.backtest.config import BacktestConfig
 from asset_allocation.backtest.constraints import Constraints
-from asset_allocation.backtest.models import PortfolioSnapshot
+from asset_allocation.backtest.models import MarketBar, MarketSnapshot, PortfolioSnapshot
 from asset_allocation.backtest.portfolio import Portfolio
 from asset_allocation.backtest.reporter import Reporter
 from asset_allocation.backtest.sizer import Sizer
@@ -23,6 +24,16 @@ def _normalize_symbol(value: str) -> str:
 def _to_date_series(series: pd.Series) -> pd.Series:
     dt = pd.to_datetime(series, errors="coerce")
     return dt.dt.date
+
+
+def _maybe_float(value: object) -> Optional[float]:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(out) or math.isinf(out):
+        return None
+    return out
 
 
 def _normalize_prices(prices: pd.DataFrame) -> pd.DataFrame:
@@ -127,18 +138,29 @@ class BacktestEngine:
             except KeyError:
                 day_prices = pd.DataFrame(columns=["open", "close"])
 
-            open_prices = pd.to_numeric(day_prices["open"], errors="coerce").dropna().to_dict()
             close_prices = pd.to_numeric(day_prices["close"], errors="coerce").dropna().to_dict()
+            market = MarketSnapshot(
+                as_of=current_date,
+                bar_index=i,
+                bars={
+                    str(symbol): MarketBar(
+                        open=_maybe_float(row.get("open")),
+                        high=_maybe_float(row.get("high")),
+                        low=_maybe_float(row.get("low")),
+                        close=_maybe_float(row.get("close")),
+                        volume=_maybe_float(row.get("volume")),
+                    )
+                    for symbol, row in day_prices.iterrows()
+                },
+            )
 
             # Execute orders at open (except for the first bar, which has no prior close).
             fills = []
             costs = None
             if i > 0 and pending_targets:
-                fills, costs = broker.execute_target_weights(
-                    current_date,
-                    target_weights=pending_targets,
-                    open_prices=open_prices,
-                )
+                execution = broker.execute_target_weights(market, target_weights=pending_targets)
+                fills = execution.fills
+                costs = execution.costs
                 self.reporter.record_trades(fills)
 
             # Mark-to-market at close and record daily metrics.
@@ -200,6 +222,8 @@ class BacktestEngine:
                 cash=portfolio.cash,
                 positions=dict(portfolio.positions),
                 equity=equity,
+                bar_index=i,
+                position_states=broker.get_position_states(),
             )
             decision = self.strategy.on_bar(
                 current_date,

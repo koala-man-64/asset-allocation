@@ -1,7 +1,6 @@
 import io
 import logging
 import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,17 +12,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-try:
-    from scripts.common.blob_storage import BlobStorageClient
-    from scripts.common.delta_core import load_delta
-except ModuleNotFoundError as exc:
-    if exc.name != "scripts":
-        raise
-    repo_root = Path(__file__).resolve().parents[2]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    from scripts.common.blob_storage import BlobStorageClient
-    from scripts.common.delta_core import load_delta
+from scripts.common.blob_storage import BlobStorageClient
+from scripts.common.data_contract import (
+    CANONICAL_COMPOSITE_SIGNALS_PATH,
+    CANONICAL_RANKING_SIGNALS_PATH,
+    LEGACY_COMPOSITE_SIGNALS_PATH,
+    LEGACY_RANKING_SIGNALS_PATH,
+)
+from scripts.common.delta_core import load_delta
 
 logger = logging.getLogger("asset_allocation.ui")
 logging.basicConfig(level=os.environ.get("UI_LOG_LEVEL", "INFO"))
@@ -256,10 +252,17 @@ def _get_strategy_names(year_month: str) -> List[str]:
     container = _get_ranking_container()
     strategies_df = load_delta(
         container,
-        "gold/ranking_signals",
+        CANONICAL_RANKING_SIGNALS_PATH,
         columns=["strategy"],
         filters=[("year_month", "=", year_month)],
     )
+    if strategies_df is None or strategies_df.empty:
+        strategies_df = load_delta(
+            container,
+            LEGACY_RANKING_SIGNALS_PATH,
+            columns=["strategy"],
+            filters=[("year_month", "=", year_month)],
+        )
     if strategies_df is None or strategies_df.empty or "strategy" not in strategies_df.columns:
         return []
     return sorted(strategies_df["strategy"].dropna().astype(str).unique().tolist())
@@ -288,6 +291,9 @@ def rankings_snapshot(
     """
     Returns top-N symbols for a given date with composite and per-strategy ranks.
     Reads from Delta tables in the ranking container:
+    - platinum/signals/daily (canonical composite signals)
+    - platinum/signals/ranking_signals (canonical per-strategy ranks)
+    Falls back to legacy:
     - gold/composite_signals
     - gold/ranking_signals
     """
@@ -307,13 +313,23 @@ def rankings_snapshot(
 
     composite = load_delta(
         container,
-        "gold/composite_signals",
+        CANONICAL_COMPOSITE_SIGNALS_PATH,
         filters=[
             ("year_month", "=", year_month),
             ("date", ">=", day_start.to_pydatetime()),
             ("date", "<", day_end.to_pydatetime()),
         ],
     )
+    if composite is None or composite.empty:
+        composite = load_delta(
+            container,
+            LEGACY_COMPOSITE_SIGNALS_PATH,
+            filters=[
+                ("year_month", "=", year_month),
+                ("date", ">=", day_start.to_pydatetime()),
+                ("date", "<", day_end.to_pydatetime()),
+            ],
+        )
     if composite is None or composite.empty:
         raise HTTPException(status_code=404, detail=f"No composite rankings found for {target_day.date()}.")
 
@@ -323,7 +339,7 @@ def rankings_snapshot(
 
     signals = load_delta(
         container,
-        "gold/ranking_signals",
+        CANONICAL_RANKING_SIGNALS_PATH,
         filters=[
             ("year_month", "=", year_month),
             ("date", ">=", day_start.to_pydatetime()),
@@ -331,6 +347,17 @@ def rankings_snapshot(
         ],
         columns=["symbol", "strategy", "rank"],
     )
+    if signals is None:
+        signals = load_delta(
+            container,
+            LEGACY_RANKING_SIGNALS_PATH,
+            filters=[
+                ("year_month", "=", year_month),
+                ("date", ">=", day_start.to_pydatetime()),
+                ("date", "<", day_end.to_pydatetime()),
+            ],
+            columns=["symbol", "strategy", "rank"],
+        )
     if signals is None:
         signals = pd.DataFrame()
 

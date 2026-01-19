@@ -1,9 +1,9 @@
 {
-  "generated_at_utc": "2026-01-18T16:51:35.395333+00:00",
+  "generated_at_utc": "2026-01-19T16:54:05.301934+00:00",
   "git": {
     "branch": "main",
-    "commit": "7a7e2e45403d7130fa09649fb0409af869364e44",
-    "status_porcelain": "M asset_allocation/backtest/config.py\n M asset_allocation/backtest/constraints.py\n M asset_allocation/backtest/engine.py\n M asset_allocation/backtest/reporter.py\n M asset_allocation/backtest/runner.py\n M asset_allocation/backtest/sizer.py\n M asset_allocation/backtest/strategy.py\n M tests/backtest/test_phase1_engine.py\n M tests/backtest/test_phase3_service_api.py\n?? docs/backtesting_architecture.jpg\n?? tests/backtest/test_breakout_and_ep_strategies.py\n?? tests/backtest/test_long_short_sizer.py"
+    "commit": "014bc7298f1710d52a7581c2868278abffabd4a7",
+    "status_porcelain": "M .github/workflows/deploy.yml\n M .github/workflows/run_tests.yml\n M Dockerfile\n M Dockerfile.backtest_api\n M asset_allocation/backtest/broker.py\n M asset_allocation/backtest/config.py\n M asset_allocation/backtest/engine.py\n M asset_allocation/backtest/models.py\n M asset_allocation/backtest/service/job_manager.py\n M asset_allocation/backtest/strategy.py\n M asset_allocation/ui/cli.py\n M asset_allocation/ui/web.py\n M backtests/platinum_ep_continuation_long.yaml\n M backtests/platinum_gap_and_crap_short.yaml\n M backtests/platinum_pullback_failure_short.yaml\n M backtests/platinum_pullback_long.yaml\n M backtests/platinum_vcp_breakdown_short.yaml\n M backtests/platinum_vcp_breakout_long.yaml\n M deploy/job_platinum_ranking.yaml\n M docs/backtesting_guide.md\n M helpers/inspect_adls.py\n M pytest.ini\n M requirements-opt.txt\n M requirements.txt\n M scripts/audit_adls_columns.py\n M scripts/common/config.py\n M scripts/common/config_shared.py\n M scripts/common/pipeline.py\n M scripts/common/schema_definitions.py\n M \"scripts/earnings_data/bronze_earnings _data.py\"\n M scripts/earnings_data/bronze_earnings_data.py\n M scripts/earnings_data/gold_earnings_data.py\n M scripts/earnings_data/silver_earnings_data.py\n M scripts/finance_data/bronze_finance_data.py\n M scripts/finance_data/gold_finance_data.py\n M scripts/finance_data/silver_finance_data.py\n M scripts/market_data/bronze_market_data.py\n M scripts/market_data/gold_market_data.py\n M scripts/market_data/silver_market_data.py\n M scripts/price_target_data/bronze_price_target_data.py\n M scripts/price_target_data/gold_price_target_data.py\n M scripts/price_target_data/silver_price_target_data.py\n M scripts/ranking/core.py\n M scripts/ranking/runner.py\n M scripts/ranking/signals.py\n M tests/backtest/test_phase2_data_and_cli.py\n M tests/conftest.py\n M tests/manual_lock_test.py\n M tests/ranking/test_runner.py\n M verify_imports.py\n?? .github/CODEOWNERS\n?? CONTRIBUTING.md\n?? README.md\n?? SECURITY.md\n?? pyproject.toml\n?? requirements-dev.lock.txt\n?? requirements-dev.txt\n?? requirements.lock.txt\n?? scripts/common/data_contract.py\n?? scripts/market_data/materialize_market_by_date.py\n?? scripts/market_data/materialize_silver_market_by_date.py\n?? tests/backtest/test_broker_refactor.py"
   },
   "github": {
     ".github/workflows": true,
@@ -12,22 +12,26 @@
   },
   "instruction_files": {
     "AGENTS.md": [],
-    "CONTRIBUTING.md": [],
-    "SECURITY.md": []
+    "CONTRIBUTING.md": [
+      "CONTRIBUTING.md"
+    ],
+    "SECURITY.md": [
+      "SECURITY.md"
+    ]
   },
   "project_files": {
     ".editorconfig": false,
-    ".github/CODEOWNERS": false,
+    ".github/CODEOWNERS": true,
     ".github/dependabot.yml": false,
     ".pre-commit-config.yaml": false,
     "CODEOWNERS": false,
     "Dockerfile": true,
     "LICENSE": false,
     "Makefile": false,
-    "README.md": false,
+    "README.md": true,
     "docker-compose.yml": false,
-    "pyproject.toml": false,
-    "requirements-dev.txt": false,
+    "pyproject.toml": true,
+    "requirements-dev.txt": true,
     "requirements.txt": true
   },
   "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation",

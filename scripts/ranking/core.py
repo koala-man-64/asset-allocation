@@ -11,6 +11,7 @@ import os
 from scripts.common import config as cfg
 from scripts.common.delta_core import store_delta, load_delta
 from scripts.common.core import write_line
+from scripts.common.data_contract import CANONICAL_RANKINGS_PATH
 
 @dataclass
 class RankingResult:
@@ -57,7 +58,7 @@ def save_rankings(rankings: List[RankingResult], container: str = None):
     df['score'] = df['score'].astype(float)
     
     # Path for the delta table
-    table_path = "platinum/rankings" 
+    table_path = CANONICAL_RANKINGS_PATH
     
     write_line(f"Saving {len(df)} rankings to {container}/{table_path}...")
     
@@ -79,7 +80,7 @@ def get_rankings(strategy: str, date_val: Optional[date] = None, container: str 
         if "AZURE_CONTAINER_RANKING" not in os.environ:
             raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
         container = cfg.AZURE_CONTAINER_RANKING
-    table_path = "platinum/rankings"
+    table_path = CANONICAL_RANKINGS_PATH
     
     df = load_delta(container, table_path)
     if df is None or df.empty:

@@ -17,8 +17,16 @@ class DataPaths:
         return f"market-data/{ticker.replace('.', '-')}"
 
     @staticmethod
+    def get_market_data_by_date_path() -> str:
+        return "market-data-by-date"
+
+    @staticmethod
     def get_gold_features_path(ticker: str) -> str:
         return f"market/{ticker}"
+
+    @staticmethod
+    def get_gold_features_wide_path() -> str:
+        return "market_by_date"
 
     @staticmethod
     def get_gold_earnings_path(ticker: str) -> str:
