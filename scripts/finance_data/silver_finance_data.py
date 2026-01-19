@@ -34,6 +34,28 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     df_t['Symbol'] = ticker
     return df_t
 
+def resample_daily_ffill(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Resamples sparse dataframe to daily frequency using forward fill.
+    """
+    if 'Date' not in df.columns:
+        return df
+        
+    df = df.copy()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.set_index('Date')
+    df = df.sort_index()
+    
+    # Resample and ffill
+    # We must restrict to the known date range
+    if df.empty:
+        return df
+        
+    # Resample 'D' will create daily rows. ffill() propagates last observation.
+    df_daily = df.resample('D').ffill()
+    
+    return df_daily.reset_index()
+
 def process_blob(blob):
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
@@ -96,6 +118,9 @@ def process_blob(blob):
         df_raw = pd.read_csv(BytesIO(raw_bytes))
         
         df_clean = transpose_dataframe(df_raw, ticker)
+        
+        # Resample to daily frequency (forward fill)
+        df_clean = resample_daily_ffill(df_clean)
         
         # Write to Silver (Overwrite is fine for finance snapshots, or merge? 
         # Typically Finance Sheets are full snapshots. Replacing is safer for consistency, 

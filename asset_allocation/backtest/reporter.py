@@ -184,9 +184,27 @@ class Reporter:
 
         self.config.to_yaml(self.output_dir / "config.yaml")
 
+        if self.config.output.save_config_parquet:
+            # Store full config as JSON string to handle schema evolution
+            resolved_for_parquet = self.config.to_dict()
+            resolved_for_parquet["run_id"] = self.run_id
+            resolved_for_parquet["submitted_at"] = self.submitted_at.isoformat()
+            
+            config_row = {
+                "run_id": self.run_id,
+                "submitted_at": self.submitted_at,
+                "config_json": json.dumps(resolved_for_parquet, sort_keys=True)
+            }
+            pd.DataFrame([config_row]).to_parquet(self.output_dir / "config.parquet", index=False)
+
         trades_df = pd.DataFrame(self._trades)
         if self.config.output.save_trades:
             trades_df.to_csv(self.output_dir / "trades.csv", index=False)
+
+        if self.config.output.save_trades_parquet and not trades_df.empty:
+            trades_df.to_parquet(self.output_dir / "trades.parquet", index=False)
+
+
 
         daily_df = pd.DataFrame(self._days)
         if self.config.output.save_daily_metrics:
@@ -248,6 +266,9 @@ class Reporter:
                 json.dumps(summary.__dict__, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
+
+        if self.config.output.save_summary_parquet:
+            pd.DataFrame([summary.__dict__]).to_parquet(self.output_dir / "summary.parquet", index=False)
 
         self._update_run_index(summary)
         if self.config.output.save_run_index_parquet:

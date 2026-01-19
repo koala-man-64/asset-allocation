@@ -42,8 +42,15 @@ env:
   SILVER_MARKET_JOB: silver-market-job
   SILVER_MARKET_BY_DATE_JOB: silver-market-by-date-job
   SILVER_FINANCE_JOB: silver-finance-job
+  SILVER_FINANCE_BY_DATE_JOB: silver-finance-by-date-job
   SILVER_PRICE_TARGET_JOB: silver-price-target-job
+  SILVER_PRICE_TARGET_BY_DATE_JOB: silver-price-target-by-date-job
   SILVER_EARNINGS_JOB: silver-earnings-job
+  SILVER_EARNINGS_BY_DATE_JOB: silver-earnings-by-date-job
+
+  GOLD_FINANCE_WIDE_JOB: gold-finance-wide-job
+  GOLD_EARNINGS_WIDE_JOB: gold-earnings-wide-job
+  GOLD_PRICE_TARGET_WIDE_JOB: gold-price-target-wide-job
 
 
 jobs:
@@ -107,6 +114,16 @@ jobs:
               - "scripts/finance_data/gold_finance_data.py"
               - "deploy/job_gold_finance_data.yaml"
               - ".github/workflows/deploy.yml"
+            silver_finance_by_date:
+              - "scripts/common/**"
+              - "scripts/finance_data/materialize_silver_finance_by_date.py"
+              - "deploy/job_silver_finance_by_date.yaml"
+              - ".github/workflows/deploy.yml"
+            gold_finance_wide:
+              - "scripts/common/**"
+              - "scripts/finance_data/materialize_gold_finance_wide.py"
+              - "deploy/job_gold_finance_wide.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Earnings Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
@@ -128,6 +145,16 @@ jobs:
               - "scripts/earnings_data/gold_earnings_data.py"
               - "deploy/job_gold_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
+            silver_earnings_by_date:
+              - "scripts/common/**"
+              - "scripts/earnings_data/materialize_silver_earnings_by_date.py"
+              - "deploy/job_silver_earnings_by_date.yaml"
+              - ".github/workflows/deploy.yml"
+            gold_earnings_wide:
+              - "scripts/common/**"
+              - "scripts/earnings_data/materialize_gold_earnings_wide.py"
+              - "deploy/job_gold_earnings_wide.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Price Target Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
@@ -148,6 +175,16 @@ jobs:
               - "scripts/common/**"
               - "scripts/price_target_data/gold_price_target_data.py"
               - "deploy/job_gold_price_target_data.yaml"
+              - ".github/workflows/deploy.yml"
+            silver_price_target_by_date:
+              - "scripts/common/**"
+              - "scripts/price_target_data/materialize_silver_price_target_by_date.py"
+              - "deploy/job_silver_price_target_by_date.yaml"
+              - ".github/workflows/deploy.yml"
+            gold_price_target_wide:
+              - "scripts/common/**"
+              - "scripts/price_target_data/materialize_gold_price_target_wide.py"
+              - "deploy/job_gold_price_target_wide.yaml"
               - ".github/workflows/deploy.yml"
 
       - name: Detect Ranking Changes
@@ -183,12 +220,18 @@ jobs:
           echo "bronze_finance=${{ steps.finance_changes.outputs.bronze_finance }}"
           echo "silver_finance=${{ steps.finance_changes.outputs.silver_finance }}"
           echo "gold_finance=${{ steps.finance_changes.outputs.gold_finance }}"
+          echo "silver_finance_by_date=${{ steps.finance_changes.outputs.silver_finance_by_date }}"
+          echo "gold_finance_wide=${{ steps.finance_changes.outputs.gold_finance_wide }}"
           echo "bronze_earnings=${{ steps.earnings_changes.outputs.bronze_earnings }}"
           echo "silver_earnings=${{ steps.earnings_changes.outputs.silver_earnings }}"
           echo "gold_earnings=${{ steps.earnings_changes.outputs.gold_earnings }}"
+          echo "silver_earnings_by_date=${{ steps.earnings_changes.outputs.silver_earnings_by_date }}"
+          echo "gold_earnings_wide=${{ steps.earnings_changes.outputs.gold_earnings_wide }}"
           echo "bronze_price_target=${{ steps.price_target_changes.outputs.bronze_price_target }}"
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
+          echo "silver_price_target_by_date=${{ steps.price_target_changes.outputs.silver_price_target_by_date }}"
+          echo "gold_price_target_wide=${{ steps.price_target_changes.outputs.gold_price_target_wide }}"
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
           echo "backtest_api=${{ steps.backtest_api_changes.outputs.backtest_api }}"
       - name: Azure Login
@@ -614,6 +657,52 @@ jobs:
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Finance Silver By-Date Job Exists
+        id: finance_silver_by_date_job_check
+        run: |
+          if az containerapp job show --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Finance Silver By-Date Job check
+        run: |
+          echo "finance_silver_by_date_job_exists=${{ steps.finance_silver_by_date_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Finance Silver By-Date Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.silver_finance_by_date == 'true' || steps.finance_silver_by_date_job_check.outputs.job_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          echo "Deploying Silver Finance By-Date Job from YAML..."
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          envsubst < deploy/job_silver_finance_by_date.yaml > deploy/job_silver_finance_by_date.tmp.yaml
+          
+          if ! az containerapp job show --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.SILVER_FINANCE_BY_DATE_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "deploy/job_silver_finance_by_date.tmp.yaml"
+          else
+            az containerapp job update \
+              --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "deploy/job_silver_finance_by_date.tmp.yaml"
+          fi
+          
+          rm deploy/job_silver_finance_by_date.tmp.yaml
+          
+          az containerapp job update \
+            --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
       - name: Check Finance Gold Job Exists
         id: finance_feature_job_check
         run: |
@@ -659,6 +748,52 @@ jobs:
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Finance Gold Wide Job Exists
+        id: finance_gold_wide_job_check
+        run: |
+          if az containerapp job show --name ${{ env.GOLD_FINANCE_WIDE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Finance Gold Wide Job check
+        run: |
+          echo "finance_gold_wide_job_exists=${{ steps.finance_gold_wide_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Finance Gold Wide Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.gold_finance_wide == 'true' || steps.finance_gold_wide_job_check.outputs.job_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          echo "Deploying Gold Finance Wide Job from YAML..."
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          envsubst < deploy/job_gold_finance_wide.yaml > deploy/job_gold_finance_wide.tmp.yaml
+          
+          if ! az containerapp job show --name ${{ env.GOLD_FINANCE_WIDE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.GOLD_FINANCE_WIDE_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.GOLD_FINANCE_WIDE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "deploy/job_gold_finance_wide.tmp.yaml"
+          else
+            az containerapp job update \
+              --name ${{ env.GOLD_FINANCE_WIDE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "deploy/job_gold_finance_wide.tmp.yaml"
+          fi
+          
+          rm deploy/job_gold_finance_wide.tmp.yaml
+          
+          az containerapp job update \
+            --name ${{ env.GOLD_FINANCE_WIDE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.GOLD_FINANCE_WIDE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       
       - name: Check Price Target Job Exists
@@ -755,6 +890,52 @@ jobs:
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Price Target Silver By-Date Job Exists
+        id: price_target_silver_by_date_job_check
+        run: |
+          if az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Price Target Silver By-Date Job check
+        run: |
+          echo "price_target_silver_by_date_job_exists=${{ steps.price_target_silver_by_date_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Price Target Silver By-Date Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.silver_price_target_by_date == 'true' || steps.price_target_silver_by_date_job_check.outputs.job_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          echo "Deploying Silver Price Target By-Date Job from YAML..."
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          envsubst < deploy/job_silver_price_target_by_date.yaml > deploy/job_silver_price_target_by_date.tmp.yaml
+          
+          if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "deploy/job_silver_price_target_by_date.tmp.yaml"
+          else
+            az containerapp job update \
+              --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "deploy/job_silver_price_target_by_date.tmp.yaml"
+          fi
+          
+          rm deploy/job_silver_price_target_by_date.tmp.yaml
+          
+          az containerapp job update \
+            --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
       - name: Check Price Target Gold Job Exists
         id: price_target_feature_job_check
         run: |
@@ -800,6 +981,52 @@ jobs:
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Price Target Gold Wide Job Exists
+        id: price_target_gold_wide_job_check
+        run: |
+          if az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Price Target Gold Wide Job check
+        run: |
+          echo "price_target_gold_wide_job_exists=${{ steps.price_target_gold_wide_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Price Target Gold Wide Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.gold_price_target_wide == 'true' || steps.price_target_gold_wide_job_check.outputs.job_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          echo "Deploying Gold Price Target Wide Job from YAML..."
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          envsubst < deploy/job_gold_price_target_wide.yaml > deploy/job_gold_price_target_wide.tmp.yaml
+          
+          if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "deploy/job_gold_price_target_wide.tmp.yaml"
+          else
+            az containerapp job update \
+              --name ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "deploy/job_gold_price_target_wide.tmp.yaml"
+          fi
+          
+          rm deploy/job_gold_price_target_wide.tmp.yaml
+          
+          az containerapp job update \
+            --name ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.GOLD_PRICE_TARGET_WIDE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       
       - name: Check Earnings Bronze Job Exists
@@ -895,6 +1122,52 @@ jobs:
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
+      - name: Check Earnings Silver By-Date Job Exists
+        id: earnings_silver_by_date_job_check
+        run: |
+          if az containerapp job show --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Earnings Silver By-Date Job check
+        run: |
+          echo "earnings_silver_by_date_job_exists=${{ steps.earnings_silver_by_date_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Earnings Silver By-Date Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.silver_earnings_by_date == 'true' || steps.earnings_silver_by_date_job_check.outputs.job_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          echo "Deploying Silver Earnings By-Date Job from YAML..."
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          envsubst < deploy/job_silver_earnings_by_date.yaml > deploy/job_silver_earnings_by_date.tmp.yaml
+          
+          if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "deploy/job_silver_earnings_by_date.tmp.yaml"
+          else
+            az containerapp job update \
+              --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "deploy/job_silver_earnings_by_date.tmp.yaml"
+          fi
+          
+          rm deploy/job_silver_earnings_by_date.tmp.yaml
+          
+          az containerapp job update \
+            --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
       - name: Check Earnings Gold Job Exists
         id: earnings_feature_job_check
         run: |
@@ -940,6 +1213,52 @@ jobs:
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }}
+
+      - name: Check Earnings Gold Wide Job Exists
+        id: earnings_gold_wide_job_check
+        run: |
+          if az containerapp job show --name ${{ env.GOLD_EARNINGS_WIDE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Earnings Gold Wide Job check
+        run: |
+          echo "earnings_gold_wide_job_exists=${{ steps.earnings_gold_wide_job_check.outputs.job_exists }}"
+
+      - name: Update and Start Earnings Gold Wide Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.gold_earnings_wide == 'true' || steps.earnings_gold_wide_job_check.outputs.job_exists == 'false'
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          echo "Deploying Gold Earnings Wide Job from YAML..."
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          envsubst < deploy/job_gold_earnings_wide.yaml > deploy/job_gold_earnings_wide.tmp.yaml
+          
+          if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_WIDE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.GOLD_EARNINGS_WIDE_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.GOLD_EARNINGS_WIDE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "deploy/job_gold_earnings_wide.tmp.yaml"
+          else
+            az containerapp job update \
+              --name ${{ env.GOLD_EARNINGS_WIDE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "deploy/job_gold_earnings_wide.tmp.yaml"
+          fi
+          
+          rm deploy/job_gold_earnings_wide.tmp.yaml
+          
+          az containerapp job update \
+            --name ${{ env.GOLD_EARNINGS_WIDE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          az containerapp job start \
+            --name ${{ env.GOLD_EARNINGS_WIDE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       
       - name: Check Ranking Job Exists
@@ -1026,8 +1345,14 @@ jobs:
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.silver_finance }}" = "true" ] || [ "${{ steps.finance_silver_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.SILVER_FINANCE_JOB }}"
           fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.silver_finance_by_date }}" = "true" ] || [ "${{ steps.finance_silver_by_date_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.SILVER_FINANCE_BY_DATE_JOB }}"
+          fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.gold_finance }}" = "true" ] || [ "${{ steps.finance_feature_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.GOLD_FINANCE_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.finance_changes.outputs.gold_finance_wide }}" = "true" ] || [ "${{ steps.finance_gold_wide_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.GOLD_FINANCE_WIDE_JOB }}"
           fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.bronze_price_target }}" = "true" ] || [ "${{ steps.price_target_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.BRONZE_PRICE_TARGET_JOB }}"
@@ -1035,8 +1360,14 @@ jobs:
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.silver_price_target }}" = "true" ] || [ "${{ steps.price_target_silver_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.SILVER_PRICE_TARGET_JOB }}"
           fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.silver_price_target_by_date }}" = "true" ] || [ "${{ steps.price_target_silver_by_date_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }}"
+          fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.gold_price_target }}" = "true" ] || [ "${{ steps.price_target_feature_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.GOLD_PRICE_TARGET_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.gold_price_target_wide }}" = "true" ] || [ "${{ steps.price_target_gold_wide_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.GOLD_PRICE_TARGET_WIDE_JOB }}"
           fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.bronze_earnings }}" = "true" ] || [ "${{ steps.earnings_data_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.BRONZE_EARNINGS_JOB }}"
@@ -1044,8 +1375,14 @@ jobs:
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.silver_earnings }}" = "true" ] || [ "${{ steps.earnings_silver_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.SILVER_EARNINGS_JOB }}"
           fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.silver_earnings_by_date }}" = "true" ] || [ "${{ steps.earnings_silver_by_date_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.SILVER_EARNINGS_BY_DATE_JOB }}"
+          fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.gold_earnings }}" = "true" ] || [ "${{ steps.earnings_feature_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.GOLD_EARNINGS_JOB }}"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.gold_earnings_wide }}" = "true" ] || [ "${{ steps.earnings_gold_wide_job_check.outputs.job_exists }}" = "false" ]; then
+            check_job "${{ env.GOLD_EARNINGS_WIDE_JOB }}"
           fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}" = "true" ] || [ "${{ steps.ranking_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.PLATINUM_RANKING_JOB }}"

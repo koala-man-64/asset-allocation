@@ -84,6 +84,9 @@ _STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
         "save_metrics_json",
         "save_constraint_hits",
         "save_run_index_parquet",
+        "save_trades_parquet",
+        "save_config_parquet",
+        "save_summary_parquet",
     },
 }
 
@@ -366,6 +369,9 @@ class OutputConfig:
     save_metrics_json: bool = True
     save_constraint_hits: bool = True
     save_run_index_parquet: bool = True
+    save_trades_parquet: bool = True
+    save_config_parquet: bool = True
+    save_summary_parquet: bool = True
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "OutputConfig":
@@ -381,6 +387,9 @@ class OutputConfig:
             save_metrics_json=bool(data.get("save_metrics_json", True)),
             save_constraint_hits=bool(data.get("save_constraint_hits", True)),
             save_run_index_parquet=bool(data.get("save_run_index_parquet", True)),
+            save_trades_parquet=bool(data.get("save_trades_parquet", True)),
+            save_config_parquet=bool(data.get("save_config_parquet", True)),
+            save_summary_parquet=bool(data.get("save_summary_parquet", True)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -395,6 +404,9 @@ class OutputConfig:
             "save_metrics_json": self.save_metrics_json,
             "save_constraint_hits": self.save_constraint_hits,
             "save_run_index_parquet": self.save_run_index_parquet,
+            "save_trades_parquet": self.save_trades_parquet,
+            "save_config_parquet": self.save_config_parquet,
+            "save_summary_parquet": self.save_summary_parquet,
         }
         if self.adls_dir:
             out["adls_dir"] = self.adls_dir

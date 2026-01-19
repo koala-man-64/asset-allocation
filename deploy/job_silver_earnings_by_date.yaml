@@ -1,0 +1,51 @@
+location: East US
+name: silver-earnings-by-date-job
+type: Microsoft.App/jobs
+identity:
+  type: SystemAssigned
+properties:
+  configuration:
+    triggerType: Schedule
+    scheduleTriggerConfig:
+      cronExpression: "30 1 * * *"
+      parallelism: 1
+      replicaCompletionCount: 1
+    registries:
+    - identity: ''
+      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
+      server: assetallocationacr.azurecr.io
+      username: assetallocationacr
+    replicaRetryLimit: 2
+    replicaTimeout: 7200
+    secrets:
+    - name: assetallocationacrazurecrio-assetallocationacr
+      value: ${ACR_PASSWORD}
+    - name: az-cs
+      value: ${AZURE_STORAGE_CONNECTION_STRING}
+  environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  template:
+    containers:
+    - env:
+      - name: LOG_FORMAT
+        value: JSON
+      - name: AZURE_STORAGE_ACCOUNT_NAME
+        value: assetallocstorage001
+      - name: AZURE_STORAGE_CONNECTION_STRING
+        secretRef: az-cs
+      - name: AZURE_CONTAINER_COMMON
+        value: common
+      - name: AZURE_CONTAINER_SILVER
+        value: silver
+      image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
+      imageType: ContainerImage
+      name: silver-earnings-by-date-job
+      command:
+        [
+          "bash",
+          "-lc",
+          "set -euo pipefail; python -m scripts.earnings_data.materialize_silver_earnings_by_date --year-month \"${MATERIALIZE_YEAR_MONTH:-$(date -u -d 'yesterday' +%Y-%m)}\"",
+        ]
+      resources:
+        cpu: 2.0
+        memory: 4Gi
+  workloadProfileName: Consumption

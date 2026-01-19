@@ -10,3 +10,4 @@ Tests
 .env
 .github
 *.md
+!README.md

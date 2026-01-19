@@ -57,6 +57,31 @@ class DataPaths:
         return f"finance-data/{clean_folder}/{ticker}_{file_suffix}"
 
 
+    @staticmethod
+    def get_gold_finance_wide_path() -> str:
+        return "finance_by_date"
+
+    @staticmethod
+    def get_finance_by_date_path() -> str:
+        return "finance-data-by-date"
+
+    @staticmethod
+    def get_earnings_by_date_path() -> str:
+        return "earnings-data-by-date"
+
+    @staticmethod
+    def get_gold_earnings_wide_path() -> str:
+        return "earnings_by_date"
+
+    @staticmethod
+    def get_price_targets_by_date_path() -> str:
+        return "price-target-data-by-date"
+
+    @staticmethod
+    def get_gold_price_targets_wide_path() -> str:
+        return "targets_by_date"
+
+
 class ListManager:
     """
     Manages Whitelist and Blacklist for a specific scraper context.
