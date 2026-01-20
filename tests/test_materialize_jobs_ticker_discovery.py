@@ -37,8 +37,8 @@ def test_materialize_gold_market_by_date_prefers_container_listing(monkeypatch):
     assert "year_month" in captured["df"].columns
 
 
-def test_materialize_gold_earnings_wide_prefers_container_listing(monkeypatch):
-    from scripts.earnings_data import materialize_gold_earnings_wide as job
+def test_materialize_gold_earnings_by_date_prefers_container_listing(monkeypatch):
+    from scripts.earnings_data import materialize_gold_earnings_by_date as job
 
     cfg = job.MaterializeConfig(
         container="gold",
@@ -66,8 +66,8 @@ def test_materialize_gold_earnings_wide_prefers_container_listing(monkeypatch):
     assert store_calls["count"] == 1
 
 
-def test_materialize_gold_finance_wide_prefers_container_listing(monkeypatch):
-    from scripts.finance_data import materialize_gold_finance_wide as job
+def test_materialize_gold_finance_by_date_prefers_container_listing(monkeypatch):
+    from scripts.finance_data import materialize_gold_finance_by_date as job
 
     cfg = job.MaterializeConfig(
         container="gold",
@@ -95,8 +95,8 @@ def test_materialize_gold_finance_wide_prefers_container_listing(monkeypatch):
     assert store_calls["count"] == 1
 
 
-def test_materialize_gold_price_target_wide_prefers_container_listing(monkeypatch):
-    from scripts.price_target_data import materialize_gold_price_target_wide as job
+def test_materialize_gold_price_target_by_date_prefers_container_listing(monkeypatch):
+    from scripts.price_target_data import materialize_gold_price_target_by_date as job
 
     cfg = job.MaterializeConfig(
         container="gold",
