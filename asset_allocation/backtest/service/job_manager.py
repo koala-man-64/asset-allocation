@@ -5,7 +5,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from asset_allocation.backtest.config import BacktestConfig
 from asset_allocation.backtest.runner import run_backtest
@@ -21,9 +21,17 @@ def _utc_now() -> datetime:
 
 
 class JobManager:
-    def __init__(self, *, store: RunStore, output_base_dir: Path, max_workers: int):
+    def __init__(
+        self,
+        *,
+        store: RunStore,
+        output_base_dir: Path,
+        max_workers: int,
+        default_adls_dir: Optional[str] = None,
+    ):
         self._store = store
         self._output_base_dir = Path(output_base_dir)
+        self._default_adls_dir = default_adls_dir
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="backtest")
         self._futures: Dict[str, Future[None]] = {}
 
@@ -44,6 +52,7 @@ class JobManager:
 
                 # Ensure artifacts reflect the effective output base dir in config.yaml.
                 requested_adls_dir = config.output.adls_dir
+                resolved_adls_dir = requested_adls_dir or self._default_adls_dir
                 effective = replace(
                     config,
                     output=replace(
@@ -60,11 +69,11 @@ class JobManager:
                 )
 
                 # Optional artifact upload.
-                if requested_adls_dir:
+                if resolved_adls_dir:
                     upload = upload_run_artifacts(
                         run_id=run_id,
                         run_dir=result.output_dir,
-                        adls_dir=requested_adls_dir,
+                        adls_dir=resolved_adls_dir,
                     )
                     self._store.update_run(
                         run_id,

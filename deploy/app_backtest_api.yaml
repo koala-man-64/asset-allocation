@@ -46,6 +46,10 @@ properties:
         value: "/tmp/backtest_results/runs.sqlite3"
       - name: BACKTEST_ADLS_CONTAINER_ALLOWLIST
         value: "bronze,silver,gold,platinum,ranking-data,common"
+      - name: BACKTEST_RUN_STORE_MODE
+        value: "adls"
+      - name: BACKTEST_ADLS_RUNS_DIR
+        value: "platinum/backtest-api-results"
       - name: LOG_FORMAT
         value: "JSON"
       resources:

@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
+
+from asset_allocation.backtest.service.security import assert_allowed_container, parse_container_and_path
+
+
+RunStoreMode = Literal["sqlite", "adls"]
 
 
 def _parse_bool(value: str) -> bool:
@@ -92,6 +97,15 @@ def _get_container_allowlist() -> List[str]:
     return ordered
 
 
+def _get_run_store_mode() -> RunStoreMode:
+    raw = os.environ.get("BACKTEST_RUN_STORE_MODE", "sqlite").strip().lower()
+    if raw in {"sqlite", "local"}:
+        return "sqlite"
+    if raw in {"adls", "blob"}:
+        return "adls"
+    raise ValueError(f"Invalid BACKTEST_RUN_STORE_MODE={raw!r} (expected sqlite|adls).")
+
+
 @dataclass(frozen=True)
 class ServiceSettings:
     output_base_dir: Path
@@ -102,6 +116,8 @@ class ServiceSettings:
     allow_local_data: bool
     allowed_local_data_dirs: List[Path]
     adls_container_allowlist: List[str]
+    run_store_mode: RunStoreMode
+    adls_runs_dir: Optional[str]
 
     @staticmethod
     def from_env() -> "ServiceSettings":
@@ -135,6 +151,14 @@ class ServiceSettings:
 
         adls_container_allowlist = _get_container_allowlist()
 
+        run_store_mode = _get_run_store_mode()
+        adls_runs_dir = os.environ.get("BACKTEST_ADLS_RUNS_DIR", "").strip() or None
+        if run_store_mode == "adls" and not adls_runs_dir:
+            raise ValueError("BACKTEST_RUN_STORE_MODE=adls requires BACKTEST_ADLS_RUNS_DIR to be set.")
+        if adls_runs_dir:
+            container, _ = parse_container_and_path(adls_runs_dir)
+            assert_allowed_container(container, adls_container_allowlist)
+
         return ServiceSettings(
             output_base_dir=output_base_dir,
             db_path=db_path,
@@ -144,5 +168,6 @@ class ServiceSettings:
             allow_local_data=allow_local_data,
             allowed_local_data_dirs=allowed_local_data_dirs,
             adls_container_allowlist=adls_container_allowlist,
+            run_store_mode=run_store_mode,
+            adls_runs_dir=adls_runs_dir,
         )
-

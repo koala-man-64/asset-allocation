@@ -143,11 +143,20 @@ class _LocalBlobStorageClient:
         self._root = Path.cwd() / ".pytest_blob_store"
         (self._root / self._container).mkdir(parents=True, exist_ok=True)
 
+    def file_exists(self, remote_path: str) -> bool:
+        path = self._root / self._container / remote_path
+        return path.exists()
+
     def upload_file(self, local_path: str, remote_path: str):
         src = Path(local_path)
         dest = self._root / self._container / remote_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(src.read_bytes())
+
+    def upload_data(self, remote_path: str, data: bytes, overwrite: bool = True):
+        dest = self._root / self._container / remote_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
 
     def download_data(self, remote_path: str) -> Optional[bytes]:
         path = self._root / self._container / remote_path
@@ -208,3 +217,65 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
         assert remote_summary.status_code == 200
         summary_data = json.loads(remote_summary.content.decode("utf-8"))
         assert summary_data["run_id"] == run_id
+
+
+def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir))
+    monkeypatch.setenv("BACKTEST_RUN_STORE_MODE", "adls")
+    monkeypatch.setenv("BACKTEST_ADLS_RUNS_DIR", "silver/backtest-run-store")
+    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
+    monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "true")
+    monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
+
+    monkeypatch.setattr("asset_allocation.backtest.service.adls_run_store.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("asset_allocation.backtest.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("asset_allocation.backtest.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
+
+    app = create_app()
+    run_id = "RUNTEST-SVC-ADLS-STORE"
+    with TestClient(app) as client:
+        _write_inputs(tmp_path)
+        config = _make_config_dict(tmp_path, run_id=run_id, adls_dir=None)
+        resp = client.post("/backtests", json={"config": config, "run_id": run_id})
+        assert resp.status_code == 200
+
+        status = _poll_status(client, run_id)
+        assert status["status"] == "completed"
+        assert status["adls_container"] == "silver"
+        assert status["adls_prefix"].endswith(f"backtest-run-store/{run_id}")
+
+        runs = client.get("/backtests")
+        assert runs.status_code == 200
+        run_ids = {r["run_id"] for r in runs.json()["runs"]}
+        assert run_id in run_ids
+
+        summary = client.get(f"/backtests/{run_id}/summary", params={"source": "adls"})
+        assert summary.status_code == 200
+        assert summary.json()["run_id"] == run_id
+
+        ts = client.get(f"/backtests/{run_id}/metrics/timeseries", params={"source": "adls", "max_points": 1000})
+        assert ts.status_code == 200
+        assert ts.json()["total_points"] >= 1
+        assert len(ts.json()["points"]) >= 1
+
+        rolling = client.get(
+            f"/backtests/{run_id}/metrics/rolling",
+            params={"source": "adls", "window_days": 21, "max_points": 1000},
+        )
+        assert rolling.status_code == 200
+
+        trades = client.get(f"/backtests/{run_id}/trades", params={"source": "adls"})
+        assert trades.status_code == 200
+        assert trades.json()["total"] >= 0
+
+    # Simulate restart: change output dir so local artifacts are missing and rely on ADLS reads.
+    out_dir_2 = tmp_path / "out2"
+    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir_2))
+    app2 = create_app()
+    with TestClient(app2) as client2:
+        summary2 = client2.get(f"/backtests/{run_id}/summary")
+        assert summary2.status_code == 200
+        assert summary2.json()["run_id"] == run_id
