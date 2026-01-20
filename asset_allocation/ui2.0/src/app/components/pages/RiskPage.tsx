@@ -1,7 +1,7 @@
 // Risk & Exposures Page
 
 import { useState } from 'react';
-import { mockStrategies, stressEvents } from '@/data/strategies';
+import { mockStrategies, stressEvents } from '../../../data/strategies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
