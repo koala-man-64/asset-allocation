@@ -13,11 +13,11 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import pandas as pd
 
-from scripts.common.core import write_line
+from scripts.common.core import write_line, write_warning
 from scripts.common.delta_core import load_delta, store_delta
 from scripts.common.pipeline import DataPaths
 
@@ -52,6 +52,64 @@ def _load_ticker_universe() -> List[str]:
         tickers.append(symbol.replace(".", "-"))
 
     return list(dict.fromkeys(tickers))
+
+
+def _extract_tickers_from_delta_tables(blob_names: Iterable[str], root_prefix: str) -> List[str]:
+    """
+    Extract tickers that have a valid Delta log present under `<root_prefix>/<ticker>/_delta_log/`.
+
+    Avoids attempting to read symbols that have no per-ticker Delta table, which otherwise triggers noisy
+    delta-rs warnings.
+    """
+
+    root_prefix = root_prefix.strip("/")
+    tickers: set[str] = set()
+    for blob_name in blob_names:
+        parts = str(blob_name).strip("/").split("/")
+        if len(parts) < 4:
+            continue
+        if parts[0] != root_prefix:
+            continue
+
+        ticker = parts[1].strip()
+        if not ticker:
+            continue
+
+        if parts[2] != "_delta_log":
+            continue
+
+        log_file = parts[3]
+        if log_file.endswith(".json") or log_file.endswith(".checkpoint.parquet"):
+            tickers.add(ticker)
+
+    return sorted(tickers)
+
+
+def _try_load_tickers_from_container(container: str, root_prefix: str) -> Optional[List[str]]:
+    """
+    Attempt to list tickers from the target container (preferred).
+
+    Returns:
+      - List[str] (possibly empty) when listing succeeds.
+      - None when listing is unavailable (e.g., no list permissions / no client).
+    """
+
+    from scripts.common import core as mdc
+
+    client = mdc.get_storage_client(container)
+    if client is None:
+        return None
+
+    prefix = root_prefix.strip("/") + "/"
+    try:
+        blobs = client.container_client.list_blobs(name_starts_with=prefix)
+        return _extract_tickers_from_delta_tables((b.name for b in blobs), root_prefix=root_prefix)
+    except Exception as exc:
+        write_warning(
+            f"Unable to list per-ticker tables under {prefix} in container={container}: {exc}. "
+            "Falling back to symbol universe."
+        )
+        return None
 
 
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
@@ -91,14 +149,25 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
 def materialize_earnings_by_date(cfg: MaterializeConfig) -> int:
     start, end = _parse_year_month_bounds(cfg.year_month)
 
-    tickers = _load_ticker_universe()
+    tickers_from_container = _try_load_tickers_from_container(cfg.container, root_prefix="earnings")
+    if tickers_from_container is None:
+        tickers = _load_ticker_universe()
+        ticker_source = "symbol_universe"
+    else:
+        tickers = tickers_from_container
+        ticker_source = "container_listing"
+
     if cfg.max_tickers is not None:
         tickers = tickers[: cfg.max_tickers]
 
     write_line(
         f"Materializing earnings_by_date for {cfg.year_month}: container={cfg.container} "
-        f"tickers={len(tickers)} output_path={cfg.output_path}"
+        f"tickers={len(tickers)} ticker_source={ticker_source} output_path={cfg.output_path}"
     )
+
+    if not tickers:
+        write_line(f"No per-ticker earnings feature tables found (source={ticker_source}); nothing to materialize.")
+        return 0
 
     frames = []
     for ticker in tickers:
