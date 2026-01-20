@@ -1,7 +1,7 @@
 // Data & Lineage Page - Audit trail and trust
 
 import { useState } from 'react';
-import { mockStrategies } from '@/data/mockData';
+import { mockStrategies } from '@/data/strategies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -17,7 +17,7 @@ import { CheckCircle2, AlertTriangle } from 'lucide-react';
 export function DataPage() {
   const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
   const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
-  
+
   return (
     <div className="space-y-6">
       <Card>
@@ -42,7 +42,7 @@ export function DataPage() {
           </p>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Audit Trail</CardTitle>
@@ -66,7 +66,7 @@ export function DataPage() {
                 </div>
               </div>
             </div>
-            
+
             <div>
               <h4 className="font-semibold mb-3">Data Version</h4>
               <div className="space-y-2 text-sm">
@@ -87,7 +87,7 @@ export function DataPage() {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Configuration</CardTitle>
@@ -98,7 +98,7 @@ export function DataPage() {
               <TabsTrigger value="summary">Summary</TabsTrigger>
               <TabsTrigger value="json">Full JSON</TabsTrigger>
             </TabsList>
-            
+
             <TabsContent value="summary" className="space-y-3 mt-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
@@ -135,31 +135,31 @@ export function DataPage() {
                 </div>
               </div>
             </TabsContent>
-            
+
             <TabsContent value="json" className="mt-4">
               <pre className="bg-muted p-4 rounded-lg overflow-x-auto text-xs">
-{JSON.stringify({
-  universe: strategy.config.universe,
-  rebalance_frequency: strategy.config.rebalance,
-  position_type: strategy.config.longOnly ? 'long_only' : 'long_short',
-  top_n_holdings: strategy.config.topN,
-  lookback_window_days: strategy.config.lookbackWindow,
-  holding_period_days: strategy.config.holdingPeriod,
-  cost_model: strategy.config.costModel,
-  risk_model: 'barra_us_equity_v4',
-  execution_model: 'vwap_slippage',
-  start_date: strategy.startDate,
-  end_date: strategy.endDate,
-  initial_capital: 10000000,
-  max_position_size: 0.05,
-  max_leverage: 1.5
-}, null, 2)}
+                {JSON.stringify({
+                  universe: strategy.config.universe,
+                  rebalance_frequency: strategy.config.rebalance,
+                  position_type: strategy.config.longOnly ? 'long_only' : 'long_short',
+                  top_n_holdings: strategy.config.topN,
+                  lookback_window_days: strategy.config.lookbackWindow,
+                  holding_period_days: strategy.config.holdingPeriod,
+                  cost_model: strategy.config.costModel,
+                  risk_model: 'barra_us_equity_v4',
+                  execution_model: 'vwap_slippage',
+                  start_date: strategy.startDate,
+                  end_date: strategy.endDate,
+                  initial_capital: 10000000,
+                  max_position_size: 0.05,
+                  max_leverage: 1.5
+                }, null, 2)}
               </pre>
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Data Quality Checks</CardTitle>
@@ -196,7 +196,7 @@ export function DataPage() {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Run Metadata</CardTitle>

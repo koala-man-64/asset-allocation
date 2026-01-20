@@ -1,7 +1,7 @@
 // Risk & Exposures Page
 
 import { useState } from 'react';
-import { mockStrategies, stressEvents } from '@/data/mockData';
+import { mockStrategies, stressEvents } from '@/data/strategies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -15,7 +15,7 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 export function RiskPage() {
   const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
   const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
-  
+
   const factorLoadings = [
     { factor: 'Value', loading: 0.25 },
     { factor: 'Momentum', loading: 0.68 },
@@ -23,7 +23,7 @@ export function RiskPage() {
     { factor: 'Quality', loading: 0.43 },
     { factor: 'Volatility', loading: -0.31 },
   ];
-  
+
   return (
     <div className="space-y-6">
       <Card>
@@ -43,7 +43,7 @@ export function RiskPage() {
           </div>
         </CardHeader>
       </Card>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -63,7 +63,7 @@ export function RiskPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader>
             <CardTitle>Factor Loadings</CardTitle>
@@ -87,7 +87,7 @@ export function RiskPage() {
           </CardContent>
         </Card>
       </div>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Stress Test Results</CardTitle>
@@ -128,7 +128,7 @@ export function RiskPage() {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Risk Metrics Summary</CardTitle>

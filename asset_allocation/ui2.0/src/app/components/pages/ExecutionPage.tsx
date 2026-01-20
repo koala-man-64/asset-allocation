@@ -1,7 +1,7 @@
 // Execution & Costs Page
 
 import { useState } from 'react';
-import { mockStrategies } from '@/data/mockData';
+import { mockStrategies } from '@/data/strategies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -15,19 +15,19 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 export function ExecutionPage() {
   const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
   const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
-  
+
   const costBreakdown = [
     { name: 'Commissions', value: 35, color: '#3b82f6' },
     { name: 'Slippage', value: 45, color: '#10b981' },
     { name: 'Financing', value: 20, color: '#f59e0b' },
   ];
-  
+
   const grossNetData = strategy.equityCurve.map((point, idx) => ({
     date: point.date,
     gross: point.value,
     net: point.value * 0.97 // Simplified cost drag
   }));
-  
+
   return (
     <div className="space-y-6">
       <Card>
@@ -47,7 +47,7 @@ export function ExecutionPage() {
           </div>
         </CardHeader>
       </Card>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card>
           <CardHeader>
@@ -60,7 +60,7 @@ export function ExecutionPage() {
             </p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Total Cost Drag</CardTitle>
@@ -70,7 +70,7 @@ export function ExecutionPage() {
             <p className="text-sm text-muted-foreground mt-2">Annual impact on returns</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Avg Holding Period</CardTitle>
@@ -81,7 +81,7 @@ export function ExecutionPage() {
           </CardContent>
         </Card>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -102,7 +102,7 @@ export function ExecutionPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader>
             <CardTitle>Cost Breakdown</CardTitle>
@@ -132,7 +132,7 @@ export function ExecutionPage() {
           </CardContent>
         </Card>
       </div>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Turnover Over Time</CardTitle>

@@ -1,7 +1,7 @@
 // Portfolio Builder Page
 
 import { useApp } from '@/contexts/AppContext';
-import { mockStrategies } from '@/data/mockData';
+import { mockStrategies } from '@/data/strategies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Slider } from '@/app/components/ui/slider';
 import { Button } from '@/app/components/ui/button';
@@ -10,30 +10,30 @@ import { useState } from 'react';
 export function PortfolioPage() {
   const { selectedRuns } = useApp();
   const selectedStrategies = mockStrategies.filter(s => selectedRuns.has(s.id));
-  
+
   const [weights, setWeights] = useState<Record<string, number>>(
     Object.fromEntries(selectedStrategies.map(s => [s.id, 100 / selectedStrategies.length]))
   );
-  
+
   const updateWeight = (id: string, value: number) => {
     setWeights(prev => ({ ...prev, [id]: value }));
   };
-  
+
   const totalWeight = Object.values(weights).reduce((sum, w) => sum + w, 0);
-  
+
   // Calculate portfolio metrics
-  const portfolioCagr = selectedStrategies.reduce((sum, s) => 
+  const portfolioCagr = selectedStrategies.reduce((sum, s) =>
     sum + (s.cagr * (weights[s.id] / 100)), 0
   );
-  
+
   const portfolioVol = Math.sqrt(
-    selectedStrategies.reduce((sum, s) => 
+    selectedStrategies.reduce((sum, s) =>
       sum + Math.pow(s.annVol * (weights[s.id] / 100), 2), 0
     )
   ) * 1.2; // Simplified - assumes some correlation
-  
+
   const portfolioSharpe = portfolioCagr / portfolioVol;
-  
+
   return (
     <div className="space-y-6">
       <Card>
@@ -46,7 +46,7 @@ export function PortfolioPage() {
           </p>
         </CardContent>
       </Card>
-      
+
       {selectedStrategies.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
@@ -84,7 +84,7 @@ export function PortfolioPage() {
                   </div>
                 ))}
               </div>
-              
+
               <div className="mt-6 flex gap-2">
                 <Button
                   variant="outline"
@@ -111,7 +111,7 @@ export function PortfolioPage() {
               </div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader>
               <CardTitle>Portfolio Metrics</CardTitle>
@@ -137,7 +137,7 @@ export function PortfolioPage() {
               </div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader>
               <CardTitle>Component Strategies</CardTitle>

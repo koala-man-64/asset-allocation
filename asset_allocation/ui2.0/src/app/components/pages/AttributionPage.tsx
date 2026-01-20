@@ -1,7 +1,7 @@
 // Attribution Page - Performance decomposition
 
 import { useState } from 'react';
-import { mockStrategies } from '@/data/mockData';
+import { mockStrategies } from '@/data/strategies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -15,16 +15,16 @@ import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGri
 export function AttributionPage() {
   const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
   const [groupBy, setGroupBy] = useState('symbol');
-  
+
   const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
-  
+
   const contributorsData = strategy.contributions
     .filter(c => c.type === groupBy)
     .sort((a, b) => b.contribution - a.contribution);
-  
+
   const topContributors = contributorsData.slice(0, 10);
   const topDetractors = contributorsData.slice(-5);
-  
+
   return (
     <div className="space-y-6">
       <Card>
@@ -42,7 +42,7 @@ export function AttributionPage() {
                   ))}
                 </SelectContent>
               </Select>
-              
+
               <Select value={groupBy} onValueChange={setGroupBy}>
                 <SelectTrigger className="w-40">
                   <SelectValue />
@@ -57,7 +57,7 @@ export function AttributionPage() {
           </div>
         </CardHeader>
       </Card>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -77,7 +77,7 @@ export function AttributionPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader>
             <CardTitle>Top 5 Detractors</CardTitle>
@@ -97,7 +97,7 @@ export function AttributionPage() {
           </CardContent>
         </Card>
       </div>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Contribution Summary</CardTitle>
@@ -117,7 +117,7 @@ export function AttributionPage() {
                 {contributorsData.map(c => {
                   const totalPnL = contributorsData.reduce((sum, item) => sum + Math.abs(item.contribution), 0);
                   const pct = (c.contribution / totalPnL) * 100;
-                  
+
                   return (
                     <tr key={c.name} className="border-b hover:bg-muted/50">
                       <td className="p-3 font-medium">{c.name}</td>
