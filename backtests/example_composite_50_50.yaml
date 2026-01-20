@@ -1,0 +1,59 @@
+run_name: "example_composite_50_50"
+start_date: "2024-01-01"
+end_date: "2024-12-31"
+initial_cash: 100000.0
+
+universe:
+  symbols: ["AAPL", "MSFT", "GOOG", "AMZN"]
+
+data:
+  price_source: "ADLS"
+  price_path: "silver/market-data/{symbol}"
+  signal_path: "ranking-data/platinum/signals/daily"
+
+strategy:
+  type: composite
+  blend:
+    method: weighted_sum
+    normalize_final: gross
+    target_gross: 1.0
+    allow_overlap: true
+  legs:
+    - name: momentum
+      weight: 0.5
+      normalize_leg: none
+      strategy:
+        class: TopNSignalStrategy
+        parameters:
+          signal_column: "momentum_percentile"
+          top_n: 10
+          higher_is_better: true
+          rebalance: weekly
+    - name: value
+      weight: 0.5
+      normalize_leg: none
+      strategy:
+        class: TopNSignalStrategy
+        parameters:
+          signal_column: "value_percentile"
+          top_n: 10
+          higher_is_better: true
+          rebalance: weekly
+
+sizing:
+  class: EqualWeightSizer
+  parameters:
+    max_positions: 10
+
+constraints:
+  max_leverage: 1.0
+  max_position_size: 0.2
+  allow_short: false
+
+broker:
+  slippage_bps: 2.0
+  commission: 0.0005
+  fill_policy: "next_open"
+
+output:
+  local_dir: "./backtest_results"

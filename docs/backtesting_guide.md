@@ -117,6 +117,33 @@ Files are only emitted on dates where the strategy returns a decision (rebalance
 - `<YYYY-MM-DD>_scores.csv`, `<YYYY-MM-DD>_scales.csv`
 - `<YYYY-MM-DD>_exits.csv` (when `record_reasons: true`)
 
+### CompositeStrategy (multi-leg blends)
+Composite strategies let you blend multiple independent strategy “legs” into a single portfolio target without creating bespoke classes per blend.
+
+- Example config: `backtests/example_composite_50_50.yaml`
+
+```yaml
+strategy:
+  type: composite
+  blend:
+    method: weighted_sum
+    normalize_final: gross
+    target_gross: 1.0
+    allow_overlap: true
+  legs:
+    - name: leg_a
+      weight: 0.5
+      strategy: { class: TopNSignalStrategy, parameters: { signal_column: "momentum_percentile", top_n: 10 } }
+    - name: leg_b
+      weight: 0.5
+      strategy: { class: TopNSignalStrategy, parameters: { signal_column: "value_percentile", top_n: 10 } }
+```
+
+Composite run artifacts (written for each decision date where the composite emits a decision):
+- `backtest_results/<RUN_ID>/legs/<LEG_NAME>/weights.csv` (per-leg target weights, pre-constraints)
+- `backtest_results/<RUN_ID>/blend/blended_pre_constraints.csv`
+- `backtest_results/<RUN_ID>/blend/blended_post_constraints.csv`
+
 ### Key Parameters
 *   **`data.signal_path`**: Optional signals input table (Delta `container/path` or local file path when `price_source: local`).
     *   If using ranking-derived signals, set `signal_path: "ranking-data/platinum/signals/daily"` and use `signal_column: "composite_percentile"` in your strategy.

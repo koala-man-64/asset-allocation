@@ -66,4 +66,4 @@ jobs:
         AZURE_CONTAINER_BRONZE: "bronze"
         AZURE_CONTAINER_SILVER: "silver"
       run: |
-        pytest
+        python -m pytest

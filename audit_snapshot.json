@@ -1,9 +1,9 @@
 {
-  "generated_at_utc": "2026-01-20T07:09:10.948441+00:00",
+  "generated_at_utc": "2026-01-20T08:12:46.097953+00:00",
   "git": {
     "branch": "vsc-strategy-refactor",
-    "commit": "50e5cbad09ebd5960717517cc7bd2d0ede596740",
-    "status_porcelain": "M asset_allocation/backtest/config.py\n M asset_allocation/backtest/engine.py\n M asset_allocation/backtest/runner.py\n M docs/backtesting_guide.md\n?? asset_allocation/backtest/configured_strategy/\n?? backtests/example_configured_topn.yaml\n?? backtests/example_configured_vcp_breakout_long.yaml\n?? tests/backtest/test_configured_strategy_contract.py\n?? tests/backtest/test_configured_strategy_legacy_parity.py"
+    "commit": "5bd07880c537e1aef218afc1703683c44778c35a",
+    "status_porcelain": "M .github/workflows/run_tests.yml\n M README.md\n M asset_allocation/backtest/config.py\n M asset_allocation/backtest/engine.py\n M asset_allocation/backtest/reporter.py\n M asset_allocation/backtest/runner.py\n M asset_allocation/backtest/strategy.py\n M docs/backtesting_guide.md\n?? asset_allocation/backtest/blend.py\n?? asset_allocation/backtest/composite_strategy.py\n?? backtests/example_composite_50_50.yaml\n?? deploy/provision_azure.ps1\n?? tests/backtest/test_blend_engine.py\n?? tests/backtest/test_composite_strategy.py"
   },
   "github": {
     ".github/workflows": true,

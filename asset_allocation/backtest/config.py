@@ -54,6 +54,8 @@ _STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
         # ConfiguredStrategy schema (normalized into parameters at load time).
         "type",
         "rebalance",
+        "blend",
+        "legs",
         "universe",
         "signals",
         "scoring",
@@ -236,18 +238,40 @@ def _parse_strategy_config(data: Dict[str, Any]) -> ComponentConfig:
         raise ValueError("strategy must be an object.")
 
     stype = raw.get("type")
-    if stype is None or str(stype).strip() != "configured":
+    stype_norm = str(stype).strip() if stype is not None else None
+    if stype_norm is None:
+        return ComponentConfig.from_dict(raw, label="strategy")
+    if stype_norm not in {"configured", "composite"}:
         return ComponentConfig.from_dict(raw, label="strategy")
 
-    class_name = raw.get("class") or raw.get("class_name") or "ConfiguredStrategy"
-    if str(class_name).strip() not in {"ConfiguredStrategy", "configured"}:
-        raise ValueError("strategy.type=configured requires strategy.class to be 'ConfiguredStrategy' when provided.")
+    if stype_norm == "configured":
+        class_name = raw.get("class") or raw.get("class_name") or "ConfiguredStrategy"
+        if str(class_name).strip() not in {"ConfiguredStrategy", "configured"}:
+            raise ValueError("strategy.type=configured requires strategy.class to be 'ConfiguredStrategy' when provided.")
+
+        params = raw.get("parameters") or {}
+        if not isinstance(params, dict):
+            raise ValueError("strategy.parameters must be an object.")
+
+        # Merge top-level configured keys into parameters to avoid changing BacktestConfig schema.
+        merged = dict(params)
+        for key, value in raw.items():
+            if key in {"type", "class", "class_name", "module", "parameters"}:
+                continue
+            merged[str(key)] = value
+
+        module = raw.get("module")
+        return ComponentConfig(class_name="ConfiguredStrategy", module=str(module) if module else None, parameters=merged)
+
+    # Composite strategy config (normalized into parameters at load time).
+    class_name = raw.get("class") or raw.get("class_name") or "CompositeStrategy"
+    if str(class_name).strip() not in {"CompositeStrategy", "composite"}:
+        raise ValueError("strategy.type=composite requires strategy.class to be 'CompositeStrategy' when provided.")
 
     params = raw.get("parameters") or {}
     if not isinstance(params, dict):
         raise ValueError("strategy.parameters must be an object.")
 
-    # Merge top-level configured keys into parameters to avoid changing BacktestConfig schema.
     merged = dict(params)
     for key, value in raw.items():
         if key in {"type", "class", "class_name", "module", "parameters"}:
@@ -255,7 +279,7 @@ def _parse_strategy_config(data: Dict[str, Any]) -> ComponentConfig:
         merged[str(key)] = value
 
     module = raw.get("module")
-    return ComponentConfig(class_name="ConfiguredStrategy", module=str(module) if module else None, parameters=merged)
+    return ComponentConfig(class_name="CompositeStrategy", module=str(module) if module else None, parameters=merged)
 
 
 @dataclass(frozen=True)

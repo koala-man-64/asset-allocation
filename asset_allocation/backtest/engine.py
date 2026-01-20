@@ -10,6 +10,7 @@ import pandas as pd
 from asset_allocation.backtest.broker import SimulatedBroker
 from asset_allocation.backtest.config import BacktestConfig
 from asset_allocation.backtest.constraints import Constraints
+from asset_allocation.backtest.composite_strategy import CompositeDecision, CompositeStrategy
 from asset_allocation.backtest.models import MarketBar, MarketSnapshot, PortfolioSnapshot
 from asset_allocation.backtest.portfolio import Portfolio
 from asset_allocation.backtest.reporter import Reporter
@@ -164,6 +165,7 @@ class BacktestEngine:
                 fills = execution.fills
                 costs = execution.costs
                 self.reporter.record_trades(fills)
+                self.strategy.on_execution(market=market)
 
             # Mark-to-market at close and record daily metrics.
             equity = portfolio.equity(close_prices)
@@ -239,17 +241,38 @@ class BacktestEngine:
                 pending_targets = None
                 continue
 
-            target = self.sizer.size(
-                current_date,
-                decision=decision,
-                prices=price_slice,
-                portfolio=snapshot,
-            )
-            constraint_result = self.constraints.apply(
-                current_date,
-                target.weights,
-                portfolio=snapshot,
-                close_prices=close_prices,
-            )
-            self.reporter.record_constraint_hits(constraint_result.hits)
-            pending_targets = constraint_result.weights
+            if isinstance(decision, CompositeDecision):
+                constraint_result = self.constraints.apply(
+                    current_date,
+                    decision.blended_weights_pre_constraints,
+                    portfolio=snapshot,
+                    close_prices=close_prices,
+                )
+                self.reporter.record_constraint_hits(constraint_result.hits)
+                if isinstance(self.strategy, CompositeStrategy):
+                    self.strategy.set_pending_post_constraints_targets(
+                        as_of=current_date,
+                        decision=decision,
+                        final_weights=constraint_result.weights,
+                    )
+                    self.reporter.record_composite_weights(
+                        current_date,
+                        composite=decision,
+                        final_weights=constraint_result.weights,
+                    )
+                pending_targets = constraint_result.weights
+            else:
+                target = self.sizer.size(
+                    current_date,
+                    decision=decision,
+                    prices=price_slice,
+                    portfolio=snapshot,
+                )
+                constraint_result = self.constraints.apply(
+                    current_date,
+                    target.weights,
+                    portfolio=snapshot,
+                    close_prices=close_prices,
+                )
+                self.reporter.record_constraint_hits(constraint_result.hits)
+                pending_targets = constraint_result.weights

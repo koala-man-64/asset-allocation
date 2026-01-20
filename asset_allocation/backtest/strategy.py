@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from asset_allocation.backtest.models import PortfolioSnapshot
+from asset_allocation.backtest.models import MarketSnapshot, PortfolioSnapshot
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,15 @@ class Strategy(ABC):
         self._entry_side: Dict[str, int] = {}
         self._high_water_marks: Dict[str, float] = {}
         self._low_water_marks: Dict[str, float] = {}
+
+    def on_execution(self, *, market: MarketSnapshot) -> None:
+        """
+        Optional hook called by the engine immediately after executing targets at open(T).
+
+        Most strategies are fully driven by close(T) decisions and broker-provided position state,
+        so the default is a no-op. Composite strategies can override to keep sleeve state aligned.
+        """
+        return None
 
     def check_rebalance(self, current_date: date) -> bool:
         """
