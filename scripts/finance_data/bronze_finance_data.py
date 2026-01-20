@@ -1,6 +1,6 @@
 
 import os
-import sys
+import sys  # Required for platform check
 import asyncio
 import warnings
 import datetime
