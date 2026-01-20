@@ -1,5 +1,5 @@
 location: East US
-name: gold-finance-wide-job
+name: gold-earnings-by-date-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -7,7 +7,7 @@ properties:
   configuration:
     triggerType: Schedule
     scheduleTriggerConfig:
-      cronExpression: "15 2 * * *"
+      cronExpression: "30 2 * * *"
       parallelism: 1
       replicaCompletionCount: 1
     registries:
@@ -40,12 +40,12 @@ properties:
         value: ${AZURE_CONTAINER_GOLD}
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: gold-finance-wide-job
+      name: gold-earnings-by-date-job
       command:
         [
           "bash",
           "-lc",
-          "set -euo pipefail; python -m scripts.finance_data.materialize_gold_finance_wide --year-month \"${MATERIALIZE_YEAR_MONTH:-$(date -u -d 'yesterday' +%Y-%m)}\"",
+          "set -euo pipefail; python -m scripts.earnings_data.materialize_gold_earnings_by_date --year-month \"${MATERIALIZE_YEAR_MONTH:-$(date -u -d 'yesterday' +%Y-%m)}\"",
         ]
       resources:
         cpu: 2.0

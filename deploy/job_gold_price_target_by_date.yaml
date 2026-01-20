@@ -1,5 +1,5 @@
 location: East US
-name: gold-price-target-wide-job
+name: gold-price-target-by-date-job
 type: Microsoft.App/jobs
 identity:
   type: SystemAssigned
@@ -40,12 +40,12 @@ properties:
         value: ${AZURE_CONTAINER_GOLD}
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
-      name: gold-price-target-wide-job
+      name: gold-price-target-by-date-job
       command:
         [
           "bash",
           "-lc",
-          "set -euo pipefail; python -m scripts.price_target_data.materialize_gold_price_target_wide --year-month \"${MATERIALIZE_YEAR_MONTH:-$(date -u -d 'yesterday' +%Y-%m)}\"",
+          "set -euo pipefail; python -m scripts.price_target_data.materialize_gold_price_target_by_date --year-month \"${MATERIALIZE_YEAR_MONTH:-$(date -u -d 'yesterday' +%Y-%m)}\"",
         ]
       resources:
         cpu: 2.0

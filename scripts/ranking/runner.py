@@ -158,20 +158,20 @@ def _get_market_feature_tickers(
 def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
     from scripts.common.pipeline import DataPaths
 
-    wide_path = os.environ.get("RANKING_MARKET_WIDE_DELTA_PATH", "").strip().lstrip("/")
-    if wide_path:
-        wide = load_delta(cfg.AZURE_CONTAINER_MARKET, wide_path)
-        if wide is not None and not wide.empty:
-            wide = _normalize_symbol_column(wide)
+    by_date_path = os.environ.get("RANKING_MARKET_BY_DATE_DELTA_PATH", "").strip().lstrip("/")
+    if by_date_path:
+        by_date = load_delta(cfg.AZURE_CONTAINER_MARKET, by_date_path)
+        if by_date is not None and not by_date.empty:
+            by_date = _normalize_symbol_column(by_date)
             if whitelist:
-                wide = wide[wide["symbol"].isin(whitelist)]
-            if wide.empty:
+                by_date = by_date[by_date["symbol"].isin(whitelist)]
+            if by_date.empty:
                 return pd.DataFrame()
             write_line(
-                f"Loaded market features from wide table {cfg.AZURE_CONTAINER_MARKET}/{wide_path} "
-                f"(rows={len(wide)})"
+                f"Loaded market features from by-date table {cfg.AZURE_CONTAINER_MARKET}/{by_date_path} "
+                f"(rows={len(by_date)})"
             )
-            return wide.reset_index(drop=True)
+            return by_date.reset_index(drop=True)
 
     # Fallback: load per-ticker market features from the market container.
     client = _build_blob_client(cfg.AZURE_CONTAINER_MARKET, label="market container")

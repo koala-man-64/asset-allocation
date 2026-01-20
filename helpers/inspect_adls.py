@@ -5,28 +5,33 @@ import pandas as pd
 from azure.storage.blob import BlobServiceClient
 from typing import List, Optional
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 try:
-    from scripts.common import delta_core, config as cfg
+    from scripts.common import delta_core
+    # Config removed to avoid strict env checks in standalone mode
 except ImportError:
     print("Error: Could not import project scripts. Install the project (e.g. `pip install -e .`).")
+    print("Ensure you actiavted the environment where 'deltalake' and 'azure-identity' are installed.")
     sys.exit(1)
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def get_service_client() -> BlobServiceClient:
-    """Initialize BlobServiceClient using config credentials."""
-    conn_str = cfg.AZURE_STORAGE_CONNECTION_STRING
+    """Initialize BlobServiceClient using environment credentials."""
+    conn_str = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
     if conn_str:
         return BlobServiceClient.from_connection_string(conn_str)
     
-    account_name = cfg.AZURE_STORAGE_ACCOUNT_NAME
+    account_name = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
     if account_name:
         from azure.identity import DefaultAzureCredential
         account_url = f"https://{account_name}.blob.core.windows.net"
+        # Increase timeout for listing many containers? Default is usually fine.
         return BlobServiceClient(account_url, credential=DefaultAzureCredential())
     
-    raise ValueError("No valid Azure Storage credentials found in config.")
+    raise ValueError("No valid Azure Storage credentials found (set AZURE_STORAGE_ACCOUNT_NAME or CONNECTION_STRING).")
 
 def select_container(client: BlobServiceClient) -> Optional[str]:
     """List containers and prompt user to select one."""
@@ -210,9 +215,85 @@ def navigate_container(client: BlobServiceClient, container_name: str):
             input("Press Enter...")
 
 
+import argparse
+
+def find_delta_tables(container_client) -> List[str]:
+    """Scan container for Delta Tables by looking for _delta_log directories."""
+    print(f"Scanning {container_client.container_name} for Delta Tables...")
+    table_paths = set()
+    try:
+        # We only need to list identifying files. _delta_log/*.json is a good indicator.
+        # However, listing ALL blobs might be slow for massive containers.
+        # But for 'audit all', we likely have to.
+        # Optimization: Just recursively finding _delta_log folders.
+        blobs = container_client.list_blobs()
+        for blob in blobs:
+            if "_delta_log/" in blob.name and blob.name.endswith(".json"):
+                # Path is everything before _delta_log
+                path = blob.name.split("_delta_log/")[0].rstrip("/")
+                if path:
+                    table_paths.add(path)
+    except Exception as e:
+        print(f"Error scanning container: {e}")
+    
+    return sorted(list(table_paths))
+
+def audit_all(client: BlobServiceClient):
+    """Audit all containers and their Delta Tables."""
+    print("--- STARTING FULL AUDIT ---")
+    containers = list(client.list_containers())
+    
+    summary = []
+    
+    for c in containers:
+        print(f"\n[Container: {c.name}]")
+        container_client = client.get_container_client(c.name)
+        tables = find_delta_tables(container_client)
+        
+        if not tables:
+            print("  No Delta Tables found.")
+            continue
+            
+        for t in tables:
+            print(f"  Found Table: {t}")
+            try:
+                df = delta_core.load_delta(c.name, t)
+                if df is not None:
+                    cols = df.columns.tolist()
+                    shape = df.shape
+                    print(f"    Shape: {shape}")
+                    print(f"    Columns: {cols}")
+                    summary.append({
+                        "container": c.name,
+                        "table": t,
+                        "rows": shape[0],
+                        "cols": shape[1],
+                        "columns": str(cols)
+                    })
+                else:
+                    print("    (Empty or Load Failed)")
+            except Exception as e:
+                print(f"    Error loading: {e}")
+                
+    print("\n--- AUDIT SUMMARY ---")
+    df_summary = pd.DataFrame(summary)
+    if not df_summary.empty:
+        print(df_summary.to_string(index=False))
+    else:
+        print("No tables successfully audited.")
+
 def main():
+    parser = argparse.ArgumentParser(description="ADLS Inspector & Auditor")
+    parser.add_argument("--audit", action="store_true", help="Audit all containers and columns non-interactively")
+    args = parser.parse_args()
+
     try:
         client = get_service_client()
+        
+        if args.audit:
+            audit_all(client)
+            return
+
         while True:
             clear_screen()
             container = select_container(client)

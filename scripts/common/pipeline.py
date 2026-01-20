@@ -25,7 +25,7 @@ class DataPaths:
         return f"market/{ticker}"
 
     @staticmethod
-    def get_gold_features_wide_path() -> str:
+    def get_gold_features_by_date_path() -> str:
         return "market_by_date"
 
     @staticmethod
@@ -58,7 +58,7 @@ class DataPaths:
 
 
     @staticmethod
-    def get_gold_finance_wide_path() -> str:
+    def get_gold_finance_by_date_path() -> str:
         return "finance_by_date"
 
     @staticmethod
@@ -70,7 +70,7 @@ class DataPaths:
         return "earnings-data-by-date"
 
     @staticmethod
-    def get_gold_earnings_wide_path() -> str:
+    def get_gold_earnings_by_date_path() -> str:
         return "earnings_by_date"
 
     @staticmethod
@@ -78,7 +78,7 @@ class DataPaths:
         return "price-target-data-by-date"
 
     @staticmethod
-    def get_gold_price_targets_wide_path() -> str:
+    def get_gold_price_targets_by_date_path() -> str:
         return "targets_by_date"
 
 

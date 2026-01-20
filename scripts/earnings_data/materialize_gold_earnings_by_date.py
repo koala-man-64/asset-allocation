@@ -62,7 +62,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser.add_argument("--year-month", required=True, help="Year-month partition to materialize (YYYY-MM).")
     parser.add_argument(
         "--output-path",
-        default=DataPaths.get_gold_earnings_wide_path(),
+        default=DataPaths.get_gold_earnings_by_date_path(),
         help="Output Delta table path within the container.",
     )
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")

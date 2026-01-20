@@ -90,10 +90,10 @@ def test_runner_invokes_save_rankings(monkeypatch):
     assert all(results for results in calls)
 
 
-def test_load_market_data_prefers_wide_table(monkeypatch):
-    monkeypatch.setenv("RANKING_MARKET_WIDE_DELTA_PATH", "market_by_date")
+def test_load_market_data_prefers_by_date_table(monkeypatch):
+    monkeypatch.setenv("RANKING_MARKET_BY_DATE_DELTA_PATH", "market_by_date")
 
-    wide = pd.DataFrame(
+    by_date = pd.DataFrame(
         {
             "date": [pd.Timestamp("2023-01-01")],
             "symbol": ["ALPHA"],
@@ -102,7 +102,7 @@ def test_load_market_data_prefers_wide_table(monkeypatch):
     )
 
     delta_core.store_delta(
-        wide,
+        by_date,
         container=runner.cfg.AZURE_CONTAINER_MARKET,
         path="market_by_date",
         mode="overwrite",

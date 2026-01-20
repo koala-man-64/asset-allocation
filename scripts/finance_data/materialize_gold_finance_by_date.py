@@ -1,7 +1,11 @@
 """
-Materialize a cross-sectional (by-date) Delta table from per-ticker Gold price target feature tables.
+Materialize a cross-sectional (by-date) Delta table from per-ticker finance feature tables.
 
-Partitioned by year_month and date.
+Why:
+- Per-ticker tables are convenient for lookups.
+- Analysis often needs cross-sectional slices (all symbols for a given date).
+
+This script builds a single Delta table partitioned by year_month and date.
 """
 
 from __future__ import annotations
@@ -52,13 +56,13 @@ def _load_ticker_universe() -> List[str]:
 
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
-        description="Materialize price target features into a cross-sectional Delta table (partitioned by date)."
+        description="Materialize finance features into a cross-sectional Delta table (partitioned by date)."
     )
-    parser.add_argument("--container", help="Targets features container (default: AZURE_CONTAINER_GOLD).")
+    parser.add_argument("--container", help="Finance features container (default: AZURE_CONTAINER_GOLD).")
     parser.add_argument("--year-month", required=True, help="Year-month partition to materialize (YYYY-MM).")
     parser.add_argument(
         "--output-path",
-        default=DataPaths.get_gold_price_targets_wide_path(),
+        default=DataPaths.get_gold_finance_by_date_path(),
         help="Output Delta table path within the container.",
     )
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
@@ -66,11 +70,11 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
 
     container = (args.container or os.environ.get("AZURE_CONTAINER_GOLD", "")).strip()
     if not container:
-        # Fallback to TARGETS if GOLD is not set
-        container = os.environ.get("AZURE_CONTAINER_TARGETS", "").strip()
-
+        # Fallback to FINANCE if GOLD is not set, as per some configs
+        container = os.environ.get("AZURE_CONTAINER_FINANCE", "").strip()
+        
     if not container:
-        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or pass --container.")
+        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_CONTAINER_FINANCE or pass --container.")
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
     if max_tickers is not None and max_tickers <= 0:
@@ -84,7 +88,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     )
 
 
-def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
+def materialize_finance_by_date(cfg: MaterializeConfig) -> int:
     start, end = _parse_year_month_bounds(cfg.year_month)
 
     tickers = _load_ticker_universe()
@@ -92,13 +96,13 @@ def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
         tickers = tickers[: cfg.max_tickers]
 
     write_line(
-        f"Materializing targets_by_date for {cfg.year_month}: container={cfg.container} "
+        f"Materializing finance_by_date for {cfg.year_month}: container={cfg.container} "
         f"tickers={len(tickers)} output_path={cfg.output_path}"
     )
 
     frames = []
     for ticker in tickers:
-        src_path = DataPaths.get_gold_price_targets_path(ticker)
+        src_path = DataPaths.get_gold_finance_path(ticker)
         df = load_delta(
             cfg.container,
             src_path,
@@ -106,14 +110,14 @@ def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
         )
         if df is None or df.empty:
             continue
-            
+        # Inject ticker col if missing? usually DataPaths implies ticker is key, but wide table needs it
         if "symbol" not in df.columns and "Symbol" not in df.columns:
             df["symbol"] = ticker
-
+            
         frames.append(df)
 
     if not frames:
-        write_line(f"No price target feature rows found for {cfg.year_month}; nothing to materialize.")
+        write_line(f"No finance feature rows found for {cfg.year_month}; nothing to materialize.")
         return 0
 
     out = pd.concat(frames, ignore_index=True)
@@ -146,7 +150,7 @@ def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     cfg = _build_config(argv)
-    return materialize_targets_by_date(cfg)
+    return materialize_finance_by_date(cfg)
 
 
 if __name__ == "__main__":
