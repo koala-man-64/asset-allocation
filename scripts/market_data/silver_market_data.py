@@ -98,6 +98,14 @@ def main():
         process_file(blob_name)
 
 if __name__ == "__main__":
-    job_name = 'bronze-market-job-silver'
-    with mdc.JobLock(job_name):
-        main()
+    from scripts.common.by_date_pipeline import run_partner_then_by_date
+    from scripts.market_data.materialize_silver_market_by_date import main as by_date_main
+
+    job_name = "bronze-market-job-silver"
+    raise SystemExit(
+        run_partner_then_by_date(
+            job_name=job_name,
+            partner_main=main,
+            by_date_main=by_date_main,
+        )
+    )

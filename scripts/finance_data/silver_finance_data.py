@@ -153,6 +153,14 @@ def main():
     mdc.write_line(f"Processed {count} blobs.")
 
 if __name__ == "__main__":
-    job_name = 'branze-finance-job-silver'
-    with mdc.JobLock(job_name):
-        main()
+    from scripts.common.by_date_pipeline import run_partner_then_by_date
+    from scripts.finance_data.materialize_silver_finance_by_date import main as by_date_main
+
+    job_name = "branze-finance-job-silver"
+    raise SystemExit(
+        run_partner_then_by_date(
+            job_name=job_name,
+            partner_main=main,
+            by_date_main=by_date_main,
+        )
+    )

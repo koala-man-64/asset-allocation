@@ -21,22 +21,14 @@ env:
   BRONZE_EARNINGS_JOB: bronze-earnings-job
   # Silver
   SILVER_MARKET_JOB: silver-market-job
-  SILVER_MARKET_BY_DATE_JOB: silver-market-by-date-job
   SILVER_FINANCE_JOB: silver-finance-job
-  SILVER_FINANCE_BY_DATE_JOB: silver-finance-by-date-job
   SILVER_PRICE_TARGET_JOB: silver-price-target-job
-  SILVER_PRICE_TARGET_BY_DATE_JOB: silver-price-target-by-date-job
   SILVER_EARNINGS_JOB: silver-earnings-job
-  SILVER_EARNINGS_BY_DATE_JOB: silver-earnings-by-date-job
   # Gold
   GOLD_MARKET_JOB: gold-market-job
-  GOLD_MARKET_BY_DATE_JOB: gold-market-by-date-job
   GOLD_FINANCE_JOB: gold-finance-job
-  GOLD_FINANCE_BY_DATE_JOB: gold-finance-by-date-job
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
-  GOLD_PRICE_TARGET_BY_DATE_JOB: gold-price-target-by-date-job
   GOLD_EARNINGS_JOB: gold-earnings-job
-  GOLD_EARNINGS_BY_DATE_JOB: gold-earnings-by-date-job
   # Platinum
   PLATINUM_RANKING_JOB: platinum-ranking-job
 
@@ -70,69 +62,37 @@ jobs:
 
       # --- Silver ---
       - name: Trigger Market Silver Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_market' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_market' || github.event.inputs.job == 'silver_market_by_date' }}
         run: az containerapp job start --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Trigger Market Silver By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_market_by_date' }}
-        run: az containerapp job start --name ${{ env.SILVER_MARKET_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Trigger Finance Silver Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_finance' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_finance' || github.event.inputs.job == 'silver_finance_by_date' }}
         run: az containerapp job start --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Trigger Finance Silver By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_finance_by_date' }}
-        run: az containerapp job start --name ${{ env.SILVER_FINANCE_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Trigger Price Target Silver Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_price_target' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_price_target' || github.event.inputs.job == 'silver_price_target_by_date' }}
         run: az containerapp job start --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Trigger Price Target Silver By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_price_target_by_date' }}
-        run: az containerapp job start --name ${{ env.SILVER_PRICE_TARGET_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Trigger Earnings Silver Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_earnings' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_earnings' || github.event.inputs.job == 'silver_earnings_by_date' }}
         run: az containerapp job start --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
-      - name: Trigger Earnings Silver By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'silver_earnings_by_date' }}
-        run: az containerapp job start --name ${{ env.SILVER_EARNINGS_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       # --- Gold ---
       - name: Trigger Market Gold Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_market' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_market' || github.event.inputs.job == 'gold_market_by_date' }}
         run: az containerapp job start --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Trigger Market Gold By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_market_by_date' }}
-        run: az containerapp job start --name ${{ env.GOLD_MARKET_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Trigger Finance Gold Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_finance' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_finance' || github.event.inputs.job == 'gold_finance_by_date' }}
         run: az containerapp job start --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Trigger Finance Gold By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_finance_by_date' }}
-        run: az containerapp job start --name ${{ env.GOLD_FINANCE_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Trigger Price Target Gold Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_price_target' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_price_target' || github.event.inputs.job == 'gold_price_target_by_date' }}
         run: az containerapp job start --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      - name: Trigger Price Target Gold By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_price_target_by_date' }}
-        run: az containerapp job start --name ${{ env.GOLD_PRICE_TARGET_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Trigger Earnings Gold Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_earnings' }}
+        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_earnings' || github.event.inputs.job == 'gold_earnings_by_date' }}
         run: az containerapp job start --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
-      - name: Trigger Earnings Gold By Date Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_earnings_by_date' }}
-        run: az containerapp job start --name ${{ env.GOLD_EARNINGS_BY_DATE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       # --- Platinum ---
       - name: Trigger Ranking Job

@@ -16,7 +16,7 @@ properties:
       server: assetallocationacr.azurecr.io
       username: assetallocationacr
     replicaRetryLimit: 2
-    replicaTimeout: 1800
+    replicaTimeout: 7200
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
       value: ${ACR_PASSWORD}
@@ -34,6 +34,8 @@ properties:
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_RANKING
         value: ${AZURE_CONTAINER_RANKING}
+      - name: MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR
+        value: "23"
       - name: LOG_FORMAT
         value: JSON
       - name: AZURE_STORAGE_ACCOUNT_NAME
@@ -53,6 +55,6 @@ properties:
       name: silver-market-job
       command: ["python", "-m", "scripts.market_data.silver_market_data"]
       resources:
-        cpu: 1.0
-        memory: 2Gi
+        cpu: 2.0
+        memory: 4Gi
   workloadProfileName: Consumption

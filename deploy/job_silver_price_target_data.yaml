@@ -16,7 +16,7 @@ properties:
       server: assetallocationacr.azurecr.io
       username: assetallocationacr
     replicaRetryLimit: 2
-    replicaTimeout: 1800
+    replicaTimeout: 7200
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
       value: ${ACR_PASSWORD}
@@ -53,6 +53,6 @@ properties:
       name: silver-price-target-job
       command: ["python", "-m", "scripts.price_target_data.silver_price_target_data"]
       resources:
-        cpu: 1.0
-        memory: 2Gi
+        cpu: 2.0
+        memory: 4Gi
   workloadProfileName: Consumption

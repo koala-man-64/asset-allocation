@@ -16,7 +16,7 @@ properties:
       server: assetallocationacr.azurecr.io
       username: assetallocationacr
     replicaRetryLimit: 2
-    replicaTimeout: 1800
+    replicaTimeout: 7200
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
       value: ${ACR_PASSWORD}
@@ -40,6 +40,8 @@ properties:
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_RANKING
         value: ${AZURE_CONTAINER_RANKING}
+      - name: MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR
+        value: "22"
       - name: AZURE_CONTAINER_BRONZE
         value: ${AZURE_CONTAINER_BRONZE}
       - name: LOG_FORMAT

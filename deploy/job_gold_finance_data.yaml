@@ -16,7 +16,7 @@ properties:
       server: assetallocationacr.azurecr.io
       username: assetallocationacr
     replicaRetryLimit: 2
-    replicaTimeout: 1800
+    replicaTimeout: 7200
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
       value: ${ACR_PASSWORD}
