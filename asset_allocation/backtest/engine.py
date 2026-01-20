@@ -10,6 +10,7 @@ import pandas as pd
 from asset_allocation.backtest.broker import SimulatedBroker
 from asset_allocation.backtest.config import BacktestConfig
 from asset_allocation.backtest.constraints import Constraints
+from asset_allocation.backtest.composite_strategy import CompositeDecision, CompositeStrategy
 from asset_allocation.backtest.models import MarketBar, MarketSnapshot, PortfolioSnapshot
 from asset_allocation.backtest.portfolio import Portfolio
 from asset_allocation.backtest.reporter import Reporter
@@ -127,7 +128,9 @@ class BacktestEngine:
         portfolio = Portfolio(cash=float(self.config.initial_cash))
         broker = SimulatedBroker(config=self.config.broker, portfolio=portfolio)
 
-        pending_targets: Dict[str, float] = {}
+        # None => no trade scheduled for the next open.
+        # Dict (possibly empty) => explicit target weights to execute at the next open.
+        pending_targets: Optional[Dict[str, float]] = None
 
         prev_equity = float(self.config.initial_cash)
         running_peak = prev_equity
@@ -157,11 +160,12 @@ class BacktestEngine:
             # Execute orders at open (except for the first bar, which has no prior close).
             fills = []
             costs = None
-            if i > 0 and pending_targets:
+            if i > 0 and pending_targets is not None:
                 execution = broker.execute_target_weights(market, target_weights=pending_targets)
                 fills = execution.fills
                 costs = execution.costs
                 self.reporter.record_trades(fills)
+                self.strategy.on_execution(market=market)
 
             # Mark-to-market at close and record daily metrics.
             equity = portfolio.equity(close_prices)
@@ -234,39 +238,41 @@ class BacktestEngine:
             # If strategy returns None, it means "No Action" (e.g. no rebalance today).
             # We skip sizing and constraint application, preserving current positions.
             if decision is None:
-                pending_targets = {}  # or better: self.constraints.apply(...) on EXISTING positions?
-                # Actually, if we skip, pending_targets should be cleared or set to None?
-                # In current loop logic:
-                # `pending_targets` is a local dict defined outside loop: `pending_targets = {}`
-                # If we don't update it, it KEEPS the value from previous iteration?
-                # WAIIIT.
-                # line 119: pending_targets: Dict[str, float] = {}
-                # line 136: if i > 0 and pending_targets: broker.execute...
-                # line 208: pending_targets = ...
-                
-                # If we skip line 208, pending_targets retains YESTERDAY'S target?
-                # No, because pending_targets is executed at i (today's open).
-                # The loop structure:
-                # 1. Execute `pending_targets` (calculated yesterday close) at Today Open.
-                # 2. Daily Metrics based on Today Close.
-                # 3. Calculate `pending_targets` (for Tomorrow Open) based on Today Close.
-                
-                # So if on_bar returns None (No Rebalance at Today Close),
-                # we want `pending_targets` for Tomorrow Open to be EMPTY (no trade).
-                pending_targets = {}
+                pending_targets = None
                 continue
 
-            target = self.sizer.size(
-                current_date,
-                decision=decision,
-                prices=price_slice,
-                portfolio=snapshot,
-            )
-            constraint_result = self.constraints.apply(
-                current_date,
-                target.weights,
-                portfolio=snapshot,
-                close_prices=close_prices,
-            )
-            self.reporter.record_constraint_hits(constraint_result.hits)
-            pending_targets = constraint_result.weights
+            if isinstance(decision, CompositeDecision):
+                constraint_result = self.constraints.apply(
+                    current_date,
+                    decision.blended_weights_pre_constraints,
+                    portfolio=snapshot,
+                    close_prices=close_prices,
+                )
+                self.reporter.record_constraint_hits(constraint_result.hits)
+                if isinstance(self.strategy, CompositeStrategy):
+                    self.strategy.set_pending_post_constraints_targets(
+                        as_of=current_date,
+                        decision=decision,
+                        final_weights=constraint_result.weights,
+                    )
+                    self.reporter.record_composite_weights(
+                        current_date,
+                        composite=decision,
+                        final_weights=constraint_result.weights,
+                    )
+                pending_targets = constraint_result.weights
+            else:
+                target = self.sizer.size(
+                    current_date,
+                    decision=decision,
+                    prices=price_slice,
+                    portfolio=snapshot,
+                )
+                constraint_result = self.constraints.apply(
+                    current_date,
+                    target.weights,
+                    portfolio=snapshot,
+                    close_prices=close_prices,
+                )
+                self.reporter.record_constraint_hits(constraint_result.hits)
+                pending_targets = constraint_result.weights

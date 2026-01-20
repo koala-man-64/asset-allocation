@@ -13,6 +13,7 @@ import pandas as pd
 from filelock import FileLock
 
 from asset_allocation.backtest.config import BacktestConfig
+from asset_allocation.backtest.composite_strategy import CompositeDecision
 from asset_allocation.backtest.constraints import ConstraintHit
 from asset_allocation.backtest.models import BacktestSummary, TradeFill, PortfolioSnapshot
 from asset_allocation.backtest.portfolio import Portfolio
@@ -76,6 +77,9 @@ class Reporter:
     _days: List[Dict[str, Any]] = field(default_factory=list)
     _positions: List[Dict[str, Any]] = field(default_factory=list)
     _constraint_hits: List[Dict[str, Any]] = field(default_factory=list)
+    _composite_leg_weights: List[Dict[str, Any]] = field(default_factory=list)
+    _composite_blended_pre: List[Dict[str, Any]] = field(default_factory=list)
+    _composite_blended_post: List[Dict[str, Any]] = field(default_factory=list)
 
     @staticmethod
     def create(config: BacktestConfig, *, run_id: str, output_dir: Optional[Path] = None) -> "Reporter":
@@ -172,6 +176,38 @@ class Reporter:
                 }
             )
 
+    def record_composite_weights(self, as_of: date, *, composite: CompositeDecision, final_weights: Dict[str, float]) -> None:
+        for leg in composite.leg_results:
+            leg_name = str(leg.name)
+            for symbol, weight in (leg.target_weights or {}).items():
+                self._composite_leg_weights.append(
+                    {
+                        "date": as_of.isoformat(),
+                        "leg": leg_name,
+                        "alpha": float(leg.alpha),
+                        "symbol": str(symbol),
+                        "weight": float(weight),
+                    }
+                )
+
+        for symbol, weight in (composite.blended_weights_pre_constraints or {}).items():
+            self._composite_blended_pre.append(
+                {
+                    "date": as_of.isoformat(),
+                    "symbol": str(symbol),
+                    "weight": float(weight),
+                }
+            )
+
+        for symbol, weight in (final_weights or {}).items():
+            self._composite_blended_post.append(
+                {
+                    "date": as_of.isoformat(),
+                    "symbol": str(symbol),
+                    "weight": float(weight),
+                }
+            )
+
     def write_artifacts(self) -> BacktestSummary:
         if self.config.output.save_resolved_config_json:
             resolved = self.config.to_dict()
@@ -229,6 +265,8 @@ class Reporter:
                 json.dumps(self._constraint_hits, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
+
+        self._write_composite_artifacts()
 
         initial_cash = float(self.config.initial_cash)
         final_equity = float(daily_df["portfolio_value"].iloc[-1])
@@ -291,6 +329,30 @@ class Reporter:
                 client.upload_file(str(index_path), remote_path)
 
         return summary
+
+    def _write_composite_artifacts(self) -> None:
+        if not self._composite_leg_weights and not self._composite_blended_pre and not self._composite_blended_post:
+            return
+
+        def _safe_name(value: str) -> str:
+            cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value).strip())
+            return cleaned or "leg"
+
+        if self._composite_leg_weights:
+            legs_df = pd.DataFrame(self._composite_leg_weights)
+            if not legs_df.empty:
+                legs_df["leg"] = legs_df["leg"].astype(str)
+                for leg_name in sorted(set(legs_df["leg"].tolist())):
+                    out_dir = self.output_dir / "legs" / _safe_name(leg_name)
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    legs_df[legs_df["leg"] == leg_name].to_csv(out_dir / "weights.csv", index=False)
+
+        blend_dir = self.output_dir / "blend"
+        blend_dir.mkdir(parents=True, exist_ok=True)
+        if self._composite_blended_pre:
+            pd.DataFrame(self._composite_blended_pre).to_csv(blend_dir / "blended_pre_constraints.csv", index=False)
+        if self._composite_blended_post:
+            pd.DataFrame(self._composite_blended_post).to_csv(blend_dir / "blended_post_constraints.csv", index=False)
 
     def _compute_rolling_metrics(self, daily_df: pd.DataFrame) -> pd.DataFrame:
         if daily_df is None or daily_df.empty:

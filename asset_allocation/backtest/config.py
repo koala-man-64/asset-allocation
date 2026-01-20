@@ -46,7 +46,25 @@ _STRICT_ALLOWED_TOP_LEVEL_KEYS = {
 _STRICT_ALLOWED_SECTIONS: Dict[str, set[str]] = {
     "universe": {"symbols", "asset_class", "currency"},
     "data": {"price_source", "price_path", "signal_path", "price_fields", "frequency"},
-    "strategy": {"class", "class_name", "module", "parameters"},
+    "strategy": {
+        "class",
+        "class_name",
+        "module",
+        "parameters",
+        # ConfiguredStrategy schema (normalized into parameters at load time).
+        "type",
+        "rebalance",
+        "blend",
+        "legs",
+        "universe",
+        "signals",
+        "scoring",
+        "selection",
+        "holding_policy",
+        "exits",
+        "postprocess",
+        "debug",
+    },
     "sizing": {"class", "class_name", "module", "parameters"},
     "constraints": {
         "max_leverage",
@@ -198,6 +216,70 @@ class ComponentConfig:
         if self.parameters:
             out["parameters"] = self.parameters
         return out
+
+
+def _parse_strategy_config(data: Dict[str, Any]) -> ComponentConfig:
+    """
+    Supports both legacy strategy configs:
+      strategy: {class: "BreakoutStrategy", parameters: {...}}
+
+    and ConfiguredStrategy configs:
+      strategy:
+        type: configured
+        rebalance: {...}
+        universe: {...}
+        ...
+
+    ConfiguredStrategy configs are normalized into:
+      ComponentConfig(class_name="ConfiguredStrategy", parameters=<pipeline config dict>)
+    """
+    raw = data.get("strategy") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("strategy must be an object.")
+
+    stype = raw.get("type")
+    stype_norm = str(stype).strip() if stype is not None else None
+    if stype_norm is None:
+        return ComponentConfig.from_dict(raw, label="strategy")
+    if stype_norm not in {"configured", "composite"}:
+        return ComponentConfig.from_dict(raw, label="strategy")
+
+    if stype_norm == "configured":
+        class_name = raw.get("class") or raw.get("class_name") or "ConfiguredStrategy"
+        if str(class_name).strip() not in {"ConfiguredStrategy", "configured"}:
+            raise ValueError("strategy.type=configured requires strategy.class to be 'ConfiguredStrategy' when provided.")
+
+        params = raw.get("parameters") or {}
+        if not isinstance(params, dict):
+            raise ValueError("strategy.parameters must be an object.")
+
+        # Merge top-level configured keys into parameters to avoid changing BacktestConfig schema.
+        merged = dict(params)
+        for key, value in raw.items():
+            if key in {"type", "class", "class_name", "module", "parameters"}:
+                continue
+            merged[str(key)] = value
+
+        module = raw.get("module")
+        return ComponentConfig(class_name="ConfiguredStrategy", module=str(module) if module else None, parameters=merged)
+
+    # Composite strategy config (normalized into parameters at load time).
+    class_name = raw.get("class") or raw.get("class_name") or "CompositeStrategy"
+    if str(class_name).strip() not in {"CompositeStrategy", "composite"}:
+        raise ValueError("strategy.type=composite requires strategy.class to be 'CompositeStrategy' when provided.")
+
+    params = raw.get("parameters") or {}
+    if not isinstance(params, dict):
+        raise ValueError("strategy.parameters must be an object.")
+
+    merged = dict(params)
+    for key, value in raw.items():
+        if key in {"type", "class", "class_name", "module", "parameters"}:
+            continue
+        merged[str(key)] = value
+
+    module = raw.get("module")
+    return ComponentConfig(class_name="CompositeStrategy", module=str(module) if module else None, parameters=merged)
 
 
 @dataclass(frozen=True)
@@ -435,7 +517,7 @@ class BacktestConfig:
         start_date = _parse_date(data.get("start_date"), field_name="start_date")
         end_date = _parse_date(data.get("end_date"), field_name="end_date")
         universe = UniverseConfig.from_dict(data.get("universe") or {})
-        strategy = ComponentConfig.from_dict(data.get("strategy") or {}, label="strategy")
+        strategy = _parse_strategy_config(data)
         sizing = ComponentConfig.from_dict(data.get("sizing") or {"class": "EqualWeightSizer"}, label="sizing")
         constraints = ConstraintsConfig.from_dict(data.get("constraints") or {})
         broker = BrokerConfig.from_dict(data.get("broker") or {})

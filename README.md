@@ -17,7 +17,7 @@ python3 -m pip install -e .
 
 ### Run tests
 ```bash
-pytest -q
+python3 -m pytest -q
 ```
 
 ## Backtesting
