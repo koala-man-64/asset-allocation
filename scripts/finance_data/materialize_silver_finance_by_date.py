@@ -9,11 +9,11 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import pandas as pd
 
-from scripts.common.core import write_line
+from scripts.common.core import write_line, write_warning
 from scripts.common.delta_core import load_delta, store_delta
 from scripts.common.pipeline import DataPaths
 
@@ -50,6 +50,59 @@ def _load_ticker_universe() -> List[str]:
     return list(dict.fromkeys(tickers))
 
 
+def _extract_finance_table_roots_from_blobs(blob_names: Iterable[str]) -> set[str]:
+    """
+    Extract per-table roots that have a Delta log present under `finance-data/<folder>/<table>/_delta_log/`.
+
+    This is used to avoid attempting to read tables that do not exist, which otherwise triggers noisy delta-rs warnings.
+    """
+
+    roots: set[str] = set()
+    for blob_name in blob_names:
+        parts = str(blob_name).strip("/").split("/")
+        if len(parts) < 5:
+            continue
+        if parts[0] != "finance-data":
+            continue
+
+        if parts[3] != "_delta_log":
+            continue
+
+        log_file = parts[4]
+        if not (log_file.endswith(".json") or log_file.endswith(".checkpoint.parquet")):
+            continue
+
+        roots.add("/".join(parts[:3]))
+
+    return roots
+
+
+def _try_load_finance_table_roots_from_container(container: str) -> Optional[set[str]]:
+    """
+    Attempt to list existing Silver finance tables from the target container (preferred).
+
+    Returns:
+      - set[str] (possibly empty) when listing succeeds.
+      - None when listing is unavailable (e.g., no list permissions / no client).
+    """
+
+    from scripts.common import core as mdc
+
+    client = mdc.get_storage_client(container)
+    if client is None:
+        return None
+
+    try:
+        blobs = client.container_client.list_blobs(name_starts_with="finance-data/")
+        return _extract_finance_table_roots_from_blobs(b.name for b in blobs)
+    except Exception as exc:
+        write_warning(
+            f"Unable to list finance-data tables in container={container}: {exc}. "
+            "Falling back to symbol universe."
+        )
+        return None
+
+
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
         description="Materialize Silver finance data into a cross-sectional Delta table (partitioned by date)."
@@ -83,14 +136,25 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
 def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
     start, end = _parse_year_month_bounds(cfg.year_month)
 
-    tickers = _load_ticker_universe()
+    available_table_roots = _try_load_finance_table_roots_from_container(cfg.container)
+    if available_table_roots is None:
+        tickers = _load_ticker_universe()
+        ticker_source = "symbol_universe"
+    else:
+        tickers = sorted({root.split("/")[2].split("_", 1)[0] for root in available_table_roots})
+        ticker_source = "container_listing"
+
     if cfg.max_tickers is not None:
         tickers = tickers[: cfg.max_tickers]
 
     write_line(
         f"Materializing finance-data-by-date for {cfg.year_month}: container={cfg.container} "
-        f"tickers={len(tickers)} output_path={cfg.output_path}"
+        f"tickers={len(tickers)} ticker_source={ticker_source} output_path={cfg.output_path}"
     )
+
+    if not tickers:
+        write_line(f"No per-ticker finance tables found (source={ticker_source}); nothing to materialize.")
+        return 0
 
     frames = []
     # Finance data is unique; multiple tables per ticker (balance sheet, income, etc.)
@@ -140,6 +204,8 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
         ticker_frames = []
         for folder_name, suffix in known_types:
             src_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
+            if available_table_roots is not None and src_path not in available_table_roots:
+                continue
             df = load_delta(cfg.container, src_path)
             
             if df is None or df.empty:
