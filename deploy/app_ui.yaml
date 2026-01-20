@@ -1,0 +1,34 @@
+location: East US
+name: asset-allocation-ui
+type: Microsoft.App/containerApps
+identity:
+  type: SystemAssigned
+properties:
+  managedEnvironmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: true
+      targetPort: 80
+      transport: auto
+      allowInsecure: false
+    registries:
+    - identity: ''
+      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
+      server: assetallocationacr.azurecr.io
+      username: assetallocationacr
+    secrets:
+    - name: assetallocationacrazurecrio-assetallocationacr
+      value: ${ACR_PASSWORD}
+  template:
+    containers:
+    - image: assetallocationacr.azurecr.io/asset-allocation-ui:${IMAGE_TAG}
+      imageType: ContainerImage
+      name: asset-allocation-ui
+      resources:
+        cpu: 0.5
+        memory: 1Gi
+      probes: []
+    scale:
+      minReplicas: 0
+      maxReplicas: 10

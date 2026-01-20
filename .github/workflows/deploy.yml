@@ -27,6 +27,8 @@ env:
   IMAGE_NAME: asset-allocation-scraper
   BACKTEST_API_IMAGE_NAME: asset-allocation-backtest-api
   BACKTEST_API_APP: backtest-api
+  UI_IMAGE_NAME: asset-allocation-ui
+  UI_APP: asset-allocation-ui
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -222,6 +224,16 @@ jobs:
               - "requirements.lock.txt"
               - ".github/workflows/deploy.yml"
 
+      - name: Detect UI Changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: ui_changes
+        with:
+          filters: |
+            ui:
+              - "asset_allocation/ui2.0/**"
+              - "deploy/app_ui.yaml"
+              - ".github/workflows/deploy.yml"
+
       - name: Log change detection outputs
         run: |
           echo "bronze_market=${{ steps.market_changes.outputs.bronze_market }}"
@@ -246,6 +258,7 @@ jobs:
           echo "gold_price_target_wide=${{ steps.price_target_changes.outputs.gold_price_target_wide }}"
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
           echo "backtest_api=${{ steps.backtest_api_changes.outputs.backtest_api }}"
+          echo "ui=${{ steps.ui_changes.outputs.ui }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
@@ -270,6 +283,16 @@ jobs:
           docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+
+      - name: Build and Push UI Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true'
+        run: |
+          cd asset_allocation/ui2.0
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+          cd ../..
 
       - name: Ensure Storage Containers Exist
         run: |
@@ -353,6 +376,55 @@ jobs:
             exit 1
           fi
           echo "Verified ${{ env.BACKTEST_API_APP }} image $actual_image"
+
+      - name: Check UI App Exists
+        id: ui_app_check
+        run: |
+          if az containerapp show --name ${{ env.UI_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "app_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy UI App
+        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true' || steps.ui_app_check.outputs.app_exists == 'false'
+        run: |
+          set -euo pipefail
+          ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          export ACR_PASSWORD
+          export IMAGE_TAG="${{ github.sha }}"
+
+          echo "Deploying UI App from YAML..."
+          envsubst < deploy/app_ui.yaml > deploy/app_ui.tmp.yaml
+
+          if ! az containerapp show --name ${{ env.UI_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+             echo "App ${{ env.UI_APP }} not found. Creating..."
+             az containerapp create \
+               --name ${{ env.UI_APP }} \
+               --resource-group ${{ env.RESOURCE_GROUP }} \
+               --environment asset-allocation-env \
+               --yaml "deploy/app_ui.tmp.yaml"
+          else
+             echo "App ${{ env.UI_APP }} found. Updating..."
+             az containerapp update \
+               --name ${{ env.UI_APP }} \
+               --resource-group ${{ env.RESOURCE_GROUP }} \
+               --yaml "deploy/app_ui.tmp.yaml"
+          fi
+          
+          rm deploy/app_ui.tmp.yaml
+
+      - name: Verify UI Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true' || steps.ui_app_check.outputs.app_exists == 'false'
+        run: |
+          set -euo pipefail
+          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}"
+          actual_image=$(az containerapp show --name "${{ env.UI_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
+          if [ "$actual_image" != "$expected_image" ]; then
+            echo "Image mismatch for ${{ env.UI_APP }}: expected $expected_image, got $actual_image"
+            exit 1
+          fi
+          echo "Verified ${{ env.UI_APP }} image $actual_image"
 
       - name: Check Market Bronze Job Exists
         id: market_data_job_check
