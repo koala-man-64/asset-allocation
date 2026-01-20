@@ -132,7 +132,7 @@ class AdlsRunStore:
             if not name.endswith(".json"):
                 continue
             data = self._client.download_data(name)
-            if not data:
+            if data is None:
                 continue
             try:
                 records.append(self._deserialize_record(data))
@@ -208,7 +208,7 @@ class AdlsRunStore:
 
     def get_run(self, run_id: str) -> RunRecord:
         data = self._client.download_data(self._record_path(run_id))
-        if not data:
+        if data is None:
             raise KeyError(run_id)
         return self._deserialize_record(data)
 

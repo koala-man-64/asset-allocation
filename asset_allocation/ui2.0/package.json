@@ -3,12 +3,14 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "packageManager": "pnpm@10.28.1",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
+    "@azure/msal-browser": "5.0.2",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",

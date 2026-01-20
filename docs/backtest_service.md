@@ -1,6 +1,17 @@
-# Backtest Service (Phase 3)
+# Backtest Service (Phases 3–5)
 
 FastAPI service for config-driven backtest execution with persistent run state and artifact access.
+
+## UI Hosting (Phase 4, Option A)
+
+When the service is built with `Dockerfile.backtest_api`, the React SPA is built from `asset_allocation/ui2.0`
+and served from the same FastAPI process:
+
+- UI: `GET /`
+- Static assets: `GET /assets/*`
+- API: `GET /backtests/*`
+
+You can override the UI dist directory with `BACKTEST_UI_DIST_DIR` (must contain `index.html` and `assets/`).
 
 ## Run Locally
 
@@ -25,6 +36,23 @@ export BACKTEST_ALLOWED_DATA_DIRS="$(pwd)/data"
 
 # Optional auth (recommended for any shared environment):
 export BACKTEST_API_KEY="change-me"
+# Optional: customize API key header name (default: X-API-Key)
+export BACKTEST_API_KEY_HEADER="X-API-Key"
+
+# Optional: browser-safe auth via OIDC/JWT
+# If BACKTEST_OIDC_ISSUER + BACKTEST_OIDC_AUDIENCE are set, the service will accept bearer tokens.
+# When both API key + OIDC are configured, the default mode becomes api_key_or_oidc.
+export BACKTEST_AUTH_MODE="api_key_or_oidc"   # none|api_key|oidc|api_key_or_oidc
+export BACKTEST_OIDC_ISSUER="https://login.microsoftonline.com/<tenant-id>/v2.0"
+export BACKTEST_OIDC_AUDIENCE="api://<api-client-id>"
+# Optional override; otherwise discovered via the issuer's OIDC discovery document:
+export BACKTEST_OIDC_JWKS_URL="https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
+# Optional authorization:
+export BACKTEST_OIDC_REQUIRED_SCOPES="backtests.read,backtests.write"
+export BACKTEST_OIDC_REQUIRED_ROLES=""
+
+# Optional: override default Content-Security-Policy header:
+export BACKTEST_CSP=""
 
 uvicorn asset_allocation.backtest.service.app:app --reload --port 8000
 ```
@@ -76,4 +104,35 @@ The service uploads to:
 ## Security Notes
 
 - Local filesystem reads via `data.price_source=local` are blocked unless explicitly enabled + allowlisted.
-- If `BACKTEST_API_KEY` is set, all backtest endpoints require `X-API-Key`.
+- Auth modes:
+  - `BACKTEST_AUTH_MODE=api_key` requires `BACKTEST_API_KEY`.
+  - `BACKTEST_AUTH_MODE=oidc` requires bearer tokens (`Authorization: Bearer ...`).
+  - `BACKTEST_AUTH_MODE=api_key_or_oidc` allows either (recommended for “UI + automation”).
+  - `BACKTEST_AUTH_MODE=none` disables auth (recommended only for internal/dev).
+
+## UI Auth (Phase 5)
+
+The UI supports OIDC in the browser (preferred) and **dev-only** API keys.
+
+For Option A hosting, the FastAPI service serves a runtime config file at `GET /config.js`.
+The SPA loads it from `asset_allocation/ui2.0/index.html` and reads values from `window.__BACKTEST_UI_CONFIG__`.
+
+### Runtime UI config (served by API)
+
+Backtest API env vars (recommended for Option A):
+- `BACKTEST_UI_AUTH_MODE=oidc|api_key|none` (defaults to `oidc` when the API supports OIDC; otherwise `none`)
+- `BACKTEST_UI_OIDC_CLIENT_ID=...` (SPA app registration client id)
+- `BACKTEST_UI_OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>` (optional; defaults from `BACKTEST_OIDC_ISSUER`)
+- `BACKTEST_UI_OIDC_SCOPES=api://<api-client-id>/backtests.read api://<api-client-id>/backtests.write`
+- `BACKTEST_UI_API_BASE_URL=` (optional; default empty means “same origin”)
+
+### UI env vars (Vite, local dev)
+
+These are used when running the UI via Vite (`pnpm dev`) and as a fallback if `/config.js` is not present:
+- `VITE_AUTH_MODE=oidc|api_key|none`
+- `VITE_OIDC_CLIENT_ID=...`
+- `VITE_OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>`
+- `VITE_OIDC_SCOPES=api://<api-client-id>/backtests.read api://<api-client-id>/backtests.write`
+
+Dev-only API key support:
+- `VITE_BACKTEST_API_KEY=...` (only sent automatically in dev unless `VITE_ALLOW_BROWSER_API_KEY=true`)

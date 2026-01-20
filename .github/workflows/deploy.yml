@@ -51,7 +51,18 @@ env:
   GOLD_FINANCE_WIDE_JOB: gold-finance-wide-job
   GOLD_EARNINGS_WIDE_JOB: gold-earnings-wide-job
   GOLD_PRICE_TARGET_WIDE_JOB: gold-price-target-wide-job
-
+  
+  # Standardized Container Names
+  AZURE_CONTAINER_BRONZE: bronze
+  AZURE_CONTAINER_SILVER: silver
+  AZURE_CONTAINER_GOLD: gold
+  AZURE_CONTAINER_PLATINUM: platinum
+  AZURE_CONTAINER_MARKET: market-data
+  AZURE_CONTAINER_FINANCE: finance-data
+  AZURE_CONTAINER_EARNINGS: earnings-data
+  AZURE_CONTAINER_TARGETS: price-target-data
+  AZURE_CONTAINER_RANKING: ranking-data
+  AZURE_CONTAINER_COMMON: common
 
 jobs:
   build-and-deploy:
@@ -205,6 +216,7 @@ jobs:
           filters: |
             backtest_api:
               - "asset_allocation/backtest/**"
+              - "asset_allocation/ui2.0/**"
               - "Dockerfile.backtest_api"
               - "requirements.txt"
               - "requirements.lock.txt"
@@ -281,8 +293,19 @@ jobs:
       - name: Deploy Backtest API App
         if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
         env:
-          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
+          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
+          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
+          BACKTEST_OIDC_JWKS_URL: ${{ secrets.BACKTEST_OIDC_JWKS_URL }}
+          BACKTEST_OIDC_REQUIRED_SCOPES: ${{ secrets.BACKTEST_OIDC_REQUIRED_SCOPES }}
+          BACKTEST_OIDC_REQUIRED_ROLES: ${{ secrets.BACKTEST_OIDC_REQUIRED_ROLES }}
+          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
+          BACKTEST_UI_AUTH_MODE: ${{ secrets.BACKTEST_UI_AUTH_MODE }}
+          BACKTEST_UI_OIDC_CLIENT_ID: ${{ secrets.BACKTEST_UI_OIDC_CLIENT_ID }}
+          BACKTEST_UI_OIDC_AUTHORITY: ${{ secrets.BACKTEST_UI_OIDC_AUTHORITY }}
+          BACKTEST_UI_OIDC_SCOPES: ${{ secrets.BACKTEST_UI_OIDC_SCOPES }}
+          BACKTEST_UI_API_BASE_URL: ${{ secrets.BACKTEST_UI_API_BASE_URL }}
         run: |
           set -euo pipefail
           ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
@@ -290,8 +313,12 @@ jobs:
           export IMAGE_TAG="${{ github.sha }}"
           
           export INGRESS_EXTERNAL="true"
-          if [ -z "${BACKTEST_API_KEY:-}" ]; then
-            echo "WARNING: BACKTEST_API_KEY secret is not set. Deploying with internal ingress and no auth."
+          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          if [ "$auth_mode" = "none" ]; then
+            echo "WARNING: BACKTEST_AUTH_MODE=none. Forcing internal ingress."
+            export INGRESS_EXTERNAL="false"
+          elif [ -z "${BACKTEST_API_KEY:-}" ] && { [ -z "${BACKTEST_OIDC_ISSUER:-}" ] || [ -z "${BACKTEST_OIDC_AUDIENCE:-}" ]; }; then
+            echo "WARNING: No BACKTEST_API_KEY and no OIDC issuer/audience configured. Deploying with internal ingress."
             export INGRESS_EXTERNAL="false"
           fi
 

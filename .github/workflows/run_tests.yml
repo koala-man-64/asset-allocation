@@ -14,6 +14,15 @@ jobs:
     
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Build UI (ui2.0)
+      run: |
+        docker run --rm \
+          -v "${{ github.workspace }}/asset_allocation/ui2.0:/app" \
+          -v /app/node_modules \
+          -w /app \
+          node:20-bookworm-slim@sha256:6c51af7dc83f4708aaac35991306bca8f478351cfd2bda35750a62d7efcf05bb \
+          bash -lc "corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && pnpm build"
     
     - name: Set up Python
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5

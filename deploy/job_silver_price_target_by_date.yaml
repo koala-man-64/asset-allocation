@@ -33,9 +33,9 @@ properties:
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: az-cs
       - name: AZURE_CONTAINER_COMMON
-        value: common
+        value: ${AZURE_CONTAINER_COMMON}
       - name: AZURE_CONTAINER_SILVER
-        value: silver
+        value: ${AZURE_CONTAINER_SILVER}
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: silver-price-target-by-date-job

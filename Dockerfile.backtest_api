@@ -1,3 +1,15 @@
+FROM node:20-bookworm-slim AS ui-builder
+
+WORKDIR /ui
+
+COPY asset_allocation/ui2.0/package.json asset_allocation/ui2.0/pnpm-lock.yaml ./
+COPY asset_allocation/ui2.0/index.html asset_allocation/ui2.0/postcss.config.mjs asset_allocation/ui2.0/tsconfig.json asset_allocation/ui2.0/vite.config.ts ./
+COPY asset_allocation/ui2.0/public ./public
+COPY asset_allocation/ui2.0/src ./src
+
+RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
+
+
 FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 WORKDIR /app
@@ -12,6 +24,9 @@ RUN pip install --no-cache-dir .
 
 ENV BACKTEST_OUTPUT_DIR=/app/backtest_results
 ENV BACKTEST_DB_PATH=/app/backtest_results/runs.sqlite3
+ENV BACKTEST_UI_DIST_DIR=/app/ui-dist
+
+COPY --from=ui-builder /ui/dist /app/ui-dist
 
 EXPOSE 8000
 

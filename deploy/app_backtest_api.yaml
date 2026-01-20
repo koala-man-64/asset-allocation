@@ -20,8 +20,6 @@ properties:
     secrets:
     - name: assetallocationacrazurecrio-assetallocationacr
       value: ${ACR_PASSWORD}
-    - name: az-cs
-      value: ${AZURE_STORAGE_CONNECTION_STRING}
     - name: api-key
       value: "${BACKTEST_API_KEY}"
   template:
@@ -32,10 +30,32 @@ properties:
       env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
-      - name: AZURE_STORAGE_CONNECTION_STRING
-        secretRef: az-cs
       - name: BACKTEST_API_KEY
         secretRef: api-key
+      - name: BACKTEST_AUTH_MODE
+        value: "${BACKTEST_AUTH_MODE}"
+      - name: BACKTEST_OIDC_ISSUER
+        value: "${BACKTEST_OIDC_ISSUER}"
+      - name: BACKTEST_OIDC_AUDIENCE
+        value: "${BACKTEST_OIDC_AUDIENCE}"
+      - name: BACKTEST_OIDC_JWKS_URL
+        value: "${BACKTEST_OIDC_JWKS_URL}"
+      - name: BACKTEST_OIDC_REQUIRED_SCOPES
+        value: "${BACKTEST_OIDC_REQUIRED_SCOPES}"
+      - name: BACKTEST_OIDC_REQUIRED_ROLES
+        value: "${BACKTEST_OIDC_REQUIRED_ROLES}"
+      - name: BACKTEST_CSP
+        value: "${BACKTEST_CSP}"
+      - name: BACKTEST_UI_AUTH_MODE
+        value: "${BACKTEST_UI_AUTH_MODE}"
+      - name: BACKTEST_UI_OIDC_CLIENT_ID
+        value: "${BACKTEST_UI_OIDC_CLIENT_ID}"
+      - name: BACKTEST_UI_OIDC_AUTHORITY
+        value: "${BACKTEST_UI_OIDC_AUTHORITY}"
+      - name: BACKTEST_UI_OIDC_SCOPES
+        value: "${BACKTEST_UI_OIDC_SCOPES}"
+      - name: BACKTEST_UI_API_BASE_URL
+        value: "${BACKTEST_UI_API_BASE_URL}"
       - name: BACKTEST_MAX_CONCURRENT
         value: "1"
       - name: BACKTEST_ALLOW_LOCAL_DATA

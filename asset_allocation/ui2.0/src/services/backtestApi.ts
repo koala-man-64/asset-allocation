@@ -1,6 +1,22 @@
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
 
+type AccessTokenProvider = () => Promise<string | null>;
+
+let accessTokenProvider: AccessTokenProvider | null = null;
+
+type RuntimeConfig = {
+  backtestApiBaseUrl?: string;
+};
+
+function getRuntimeConfig(): RuntimeConfig {
+  return ((window as any).__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
+}
+
+export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
+  accessTokenProvider = provider;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -132,13 +148,24 @@ export interface GetTradesParams {
 }
 
 function getBaseUrl(): string {
-  const raw = (import.meta.env.VITE_BACKTEST_API_BASE_URL ?? '').trim();
+  const runtime = getRuntimeConfig();
+  const raw = String(runtime.backtestApiBaseUrl ?? import.meta.env.VITE_BACKTEST_API_BASE_URL ?? '').trim();
   return raw.replace(/\/+$/, '');
 }
 
 function getApiKey(): string {
   // NOTE: Do not rely on this for production secrets. This is intended for local/dev only.
   return (import.meta.env.VITE_BACKTEST_API_KEY ?? '').trim();
+}
+
+function shouldSendApiKey(): boolean {
+  const mode = String(import.meta.env.VITE_AUTH_MODE ?? '').trim().toLowerCase();
+  if (mode === 'api_key') return true;
+
+  const explicitOverride = String(import.meta.env.VITE_ALLOW_BROWSER_API_KEY ?? '').trim().toLowerCase();
+  if (explicitOverride === 'true') return true;
+
+  return Boolean(import.meta.env.DEV);
 }
 
 function buildQuery(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -161,8 +188,16 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json');
   }
+
+  if (accessTokenProvider && !headers.has('Authorization')) {
+    const token = await accessTokenProvider();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+  }
+
   const apiKey = getApiKey();
-  if (apiKey && !headers.has('X-API-Key')) {
+  if (apiKey && shouldSendApiKey() && !headers.has('X-API-Key')) {
     headers.set('X-API-Key', apiKey);
   }
 
@@ -229,4 +264,3 @@ export const backtestApi = {
     return requestJson<TradeListResponse>(`/backtests/${encodeURIComponent(runId)}/trades${query}`, { signal });
   },
 };
-

@@ -9,6 +9,7 @@ from asset_allocation.backtest.service.security import assert_allowed_container,
 
 
 RunStoreMode = Literal["sqlite", "adls"]
+AuthMode = Literal["none", "api_key", "oidc", "api_key_or_oidc"]
 
 
 def _parse_bool(value: str) -> bool:
@@ -42,6 +43,12 @@ def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 25
 
 def _split_csv(value: str) -> List[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _get_optional_str(name: str) -> Optional[str]:
+    raw = os.environ.get(name, "")
+    value = raw.strip()
+    return value or None
 
 
 def _get_path_list(name: str) -> List[Path]:
@@ -106,6 +113,19 @@ def _get_run_store_mode() -> RunStoreMode:
     raise ValueError(f"Invalid BACKTEST_RUN_STORE_MODE={raw!r} (expected sqlite|adls).")
 
 
+def _parse_auth_mode(value: str) -> AuthMode:
+    raw = (value or "").strip().lower()
+    if raw in {"none", "noauth", "disabled"}:
+        return "none"
+    if raw in {"api_key", "apikey", "key"}:
+        return "api_key"
+    if raw in {"oidc", "jwt", "bearer"}:
+        return "oidc"
+    if raw in {"api_key_or_oidc", "apikey_or_oidc", "key_or_oidc"}:
+        return "api_key_or_oidc"
+    raise ValueError(f"Invalid BACKTEST_AUTH_MODE={value!r} (expected none|api_key|oidc|api_key_or_oidc).")
+
+
 @dataclass(frozen=True)
 class ServiceSettings:
     output_base_dir: Path
@@ -113,6 +133,12 @@ class ServiceSettings:
     max_concurrent_runs: int
     api_key: Optional[str]
     api_key_header: str
+    auth_mode: AuthMode
+    oidc_issuer: Optional[str]
+    oidc_audience: List[str]
+    oidc_jwks_url: Optional[str]
+    oidc_required_scopes: List[str]
+    oidc_required_roles: List[str]
     allow_local_data: bool
     allowed_local_data_dirs: List[Path]
     adls_container_allowlist: List[str]
@@ -142,6 +168,38 @@ class ServiceSettings:
         api_key = os.environ.get("BACKTEST_API_KEY") or None
         api_key_header = os.environ.get("BACKTEST_API_KEY_HEADER", "X-API-Key").strip() or "X-API-Key"
 
+        oidc_issuer = _get_optional_str("BACKTEST_OIDC_ISSUER")
+        oidc_audience = _split_csv(_get_optional_str("BACKTEST_OIDC_AUDIENCE") or "")
+        oidc_jwks_url = _get_optional_str("BACKTEST_OIDC_JWKS_URL")
+        oidc_required_scopes = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_SCOPES") or "")
+        oidc_required_roles = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_ROLES") or "")
+
+        auth_mode_raw = _get_optional_str("BACKTEST_AUTH_MODE")
+        if auth_mode_raw:
+            auth_mode = _parse_auth_mode(auth_mode_raw)
+        else:
+            has_oidc = bool(oidc_issuer and oidc_audience)
+            has_api_key = bool(api_key and str(api_key).strip())
+            if has_oidc and has_api_key:
+                auth_mode = "api_key_or_oidc"
+            elif has_oidc:
+                auth_mode = "oidc"
+            elif has_api_key:
+                auth_mode = "api_key"
+            else:
+                auth_mode = "none"
+
+        if auth_mode in {"api_key", "api_key_or_oidc"} and not (api_key and str(api_key).strip()):
+            if auth_mode == "api_key":
+                raise ValueError("BACKTEST_AUTH_MODE=api_key requires BACKTEST_API_KEY to be set.")
+            api_key = None
+
+        if auth_mode in {"oidc", "api_key_or_oidc"}:
+            if not oidc_issuer:
+                raise ValueError(f"BACKTEST_AUTH_MODE={auth_mode} requires BACKTEST_OIDC_ISSUER to be set.")
+            if not oidc_audience:
+                raise ValueError(f"BACKTEST_AUTH_MODE={auth_mode} requires BACKTEST_OIDC_AUDIENCE to be set (csv).")
+
         allow_local_data = _get_bool("BACKTEST_ALLOW_LOCAL_DATA", False)
         allowed_local_data_dirs = _get_path_list("BACKTEST_ALLOWED_DATA_DIRS")
         if allow_local_data and not allowed_local_data_dirs:
@@ -165,6 +223,12 @@ class ServiceSettings:
             max_concurrent_runs=max_concurrent_runs,
             api_key=api_key.strip() if isinstance(api_key, str) and api_key.strip() else None,
             api_key_header=api_key_header,
+            auth_mode=auth_mode,
+            oidc_issuer=oidc_issuer,
+            oidc_audience=oidc_audience,
+            oidc_jwks_url=oidc_jwks_url,
+            oidc_required_scopes=oidc_required_scopes,
+            oidc_required_roles=oidc_required_roles,
             allow_local_data=allow_local_data,
             allowed_local_data_dirs=allowed_local_data_dirs,
             adls_container_allowlist=adls_container_allowlist,

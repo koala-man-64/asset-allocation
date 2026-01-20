@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      '@azure/msal-browser':
+        specifier: 5.0.2
+        version: 5.0.2
       '@emotion/react':
         specifier: 11.14.0
         version: 11.14.0(@types/react@18.3.18)(react@18.3.1)
@@ -203,6 +206,14 @@ importers:
         version: 6.3.5(@types/node@22.10.10)(jiti@2.6.1)(lightningcss@1.30.1)
 
 packages:
+
+  '@azure/msal-browser@5.0.2':
+    resolution: {integrity: sha512-tTrADo/ZNE8O1vzYJ2lmmZQJ0VbeLWzfjILMMENWMxvcwp6p2ibbVaHj3I1+Lpvp4y5Gg0tQiPQdlr+fICrJ0A==}
+    engines: {node: '>=0.8.0'}
+
+  '@azure/msal-common@16.0.2':
+    resolution: {integrity: sha512-ZJ/UR7lyqIntURrIJCyvScwJFanM9QhJYcJCheB21jZofGKpP9QxWgvADANo7UkresHKzV+6YwoeZYP7P7HvUg==}
+    engines: {node: '>=0.8.0'}
 
   '@babel/code-frame@7.28.6':
     resolution: {integrity: sha512-JYgintcMjRiCvS8mMECzaEn+m3PfoQiyqukOMCCVQtoJGYJw8j/8LBJEiqkHLkfwCcs74E3pbAUFNg7d9VNJ+Q==}
@@ -2312,6 +2323,12 @@ packages:
     engines: {node: '>= 6'}
 
 snapshots:
+
+  '@azure/msal-browser@5.0.2':
+    dependencies:
+      '@azure/msal-common': 16.0.2
+
+  '@azure/msal-common@16.0.2': {}
 
   '@babel/code-frame@7.28.6':
     dependencies:

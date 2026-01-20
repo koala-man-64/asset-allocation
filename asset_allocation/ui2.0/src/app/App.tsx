@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AuthProvider } from '@/contexts/AuthContext';
 import { AppProvider } from '@/contexts/AppContext';
 import { AppHeader } from '@/app/components/layout/AppHeader';
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
@@ -42,29 +43,23 @@ function AppContent() {
   };
   
   return (
-    <AppProvider>
-      <div className="h-screen flex flex-col bg-background">
-        <AppHeader />
-        
-        <div className="flex-1 flex overflow-hidden">
-          <LeftNavigation 
-            activePage={activePage} 
-            onNavigate={setActivePage} 
-          />
-          
-          <main className="flex-1 overflow-y-auto">
-            <div className="container mx-auto p-6 max-w-[1600px]">
-              {renderPage()}
-            </div>
-          </main>
+    <AuthProvider>
+      <AppProvider>
+        <div className="h-screen flex flex-col bg-background">
+          <AppHeader />
+
+          <div className="flex-1 flex overflow-hidden">
+            <LeftNavigation activePage={activePage} onNavigate={setActivePage} />
+
+            <main className="flex-1 overflow-y-auto">
+              <div className="container mx-auto p-6 max-w-[1600px]">{renderPage()}</div>
+            </main>
+          </div>
+
+          <RunCart onCompare={() => setActivePage('compare')} onPortfolioBuilder={() => setActivePage('portfolio')} />
         </div>
-        
-        <RunCart 
-          onCompare={() => setActivePage('compare')}
-          onPortfolioBuilder={() => setActivePage('portfolio')}
-        />
-      </div>
-    </AppProvider>
+      </AppProvider>
+    </AuthProvider>
   );
 }
 

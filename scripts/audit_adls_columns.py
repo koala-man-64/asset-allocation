@@ -7,7 +7,8 @@ from deltalake import DeltaTable
 try:
     from scripts.common import config as cfg
 except ImportError:
-    pass
+    # Allow running without config module if env vars are present.
+    cfg = None
 
 def get_service_client():
     if getattr(cfg, "AZURE_STORAGE_CONNECTION_STRING", None):

@@ -31,17 +31,17 @@ properties:
     containers:
     - env:
       - name: AZURE_CONTAINER_MARKET
-        value: gold
+        value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_FINANCE
-        value: gold
+        value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_EARNINGS
-        value: gold
+        value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_TARGETS
-        value: gold
+        value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_RANKING
-        value: ranking-data
+        value: ${AZURE_CONTAINER_RANKING}
       - name: AZURE_CONTAINER_BRONZE
-        value: bronze
+        value: ${AZURE_CONTAINER_BRONZE}
       - name: LOG_FORMAT
         value: JSON
       - name: AZURE_STORAGE_ACCOUNT_NAME
@@ -49,11 +49,11 @@ properties:
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: az-cs
       - name: AZURE_CONTAINER_SILVER
-        value: silver
+        value: ${AZURE_CONTAINER_SILVER}
       - name: AZURE_CONTAINER_GOLD
-        value: gold
+        value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_COMMON
-        value: common
+        value: ${AZURE_CONTAINER_COMMON}
       - name: YAHOO_USERNAME
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD

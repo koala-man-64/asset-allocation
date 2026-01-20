@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -8,6 +10,9 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pytest
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 from fastapi.testclient import TestClient
 
 from asset_allocation.backtest.service.app import create_app
@@ -124,6 +129,54 @@ def test_service_runs_backtest_and_serves_artifacts(tmp_path: Path, monkeypatch:
         assert summary_blob.status_code == 200
 
 
+def test_service_serves_ui_when_dist_dir_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "oidc")
+    monkeypatch.setenv("BACKTEST_OIDC_ISSUER", "https://login.microsoftonline.com/tenant/v2.0")
+    monkeypatch.setenv("BACKTEST_OIDC_AUDIENCE", "api://backtest-api")
+    monkeypatch.setenv("BACKTEST_UI_OIDC_CLIENT_ID", "ui-client-id")
+    monkeypatch.setenv("BACKTEST_UI_OIDC_SCOPES", "api://backtest-api/backtests.read api://backtest-api/backtests.write")
+
+    ui_dist = tmp_path / "ui-dist"
+    assets_dir = ui_dist / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    (ui_dist / "index.html").write_text("<!doctype html><html><body>ok</body></html>", encoding="utf-8")
+    (assets_dir / "app.js").write_text("console.log('ok')", encoding="utf-8")
+    monkeypatch.setenv("BACKTEST_UI_DIST_DIR", str(ui_dist))
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
+        assert resp.headers.get("cache-control") == "no-store"
+        assert resp.headers.get("content-security-policy")
+        assert resp.headers.get("x-frame-options") == "DENY"
+        assert "ok" in resp.text
+
+        config_js = client.get("/config.js")
+        assert config_js.status_code == 200
+        assert "application/javascript" in config_js.headers.get("content-type", "")
+        assert config_js.headers.get("cache-control") == "no-store"
+        assert "window.__BACKTEST_UI_CONFIG__" in config_js.text
+        assert '"authMode": "oidc"' in config_js.text
+        assert '"oidcClientId": "ui-client-id"' in config_js.text
+
+        asset = client.get("/assets/app.js")
+        assert asset.status_code == 200
+        assert asset.headers.get("cache-control") == "public, max-age=31536000, immutable"
+
+        fallback = client.get("/some/deep/link")
+        assert fallback.status_code == 200
+        assert "text/html" in fallback.headers.get("content-type", "")
+
+        redirect = client.get("/backtests/", follow_redirects=False)
+        assert redirect.status_code == 307
+        assert redirect.headers.get("location", "").endswith("/backtests")
+
+
 def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
@@ -137,32 +190,119 @@ def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: p
         assert resp2.status_code == 200
 
 
+def test_service_honors_custom_api_key_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.setenv("BACKTEST_API_KEY", "secret")
+    monkeypatch.setenv("BACKTEST_API_KEY_HEADER", "X-Backtest-Key")
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/backtests", headers={"X-API-Key": "secret"})
+        assert resp.status_code == 401
+
+        resp2 = client.get("/backtests", headers={"X-Backtest-Key": "secret"})
+        assert resp2.status_code == 200
+
+
+class _FakeHttpResponse:
+    def __init__(self, payload: Dict[str, Any]):
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> Dict[str, Any]:
+        return self._payload
+
+
+def test_service_accepts_oidc_bearer_tokens_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
+
+    issuer = "https://issuer.example"
+    audience = "api://backtest-api"
+    jwks_url = "https://issuer.example/jwks"
+
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "oidc")
+    monkeypatch.setenv("BACKTEST_OIDC_ISSUER", issuer)
+    monkeypatch.setenv("BACKTEST_OIDC_AUDIENCE", audience)
+    monkeypatch.setenv("BACKTEST_OIDC_JWKS_URL", jwks_url)
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk.update({"kid": "test-kid", "use": "sig", "alg": "RS256"})
+    jwks = {"keys": [public_jwk]}
+
+    token = jwt.encode(
+        {
+            "iss": issuer,
+            "aud": audience,
+            "sub": "user-123",
+            "exp": int(time.time()) + 3600,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-kid"},
+    )
+
+    def _fake_requests_get(url: str, timeout=None):
+        assert url == jwks_url
+        return _FakeHttpResponse(jwks)
+
+    monkeypatch.setattr("asset_allocation.backtest.service.auth.requests.get", _fake_requests_get)
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/backtests")
+        assert resp.status_code == 401
+
+        resp2 = client.get("/backtests", headers={"Authorization": f"Bearer {token}"})
+        assert resp2.status_code == 200
+
+
 class _LocalBlobStorageClient:
     def __init__(self, *, container_name: str, ensure_container_exists: bool = True):
         self._container = container_name
         self._root = Path.cwd() / ".pytest_blob_store"
         (self._root / self._container).mkdir(parents=True, exist_ok=True)
 
+    def _atomic_write_bytes(self, dest: Path, data: bytes) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(prefix=f"{dest.name}.", suffix=".tmp", dir=str(dest.parent))
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.replace(tmp_path, dest)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except FileNotFoundError:
+                pass
+
     def file_exists(self, remote_path: str) -> bool:
         path = self._root / self._container / remote_path
         return path.exists()
 
     def upload_file(self, local_path: str, remote_path: str):
-        src = Path(local_path)
-        dest = self._root / self._container / remote_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(src.read_bytes())
+        self.upload_data(remote_path, Path(local_path).read_bytes(), overwrite=True)
 
     def upload_data(self, remote_path: str, data: bytes, overwrite: bool = True):
         dest = self._root / self._container / remote_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        self._atomic_write_bytes(dest, data)
 
     def download_data(self, remote_path: str) -> Optional[bytes]:
         path = self._root / self._container / remote_path
-        if not path.exists():
-            return None
-        return path.read_bytes()
+        # Be resilient to brief filesystem-level replace windows (e.g., atomic writes on mounted filesystems).
+        for _ in range(5):
+            if path.exists():
+                try:
+                    return path.read_bytes()
+                except FileNotFoundError:
+                    pass
+            time.sleep(0.005)
+        return None
 
     def list_blob_infos(self, name_starts_with: Optional[str] = None) -> List[Dict[str, Any]]:
         base = self._root / self._container
@@ -196,13 +336,16 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
     with TestClient(app) as client:
         _write_inputs(tmp_path)
         run_id = "RUNTEST-SVC-ADLS"
-        config = _make_config_dict(tmp_path, run_id=run_id, adls_dir="silver/backtest-api-results")
+        from scripts.common import config_shared as cfg
+        silver_container = cfg.AZURE_CONTAINER_SILVER or "silver"
+        config = _make_config_dict(tmp_path, run_id=run_id, adls_dir=f"{silver_container}/backtest-api-results")
         resp = client.post("/backtests", json={"config": config, "run_id": run_id})
         assert resp.status_code == 200
 
         status = _poll_status(client, run_id)
         assert status["status"] == "completed"
-        assert status["adls_container"] == "silver"
+        from scripts.common import config_shared as cfg
+        assert status["adls_container"] == (cfg.AZURE_CONTAINER_SILVER or "silver")
         assert status["adls_prefix"].endswith(f"backtest-api-results/{run_id}")
 
         artifacts = client.get(f"/backtests/{run_id}/artifacts", params={"remote": "true"})
@@ -225,7 +368,9 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
     out_dir = tmp_path / "out"
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir))
     monkeypatch.setenv("BACKTEST_RUN_STORE_MODE", "adls")
-    monkeypatch.setenv("BACKTEST_ADLS_RUNS_DIR", "silver/backtest-run-store")
+    from scripts.common import config_shared as cfg
+    silver_container = cfg.AZURE_CONTAINER_SILVER or "silver"
+    monkeypatch.setenv("BACKTEST_ADLS_RUNS_DIR", f"{silver_container}/backtest-run-store")
     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
     monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "true")
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
@@ -244,7 +389,8 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
 
         status = _poll_status(client, run_id)
         assert status["status"] == "completed"
-        assert status["adls_container"] == "silver"
+        from scripts.common import config_shared as cfg
+        assert status["adls_container"] == (cfg.AZURE_CONTAINER_SILVER or "silver")
         assert status["adls_prefix"].endswith(f"backtest-run-store/{run_id}")
 
         runs = client.get("/backtests")

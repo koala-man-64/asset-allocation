@@ -4,18 +4,22 @@ import io
 import json
 import logging
 import math
+import os
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
 import yaml
-from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from asset_allocation.backtest.config import BacktestConfig, generate_run_id, validate_config_dict_strict
 from asset_allocation.backtest.service.artifacts import download_remote_artifact, list_local_artifacts, list_remote_artifacts
 from asset_allocation.backtest.service.adls_run_store import AdlsRunStore
+from asset_allocation.backtest.service.auth import AuthError, AuthManager
 from asset_allocation.backtest.service.job_manager import JobManager
 from asset_allocation.backtest.service.run_store import RunStore
 from asset_allocation.backtest.service.schemas import (
@@ -81,16 +85,6 @@ def _validate_config_for_service(cfg: BacktestConfig, cfg_dict: Dict[str, Any], 
         assert_allowed_container(container, settings.adls_container_allowlist)
 
 
-def _require_api_key(
-    settings: ServiceSettings,
-    api_key: Optional[str],
-) -> None:
-    if not settings.api_key:
-        return
-    if not api_key or api_key != settings.api_key:
-        raise HTTPException(status_code=401, detail="Unauthorized.")
-
-
 def _get_settings(app: FastAPI) -> ServiceSettings:
     return app.state.settings
 
@@ -101,6 +95,10 @@ def _get_store(app: FastAPI) -> RunStore:
 
 def _get_manager(app: FastAPI) -> JobManager:
     return app.state.manager
+
+
+def _get_auth(app: FastAPI) -> AuthManager:
+    return app.state.auth
 
 
 def create_app() -> FastAPI:
@@ -122,10 +120,12 @@ def create_app() -> FastAPI:
             max_workers=settings.max_concurrent_runs,
             default_adls_dir=settings.adls_runs_dir,
         )
+        auth = AuthManager(settings)
 
         app.state.settings = settings
         app.state.store = store
         app.state.manager = manager
+        app.state.auth = auth
         try:
             yield
         finally:
@@ -136,6 +136,53 @@ def create_app() -> FastAPI:
     def _prefer_adls_reads() -> bool:
         settings = _get_settings(app)
         return settings.run_store_mode == "adls"
+
+    def _require_auth(request: Request) -> None:
+        settings = _get_settings(app)
+        auth = _get_auth(app)
+        if settings.auth_mode == "none":
+            return
+        try:
+            auth.authenticate_headers(dict(request.headers))
+        except AuthError as exc:
+            headers: Dict[str, str] = {}
+            if exc.www_authenticate:
+                headers["WWW-Authenticate"] = exc.www_authenticate
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers=headers) from exc
+
+    @app.middleware("http")
+    async def _http_middleware(request: Request, call_next):
+        path = request.url.path or ""
+        if path.startswith("/backtests") and path.endswith("/"):
+            url = request.url.replace(path=path.rstrip("/"))
+            return RedirectResponse(url=str(url), status_code=307)
+
+        response = await call_next(request)
+
+        if path.startswith("/assets/") and response.status_code == 200:
+            response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+
+        csp = os.environ.get("BACKTEST_CSP", "").strip()
+        if not csp:
+            csp = (
+                "default-src 'self'; "
+                "base-uri 'none'; "
+                "frame-ancestors 'none'; "
+                "object-src 'none'; "
+                "img-src 'self' data: https:; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "font-src 'self' data: https:; "
+                "connect-src 'self' https:; "
+            )
+        response.headers.setdefault("Content-Security-Policy", csp)
+
+        return response
 
     def _get_run_record(run_id: str):
         store = _get_store(app)
@@ -171,10 +218,10 @@ def create_app() -> FastAPI:
     @app.post("/backtests", response_model=BacktestSubmitResponse)
     def submit_backtest(
         payload: BacktestSubmitRequest,
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+        request: Request,
     ) -> BacktestSubmitResponse:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
 
         try:
             config_dict = _load_config_from_request(payload)
@@ -231,14 +278,13 @@ def create_app() -> FastAPI:
 
     @app.get("/backtests", response_model=RunListResponse)
     def list_backtests(
+        request: Request,
         status: Optional[str] = Query(default=None),
         q: Optional[str] = Query(default=None),
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> RunListResponse:
-        settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         store = _get_store(app)
 
         if status is not None and status not in {"queued", "running", "completed", "failed"}:
@@ -254,10 +300,9 @@ def create_app() -> FastAPI:
     @app.get("/backtests/{run_id}/status", response_model=RunRecordResponse)
     def get_status(
         run_id: str,
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+        request: Request,
     ) -> RunRecordResponse:
-        settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
 
         store = _get_store(app)
@@ -270,11 +315,11 @@ def create_app() -> FastAPI:
     @app.get("/backtests/{run_id}/summary")
     def get_summary(
         run_id: str,
+        request: Request,
         source: str = Query("auto"),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> JSONResponse:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
 
         if source not in {"auto", "local", "adls"}:
@@ -317,12 +362,12 @@ def create_app() -> FastAPI:
     @app.get("/backtests/{run_id}/metrics/timeseries", response_model=TimeseriesResponse)
     def get_timeseries(
         run_id: str,
+        request: Request,
         source: str = Query("auto"),
         max_points: int = Query(5000, ge=50, le=200000),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> TimeseriesResponse:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
 
         if source not in {"auto", "local", "adls"}:
@@ -415,13 +460,13 @@ def create_app() -> FastAPI:
     @app.get("/backtests/{run_id}/metrics/rolling", response_model=RollingMetricsResponse)
     def get_rolling_metrics(
         run_id: str,
+        request: Request,
         window_days: int = Query(63, ge=2, le=2000),
         source: str = Query("auto"),
         max_points: int = Query(5000, ge=50, le=200000),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> RollingMetricsResponse:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
 
         if source not in {"auto", "local", "adls"}:
@@ -500,13 +545,13 @@ def create_app() -> FastAPI:
     @app.get("/backtests/{run_id}/trades", response_model=TradeListResponse)
     def get_trades(
         run_id: str,
+        request: Request,
         source: str = Query("auto"),
         limit: int = Query(5000, ge=1, le=200000),
         offset: int = Query(0, ge=0),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> TradeListResponse:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
 
         if source not in {"auto", "local", "adls"}:
@@ -567,11 +612,11 @@ def create_app() -> FastAPI:
     @app.get("/backtests/{run_id}/artifacts", response_model=ArtifactListResponse)
     def list_artifacts(
         run_id: str,
+        request: Request,
         remote: bool = Query(False),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> ArtifactListResponse:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
         run_dir = settings.output_base_dir / run_id
 
@@ -599,11 +644,11 @@ def create_app() -> FastAPI:
     def get_artifact(
         run_id: str,
         name: str,
+        request: Request,
         source: str = Query("auto"),
-        api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> Response:
         settings = _get_settings(app)
-        _require_api_key(settings, api_key)
+        _require_auth(request)
         run_id = validate_run_id(run_id)
         name = validate_artifact_name(name)
 
@@ -645,6 +690,114 @@ def create_app() -> FastAPI:
                 return Response(content=content, media_type="application/octet-stream")
 
         raise HTTPException(status_code=404, detail="Artifact not found.")
+
+    def _parse_ui_scopes(raw: str) -> list[str]:
+        normalized = str(raw or "").replace(",", " ").strip()
+        return [s for s in normalized.split() if s]
+
+    def _default_ui_auth_mode(settings: ServiceSettings) -> str:
+        return "oidc" if settings.auth_mode in {"oidc", "api_key_or_oidc"} else "none"
+
+    def _normalize_ui_auth_mode(raw: str, settings: ServiceSettings) -> str:
+        mode = (raw or "").strip().lower()
+        if not mode:
+            return _default_ui_auth_mode(settings)
+        if mode in {"none", "noauth", "disabled"}:
+            return "none"
+        if mode in {"oidc", "jwt", "bearer"}:
+            return "oidc"
+        if mode in {"api_key", "apikey", "key"}:
+            return "api_key"
+        return _default_ui_auth_mode(settings)
+
+    @app.get("/config.js", include_in_schema=False)
+    def ui_runtime_config() -> Response:
+        settings = _get_settings(app)
+
+        backtest_api_base_url = os.environ.get("BACKTEST_UI_API_BASE_URL", "").strip()
+        ui_mode = _normalize_ui_auth_mode(os.environ.get("BACKTEST_UI_AUTH_MODE", ""), settings)
+
+        oidc_client_id = os.environ.get("BACKTEST_UI_OIDC_CLIENT_ID", "").strip()
+        oidc_authority = os.environ.get("BACKTEST_UI_OIDC_AUTHORITY", "").strip()
+        if not oidc_authority:
+            issuer = (settings.oidc_issuer or "").strip()
+            oidc_authority = issuer.removesuffix("/v2.0") if issuer else ""
+
+        oidc_scopes = _parse_ui_scopes(os.environ.get("BACKTEST_UI_OIDC_SCOPES", ""))
+
+        if ui_mode == "oidc" and not (oidc_client_id and oidc_authority):
+            ui_mode = "none"
+
+        payload: Dict[str, Any] = {
+            "backtestApiBaseUrl": backtest_api_base_url,
+            "authMode": ui_mode,
+        }
+        if ui_mode == "oidc":
+            payload.update(
+                {
+                    "oidcClientId": oidc_client_id,
+                    "oidcAuthority": oidc_authority,
+                    "oidcScopes": oidc_scopes,
+                }
+            )
+
+        js = f"window.__BACKTEST_UI_CONFIG__ = {json.dumps(payload)};\n"
+        return Response(
+            content=js,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def _find_ui_dist_dir() -> Optional[Path]:
+        raw = os.environ.get("BACKTEST_UI_DIST_DIR", "").strip()
+        candidates: list[Path] = []
+        if raw:
+            candidates.append(Path(raw).expanduser())
+
+        # Dockerfile.backtest_api copies UI dist here by default.
+        candidates.append((Path.cwd() / "ui-dist").resolve(strict=False))
+
+        # Local dev: allow serving a locally built UI.
+        candidates.append((Path(__file__).resolve().parents[2] / "ui2.0" / "dist").resolve(strict=False))
+
+        for candidate in candidates:
+            try:
+                index_path = candidate / "index.html"
+                assets_dir = candidate / "assets"
+                if candidate.is_dir() and index_path.is_file() and assets_dir.is_dir():
+                    return candidate
+            except Exception:
+                logger.exception("Failed to validate UI dist dir: %s", candidate)
+        return None
+
+    ui_dist_dir = _find_ui_dist_dir()
+    if ui_dist_dir:
+        index_path = ui_dist_dir / "index.html"
+        assets_dir = ui_dist_dir / "assets"
+
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="ui-assets")
+        logger.info("UI enabled: dist_dir=%s", ui_dist_dir)
+
+        @app.get("/", include_in_schema=False)
+        def ui_index() -> Response:
+            return FileResponse(
+                path=str(index_path),
+                media_type="text/html",
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get("/{path:path}", include_in_schema=False)
+        def ui_fallback(path: str) -> Response:
+            # Never shadow API routes.
+            if path.startswith("backtests"):
+                raise HTTPException(status_code=404, detail="Not found.")
+            return FileResponse(
+                path=str(index_path),
+                media_type="text/html",
+                headers={"Cache-Control": "no-store"},
+            )
+    else:
+        logger.info("UI disabled: dist directory not found (set BACKTEST_UI_DIST_DIR or build UI into the image).")
 
     return app
 

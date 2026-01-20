@@ -17,6 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/app/components/ui/dropdown-menu';
+import { useAuth } from '@/contexts/AuthContext';
 
 export function AppHeader() {
   const {
@@ -34,6 +35,7 @@ export function AppHeader() {
     costModel,
     setCostModel
   } = useApp();
+  const auth = useAuth();
   
   return (
     <div className="sticky top-0 z-50 border-b bg-background">
@@ -147,6 +149,15 @@ export function AppHeader() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {auth.enabled && auth.userLabel && (
+                <DropdownMenuItem disabled>{auth.userLabel}</DropdownMenuItem>
+              )}
+              {auth.enabled && !auth.authenticated && (
+                <DropdownMenuItem onClick={auth.signIn}>Sign in</DropdownMenuItem>
+              )}
+              {auth.enabled && auth.authenticated && (
+                <DropdownMenuItem onClick={auth.signOut}>Sign out</DropdownMenuItem>
+              )}
               <DropdownMenuItem>Settings</DropdownMenuItem>
               <DropdownMenuItem>API Keys</DropdownMenuItem>
               <DropdownMenuItem>Defaults</DropdownMenuItem>
