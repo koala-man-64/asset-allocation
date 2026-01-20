@@ -33,6 +33,7 @@ local.settings.json
 # --- Project Specific ---
 # Data Directory
 data/
+!asset_allocation/ui2.0/src/data/
 # Backtest Artifacts
 backtest_results/
 
