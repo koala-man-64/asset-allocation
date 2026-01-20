@@ -2,10 +2,11 @@
 
 import { X, GitCompare, Folder } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
-import { mockStrategies } from '@/data/mockData';
+import { useRunList, useRunSummaries } from '@/services/backtestHooks';
+import { formatNumber, formatPercentDecimal } from '@/utils/format';
 import { Button } from '@/app/components/ui/button';
-import { Badge } from '@/app/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/app/components/ui/sheet';
+import { useMemo } from 'react';
 
 interface RunCartProps {
   onCompare: () => void;
@@ -15,7 +16,10 @@ interface RunCartProps {
 export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
   const { selectedRuns, removeFromCart, clearCart, cartOpen, setCartOpen } = useApp();
   
-  const selectedStrategies = mockStrategies.filter(s => selectedRuns.has(s.id));
+  const selectedRunIds = useMemo(() => Array.from(selectedRuns.values()), [selectedRuns]);
+  const { runs } = useRunList({ limit: 200, offset: 0 });
+  const runsById = useMemo(() => new Map(runs.map((r) => [r.run_id, r])), [runs]);
+  const { summaries } = useRunSummaries(selectedRunIds, { source: 'auto' });
   
   const getColorForIndex = (index: number): string => {
     const colors = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-purple-500', 'bg-pink-500', 'bg-yellow-500'];
@@ -39,27 +43,35 @@ export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
           ) : (
             <>
               <div className="space-y-2">
-                {selectedStrategies.map((strategy, index) => (
+                {selectedRunIds.map((runId, index) => {
+                  const run = runsById.get(runId);
+                  const summary = summaries[runId] ?? null;
+                  const name = run?.run_name || runId;
+                  const sharpe = summary ? formatNumber(Number(summary.sharpe_ratio), 2) : '—';
+                  const annReturn = summary ? formatPercentDecimal(Number(summary.annualized_return), 1) : '—';
+
+                  return (
                   <div
-                    key={strategy.id}
+                    key={runId}
                     className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
                   >
                     <div className={`w-3 h-3 rounded-full ${getColorForIndex(index)}`} />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{strategy.name}</div>
+                      <div className="font-medium truncate">{name}</div>
                       <div className="text-sm text-muted-foreground">
-                        Sharpe: {strategy.sharpe.toFixed(2)} | CAGR: {strategy.cagr.toFixed(1)}%
+                        Sharpe: {sharpe} | Ann. Return: {annReturn}
                       </div>
                     </div>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => removeFromCart(strategy.id)}
+                      onClick={() => removeFromCart(runId)}
                     >
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               
               <div className="pt-4 border-t space-y-2">

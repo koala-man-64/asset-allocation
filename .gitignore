@@ -41,3 +41,4 @@ node_modules/
 **/node_modules/
 asset_allocation/ui2.0/dist/
 asset_allocation/ui2.0/.vite/
+asset_allocation/ui2.0/.pnpm-store/

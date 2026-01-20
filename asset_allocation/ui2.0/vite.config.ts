@@ -10,6 +10,16 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    proxy: {
+      // Local dev convenience: avoid CORS by proxying API requests to the backtest service.
+      // In production (Option A hosting), the SPA is served by the API service and this is not needed.
+      '/backtests': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
   resolve: {
     alias: {
       // Alias @ to the src directory
