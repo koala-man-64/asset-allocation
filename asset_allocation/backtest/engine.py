@@ -127,7 +127,9 @@ class BacktestEngine:
         portfolio = Portfolio(cash=float(self.config.initial_cash))
         broker = SimulatedBroker(config=self.config.broker, portfolio=portfolio)
 
-        pending_targets: Dict[str, float] = {}
+        # None => no trade scheduled for the next open.
+        # Dict (possibly empty) => explicit target weights to execute at the next open.
+        pending_targets: Optional[Dict[str, float]] = None
 
         prev_equity = float(self.config.initial_cash)
         running_peak = prev_equity
@@ -157,7 +159,7 @@ class BacktestEngine:
             # Execute orders at open (except for the first bar, which has no prior close).
             fills = []
             costs = None
-            if i > 0 and pending_targets:
+            if i > 0 and pending_targets is not None:
                 execution = broker.execute_target_weights(market, target_weights=pending_targets)
                 fills = execution.fills
                 costs = execution.costs
@@ -234,26 +236,7 @@ class BacktestEngine:
             # If strategy returns None, it means "No Action" (e.g. no rebalance today).
             # We skip sizing and constraint application, preserving current positions.
             if decision is None:
-                pending_targets = {}  # or better: self.constraints.apply(...) on EXISTING positions?
-                # Actually, if we skip, pending_targets should be cleared or set to None?
-                # In current loop logic:
-                # `pending_targets` is a local dict defined outside loop: `pending_targets = {}`
-                # If we don't update it, it KEEPS the value from previous iteration?
-                # WAIIIT.
-                # line 119: pending_targets: Dict[str, float] = {}
-                # line 136: if i > 0 and pending_targets: broker.execute...
-                # line 208: pending_targets = ...
-                
-                # If we skip line 208, pending_targets retains YESTERDAY'S target?
-                # No, because pending_targets is executed at i (today's open).
-                # The loop structure:
-                # 1. Execute `pending_targets` (calculated yesterday close) at Today Open.
-                # 2. Daily Metrics based on Today Close.
-                # 3. Calculate `pending_targets` (for Tomorrow Open) based on Today Close.
-                
-                # So if on_bar returns None (No Rebalance at Today Close),
-                # we want `pending_targets` for Tomorrow Open to be EMPTY (no trade).
-                pending_targets = {}
+                pending_targets = None
                 continue
 
             target = self.sizer.size(

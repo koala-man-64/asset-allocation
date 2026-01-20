@@ -62,6 +62,61 @@ output:
   save_daily_metrics: true
 ```
 
+### ConfiguredStrategy (pipeline-based)
+You can also define strategies using a single configurable pipeline:
+
+- Example configs: `backtests/example_configured_topn.yaml`, `backtests/example_configured_vcp_breakout_long.yaml`
+- Programmatic wrappers (for tests/tools): `asset_allocation/backtest/configured_strategy/legacy_migrations.py`
+
+```yaml
+strategy:
+  type: configured
+  rebalance:
+    freq: every_n_days
+    every_n_days: 5
+  universe:
+    source: signals
+    filters: []
+    require_columns: ["symbol", "date", "open", "close"]
+  signals:
+    provider: platinum_signals_daily
+    columns: ["composite_percentile"]
+  scoring:
+    type: column
+    column: composite_percentile
+    fillna: drop
+  selection:
+    type: topn
+    topn:
+      n: 10
+      side: long
+      min_score: null
+      higher_is_better: true
+  holding_policy:
+    type: replace_all
+    replace_all:
+      exit_if_not_selected: true
+  exits:
+    precedence: exit_over_scale
+    rules: []
+  postprocess:
+    steps: []
+  debug:
+    record_intermediates: false
+    record_reasons: false
+```
+
+### ConfiguredStrategy debug artifacts
+When `strategy.type: configured` and either `strategy.debug.record_intermediates` or `strategy.debug.record_reasons` is enabled, the runner writes per-decision-date artifacts under:
+
+- `backtest_results/<RUN_ID>/strategy_debug/`
+
+Files are only emitted on dates where the strategy returns a decision (rebalance days, or non-rebalance days where exits/scales changed):
+
+- `<YYYY-MM-DD>_universe.csv`, `<YYYY-MM-DD>_raw_scores.csv`, `<YYYY-MM-DD>_selected.csv`, `<YYYY-MM-DD>_held.csv`
+- `<YYYY-MM-DD>_scores.csv`, `<YYYY-MM-DD>_scales.csv`
+- `<YYYY-MM-DD>_exits.csv` (when `record_reasons: true`)
+
 ### Key Parameters
 *   **`data.signal_path`**: Optional signals input table (Delta `container/path` or local file path when `price_source: local`).
     *   If using ranking-derived signals, set `signal_path: "ranking-data/platinum/signals/daily"` and use `signal_column: "composite_percentile"` in your strategy.

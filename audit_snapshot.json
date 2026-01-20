@@ -1,9 +1,9 @@
 {
-  "generated_at_utc": "2026-01-20T05:30:39.595464+00:00",
+  "generated_at_utc": "2026-01-20T07:09:10.948441+00:00",
   "git": {
-    "branch": "main",
-    "commit": "21283edcd36182a1507f3942904a81548e7b6635",
-    "status_porcelain": "M .dockerignore\n M .github/workflows/deploy.yml\n M .github/workflows/run_tests.yml\n M Dockerfile.backtest_api\n M asset_allocation/backtest/service/adls_run_store.py\n M asset_allocation/backtest/service/app.py\n M asset_allocation/backtest/service/settings.py\n M asset_allocation/ui2.0/index.html\n M asset_allocation/ui2.0/package.json\n M asset_allocation/ui2.0/pnpm-lock.yaml\n M asset_allocation/ui2.0/src/app/App.tsx\n M asset_allocation/ui2.0/src/app/components/layout/AppHeader.tsx\n M asset_allocation/ui2.0/src/services/backtestApi.ts\n M audit_snapshot.json\n M deploy/app_backtest_api.yaml\n M deploy/job_bronze_earnings_data.yaml\n M deploy/job_bronze_finance_data.yaml\n M deploy/job_bronze_market_data.yaml\n M deploy/job_bronze_price_target_data.yaml\n M deploy/job_gold_earnings_data.yaml\n M deploy/job_gold_earnings_wide.yaml\n M deploy/job_gold_finance_data.yaml\n M deploy/job_gold_finance_wide.yaml\n M deploy/job_gold_market_by_date.yaml\n M deploy/job_gold_market_data.yaml\n M deploy/job_gold_price_target_data.yaml\n M deploy/job_gold_price_target_wide.yaml\n M deploy/job_platinum_ranking.yaml\n M deploy/job_silver_earnings_by_date.yaml\n M deploy/job_silver_earnings_data.yaml\n M deploy/job_silver_finance_by_date.yaml\n M deploy/job_silver_finance_data.yaml\n M deploy/job_silver_market_by_date.yaml\n M deploy/job_silver_market_data.yaml\n M deploy/job_silver_price_target_by_date.yaml\n M deploy/job_silver_price_target_data.yaml\n M docs/backtest_service.md\n M scripts/audit_adls_columns.py\n M tests/backtest/test_phase3_service_api.py\n?? asset_allocation/backtest/service/auth.py\n?? asset_allocation/ui2.0/public/\n?? asset_allocation/ui2.0/src/contexts/AuthContext.tsx"
+    "branch": "vsc-strategy-refactor",
+    "commit": "50e5cbad09ebd5960717517cc7bd2d0ede596740",
+    "status_porcelain": "M asset_allocation/backtest/config.py\n M asset_allocation/backtest/engine.py\n M asset_allocation/backtest/runner.py\n M docs/backtesting_guide.md\n?? asset_allocation/backtest/configured_strategy/\n?? backtests/example_configured_topn.yaml\n?? backtests/example_configured_vcp_breakout_long.yaml\n?? tests/backtest/test_configured_strategy_contract.py\n?? tests/backtest/test_configured_strategy_legacy_parity.py"
   },
   "github": {
     ".github/workflows": true,

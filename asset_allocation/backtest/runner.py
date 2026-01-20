@@ -11,6 +11,7 @@ from asset_allocation.backtest.constraints import Constraints
 from asset_allocation.backtest.engine import BacktestEngine
 from asset_allocation.backtest.reporter import Reporter
 from asset_allocation.backtest.sizer import EqualWeightSizer, KellySizer, LongShortScoreSizer, Sizer
+from asset_allocation.backtest.configured_strategy import ConfiguredStrategy
 from asset_allocation.backtest.strategy import (
     BreakoutStrategy,
     BuyAndHoldStrategy,
@@ -28,9 +29,11 @@ class BacktestRunResult:
     output_dir: Path
 
 
-def _build_strategy(config: BacktestConfig) -> Strategy:
+def _build_strategy(config: BacktestConfig, *, output_dir: Path) -> Strategy:
     name = config.strategy.class_name
     params = config.strategy.parameters or {}
+    if name == "ConfiguredStrategy":
+        return ConfiguredStrategy(config=params, debug_output_dir=output_dir)
     if name == "BuyAndHoldStrategy":
         symbol = str(params.get("symbol") or (config.universe.symbols[0] if config.universe.symbols else ""))
         if not symbol:
@@ -174,7 +177,7 @@ def run_backtest(
     resolved_run_id = run_id or generate_run_id()
     reporter = Reporter.create(config, run_id=resolved_run_id, output_dir=output_base_dir)
 
-    strategy = _build_strategy(config)
+    strategy = _build_strategy(config, output_dir=reporter.output_dir)
     sizer = _build_sizer(config)
     constraints = Constraints(config=config.constraints)
 
