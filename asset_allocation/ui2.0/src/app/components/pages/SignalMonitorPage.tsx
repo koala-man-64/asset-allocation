@@ -1,16 +1,6 @@
 import { useState, useEffect } from 'react';
-// @ts-ignore
-import * as ReactWindowPkg from 'react-window';
-// @ts-ignore
-import * as AutoSizerPkg from 'react-virtualized-auto-sizer';
-
-// Robust interop for Vite (Dev) vs Rollup (Build)
-const FixedSizeList = (ReactWindowPkg as any).FixedSizeList || (ReactWindowPkg as any).default?.FixedSizeList || ReactWindowPkg;
-const AutoSizer = (AutoSizerPkg as any).default || (AutoSizerPkg as any).AutoSizer || AutoSizerPkg;
-
-// Cast to any to bypass strict type checks
-const VirtualList = FixedSizeList as any;
-const Sizer = AutoSizer as any;
+import { FixedSizeList as VirtualList } from 'react-window';
+import Sizer from 'react-virtualized-auto-sizer';
 
 import { DataService } from '@/services/DataService';
 import { TradingSignal } from '@/types/strategy';
@@ -38,25 +28,31 @@ import {
     Zap
 } from 'lucide-react';
 
+import { useSignalsQuery } from '@/hooks/useDataQueries';
+
 export function SignalMonitorPage() {
     const { dataSource } = useApp();
-    const [signals, setSignals] = useState<TradingSignal[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { data: signals = [], isLoading: loading } = useSignalsQuery();
+
+    // Legacy client-side state replaced by Hook
+    // const [signals, setSignals] = useState<TradingSignal[]>([]);
+    // const [loading, setLoading] = useState(true);
+
     const [searchTerm, setSearchTerm] = useState('');
     const [signalTypeFilter, setSignalTypeFilter] = useState<string>('all');
     const [strengthFilter, setStrengthFilter] = useState<string>('all');
 
-    // Load signals based on data source
-    useEffect(() => {
-        loadSignals();
-    }, [dataSource]);
+    // Load signals based on data source -> HANDLED BY REACT QUERY
+    // useEffect(() => {
+    //     loadSignals();
+    // }, [dataSource]);
 
-    async function loadSignals() {
-        setLoading(true);
-        const data = await DataService.getSignals();
-        setSignals(data);
-        setLoading(false);
-    }
+    // async function loadSignals() {
+    //     setLoading(true);
+    //     const data = await DataService.getSignals();
+    //     setSignals(data);
+    //     setLoading(false);
+    // }
 
     // Filter signals
     const filteredSignals = signals.filter(signal => {
