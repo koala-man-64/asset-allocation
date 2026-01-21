@@ -1,8 +1,8 @@
 // Risk & Exposures Page
 
 import { useState, useEffect } from 'react';
-import { Strategy, StressEvent } from '../../../data/strategies';
-import { StrategyService } from '../../../services/StrategyService';
+import { DataService } from '@/services/DataService';
+import { StrategyRun, StressEvent } from '@/types/strategy';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -14,40 +14,32 @@ import {
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
 
 export function RiskPage() {
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [stressEvents, setStressEvents] = useState<StressEvent[]>([]);
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [stressEventsList, setStressEventsList] = useState<StressEvent[]>([]);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
+    async function loadData() {
+      setLoading(true);
       try {
-        setLoading(true);
-        const [strategiesData, stressData] = await Promise.all([
-          StrategyService.getStrategies(),
-          StrategyService.getStressEvents()
+        const [strats, events] = await Promise.all([
+          DataService.getStrategies(),
+          DataService.getStressEvents()
         ]);
-
-        setStrategies(strategiesData);
-        setStressEvents(stressData);
-
-        if (strategiesData.length > 0) {
-          // Preserve selection if possible, else default to first
-          setSelectedStrategyId(prev => strategiesData.find(s => s.id === prev) ? prev : strategiesData[0].id);
+        setStrategies(strats);
+        setStressEventsList(events);
+        if (strats.length > 0) {
+          setSelectedStrategyId(strats[0].id);
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load data');
+      } catch (error) {
+        console.error("Failed to load risk data:", error);
       } finally {
         setLoading(false);
       }
-    };
-    fetchData();
+    }
+    loadData();
   }, []);
-
-  if (loading) return <div className="p-6">Loading risk analysis...</div>;
-  if (error) return <div className="p-6 text-red-500">Error: {error}</div>;
-  if (!strategies.length) return <div className="p-6">No strategies found.</div>;
 
   const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
 
@@ -59,6 +51,22 @@ export function RiskPage() {
     { factor: 'Volatility', loading: -0.31 },
   ];
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading risk analysis...</div>
+      </div>
+    );
+  }
+
+  if (!strategy) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">No strategy data available.</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -67,7 +75,7 @@ export function RiskPage() {
             <CardTitle>Risk & Exposures Analysis</CardTitle>
             <Select value={selectedStrategyId} onValueChange={setSelectedStrategyId}>
               <SelectTrigger className="w-64">
-                <SelectValue />
+                <SelectValue placeholder="Select strategy" />
               </SelectTrigger>
               <SelectContent>
                 {strategies.map(s => (
@@ -140,7 +148,7 @@ export function RiskPage() {
                 </tr>
               </thead>
               <tbody>
-                {stressEvents.map(event => {
+                {stressEventsList.map(event => {
                   const relative = event.strategyReturn - event.benchmarkReturn;
                   return (
                     <tr key={event.name} className="border-b hover:bg-muted/50">

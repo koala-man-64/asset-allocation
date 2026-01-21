@@ -1,16 +1,9 @@
 // Top sticky header with global controls
 
-import { ShoppingCart, Download, User, Moon, Sun } from 'lucide-react';
+import { ShoppingCart, Download, User, Moon, Sun, Database, Bell } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/app/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,103 +21,79 @@ export function AppHeader() {
     setIsDarkMode,
     environment,
     setEnvironment,
-    dateRange,
-    setDateRange,
-    benchmark,
-    setBenchmark,
-    costModel,
-    setCostModel
+    dataSource,
+    setDataSource
   } = useApp();
   const auth = useAuth();
-  
+
   return (
-    <div className="sticky top-0 z-50 border-b bg-background">
-      <div className="flex items-center justify-between h-14 px-4">
+    <div className="sticky top-0 z-50 border-b border-sidebar-border bg-sidebar shadow-sm text-sidebar-foreground transition-colors duration-300">
+      <div className="flex items-center justify-between h-16 px-6">
         {/* Left: Branding */}
         <div className="flex items-center gap-3">
-          <h1 className="text-base font-medium">QuantCore Analytics</h1>
-          <Badge 
+          <h1 className="text-xl font-bold text-sidebar-foreground">QuantCore Analytics</h1>
+          <Badge
             variant={environment === 'PROD' ? 'destructive' : 'secondary'}
-            className="cursor-pointer text-xs"
+            className="cursor-pointer"
             onClick={() => setEnvironment(environment === 'DEV' ? 'PROD' : 'DEV')}
           >
             {environment}
           </Badge>
         </div>
-        
+
         {/* Center: Global Controls */}
-        <div className="flex items-center gap-4 flex-1 max-w-3xl mx-4">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Date:</span>
-            <Select value="5Y" onValueChange={(v) => {
-              const presets: Record<string, any> = {
-                'YTD': { start: '2025-01-01', end: '2025-01-19' },
-                '1Y': { start: '2024-01-01', end: '2025-01-01' },
-                '3Y': { start: '2022-01-01', end: '2025-01-01' },
-                '5Y': { start: '2020-01-01', end: '2025-01-01' },
-                'Max': { start: '2018-01-01', end: '2025-01-01' },
-              };
-              if (presets[v]) setDateRange(presets[v]);
-            }}>
-              <SelectTrigger className="w-20 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="YTD">YTD</SelectItem>
-                <SelectItem value="1Y">1Y</SelectItem>
-                <SelectItem value="3Y">3Y</SelectItem>
-                <SelectItem value="5Y">5Y</SelectItem>
-                <SelectItem value="Max">Max</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Benchmark:</span>
-            <Select value={benchmark} onValueChange={setBenchmark}>
-              <SelectTrigger className="w-20 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="SPY">SPY</SelectItem>
-                <SelectItem value="QQQ">QQQ</SelectItem>
-                <SelectItem value="ACWI">ACWI</SelectItem>
-                <SelectItem value="Custom">Custom</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Costs:</span>
-            <Select value={costModel} onValueChange={setCostModel}>
-              <SelectTrigger className="w-28 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Zero Costs">Zero</SelectItem>
-                <SelectItem value="Passive bps">Passive</SelectItem>
-                <SelectItem value="Aggressive">Aggressive</SelectItem>
-              </SelectContent>
-            </Select>
+        <div className="flex items-center gap-4 flex-1 justify-center max-w-4xl mx-4">
+          {/* Data Source Toggle */}
+          <div className="flex items-center gap-2">
+            <Database className="h-4 w-4 text-sidebar-foreground/70" />
+            <div className="flex bg-sidebar-accent rounded-lg p-0.5">
+              <button
+                className={`px-2 py-0.5 text-xs font-medium rounded-md transition-all ${dataSource === 'mock' ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
+                onClick={() => setDataSource('mock')}
+              >
+                Mock
+              </button>
+              <button
+                className={`px-2 py-0.5 text-xs font-medium rounded-md transition-all ${dataSource === 'live' ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
+                onClick={() => setDataSource('live')}
+              >
+                Live
+              </button>
+            </div>
           </div>
         </div>
-        
+
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setCartOpen(!cartOpen)}
-            className="relative"
+            className="relative h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
-            <ShoppingCart className="h-4 w-4 mr-1.5" />
-            {selectedRuns.size}
+            <Bell className="h-5 w-5" />
+            <Badge className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center p-0 bg-orange-500 text-white text-[10px] border-2 border-sidebar">
+              1
+            </Badge>
           </Button>
-          
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCartOpen(!cartOpen)}
+            className="relative h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <ShoppingCart className="h-5 w-5" />
+            {selectedRuns.size > 0 && (
+              <Badge className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center p-0 bg-primary text-primary-foreground text-[10px]">
+                {selectedRuns.size}
+              </Badge>
+            )}
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm">
-                <Download className="h-4 w-4" />
+              <Button variant="ghost" size="sm" className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+                <Download className="h-5 w-5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -133,19 +102,20 @@ export function AppHeader() {
               <DropdownMenuItem>CSV Export</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          
+
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setIsDarkMode(!isDarkMode)}
+            className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
-            {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
           </Button>
-          
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm">
-                <User className="h-4 w-4" />
+              <Button variant="ghost" size="sm" className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+                <User className="h-5 w-5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

@@ -1,0 +1,45 @@
+/* Professional font: Inter - Clean, modern, highly legible for data-heavy applications */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Monospace font for code, data, and numbers */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Font families */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  
+  /* Font sizes - increased for better readability and professional appearance */
+  --text-xs: 0.8125rem;     /* 13px */
+  --text-sm: 0.9375rem;     /* 15px */
+  --text-base: 1rem;        /* 16px */
+  --text-lg: 1.125rem;      /* 18px */
+  --text-xl: 1.375rem;      /* 22px */
+  --text-2xl: 1.75rem;      /* 28px */
+  --text-3xl: 2.125rem;     /* 34px */
+  --text-4xl: 2.5rem;       /* 40px */
+  
+  /* Line heights */
+  --leading-tight: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+  
+  /* Letter spacing */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.01em;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Apply monospace font to numeric data */
+.font-mono,
+.tabular-nums {
+  font-family: var(--font-mono);
+  font-feature-settings: 'tnum', 'zero';
+}

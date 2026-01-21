@@ -398,3 +398,67 @@ export const stressEvents: StressEvent[] = [
   { name: 'Inflation Spike', date: '2021-11-10', strategyReturn: -1.5, benchmarkReturn: -0.9 },
   { name: 'Banking Crisis 2023', date: '2023-03-13', strategyReturn: -2.7, benchmarkReturn: -4.2 }
 ];
+// =============================================================================
+// MISSING MOCKS (Appended by Implementation Agent)
+// =============================================================================
+
+import { JobRun, SystemHealth, TradingSignal } from '@/types/strategy';
+
+export const mockJobHistory: JobRun[] = [
+  { jobName: 'import_market_data', jobType: 'data-ingest', status: 'success', startTime: new Date(Date.now() - 3600000).toISOString(), duration: 120, recordsProcessed: 15000, triggeredBy: 'schedule' },
+  { jobName: 'calculate_risk_metrics', jobType: 'risk-calc', status: 'success', startTime: new Date(Date.now() - 1800000).toISOString(), duration: 45, triggeredBy: 'dependency' },
+  { jobName: 'generate_signals', jobType: 'portfolio-build', status: 'running', startTime: new Date(Date.now() - 60000).toISOString(), triggeredBy: 'manual' },
+  { jobName: 'backup_db', jobType: 'data-ingest', status: 'failed', startTime: new Date(Date.now() - 86400000).toISOString(), duration: 10, errors: ['Connection timeout'], triggeredBy: 'schedule' }
+];
+
+export const mockSystemHealth: SystemHealth = {
+  overall: 'healthy',
+  dataLayers: [
+    { name: 'Bronze (Raw)', description: 'Raw ingestion layer', lastUpdated: new Date(Date.now() - 3600000).toISOString(), status: 'healthy', refreshFrequency: 'Daily' },
+    { name: 'Silver (Cleaned)', description: 'Cleaned and normalized', lastUpdated: new Date(Date.now() - 3000000).toISOString(), status: 'healthy', refreshFrequency: 'Daily' },
+    { name: 'Gold (Feature)', description: 'Feature engineering', lastUpdated: new Date(Date.now() - 2000000).toISOString(), status: 'healthy', refreshFrequency: 'Daily' },
+  ],
+  recentJobs: mockJobHistory,
+  alerts: [
+    { severity: 'info', message: 'System maintenance scheduled for Sunday', timestamp: new Date().toISOString(), component: 'Scheduler' }
+  ]
+};
+
+export const mockSignals: TradingSignal[] = [
+  {
+    id: 'sig_001',
+    strategyId: 'run_001',
+    strategyName: 'Momentum Alpha',
+    symbol: 'NVDA',
+    sector: 'Technology',
+    signalType: 'BUY',
+    strength: 85,
+    generatedAt: new Date().toISOString(),
+    expectedReturn: 12.5,
+    targetPrice: 950,
+    stopLoss: 820,
+    timeHorizon: '2W',
+    positionSize: 4.5,
+    riskScore: 65,
+    catalysts: ['Earnings Surprise', 'Sector Momentum'],
+    currentPrice: 880,
+    priceChange24h: 2.1
+  },
+  {
+    id: 'sig_002',
+    strategyId: 'run_003',
+    strategyName: 'Low Vol Defensive',
+    symbol: 'JNJ',
+    sector: 'Healthcare',
+    signalType: 'SELL',
+    strength: 60,
+    generatedAt: new Date(Date.now() - 7200000).toISOString(),
+    expectedReturn: -2.0,
+    timeHorizon: '1W',
+    positionSize: 0,
+    riskScore: 20,
+    catalysts: ['Technical Breakdown'],
+    currentPrice: 155,
+    priceChange24h: -0.5
+  }
+];

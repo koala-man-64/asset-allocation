@@ -1,6 +1,11 @@
 // Global application context for managing state across the dashboard
 
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+// StrategyRun type is used in DataService but maybe not here directly now, but let's keep it safe. 
+// Actually, I don't see StrategyRun usage in AppContext explicitly besides imports in previous versions.
+// checking Step 125, it imported StrategyRun but didn't seem to use it in types.
+// I'll keep the import if it was there to avoid breaking other things.
 import { StrategyRun } from '@/types/strategy';
 
 interface AppContextType {
@@ -9,24 +14,28 @@ interface AppContextType {
   addToCart: (runId: string) => void;
   removeFromCart: (runId: string) => void;
   clearCart: () => void;
-  
+
   // Global filters
   dateRange: { start: string; end: string };
   setDateRange: (range: { start: string; end: string }) => void;
-  
+
   benchmark: string;
   setBenchmark: (benchmark: string) => void;
-  
+
   costModel: string;
   setCostModel: (model: string) => void;
-  
+
+  // Data Source
+  dataSource: 'mock' | 'live';
+  setDataSource: (source: 'mock' | 'live') => void;
+
   // UI state
   isDarkMode: boolean;
   setIsDarkMode: (dark: boolean) => void;
-  
+
   environment: 'DEV' | 'PROD';
   setEnvironment: (env: 'DEV' | 'PROD') => void;
-  
+
   cartOpen: boolean;
   setCartOpen: (open: boolean) => void;
 }
@@ -38,10 +47,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [dateRange, setDateRange] = useState({ start: '2020-01-01', end: '2025-01-01' });
   const [benchmark, setBenchmark] = useState('SPY');
   const [costModel, setCostModel] = useState('Passive bps');
+  const [dataSource, setDataSource] = useState<'mock' | 'live'>('mock');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [environment, setEnvironment] = useState<'DEV' | 'PROD'>('DEV');
   const [cartOpen, setCartOpen] = useState(false);
-  
+
+  // Sync DataService mode
+  useEffect(() => {
+    DataService.setMode(dataSource);
+  }, [dataSource]);
+
   // Apply dark mode to document
   useEffect(() => {
     if (isDarkMode) {
@@ -50,11 +65,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
-  
+
   const addToCart = (runId: string) => {
     setSelectedRuns(prev => new Set(prev).add(runId));
   };
-  
+
   const removeFromCart = (runId: string) => {
     setSelectedRuns(prev => {
       const next = new Set(prev);
@@ -62,11 +77,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return next;
     });
   };
-  
+
   const clearCart = () => {
     setSelectedRuns(new Set());
   };
-  
+
   return (
     <AppContext.Provider value={{
       selectedRuns,
@@ -79,6 +94,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setBenchmark,
       costModel,
       setCostModel,
+      dataSource,
+      setDataSource,
       isDarkMode,
       setIsDarkMode,
       environment,

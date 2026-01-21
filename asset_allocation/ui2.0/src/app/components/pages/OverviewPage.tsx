@@ -1,133 +1,137 @@
-// Overview Page - PM Scoreboard (API-backed)
+// Overview Page - PM Scoreboard
 
-import { useMemo } from 'react';
+import { useState, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+import { StrategyRun } from '@/types/strategy';
 import { useApp } from '@/contexts/AppContext';
-import { useRunList, useRunSummaries } from '@/services/backtestHooks';
-import { formatCurrency, formatNumber, formatPercentDecimal } from '@/utils/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
 import { Checkbox } from '@/app/components/ui/checkbox';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { AlertTriangle, TrendingDown } from 'lucide-react';
 import {
-  ResponsiveContainer,
-  Scatter,
-  ScatterChart,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-  ZAxis,
-} from 'recharts';
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/app/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/app/components/ui/tooltip';
+import { AlertTriangle, DollarSign, TrendingDown, Settings } from 'lucide-react';
+import { LineChart, Line, ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, Tooltip as RechartsTooltip, ZAxis } from 'recharts';
+import { MetricTooltip, InfoTooltip } from '@/app/components/ui/metric-tooltip';
+import { StrategyConfigModal } from '@/app/components/modals/StrategyConfigModal';
 
 export function OverviewPage() {
-  const { selectedRuns, addToCart, removeFromCart } = useApp();
-  const { runs, loading: runsLoading, error: runsError } = useRunList({ limit: 200, offset: 0 });
+  const { selectedRuns, addToCart, removeFromCart, dataSource } = useApp();
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategyRun | null>(null);
+  const [configModalOpen, setConfigModalOpen] = useState(false);
 
-  const runIds = useMemo(() => runs.map((r) => r.run_id), [runs]);
-  const { summaries, loading: summariesLoading } = useRunSummaries(runIds, { limit: 100, source: 'auto' });
+  // Load strategies based on data source
+  useEffect(() => {
+    async function loadStrategies() {
+      setLoading(true);
+      try {
+        // Note: DataService currently handles the backend connection. 
+        // In the future, pass dataSource to DataService if needed.
+        const data = await DataService.getStrategies();
+        setStrategies(data);
+      } catch (err) {
+        console.error("Failed to load strategies", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadStrategies();
+  }, [dataSource]);
 
-  const rows = useMemo(() => {
-    return runs.map((run) => ({ run, summary: summaries[run.run_id] }));
-  }, [runs, summaries]);
-
-  const rowsWithSummary = rows.filter((r) => Boolean(r.summary));
-
-  const bestSharpe = rowsWithSummary.reduce<{ name: string; value: number } | null>((best, row) => {
-    const sharpe = Number(row.summary?.sharpe_ratio);
-    if (!Number.isFinite(sharpe)) return best;
-    const name = row.run.run_name || row.run.run_id;
-    if (!best || sharpe > best.value) return { name, value: sharpe };
-    return best;
-  }, null);
-
-  const worstDrawdown = rowsWithSummary.reduce<{ name: string; value: number } | null>((worst, row) => {
-    const dd = Number(row.summary?.max_drawdown);
-    if (!Number.isFinite(dd)) return worst;
-    const name = row.run.run_name || row.run.run_id;
-    if (!worst || dd < worst.value) return { name, value: dd };
-    return worst;
-  }, null);
-
-  const mostTrades = rowsWithSummary.reduce<{ name: string; value: number } | null>((best, row) => {
-    const trades = Number(row.summary?.trades);
-    if (!Number.isFinite(trades)) return best;
-    const name = row.run.run_name || row.run.run_id;
-    if (!best || trades > best.value) return { name, value: trades };
-    return best;
-  }, null);
-
-  const scatterData = useMemo(() => {
-    return rowsWithSummary
-      .map((row) => {
-        const sharpe = Number(row.summary?.sharpe_ratio);
-        const maxDD = Number(row.summary?.max_drawdown);
-        const cagr = Number(row.summary?.annualized_return);
-        if (!Number.isFinite(sharpe) || !Number.isFinite(maxDD) || !Number.isFinite(cagr)) return null;
-        return {
-          name: row.run.run_name || row.run.run_id,
-          sharpe,
-          maxDD: Math.abs(maxDD * 100),
-          cagr: cagr * 100,
-        };
-      })
-      .filter(Boolean);
-  }, [rowsWithSummary]);
-
-  const handleCheckboxChange = (runId: string, checked: boolean) => {
-    if (checked) addToCart(runId);
-    else removeFromCart(runId);
+  const handleViewConfig = (strategy: StrategyRun) => {
+    setSelectedStrategy(strategy);
+    setConfigModalOpen(true);
   };
 
-  if (runsLoading) {
+  if (loading) {
     return (
-      <div className="space-y-6">
-        <Card>
-          <CardContent className="p-6 text-muted-foreground">Loading runs…</CardContent>
-        </Card>
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading strategies...</div>
       </div>
     );
   }
 
-  if (runsError) {
+  if (strategies.length === 0) {
     return (
-      <div className="space-y-6">
-        <Card>
-          <CardContent className="p-6">
-            <div className="font-semibold">Failed to load runs</div>
-            <div className="text-sm text-muted-foreground mt-1">{runsError}</div>
-          </CardContent>
-        </Card>
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-muted-foreground">No strategies found</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            {dataSource === 'live' ? 'Check your API connection' : 'Mock data unavailable'}
+          </p>
+        </div>
       </div>
     );
   }
+
+  // Calculate best/worst
+  const bestSharpe = strategies.reduce((best, s) => s.sharpe > best.sharpe ? s : best);
+  const worstDD = strategies.reduce((worst, s) => s.maxDD < worst.maxDD ? s : worst);
+  const highestTurnover = strategies.reduce((highest, s) => s.turnoverAnn > highest.turnoverAnn ? s : highest);
+
+  const scatterData = strategies.map(s => ({
+    name: s.name,
+    sharpe: s.sharpe,
+    maxDD: Math.abs(s.maxDD),
+    cagr: s.cagr
+  }));
+
+  const handleCheckboxChange = (runId: string, checked: boolean) => {
+    if (checked) {
+      addToCart(runId);
+    } else {
+      removeFromCart(runId);
+    }
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Data Source Indicator */}
+      {dataSource === 'live' && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="text-base text-blue-900">
+            <p className="font-semibold">Live mode active - API not connected</p>
+            <p className="text-sm text-blue-700 mt-1">
+              Showing mock data as fallback. Connect your backend API at <code className="bg-blue-100 px-1.5 py-0.5 rounded">POST /api/strategies</code> to see live data.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI Ribbon */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">Best Sharpe Ratio</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{bestSharpe ? formatNumber(bestSharpe.value, 2) : '—'}</div>
-            <p className="text-xs text-muted-foreground mt-1">{bestSharpe?.name ?? 'No summaries loaded yet'}</p>
+            <div className="text-2xl font-bold">{bestSharpe.sharpe.toFixed(2)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{bestSharpe.name}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <TrendingDown className="h-4 w-4 text-red-500" />
-              Worst Max Drawdown
-            </CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Worst Max Drawdown</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-500">
-              {worstDrawdown ? formatPercentDecimal(worstDrawdown.value, 1) : '—'}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">{worstDrawdown?.name ?? 'No summaries loaded yet'}</p>
+            <div className="text-2xl font-bold text-red-500">{worstDD.maxDD.toFixed(1)}%</div>
+            <p className="text-xs text-muted-foreground mt-1">{worstDD.name}</p>
           </CardContent>
         </Card>
 
@@ -135,32 +139,30 @@ export function OverviewPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-orange-500" />
-              Most Trades
+              Highest Turnover
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{mostTrades ? formatNumber(mostTrades.value, 0) : '—'}</div>
-            <p className="text-xs text-muted-foreground mt-1">{mostTrades?.name ?? 'No summaries loaded yet'}</p>
+            <div className="text-2xl font-bold">{highestTurnover.turnoverAnn.toFixed(0)}%</div>
+            <p className="text-xs text-muted-foreground mt-1">{highestTurnover.name}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Runs</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Strategies</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{runs.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {summariesLoading ? 'Loading summary metrics…' : 'Available for analysis'}
-            </p>
+            <div className="text-2xl font-bold">{strategies.length}</div>
+            <p className="text-xs text-muted-foreground mt-1">Available for analysis</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Run Table */}
+      {/* Strategy Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Run Universe</CardTitle>
+          <CardTitle>Strategy Universe</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
@@ -168,73 +170,121 @@ export function OverviewPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12"></TableHead>
-                  <TableHead>Run</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Ann. Return</TableHead>
-                  <TableHead className="text-right">Ann. Vol</TableHead>
-                  <TableHead className="text-right">Sharpe</TableHead>
-                  <TableHead className="text-right">Max DD</TableHead>
-                  <TableHead className="text-right">Trades</TableHead>
-                  <TableHead className="text-right">Final Equity</TableHead>
+                  <TableHead>Strategy Name</TableHead>
+                  <TableHead>Tags</TableHead>
+                  <TableHead className="text-right">
+                    <MetricTooltip metric="cagr">CAGR</MetricTooltip>
+                  </TableHead>
+                  <TableHead className="text-right">
+                    <MetricTooltip metric="volatility">Vol</MetricTooltip>
+                  </TableHead>
+                  <TableHead className="text-right">
+                    <MetricTooltip metric="sharpe">Sharpe</MetricTooltip>
+                  </TableHead>
+                  <TableHead className="text-right">
+                    <MetricTooltip metric="sortino">Sortino</MetricTooltip>
+                  </TableHead>
+                  <TableHead className="text-right">
+                    <MetricTooltip metric="maxDrawdown">Max DD</MetricTooltip>
+                  </TableHead>
+                  <TableHead className="text-right">
+                    <MetricTooltip metric="turnover">Turnover</MetricTooltip>
+                  </TableHead>
+                  <TableHead>Flags</TableHead>
+                  <TableHead className="w-32">
+                    <InfoTooltip content="12-Month Performance Trend" /> 12M Trend
+                  </TableHead>
+                  <TableHead className="w-24">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map(({ run, summary }) => {
-                  const runName = run.run_name || run.run_id;
+                {strategies.map((strategy) => {
+                  const recentData = strategy.equityCurve.slice(-252);
+                  const chartData = recentData.map(d => ({ value: d.value }));
 
                   return (
-                    <TableRow key={run.run_id} className="hover:bg-muted/50">
+                    <TableRow key={strategy.id} className="hover:bg-muted/50">
                       <TableCell>
                         <Checkbox
-                          checked={selectedRuns.has(run.run_id)}
-                          onCheckedChange={(checked) => handleCheckboxChange(run.run_id, checked as boolean)}
+                          checked={selectedRuns.has(strategy.id)}
+                          onCheckedChange={(checked) => handleCheckboxChange(strategy.id, checked as boolean)}
                         />
                       </TableCell>
-
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TableCell className="font-medium cursor-help">
-                              <div className="leading-tight">
-                                <div>{runName}</div>
-                                <div className="text-xs text-muted-foreground font-mono">{run.run_id}</div>
-                              </div>
-                            </TableCell>
+                            <TableCell className="font-medium cursor-help">{strategy.name}</TableCell>
                           </TooltipTrigger>
                           <TooltipContent side="right">
                             <div className="space-y-1">
-                              <p className="font-semibold">{runName}</p>
-                              <p className="text-xs">Run ID: {run.run_id}</p>
-                              {run.start_date && run.end_date && (
-                                <p className="text-xs">
-                                  Window: {run.start_date} → {run.end_date}
-                                </p>
-                              )}
-                              {run.error && <p className="text-xs text-red-500">Error: {run.error}</p>}
+                              <p className="font-semibold">{strategy.name}</p>
+                              <p className="text-xs">Run ID: {strategy.id}</p>
+                              <p className="text-xs">Git SHA: {strategy.audit.gitSha}</p>
+                              <p className="text-xs">Data Version: {strategy.audit.dataVersionId}</p>
                             </div>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-
                       <TableCell>
-                        <Badge variant={run.status === 'failed' ? 'destructive' : 'outline'}>{run.status}</Badge>
+                        <div className="flex gap-1 flex-wrap">
+                          {strategy.tags.slice(0, 2).map(tag => (
+                            <Badge key={tag} variant="outline" className="text-xs">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
                       </TableCell>
-
-                      <TableCell className="text-right font-mono">
-                        {summary ? formatPercentDecimal(Number(summary.annualized_return), 1) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {summary ? formatPercentDecimal(Number(summary.annualized_volatility), 1) : '—'}
-                      </TableCell>
+                      <TableCell className="text-right font-mono">{strategy.cagr.toFixed(1)}%</TableCell>
+                      <TableCell className="text-right font-mono">{strategy.annVol.toFixed(1)}%</TableCell>
                       <TableCell className="text-right font-mono font-semibold">
-                        {summary ? formatNumber(Number(summary.sharpe_ratio), 2) : '—'}
+                        {strategy.sharpe.toFixed(2)}
                       </TableCell>
+                      <TableCell className="text-right font-mono">{strategy.sortino.toFixed(2)}</TableCell>
                       <TableCell className="text-right font-mono text-red-500">
-                        {summary ? formatPercentDecimal(Number(summary.max_drawdown), 1) : '—'}
+                        {strategy.maxDD.toFixed(1)}%
                       </TableCell>
-                      <TableCell className="text-right font-mono">{summary ? formatNumber(Number(summary.trades), 0) : '—'}</TableCell>
-                      <TableCell className="text-right font-mono">
-                        {summary ? formatCurrency(Number(summary.final_equity)) : '—'}
+                      <TableCell className="text-right font-mono">{strategy.turnoverAnn.toFixed(0)}%</TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          {strategy.regimeFragility && (
+                            <MetricTooltip metric="fragility" customContent="Regime Fragility: Performance varies across regimes">
+                              <AlertTriangle className="h-4 w-4 text-orange-500" />
+                            </MetricTooltip>
+                          )}
+                          {strategy.costSensitive && (
+                            <MetricTooltip metric="costs" customContent="Cost Sensitive: High impact from transaction costs">
+                              <DollarSign className="h-4 w-4 text-yellow-500" />
+                            </MetricTooltip>
+                          )}
+                          {strategy.tailRisk && (
+                            <MetricTooltip metric="tail" customContent="Tail Risk: Negative skew or fat tails">
+                              <TrendingDown className="h-4 w-4 text-red-500" />
+                            </MetricTooltip>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div style={{ width: 120, height: 40 }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <Line
+                                type="monotone"
+                                dataKey="value"
+                                stroke="hsl(var(--primary))"
+                                strokeWidth={1.5}
+                                dot={false}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          onClick={() => handleViewConfig(strategy)}
+                        >
+                          Config
+                        </Button>
                       </TableCell>
                     </TableRow>
                   );
@@ -251,7 +301,7 @@ export function OverviewPage() {
           <CardTitle>Distribution Sanity Check</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-80">
+          <div style={{ height: 320, minHeight: 320 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 60 }}>
                 <XAxis
@@ -271,28 +321,32 @@ export function OverviewPage() {
                   cursor={{ strokeDasharray: '3 3' }}
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
-                      const data: any = payload[0].payload;
+                      const data = payload[0].payload;
                       return (
                         <div className="bg-background border rounded-lg p-3 shadow-lg">
                           <p className="font-semibold">{data.name}</p>
-                          <p className="text-sm">Sharpe: {Number(data.sharpe).toFixed(2)}</p>
-                          <p className="text-sm">Max DD: {Number(data.maxDD).toFixed(1)}%</p>
-                          <p className="text-sm">Ann. Return: {Number(data.cagr).toFixed(1)}%</p>
+                          <p className="text-sm">Sharpe: {data.sharpe.toFixed(2)}</p>
+                          <p className="text-sm">Max DD: {data.maxDD.toFixed(1)}%</p>
+                          <p className="text-sm">CAGR: {data.cagr.toFixed(1)}%</p>
                         </div>
                       );
                     }
                     return null;
                   }}
                 />
-                <Scatter data={scatterData as any} fill="hsl(var(--primary))" />
+                <Scatter data={scatterData} fill="hsl(var(--primary))" />
               </ScatterChart>
             </ResponsiveContainer>
           </div>
-          <div className="text-xs text-muted-foreground mt-3">
-            Chart uses summary metrics when available (up to the first 100 runs).
-          </div>
         </CardContent>
       </Card>
+
+      {/* Strategy Config Modal */}
+      <StrategyConfigModal
+        open={configModalOpen}
+        onClose={() => setConfigModalOpen(false)}
+        strategy={selectedStrategy}
+      />
     </div>
   );
 }

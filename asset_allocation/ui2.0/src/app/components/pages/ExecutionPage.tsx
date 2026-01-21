@@ -1,7 +1,8 @@
 // Execution & Costs Page
 
-import { useState } from 'react';
-import { mockStrategies } from '@/data/strategies';
+import { useState, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+import { StrategyRun } from '@/types/strategy';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -13,8 +14,45 @@ import {
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 
 export function ExecutionPage() {
-  const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
-  const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true);
+      try {
+        const data = await DataService.getStrategies();
+        setStrategies(data);
+        if (data.length > 0) {
+          setSelectedStrategyId(data[0].id);
+        }
+      } catch (error) {
+        console.error("Failed to load strategies for execution analysis:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-muted-foreground">Loading execution analysis...</div>
+      </div>
+    );
+  }
+
+  if (!strategy) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-muted-foreground">No strategy data available.</div>
+      </div>
+    );
+  }
 
   const costBreakdown = [
     { name: 'Commissions', value: 35, color: '#3b82f6' },
@@ -39,7 +77,7 @@ export function ExecutionPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {mockStrategies.map(s => (
+                {strategies.map(s => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
               </SelectContent>
