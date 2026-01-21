@@ -24,24 +24,38 @@ import {
 import { DataLayer, JobRun, SystemAlert } from '@/types/strategy';
 
 export function SystemStatusPage() {
-    const { dataSource } = useApp();
     const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     // Load system health based on data source
     useEffect(() => {
         async function loadSystemHealth() {
             setLoading(true);
-            const data = await DataService.getSystemHealth();
-            setSystemHealth(data);
-            setLoading(false);
+            try {
+                const data = await DataService.getLiveSystemHealth();
+                setSystemHealth(data);
+                setError(null);
+            } catch (err: any) {
+                console.error("Failed to fetch live system health:", err);
+                setError(err.message || 'Failed to connect to live system health API');
+                // Set empty states
+                setSystemHealth({
+                    overall: 'critical',
+                    dataLayers: [],
+                    recentJobs: [],
+                    alerts: []
+                });
+            } finally {
+                setLoading(false);
+            }
         }
         loadSystemHealth();
 
         // Auto-refresh every 30 seconds
         const interval = setInterval(loadSystemHealth, 30000);
         return () => clearInterval(interval);
-    }, [dataSource]);
+    }, []);
 
     if (loading || !systemHealth) {
         return (
@@ -164,6 +178,19 @@ export function SystemStatusPage() {
 
     return (
         <div className="space-y-6">
+            {/* Error Banner */}
+            {error && (
+                <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-start gap-3">
+                    <XCircle className="h-5 w-5 text-destructive mt-0.5 flex-shrink-0" />
+                    <div className="text-base text-destructive">
+                        <p className="font-semibold">Live Data Connection Error</p>
+                        <p className="text-sm opacity-90 mt-1">
+                            {error}. Metrics and tables will remain empty until connection is established.
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-semibold">System Status & Health</h1>

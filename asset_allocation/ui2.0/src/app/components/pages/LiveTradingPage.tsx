@@ -16,9 +16,11 @@ import {
     RefreshCw
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+import { Position, Order, Alert } from '@/types/data';
 
-// Mock data for connected brokerage accounts
+// Mock data for connected brokerage accounts (kept here for now as they are account-level)
 const mockAccounts = [
     {
         id: 'ib-001',
@@ -48,27 +50,6 @@ const mockAccounts = [
         totalPnL: 123847.92,
         totalPnLPct: 8.83
     }
-];
-
-// Mock current positions
-const mockPositions = [
-    { symbol: 'AAPL', qty: 500, avgPrice: 178.34, currentPrice: 182.45, pnl: 2055, pnlPct: 2.30, strategy: 'Momentum Alpha', exposure: 91225, marketValue: 91225 },
-    { symbol: 'MSFT', qty: 300, avgPrice: 412.23, currentPrice: 418.92, pnl: 2007, pnlPct: 1.62, strategy: 'Tech Sector', exposure: 125676, marketValue: 125676 },
-    { symbol: 'NVDA', qty: -200, avgPrice: 524.12, currentPrice: 518.34, pnl: 1156, pnlPct: 1.10, strategy: 'Short Vol', exposure: -103668, marketValue: 103668 },
-    { symbol: 'GOOGL', qty: 400, avgPrice: 145.67, currentPrice: 144.23, pnl: -576, pnlPct: -0.99, strategy: 'Value Mean Rev', exposure: 57692, marketValue: 57692 },
-    { symbol: 'TSLA', qty: 250, avgPrice: 248.91, currentPrice: 251.34, pnl: 607.50, pnlPct: 0.98, strategy: 'Momentum Alpha', exposure: 62835, marketValue: 62835 },
-    { symbol: 'META', qty: 150, avgPrice: 498.23, currentPrice: 502.84, pnl: 691.50, pnlPct: 0.93, strategy: 'Tech Sector', exposure: 75426, marketValue: 75426 },
-    { symbol: 'JPM', qty: -100, avgPrice: 182.45, currentPrice: 184.12, pnl: -167, pnlPct: -0.92, strategy: 'Statistical Arb', exposure: -18412, marketValue: 18412 },
-    { symbol: 'SPY', qty: 800, avgPrice: 495.23, currentPrice: 497.12, pnl: 1512, pnlPct: 0.38, strategy: 'Market Neutral', exposure: 397696, marketValue: 397696 }
-];
-
-// Mock orders
-const mockOrders = [
-    { id: 'ORD-001', symbol: 'AAPL', side: 'BUY', qty: 100, orderType: 'LIMIT', limitPrice: 181.50, status: 'working', filled: 0, strategy: 'Momentum Alpha', time: '09:32:14' },
-    { id: 'ORD-002', symbol: 'MSFT', side: 'SELL', qty: 50, orderType: 'MARKET', limitPrice: null, status: 'filled', filled: 50, strategy: 'Tech Sector', time: '09:28:43' },
-    { id: 'ORD-003', symbol: 'TSLA', side: 'BUY', qty: 75, orderType: 'LIMIT', limitPrice: 249.80, status: 'partial', filled: 32, strategy: 'Momentum Alpha', time: '09:15:22' },
-    { id: 'ORD-004', symbol: 'META', side: 'SELL', qty: 25, orderType: 'STOP', limitPrice: 500.00, status: 'working', filled: 0, strategy: 'Tech Sector', time: '08:45:11' },
-    { id: 'ORD-005', symbol: 'GOOGL', side: 'BUY', qty: 100, orderType: 'LIMIT', limitPrice: 143.75, status: 'cancelled', filled: 0, strategy: 'Value Mean Rev', time: '08:30:05' }
 ];
 
 // Mock intraday P&L data
@@ -103,12 +84,37 @@ const strategyAllocation = [
 
 export function LiveTradingPage() {
     const [selectedAccount, setSelectedAccount] = useState(mockAccounts[0].id);
+    const [positions, setPositions] = useState<Position[]>([]);
+    const [orders, setOrders] = useState<Order[]>([]);
+    const [alerts, setAlerts] = useState<Alert[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        async function loadData() {
+            setLoading(true);
+            try {
+                const [posData, orderData, alertData] = await Promise.all([
+                    DataService.getPositions(),
+                    DataService.getOrders(),
+                    DataService.getAlerts()
+                ]);
+                setPositions(posData);
+                setOrders(orderData);
+                setAlerts(alertData);
+            } catch (error) {
+                console.error("Failed to load live trading data:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
+        loadData();
+    }, []);
+
     const currentAccount = mockAccounts.find(a => a.id === selectedAccount) || mockAccounts[0];
 
-    const totalPositionValue = mockPositions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
-    const totalPositionPnL = mockPositions.reduce((sum, p) => sum + p.pnl, 0);
-    const longExposure = mockPositions.filter(p => p.qty > 0).reduce((sum, p) => sum + p.marketValue, 0);
-    const shortExposure = mockPositions.filter(p => p.qty < 0).reduce((sum, p) => sum + Math.abs(p.exposure), 0);
+    const totalPositionPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
+    const longExposure = positions.filter(p => p.shares > 0).reduce((sum, p) => sum + p.value, 0);
+    const shortExposure = positions.filter(p => p.shares < 0).reduce((sum, p) => sum + Math.abs(p.value), 0);
     const netExposure = longExposure - shortExposure;
 
     const getStatusBadge = (status: string) => {
@@ -126,20 +132,22 @@ export function LiveTradingPage() {
 
     const getOrderStatusBadge = (status: string) => {
         switch (status) {
-            case 'filled':
+            case 'FILLED':
                 return <Badge className="bg-green-100 text-green-800 border-green-200">Filled</Badge>;
-            case 'working':
+            case 'WORKING':
                 return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Working</Badge>;
-            case 'partial':
-                return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Partial</Badge>;
-            case 'cancelled':
+            case 'CANCELLED':
                 return <Badge className="bg-gray-100 text-gray-800 border-gray-200">Cancelled</Badge>;
-            case 'rejected':
+            case 'REJECTED':
                 return <Badge className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>;
             default:
                 return <Badge variant="outline">{status}</Badge>;
         }
     };
+
+    if (loading) {
+        return <div className="p-8 text-center text-muted-foreground">Loading trading data...</div>;
+    }
 
     return (
         <div className="space-y-6">
@@ -325,8 +333,7 @@ export function LiveTradingPage() {
                                     <tr className="border-b">
                                         <th className="text-left p-2">Symbol</th>
                                         <th className="text-right p-2">Qty</th>
-                                        <th className="text-right p-2">Avg Price</th>
-                                        <th className="text-right p-2">Current</th>
+                                        <th className="text-right p-2">Price</th>
                                         <th className="text-right p-2">P&L</th>
                                         <th className="text-right p-2">P&L %</th>
                                         <th className="text-right p-2">Mkt Value</th>
@@ -334,21 +341,20 @@ export function LiveTradingPage() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {mockPositions.map((pos, idx) => (
+                                    {positions.map((pos, idx) => (
                                         <tr key={idx} className="border-b hover:bg-muted/50">
                                             <td className="p-2 font-semibold">{pos.symbol}</td>
-                                            <td className={`text-right p-2 font-mono ${pos.qty > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                {pos.qty > 0 ? '+' : ''}{pos.qty}
+                                            <td className={`text-right p-2 font-mono ${pos.shares > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {pos.shares > 0 ? '+' : ''}{pos.shares}
                                             </td>
-                                            <td className="text-right p-2 font-mono">${pos.avgPrice.toFixed(2)}</td>
-                                            <td className="text-right p-2 font-mono">${pos.currentPrice.toFixed(2)}</td>
+                                            <td className="text-right p-2 font-mono">${pos.price.toFixed(2)}</td>
                                             <td className={`text-right p-2 font-mono ${pos.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                                 {pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(2)}
                                             </td>
-                                            <td className={`text-right p-2 font-mono ${pos.pnlPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                {pos.pnlPct >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
+                                            <td className={`text-right p-2 font-mono ${pos.pnlPercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(2)}%
                                             </td>
-                                            <td className="text-right p-2 font-mono">${pos.marketValue.toLocaleString()}</td>
+                                            <td className="text-right p-2 font-mono">${pos.value.toLocaleString()}</td>
                                             <td className="text-left p-2 text-muted-foreground">{pos.strategy}</td>
                                         </tr>
                                     ))}
@@ -374,7 +380,7 @@ export function LiveTradingPage() {
                                 <div className="h-2 bg-muted rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-green-500"
-                                        style={{ width: `${(longExposure / (longExposure + shortExposure)) * 100}%` }}
+                                        style={{ width: `${(longExposure / (longExposure + shortExposure || 1)) * 100}%` }}
                                     />
                                 </div>
                             </div>
@@ -389,7 +395,7 @@ export function LiveTradingPage() {
                                 <div className="h-2 bg-muted rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-red-500"
-                                        style={{ width: `${(shortExposure / (longExposure + shortExposure)) * 100}%` }}
+                                        style={{ width: `${(shortExposure / (longExposure + shortExposure || 1)) * 100}%` }}
                                     />
                                 </div>
                             </div>
@@ -441,17 +447,15 @@ export function LiveTradingPage() {
                                     <th className="text-left p-2">Symbol</th>
                                     <th className="text-left p-2">Side</th>
                                     <th className="text-right p-2">Qty</th>
-                                    <th className="text-right p-2">Filled</th>
-                                    <th className="text-left p-2">Type</th>
-                                    <th className="text-right p-2">Limit Price</th>
-                                    <th className="text-left p-2">Status</th>
+                                    <th className="text-right p-2">Status</th>
+                                    <th className="text-right p-2">Price</th>
                                     <th className="text-left p-2">Strategy</th>
                                     <th className="text-left p-2">Time</th>
                                     <th className="text-left p-2">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {mockOrders.map((order) => (
+                                {orders.map((order) => (
                                     <tr key={order.id} className="border-b hover:bg-muted/50">
                                         <td className="p-2 font-mono text-xs">{order.id}</td>
                                         <td className="p-2 font-semibold">{order.symbol}</td>
@@ -460,15 +464,13 @@ export function LiveTradingPage() {
                                                 {order.side}
                                             </Badge>
                                         </td>
-                                        <td className="text-right p-2 font-mono">{order.qty}</td>
-                                        <td className="text-right p-2 font-mono">{order.filled}</td>
-                                        <td className="p-2">{order.orderType}</td>
-                                        <td className="text-right p-2 font-mono">{order.limitPrice ? `$${order.limitPrice.toFixed(2)}` : '—'}</td>
-                                        <td className="p-2">{getOrderStatusBadge(order.status)}</td>
+                                        <td className="text-right p-2 font-mono">{order.quantity}</td>
+                                        <td className="text-right p-2">{getOrderStatusBadge(order.status)}</td>
+                                        <td className="text-right p-2 font-mono">${order.price.toFixed(2)}</td>
                                         <td className="p-2 text-muted-foreground">{order.strategy}</td>
-                                        <td className="p-2 font-mono text-xs">{order.time}</td>
+                                        <td className="p-2 font-mono text-xs">{order.date}</td>
                                         <td className="p-2">
-                                            {(order.status === 'working' || order.status === 'partial') && (
+                                            {order.status === 'WORKING' && (
                                                 <Button variant="ghost" size="sm" className="h-7 text-xs">
                                                     Cancel
                                                 </Button>
@@ -492,41 +494,47 @@ export function LiveTradingPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-3">
-                        <div className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                            <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
-                            <div className="flex-1">
-                                <div className="font-semibold text-sm">Margin Utilization Warning</div>
-                                <div className="text-sm text-muted-foreground">
-                                    Account IB-001 is using 87% of available margin. Consider reducing positions.
+                        {alerts.map((alert) => (
+                            <div key={alert.id} className={`flex items-start gap-3 p-3 border rounded-lg ${alert.severity === 'critical' ? 'bg-red-50 border-red-200' :
+                                    alert.severity === 'warning' ? 'bg-yellow-50 border-yellow-200' :
+                                        'bg-blue-50 border-blue-200'
+                                }`}>
+                                {alert.severity === 'critical' ? <XCircle className="h-5 w-5 text-red-600 mt-0.5" /> :
+                                    alert.severity === 'warning' ? <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" /> :
+                                        <InfoCircleIcon className="h-5 w-5 text-blue-600 mt-0.5" />}
+                                <div className="flex-1">
+                                    <div className="font-semibold text-sm">{alert.title}</div>
+                                    <div className="text-sm text-muted-foreground">
+                                        {alert.message}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground mt-1">{alert.timestamp}</div>
                                 </div>
-                                <div className="text-xs text-muted-foreground mt-1">2 minutes ago</div>
                             </div>
-                        </div>
-
-                        <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                            <CheckCircle className="h-5 w-5 text-blue-600 mt-0.5" />
-                            <div className="flex-1">
-                                <div className="font-semibold text-sm">Order Filled</div>
-                                <div className="text-sm text-muted-foreground">
-                                    MSFT SELL 50 shares @ $418.92 - Strategy: Tech Sector
-                                </div>
-                                <div className="text-xs text-muted-foreground mt-1">5 minutes ago</div>
-                            </div>
-                        </div>
-
-                        <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                            <Activity className="h-5 w-5 text-green-600 mt-0.5" />
-                            <div className="flex-1">
-                                <div className="font-semibold text-sm">Strategy Signal Generated</div>
-                                <div className="text-sm text-muted-foreground">
-                                    Momentum Alpha generated BUY signal for AAPL (strength: 8.2/10)
-                                </div>
-                                <div className="text-xs text-muted-foreground mt-1">12 minutes ago</div>
-                            </div>
-                        </div>
+                        ))}
                     </div>
                 </CardContent>
             </Card>
         </div>
     );
+}
+
+function InfoCircleIcon({ className }: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" x2="12" y1="16" y2="12" />
+            <line x1="12" x2="12.01" y1="8" y2="8" />
+        </svg>
+    )
 }

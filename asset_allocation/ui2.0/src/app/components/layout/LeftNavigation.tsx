@@ -154,7 +154,7 @@ export function LeftNavigation({ activePage, onNavigate }: LeftNavigationProps) 
                         className={cn(
                           "w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                           collapsed ? "px-3" : "px-4",
-                          isActive && "bg-sidebar-accent text-sidebar-primary-foreground font-semibold border-l-4 border-sidebar-primary rounded-l-none"
+                          isActive && "bg-sidebar-accent text-sidebar-primary font-semibold border-l-4 border-sidebar-primary rounded-l-none"
                         )}
                         onClick={() => onNavigate(item.id)}
                       >

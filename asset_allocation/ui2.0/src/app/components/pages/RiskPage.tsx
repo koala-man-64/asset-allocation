@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { DataService } from '@/services/DataService';
 import { StrategyRun, StressEvent } from '@/types/strategy';
+import { RiskMetrics } from '@/types/data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -16,11 +17,12 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 export function RiskPage() {
   const [strategies, setStrategies] = useState<StrategyRun[]>([]);
   const [stressEventsList, setStressEventsList] = useState<StressEvent[]>([]);
+  const [riskMetrics, setRiskMetrics] = useState<RiskMetrics | null>(null);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function loadData() {
+    async function loadInitialData() {
       setLoading(true);
       try {
         const [strats, events] = await Promise.all([
@@ -38,18 +40,24 @@ export function RiskPage() {
         setLoading(false);
       }
     }
-    loadData();
+    loadInitialData();
   }, []);
 
-  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
+  useEffect(() => {
+    if (!selectedStrategyId) return;
 
-  const factorLoadings = [
-    { factor: 'Value', loading: 0.25 },
-    { factor: 'Momentum', loading: 0.68 },
-    { factor: 'Size', loading: -0.12 },
-    { factor: 'Quality', loading: 0.43 },
-    { factor: 'Volatility', loading: -0.31 },
-  ];
+    async function loadRiskMetrics() {
+      try {
+        const metrics = await DataService.getRiskMetrics(selectedStrategyId);
+        setRiskMetrics(metrics);
+      } catch (error) {
+        console.error("Failed to load risk metrics:", error);
+      }
+    }
+    loadRiskMetrics();
+  }, [selectedStrategyId]);
+
+  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
 
   if (loading) {
     return (
@@ -58,6 +66,7 @@ export function RiskPage() {
       </div>
     );
   }
+
 
   if (!strategy) {
     return (
@@ -114,13 +123,13 @@ export function RiskPage() {
           <CardContent>
             <div className="h-64">
               <ResponsiveContainer width="100%" height={256}>
-                <BarChart data={factorLoadings}>
+                <BarChart data={riskMetrics?.factorExposures || []}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="factor" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip />
                   <Bar dataKey="loading">
-                    {factorLoadings.map((entry, index) => (
+                    {(riskMetrics?.factorExposures || []).map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.loading > 0 ? '#10b981' : '#ef4444'} />
                     ))}
                   </Bar>
@@ -184,15 +193,15 @@ export function RiskPage() {
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Value at Risk (95%)</div>
-              <div className="text-2xl font-bold text-red-500">-2.1%</div>
+              <div className="text-2xl font-bold text-red-500">{riskMetrics?.var95.toFixed(1)}%</div>
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Up Capture</div>
-              <div className="text-2xl font-bold text-green-500">112%</div>
+              <div className="text-2xl font-bold text-green-500">{((riskMetrics?.upCapture || 0) * 100).toFixed(0)}%</div>
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Down Capture</div>
-              <div className="text-2xl font-bold text-green-500">78%</div>
+              <div className="text-2xl font-bold text-green-500">{((riskMetrics?.downCapture || 0) * 100).toFixed(0)}%</div>
             </div>
           </div>
         </CardContent>

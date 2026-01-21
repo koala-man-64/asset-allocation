@@ -215,7 +215,21 @@ export function SignalMonitorPage() {
                         <Button
                             variant="outline"
                             size="sm"
-                            onClick={loadSignals}
+                            onClick={() => {
+                                // Re-fetch signals
+                                async function loadSignals() {
+                                    setLoading(true);
+                                    try {
+                                        const data = await DataService.getSignals();
+                                        setSignals(data);
+                                    } catch (error) {
+                                        console.error("Failed to load signals:", error);
+                                    } finally {
+                                        setLoading(false);
+                                    }
+                                }
+                                loadSignals();
+                            }}
                             className="gap-2"
                         >
                             <RefreshCw className="h-4 w-4" />
@@ -226,7 +240,7 @@ export function SignalMonitorPage() {
                 <CardContent>
                     <div className="grid grid-cols-4 gap-4">
                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            {/* <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /> */}
                             <Input
                                 placeholder="Search symbol, strategy, sector..."
                                 value={searchTerm}
@@ -269,7 +283,7 @@ export function SignalMonitorPage() {
                                 }}
                                 className="gap-2"
                             >
-                                <X className="h-4 w-4" />
+                                {/* <X className="h-4 w-4" /> */}
                                 Clear Filters
                             </Button>
                         )}
@@ -304,7 +318,11 @@ export function SignalMonitorPage() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {filteredSignals.length === 0 ? (
+                                {loading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">Loading signals...</TableCell>
+                                    </TableRow>
+                                ) : filteredSignals.length === 0 ? (
                                     <TableRow>
                                         <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                                             No signals found matching your filters
