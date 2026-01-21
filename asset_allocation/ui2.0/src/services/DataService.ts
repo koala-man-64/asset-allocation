@@ -50,23 +50,23 @@ class MockDataService implements IDataService {
 }
 
 class ApiDataService implements IDataService {
-    private baseUrl = '\${config.apiBaseUrl}/data';
+    private baseUrl = `${config.apiBaseUrl}/data`;
 
     async getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
-        const url = \`\${this.baseUrl}/\${layer}/market?ticker=\${ticker}\`;
-         const response = await fetch(url);
-         if (!response.ok) throw new Error(\`Failed to fetch market data: \${response.statusText}\`);
-         return response.json();
+        const url = `${this.baseUrl}/${layer}/market?ticker=${ticker}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch market data: ${response.statusText}`);
+        return response.json();
     }
 
     async getFinanceData(ticker: string, subDomain: string, layer: 'silver' | 'gold' = 'silver'): Promise<FinanceData[]> {
-        const url = \`\${this.baseUrl}/\${layer}/finance/\${subDomain}?ticker=\${ticker}\`;
+        const url = `${this.baseUrl}/${layer}/finance/${subDomain}?ticker=${ticker}`;
         const response = await fetch(url);
-        if (!response.ok) throw new Error(\`Failed to fetch finance data: \${response.statusText}\`);
+        if (!response.ok) throw new Error(`Failed to fetch finance data: ${response.statusText}`);
         return response.json();
     }
 }
 
-export const DataService: IDataService = config.useMockData 
-    ? new MockDataService() 
+export const DataService: IDataService = config.useMockData
+    ? new MockDataService()
     : new ApiDataService();

@@ -26,29 +26,29 @@ class MockStrategyService implements IStrategyService {
 }
 
 class ApiStrategyService implements IStrategyService {
-    private baseUrl = `\${config.apiBaseUrl}/ranking`;
+    private baseUrl = `${config.apiBaseUrl}/ranking`;
 
     async getStrategies(): Promise<Strategy[]> {
-        const response = await fetch(`\${this.baseUrl}/strategies`);
+        const response = await fetch(`${this.baseUrl}/strategies`);
         if (!response.ok) {
-            throw new Error(`Failed to fetch strategies: \${response.statusText}`);
+            throw new Error(`Failed to fetch strategies: ${response.statusText}`);
         }
         return response.json();
     }
 
     async getStrategyById(id: string): Promise<Strategy | undefined> {
-        const response = await fetch(`\${this.baseUrl}/\${id}`);
+        const response = await fetch(`${this.baseUrl}/${id}`);
         if (!response.ok) {
             if (response.status === 404) return undefined;
-            throw new Error(`Failed to fetch strategy \${id}: \${response.statusText}`);
+            throw new Error(`Failed to fetch strategy ${id}: ${response.statusText}`);
         }
         return response.json();
     }
 
     async getStressEvents(): Promise<StressEvent[]> {
         // Assuming endpoint exists
-        const response = await fetch(`\${this.baseUrl}/stress-events`);
-        if (!response.ok) throw new Error(`Failed to fetch stress events: \${response.statusText}`);
+        const response = await fetch(`${this.baseUrl}/stress-events`);
+        if (!response.ok) throw new Error(`Failed to fetch stress events: ${response.statusText}`);
         return response.json();
     }
 }

@@ -14,34 +14,22 @@ def get_delta_table(container: str, path: str) -> DeltaTable:
     opts = delta_core.get_delta_storage_options(container)
     return DeltaTable(uri, storage_options=opts)
 
-def resolve_container(layer: str) -> str:
+def resolve_container(layer: str, domain: str = None) -> str:
     """
-    Resolves the container name based on the layer.
+    Resolves the container name based on the layer and optional domain.
     """
     layer = layer.lower()
     if layer == "silver":
         return cfg.AZURE_CONTAINER_SILVER
     elif layer == "gold":
-        # Strategy/Ranking data is in Gold container per current setup? 
-        # Or is Platinum a separate container? 
-        # Checking config.py: AZURE_CONTAINER_RANKING exists.
-        # But 'gold' layer usually implies AZURE_CONTAINER_COMMON (for Gold market/finance?) 
-        # or specific containers?
-        # Let's check config.py again. 
-        # AZURE_CONTAINER_MARKET, FINANCE, EARNINGS, TARGETS are likely Gold containers?
-        # Re-reading config.py:
-        # AZURE_CONTAINER_MARKET = ...
-        # AZURE_CONTAINER_BRONZE = ...
-        # AZURE_CONTAINER_SILVER = ...
-        # AZURE_CONTAINER_RANKING = ...
-        # It seems 'Silver' is a single container. 
-        # 'Gold' might be split or centralized.
-        # Let's assume Gold data is in the domain-specific containers or Common?
-        # Based on pipeline.py:
-        # get_gold_features_path -> market/{ticker}
-        # This implies Gold data might be in a 'Market' container?
-        # Let's default to specific containers for Gold if possible, or raise if ambiguous.
-        pass
+        if domain:
+            return resolve_gold_container(domain)
+        # Fallback to market or common if no domain provided, or raise
+        # For now, let's assume if it's generic gold request without domain (unlikely in our API), 
+        # it might be market. But API always has domain.
+        # If domain is None/empty, we can trigger resolve_gold_container with "market" or raise.
+        # Given generic "market" is common default:
+        return cfg.AZURE_CONTAINER_MARKET
     elif layer == "platinum":
         return cfg.AZURE_CONTAINER_RANKING
     

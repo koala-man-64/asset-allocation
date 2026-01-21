@@ -23,9 +23,7 @@ def get_data_generic(
 
     # Resolve Container
     try:
-        container = deps.resolve_container(layer)
-        if layer == "gold":
-             container = deps.resolve_gold_container(domain)
+        container = deps.resolve_container(layer, domain)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -74,9 +72,7 @@ def get_finance_data(
          raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'")
 
     try:
-        container = deps.resolve_container(layer)
-        if layer == "gold":
-             container = deps.resolve_gold_container("finance")
+        container = deps.resolve_container(layer, "finance")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

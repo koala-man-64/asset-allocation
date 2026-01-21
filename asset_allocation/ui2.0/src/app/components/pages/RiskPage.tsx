@@ -113,7 +113,7 @@ export function RiskPage() {
                   <Tooltip />
                   <Bar dataKey="loading">
                     {factorLoadings.map((entry, index) => (
-                      <Cell key={`cell-\${index}`} fill={entry.loading > 0 ? '#10b981' : '#ef4444'} />
+                      <Cell key={`cell-${index}`} fill={entry.loading > 0 ? '#10b981' : '#ef4444'} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -146,13 +146,13 @@ export function RiskPage() {
                     <tr key={event.name} className="border-b hover:bg-muted/50">
                       <td className="p-3 font-medium">{event.name}</td>
                       <td className="p-3 font-mono">{event.date}</td>
-                      <td className={`text-right p-3 font-mono \${event.strategyReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      <td className={`text-right p-3 font-mono ${event.strategyReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
                         {event.strategyReturn.toFixed(1)}%
                       </td>
-                      <td className={`text-right p-3 font-mono \${event.benchmarkReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      <td className={`text-right p-3 font-mono ${event.benchmarkReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
                         {event.benchmarkReturn.toFixed(1)}%
                       </td>
-                      <td className={`text-right p-3 font-mono font-semibold \${relative > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      <td className={`text-right p-3 font-mono font-semibold ${relative > 0 ? 'text-green-500' : 'text-red-500'}`}>
                         {relative > 0 ? '+' : ''}{relative.toFixed(1)}%
                       </td>
                     </tr>
