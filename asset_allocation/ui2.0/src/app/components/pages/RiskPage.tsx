@@ -1,7 +1,8 @@
 // Risk & Exposures Page
 
-import { useState } from 'react';
-import { mockStrategies, stressEvents } from '../../../data/strategies';
+import { useState, useEffect } from 'react';
+import { Strategy, StressEvent } from '../../../data/strategies';
+import { StrategyService } from '../../../services/StrategyService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -13,8 +14,42 @@ import {
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
 
 export function RiskPage() {
-  const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
-  const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [stressEvents, setStressEvents] = useState<StressEvent[]>([]);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const [strategiesData, stressData] = await Promise.all([
+          StrategyService.getStrategies(),
+          StrategyService.getStressEvents()
+        ]);
+
+        setStrategies(strategiesData);
+        setStressEvents(stressData);
+
+        if (strategiesData.length > 0) {
+          // Preserve selection if possible, else default to first
+          setSelectedStrategyId(prev => strategiesData.find(s => s.id === prev) ? prev : strategiesData[0].id);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load data');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  if (loading) return <div className="p-6">Loading risk analysis...</div>;
+  if (error) return <div className="p-6 text-red-500">Error: {error}</div>;
+  if (!strategies.length) return <div className="p-6">No strategies found.</div>;
+
+  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
 
   const factorLoadings = [
     { factor: 'Value', loading: 0.25 },
@@ -35,7 +70,7 @@ export function RiskPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {mockStrategies.map(s => (
+                {strategies.map(s => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
               </SelectContent>
