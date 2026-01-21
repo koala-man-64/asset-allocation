@@ -1,6 +1,7 @@
 import { config } from '@/config';
 import { MarketData, FinanceData, Position, Order, Alert, AlertConfig, RiskMetrics, ExecutionMetrics } from '@/types/data';
 import { StrategyRun, SystemHealth, TradingSignal, StressEvent } from '@/types/strategy';
+import { backtestApi } from '@/services/backtestApi';
 import { mockStrategies, mockSystemHealth, mockSignals, stressEvents } from '@/data/mockData';
 
 export type { MarketData, FinanceData };
@@ -143,10 +144,7 @@ class ApiDataService implements IDataService {
     }
 
     async getLiveSystemHealth(): Promise<SystemHealth> {
-        // Actual live implementation would fetch from API
-        const response = await fetch(`${this.baseUrl}/system/health`);
-        if (!response.ok) throw new Error('Live system health API unavailable');
-        return response.json();
+        return backtestApi.getSystemHealth();
     }
 
     async getSignals(): Promise<TradingSignal[]> {

@@ -1,12 +1,9 @@
 // System Status & Health Monitoring Page
 
-import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
-import { DataService } from '@/services/DataService';
-import { useApp } from '@/contexts/AppContext';
-import { SystemHealth } from '@/types/strategy';
+import { useLiveSystemHealthQuery } from '@/hooks/useDataQueries';
 import {
     Activity,
     Database,
@@ -18,44 +15,11 @@ import {
     Loader2,
     AlertCircle,
     Info,
-    TrendingUp,
-    RefreshCw
+    TrendingUp
 } from 'lucide-react';
-import { DataLayer, JobRun, SystemAlert } from '@/types/strategy';
 
 export function SystemStatusPage() {
-    const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    // Load system health based on data source
-    useEffect(() => {
-        async function loadSystemHealth() {
-            setLoading(true);
-            try {
-                const data = await DataService.getLiveSystemHealth();
-                setSystemHealth(data);
-                setError(null);
-            } catch (err: any) {
-                console.error("Failed to fetch live system health:", err);
-                setError(err.message || 'Failed to connect to live system health API');
-                // Set empty states
-                setSystemHealth({
-                    overall: 'critical',
-                    dataLayers: [],
-                    recentJobs: [],
-                    alerts: []
-                });
-            } finally {
-                setLoading(false);
-            }
-        }
-        loadSystemHealth();
-
-        // Auto-refresh every 30 seconds
-        const interval = setInterval(loadSystemHealth, 30000);
-        return () => clearInterval(interval);
-    }, []);
+    const { data: systemHealth, isLoading: loading, error } = useLiveSystemHealthQuery();
 
     if (loading || !systemHealth) {
         return (
@@ -65,16 +29,18 @@ export function SystemStatusPage() {
         );
     }
 
-    const { overall, dataLayers, recentJobs, alerts } = systemHealth;
+    const { overall, dataLayers, recentJobs, alerts, resources = [] } = systemHealth;
 
     const getStatusIcon = (status: string) => {
         switch (status) {
             case 'healthy':
             case 'success':
                 return <CheckCircle2 className="h-4 w-4 text-green-600" />;
+            case 'degraded':
             case 'stale':
             case 'warning':
                 return <AlertTriangle className="h-4 w-4 text-yellow-600" />;
+            case 'critical':
             case 'error':
             case 'failed':
                 return <XCircle className="h-4 w-4 text-red-600" />;
@@ -91,8 +57,10 @@ export function SystemStatusPage() {
         const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
             healthy: 'default',
             success: 'default',
+            degraded: 'secondary',
             stale: 'secondary',
             warning: 'secondary',
+            critical: 'destructive',
             error: 'destructive',
             failed: 'destructive',
             running: 'outline',
@@ -175,6 +143,7 @@ export function SystemStatusPage() {
     const failedJobs = recentJobs.filter(j => j.status === 'failed').length;
 
     const unacknowledgedAlerts = alerts.filter(a => !a.acknowledged);
+    const showAzureResources = resources.length > 0;
 
     return (
         <div className="space-y-6">
@@ -185,7 +154,7 @@ export function SystemStatusPage() {
                     <div className="text-base text-destructive">
                         <p className="font-semibold">Live Data Connection Error</p>
                         <p className="text-sm opacity-90 mt-1">
-                            {error}. Metrics and tables will remain empty until connection is established.
+                            {(error as any).message || 'Failed to connect to live system health API'}. Metrics and tables will remain empty until connection is established.
                         </p>
                     </div>
                 </div>
@@ -388,6 +357,62 @@ export function SystemStatusPage() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Azure Resource Health */}
+            {showAzureResources && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Activity className="h-5 w-5" />
+                            Azure Resource Health
+                        </CardTitle>
+                        <CardDescription>
+                            Control-plane status for configured Azure resources
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="rounded-md border">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Name</TableHead>
+                                        <TableHead>Type</TableHead>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead>Last Checked</TableHead>
+                                        <TableHead>Details</TableHead>
+                                        <TableHead>Azure ID</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {resources.map((resource, idx) => (
+                                        <TableRow key={idx}>
+                                            <TableCell className="font-medium">{resource.name}</TableCell>
+                                            <TableCell className="text-sm text-muted-foreground">
+                                                {resource.resourceType}
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    {getStatusIcon(resource.status)}
+                                                    {getStatusBadge(resource.status)}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="font-mono text-xs">
+                                                {formatTimestamp(resource.lastChecked)}
+                                            </TableCell>
+                                            <TableCell className="text-sm text-muted-foreground">
+                                                {resource.details || '-'}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-xs text-muted-foreground max-w-[240px] truncate">
+                                                {resource.azureId || '-'}
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Recent Job Runs */}
             <Card>

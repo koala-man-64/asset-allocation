@@ -1,20 +1,23 @@
-// Signal Monitor Page - Hot List of Strongest Current Signals
-
 import { useState, useEffect } from 'react';
+// @ts-ignore
+import * as ReactWindowPkg from 'react-window';
+// @ts-ignore
+import * as AutoSizerPkg from 'react-virtualized-auto-sizer';
+
+// Robust interop for Vite (Dev) vs Rollup (Build)
+const FixedSizeList = (ReactWindowPkg as any).FixedSizeList || (ReactWindowPkg as any).default?.FixedSizeList || ReactWindowPkg;
+const AutoSizer = (AutoSizerPkg as any).default || (AutoSizerPkg as any).AutoSizer || AutoSizerPkg;
+
+// Cast to any to bypass strict type checks
+const VirtualList = FixedSizeList as any;
+const Sizer = AutoSizer as any;
+
 import { DataService } from '@/services/DataService';
 import { TradingSignal } from '@/types/strategy';
 import { useApp } from '@/contexts/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/app/components/ui/table';
 import {
     Select,
     SelectContent,
@@ -291,128 +294,125 @@ export function SignalMonitorPage() {
                 </CardContent>
             </Card>
 
-            {/* Signals Table */}
-            <Card>
+            {/* Signals Table - Virtualized */}
+            <Card className="flex-1 flex flex-col min-h-[500px]">
                 <CardHeader>
                     <CardTitle>Active Signals ({filteredSignals.length})</CardTitle>
                 </CardHeader>
-                <CardContent>
-                    <div className="border rounded-lg">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead className="w-[100px]">Strength</TableHead>
-                                    <TableHead className="w-[80px]">Type</TableHead>
-                                    <TableHead>Symbol</TableHead>
-                                    <TableHead>Sector</TableHead>
-                                    <TableHead>Strategy</TableHead>
-                                    <TableHead className="text-right">Price</TableHead>
-                                    <TableHead className="text-right">24h Chg</TableHead>
-                                    <TableHead className="text-right">Exp. Return</TableHead>
-                                    <TableHead className="text-right">Target</TableHead>
-                                    <TableHead className="text-right">Stop Loss</TableHead>
-                                    <TableHead>Horizon</TableHead>
-                                    <TableHead className="text-right">Size</TableHead>
-                                    <TableHead>Catalysts</TableHead>
-                                    <TableHead className="text-right">Generated</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {loading ? (
-                                    <TableRow>
-                                        <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">Loading signals...</TableCell>
-                                    </TableRow>
-                                ) : filteredSignals.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
-                                            No signals found matching your filters
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    filteredSignals.map((signal) => (
-                                        <TableRow key={signal.id} className="hover:bg-muted/50">
-                                            <TableCell>
-                                                {getStrengthBadge(signal.strength)}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge variant={getSignalBadgeVariant(signal.signalType)}>
-                                                    {signal.signalType}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="font-semibold">
-                                                {signal.symbol}
-                                            </TableCell>
-                                            <TableCell>
-                                                <span className="text-sm text-muted-foreground">
-                                                    {signal.sector}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell>
-                                                <span className="text-sm">
-                                                    {signal.strategyName}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono">
-                                                ${signal.currentPrice.toFixed(2)}
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <div className={`flex items-center justify-end gap-1 ${signal.priceChange24h > 0 ? 'text-green-600' : 'text-red-600'
-                                                    }`}>
-                                                    {signal.priceChange24h > 0 ? (
-                                                        <ArrowUpRight className="h-3 w-3" />
-                                                    ) : (
-                                                        <ArrowDownRight className="h-3 w-3" />
-                                                    )}
-                                                    <span className="font-mono text-sm">
-                                                        {signal.priceChange24h > 0 ? '+' : ''}
-                                                        {signal.priceChange24h.toFixed(2)}%
-                                                    </span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <span className={`font-mono font-semibold ${signal.expectedReturn > 0 ? 'text-green-600' : 'text-red-600'
-                                                    }`}>
-                                                    {signal.expectedReturn > 0 ? '+' : ''}
-                                                    {signal.expectedReturn.toFixed(2)}%
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono text-sm">
-                                                {signal.targetPrice ? `$${signal.targetPrice.toFixed(2)}` : '-'}
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono text-sm">
-                                                {signal.stopLoss ? `$${signal.stopLoss.toFixed(2)}` : '-'}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge variant="outline" className="font-mono">
-                                                    {signal.timeHorizon}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <span className="text-sm font-mono">
-                                                    {signal.positionSize.toFixed(1)}%
-                                                </span>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex flex-wrap gap-1 max-w-[200px]">
-                                                    {signal.catalysts.map((catalyst, idx) => (
-                                                        <Badge
-                                                            key={idx}
-                                                            variant="secondary"
-                                                            className="text-xs"
-                                                        >
-                                                            {catalyst}
-                                                        </Badge>
-                                                    ))}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-right text-sm text-muted-foreground">
-                                                {formatTimeAgo(signal.generatedAt)}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
+                <CardContent className="flex-1 p-0">
+                    <div className="h-[600px] w-full flex flex-col">
+                        {/* Header Row */}
+                        <div className="flex border-b bg-muted/50 font-medium text-xs px-4 py-3">
+                            <div className="w-[100px] shrink-0">Strength</div>
+                            <div className="w-[80px] shrink-0">Type</div>
+                            <div className="w-[80px] shrink-0">Symbol</div>
+                            <div className="flex-1 min-w-[100px]">Strategy</div>
+                            <div className="w-[120px] shrink-0">Sector</div>
+                            <div className="w-[80px] text-right shrink-0">Price</div>
+                            <div className="w-[80px] text-right shrink-0">24h Chg</div>
+                            <div className="w-[80px] text-right shrink-0">Exp. Ret</div>
+                            <div className="w-[80px] text-right shrink-0">Target</div>
+                            <div className="w-[80px] text-right shrink-0">Stop</div>
+                            <div className="w-[80px] shrink-0">Horizon</div>
+                            <div className="w-[60px] text-right shrink-0">Size</div>
+                            <div className="w-[150px] shrink-0 pl-2">Catalysts</div>
+                            <div className="w-[100px] text-right shrink-0">Generated</div>
+                        </div>
+
+                        {/* Virtualized Body */}
+                        <div className="flex-1">
+                            {loading ? (
+                                <div className="flex items-center justify-center h-full text-muted-foreground">
+                                    Loading signals...
+                                </div>
+                            ) : filteredSignals.length === 0 ? (
+                                <div className="flex items-center justify-center h-full text-muted-foreground">
+                                    No signals found matching your filters
+                                </div>
+                            ) : (
+                                <Sizer>
+                                    {({ height, width }: { height: number, width: number }) => (
+                                        <VirtualList
+                                            height={height}
+                                            width={width}
+                                            itemCount={filteredSignals.length}
+                                            itemSize={60}
+                                            itemData={filteredSignals}
+                                        >
+                                            {({ index, style, data }: any) => {
+                                                const signal = data[index];
+                                                return (
+                                                    <div style={style} className="flex border-b items-center text-sm px-4 hover:bg-muted/50 transition-colors">
+                                                        <div className="w-[100px] shrink-0">
+                                                            {getStrengthBadge(signal.strength)}
+                                                        </div>
+                                                        <div className="w-[80px] shrink-0">
+                                                            <Badge variant={getSignalBadgeVariant(signal.signalType)}>
+                                                                {signal.signalType}
+                                                            </Badge>
+                                                        </div>
+                                                        <div className="w-[80px] font-semibold shrink-0">
+                                                            {signal.symbol}
+                                                        </div>
+                                                        <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
+                                                            {signal.strategyName}
+                                                        </div>
+                                                        <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
+                                                            {signal.sector}
+                                                        </div>
+                                                        <div className="w-[80px] text-right font-mono shrink-0">
+                                                            ${signal.currentPrice.toFixed(2)}
+                                                        </div>
+                                                        <div className="w-[80px] text-right shrink-0">
+                                                            <div className={`flex items-center justify-end gap-1 ${signal.priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {signal.priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                                                                <span className="font-mono text-xs">
+                                                                    {Math.abs(signal.priceChange24h).toFixed(2)}%
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="w-[80px] text-right shrink-0">
+                                                            <span className={`font-mono font-semibold ${signal.expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {signal.expectedReturn > 0 ? '+' : ''}{signal.expectedReturn.toFixed(1)}%
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-[80px] text-right font-mono text-xs shrink-0">
+                                                            {signal.targetPrice ? `$${signal.targetPrice.toFixed(0)}` : '-'}
+                                                        </div>
+                                                        <div className="w-[80px] text-right font-mono text-xs shrink-0">
+                                                            {signal.stopLoss ? `$${signal.stopLoss.toFixed(0)}` : '-'}
+                                                        </div>
+                                                        <div className="w-[80px] shrink-0">
+                                                            <Badge variant="outline" className="font-mono text-[10px]">
+                                                                {signal.timeHorizon}
+                                                            </Badge>
+                                                        </div>
+                                                        <div className="w-[60px] text-right font-mono text-xs shrink-0">
+                                                            {signal.positionSize.toFixed(1)}%
+                                                        </div>
+                                                        <div className="w-[150px] shrink-0 pl-2 overflow-hidden">
+                                                            <div className="flex flex-wrap gap-1 h-full items-center overflow-hidden">
+                                                                {signal.catalysts.slice(0, 1).map((catalyst, idx) => (
+                                                                    <Badge key={idx} variant="secondary" className="text-[10px] px-1 h-5 truncate max-w-full">
+                                                                        {catalyst}
+                                                                    </Badge>
+                                                                ))}
+                                                                {signal.catalysts.length > 1 && (
+                                                                    <span className="text-[10px] text-muted-foreground">+{signal.catalysts.length - 1}</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <div className="w-[100px] text-right text-xs text-muted-foreground shrink-0">
+                                                            {formatTimeAgo(signal.generatedAt)}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }}
+                                        </VirtualList>
+                                    )}
+                                </Sizer>
+                            )}
+                        </div>
                     </div>
                 </CardContent>
             </Card>

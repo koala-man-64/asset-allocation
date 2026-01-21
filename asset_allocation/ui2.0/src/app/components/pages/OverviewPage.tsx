@@ -1,9 +1,9 @@
 // Overview Page - PM Scoreboard
 
-import { useState, useEffect } from 'react';
-import { DataService } from '@/services/DataService';
+import { useState } from 'react';
+import { useUIStore } from '@/stores/useUIStore';
+import { useStrategiesQuery } from '@/hooks/useDataQueries';
 import { StrategyRun } from '@/types/strategy';
-import { useApp } from '@/contexts/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -28,29 +28,11 @@ import { MetricTooltip, InfoTooltip } from '@/app/components/ui/metric-tooltip';
 import { StrategyConfigModal } from '@/app/components/modals/StrategyConfigModal';
 
 export function OverviewPage() {
-  const { selectedRuns, addToCart, removeFromCart, dataSource } = useApp();
-  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { selectedRuns, addToCart, removeFromCart, dataSource } = useUIStore();
+  const { data: strategies = [], isLoading: loading } = useStrategiesQuery();
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyRun | null>(null);
   const [configModalOpen, setConfigModalOpen] = useState(false);
 
-  // Load strategies based on data source
-  useEffect(() => {
-    async function loadStrategies() {
-      setLoading(true);
-      try {
-        // Note: DataService currently handles the backend connection. 
-        // In the future, pass dataSource to DataService if needed.
-        const data = await DataService.getStrategies();
-        setStrategies(data);
-      } catch (err) {
-        console.error("Failed to load strategies", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadStrategies();
-  }, [dataSource]);
 
   const handleViewConfig = (strategy: StrategyRun) => {
     setSelectedStrategy(strategy);
@@ -206,7 +188,7 @@ export function OverviewPage() {
                     <TableRow key={strategy.id} className="hover:bg-muted/50">
                       <TableCell>
                         <Checkbox
-                          checked={selectedRuns.has(strategy.id)}
+                          checked={selectedRuns.includes(strategy.id)}
                           onCheckedChange={(checked) => handleCheckboxChange(strategy.id, checked as boolean)}
                         />
                       </TableCell>

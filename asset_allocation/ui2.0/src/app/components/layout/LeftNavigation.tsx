@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import {
@@ -29,7 +30,7 @@ import {
 } from 'lucide-react';
 
 interface NavItem {
-  id: string;
+  path: string;
   label: string;
   icon: React.ElementType;
 }
@@ -39,55 +40,50 @@ interface NavSection {
   items: NavItem[];
 }
 
-interface LeftNavigationProps {
-  activePage: string;
-  onNavigate: (page: string) => void;
-  // Props from src matching (though src_updated is self-managed, we keep these for compatibility if needed, or remove them from App.tsx)
-}
 
 const navSections: NavSection[] = [
   {
     title: 'ANALYSIS',
     items: [
-      { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-      { id: 'compare', label: 'Run Compare', icon: GitCompare },
-      { id: 'deep-dive', label: 'Deep Dive', icon: FileText },
-      { id: 'attribution', label: 'Attribution', icon: PieChart },
+      { path: '/', label: 'Overview', icon: LayoutDashboard },
+      { path: '/compare', label: 'Run Compare', icon: GitCompare },
+      { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
+      { path: '/attribution', label: 'Attribution', icon: PieChart },
     ]
   },
   {
     title: 'RISK & PERFORMANCE',
     items: [
-      { id: 'risk', label: 'Risk & Exposures', icon: Shield },
-      { id: 'execution', label: 'Execution & Costs', icon: DollarSign },
-      { id: 'robustness', label: 'Robustness', icon: Target },
+      { path: '/risk', label: 'Risk & Exposures', icon: Shield },
+      { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
+      { path: '/robustness', label: 'Robustness', icon: Target },
     ]
   },
   {
     title: 'PORTFOLIO',
     items: [
-      { id: 'portfolio', label: 'Portfolio Builder', icon: Folder },
+      { path: '/portfolio', label: 'Portfolio Builder', icon: Folder },
     ]
   },
   {
     title: 'LIVE OPERATIONS',
     items: [
-      { id: 'signals', label: 'Signal Monitor', icon: Zap },
-      { id: 'live-trading', label: 'Live Trading', icon: TrendingUp },
-      { id: 'alerts', label: 'Alert Management', icon: Bell },
+      { path: '/signals', label: 'Signal Monitor', icon: Zap },
+      { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
+      { path: '/alerts', label: 'Alert Management', icon: Bell },
     ]
   },
   {
     title: 'SYSTEM',
     items: [
-      { id: 'data', label: 'Data & Lineage', icon: Database },
-      { id: 'data-tiers', label: 'Data Tiers', icon: Layers },
-      { id: 'system', label: 'System Status', icon: Activity },
+      { path: '/data', label: 'Data & Lineage', icon: Database },
+      { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
+      { path: '/system', label: 'System Status', icon: Activity },
     ]
   }
 ];
 
-export function LeftNavigation({ activePage, onNavigate }: LeftNavigationProps) {
+export function LeftNavigation() {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     'ANALYSIS': true,
@@ -144,28 +140,31 @@ export function LeftNavigation({ activePage, onNavigate }: LeftNavigationProps) 
                 >
                   {section.items.map(item => {
                     const Icon = item.icon;
-                    const isActive = activePage === item.id;
 
                     const buttonContent = (
-                      <Button
-                        key={item.id}
-                        variant="ghost"
-                        size="default"
-                        className={cn(
-                          "w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                          collapsed ? "px-3" : "px-4",
-                          isActive && "bg-sidebar-accent text-sidebar-primary font-semibold border-l-4 border-sidebar-primary rounded-l-none"
+                      <NavLink
+                        key={item.path}
+                        to={item.path}
+                        className={({ isActive }) => cn(
+                          "w-full flex items-center justify-start text-sm py-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors",
+                          collapsed ? "px-3 justify-center" : "px-4",
+                          isActive && "bg-sidebar-accent text-sidebar-primary font-semibold border-l-4 border-sidebar-primary -ml-[4px] pl-[calc(1rem-4px)]"
+                          // Note: removed rounded-l-none from original as we aren't using Button component here directly to avoid nesting issues or we can wrap Button with asChild
                         )}
-                        onClick={() => onNavigate(item.id)}
+                        title={collapsed ? item.label : undefined}
                       >
-                        <Icon className={cn("h-5 w-5", !collapsed && "mr-3", isActive && "text-sidebar-primary")} />
-                        {!collapsed && <span>{item.label}</span>}
-                      </Button>
+                        {({ isActive }) => (
+                          <>
+                            <Icon className={cn("h-5 w-5", !collapsed && "mr-3", isActive && "text-sidebar-primary")} />
+                            {!collapsed && <span>{item.label}</span>}
+                          </>
+                        )}
+                      </NavLink>
                     );
 
                     if (collapsed) {
                       return (
-                        <Tooltip key={item.id}>
+                        <Tooltip key={item.path}>
                           <TooltipTrigger asChild>
                             {buttonContent}
                           </TooltipTrigger>

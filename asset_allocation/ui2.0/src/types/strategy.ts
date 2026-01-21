@@ -154,11 +154,31 @@ export interface SystemAlert {
   acknowledged: boolean;
 }
 
+export interface ResourceHealth {
+  name: string;
+  resourceType: string;
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  lastChecked: string;
+  details?: string;
+  azureId?: string;
+  signals?: ResourceSignal[];
+}
+
+export interface ResourceSignal {
+  name: string;
+  value: number | null;
+  unit: string;
+  timestamp: string;
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  source?: 'metrics' | 'logs';
+}
+
 export interface SystemHealth {
   overall: 'healthy' | 'degraded' | 'critical';
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   alerts: SystemAlert[];
+  resources?: ResourceHealth[];
 }
 
 export interface TradingSignal {

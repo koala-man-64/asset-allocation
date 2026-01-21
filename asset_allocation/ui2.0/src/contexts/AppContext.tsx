@@ -1,12 +1,7 @@
 // Global application context for managing state across the dashboard
 
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { DataService } from '@/services/DataService';
-// StrategyRun type is used in DataService but maybe not here directly now, but let's keep it safe. 
-// Actually, I don't see StrategyRun usage in AppContext explicitly besides imports in previous versions.
-// checking Step 125, it imported StrategyRun but didn't seem to use it in types.
-// I'll keep the import if it was there to avoid breaking other things.
-import { StrategyRun } from '@/types/strategy';
+import React, { createContext, useContext, ReactNode, useEffect, useMemo } from 'react';
+import { useUIStore } from '@/stores/useUIStore';
 
 interface AppContextType {
   // Selected runs for comparison (the "cart")
@@ -43,65 +38,40 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [selectedRuns, setSelectedRuns] = useState<Set<string>>(new Set());
-  const [dateRange, setDateRange] = useState({ start: '2020-01-01', end: '2025-01-01' });
-  const [benchmark, setBenchmark] = useState('SPY');
-  const [costModel, setCostModel] = useState('Passive bps');
-  const [dataSource, setDataSource] = useState<'mock' | 'live'>('mock');
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [environment, setEnvironment] = useState<'DEV' | 'PROD'>('DEV');
-  const [cartOpen, setCartOpen] = useState(false);
+  const store = useUIStore();
 
-  // Sync DataService mode
-  useEffect(() => {
-    DataService.setMode(dataSource);
-  }, [dataSource]);
+  // Compatibility layer for Set<string>
+  const selectedRunsSet = useMemo(() => new Set(store.selectedRuns), [store.selectedRuns]);
 
-  // Apply dark mode to document
+  // Apply dark mode to document (moving logic here if not elsewhere)
   useEffect(() => {
-    if (isDarkMode) {
+    if (store.isDarkMode) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
-  }, [isDarkMode]);
-
-  const addToCart = (runId: string) => {
-    setSelectedRuns(prev => new Set(prev).add(runId));
-  };
-
-  const removeFromCart = (runId: string) => {
-    setSelectedRuns(prev => {
-      const next = new Set(prev);
-      next.delete(runId);
-      return next;
-    });
-  };
-
-  const clearCart = () => {
-    setSelectedRuns(new Set());
-  };
+  }, [store.isDarkMode]);
 
   return (
     <AppContext.Provider value={{
-      selectedRuns,
-      addToCart,
-      removeFromCart,
-      clearCart,
-      dateRange,
-      setDateRange,
-      benchmark,
-      setBenchmark,
-      costModel,
-      setCostModel,
-      dataSource,
-      setDataSource,
-      isDarkMode,
-      setIsDarkMode,
-      environment,
-      setEnvironment,
-      cartOpen,
-      setCartOpen
+      selectedRuns: selectedRunsSet,
+      addToCart: store.addToCart,
+      removeFromCart: store.removeFromCart,
+      clearCart: store.clearCart,
+      dateRange: store.dateRange,
+      setDateRange: store.setDateRange,
+      benchmark: store.benchmark,
+      setBenchmark: store.setBenchmark,
+      costModel: store.costModel,
+      setCostModel: store.setCostModel,
+      dataSource: store.dataSource,
+      setDataSource: store.setDataSource,
+      isDarkMode: store.isDarkMode,
+      setIsDarkMode: store.setIsDarkMode,
+      environment: store.environment,
+      setEnvironment: store.setEnvironment,
+      cartOpen: store.cartOpen,
+      setCartOpen: store.setCartOpen
     }}>
       {children}
     </AppContext.Provider>
