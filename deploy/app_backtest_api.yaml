@@ -22,6 +22,8 @@ properties:
       value: ${ACR_PASSWORD}
     - name: api-key
       value: "${BACKTEST_API_KEY}"
+    - name: backtest-pg-dsn
+      value: "${BACKTEST_POSTGRES_DSN}"
   template:
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-backtest-api:${IMAGE_TAG}
@@ -32,6 +34,8 @@ properties:
         value: assetallocstorage001
       - name: BACKTEST_API_KEY
         secretRef: api-key
+      - name: BACKTEST_POSTGRES_DSN
+        secretRef: backtest-pg-dsn
       - name: BACKTEST_AUTH_MODE
         value: "${BACKTEST_AUTH_MODE}"
       - name: BACKTEST_OIDC_ISSUER
@@ -67,7 +71,7 @@ properties:
       - name: BACKTEST_ADLS_CONTAINER_ALLOWLIST
         value: "bronze,silver,gold,platinum,ranking-data,common"
       - name: BACKTEST_RUN_STORE_MODE
-        value: "adls"
+        value: "postgres"
       - name: BACKTEST_ADLS_RUNS_DIR
         value: "platinum/backtest-api-results"
       - name: LOG_FORMAT
@@ -78,4 +82,4 @@ properties:
       probes: []
     scale:
       minReplicas: 0
-      maxReplicas: 10
+      maxReplicas: 1

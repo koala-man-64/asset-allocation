@@ -21,6 +21,7 @@ from asset_allocation.backtest.service.artifacts import download_remote_artifact
 from asset_allocation.backtest.service.adls_run_store import AdlsRunStore
 from asset_allocation.backtest.service.auth import AuthError, AuthManager
 from asset_allocation.backtest.service.job_manager import JobManager
+from asset_allocation.backtest.service.postgres_run_store import PostgresRunStore
 from asset_allocation.backtest.service.run_store import RunStore
 from asset_allocation.backtest.service.schemas import (
     ArtifactInfoResponse,
@@ -109,6 +110,8 @@ def create_app() -> FastAPI:
         settings = ServiceSettings.from_env()
         if settings.run_store_mode == "adls":
             store = AdlsRunStore(settings.adls_runs_dir or "")
+        elif settings.run_store_mode == "postgres":
+            store = PostgresRunStore(settings.postgres_dsn or "")
         else:
             store = RunStore(settings.db_path)
         store.init_db()
@@ -221,7 +224,7 @@ def create_app() -> FastAPI:
         store = _get_store(app)
         try:
             store.init_db()
-            if settings.run_store_mode == "adls" and hasattr(store, "ping"):
+            if hasattr(store, "ping"):
                 store.ping()
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"DB not ready: {exc}") from exc

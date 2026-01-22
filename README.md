@@ -56,6 +56,20 @@ See `docs/backtest_service.md`. Locally:
 uvicorn asset_allocation.backtest.service.app:app --reload
 ```
 
+## Backend API (UI data)
+
+The UI (ag-ui-wiring contract) calls these endpoints:
+
+- `GET /market/{layer}/{ticker}` (layer: `silver|gold`)
+- `GET /finance/{layer}/{sub_domain}/{ticker}` (layer: `silver|gold`)
+- `GET /strategies`
+
+These are implemented as **aliases** over the existing canonical routes:
+
+- `GET /data/{layer}/market?ticker={ticker}`
+- `GET /data/{layer}/finance/{sub_domain}?ticker={ticker}`
+- `GET /ranking/strategies`
+
 ## Deployment
 
 Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under `deploy/`.

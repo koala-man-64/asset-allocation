@@ -269,6 +269,23 @@ def materialize_signals_for_year_month(
         predicate=predicate,
     )
 
+    postgres_dsn = os.environ.get("POSTGRES_DSN", "").strip()
+    if postgres_dsn:
+        required_raw = os.environ.get("POSTGRES_SIGNALS_WRITE_REQUIRED", "true")
+        required = str(required_raw).strip().lower() not in {"0", "false", "no", "off"}
+        try:
+            from scripts.ranking.postgres_signals import write_signals_for_year_month
+
+            write_signals_for_year_month(
+                dsn=postgres_dsn,
+                year_month=year_month,
+                signals=signals,
+                composite=composite,
+            )
+        except Exception:
+            if required:
+                raise
+
     return MaterializeResult(
         year_month=year_month,
         rankings_rows=len(rankings),
