@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { AppProvider } from '@/contexts/AppContext';
+import { QueryProvider } from '@/providers/QueryProvider';
+import { useDataSync } from '@/hooks/useDataQueries';
+
 import { AppHeader } from '@/app/components/layout/AppHeader';
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
 import { RunCart } from '@/app/components/layout/RunCart';
@@ -13,56 +16,66 @@ import { ExecutionPage } from '@/app/components/pages/ExecutionPage';
 import { RobustnessPage } from '@/app/components/pages/RobustnessPage';
 import { PortfolioPage } from '@/app/components/pages/PortfolioPage';
 import { DataPage } from '@/app/components/pages/DataPage';
+import { DataTiersPage } from '@/app/components/pages/DataTiersPage';
+import { SignalMonitorPage } from '@/app/components/pages/SignalMonitorPage';
+import { LiveTradingPage } from '@/app/components/pages/LiveTradingPage';
+import { AlertsPage } from '@/app/components/pages/AlertsPage';
+import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
+import { Toaster } from '@/app/components/ui/sonner';
 
 function AppContent() {
-  const [activePage, setActivePage] = useState('overview');
-  
-  const renderPage = () => {
-    switch (activePage) {
-      case 'overview':
-        return <OverviewPage />;
-      case 'compare':
-        return <RunComparePage />;
-      case 'deep-dive':
-        return <DeepDivePage />;
-      case 'attribution':
-        return <AttributionPage />;
-      case 'risk':
-        return <RiskPage />;
-      case 'execution':
-        return <ExecutionPage />;
-      case 'robustness':
-        return <RobustnessPage />;
-      case 'portfolio':
-        return <PortfolioPage />;
-      case 'data':
-        return <DataPage />;
-      default:
-        return <OverviewPage />;
-    }
-  };
-  
+  const navigate = useNavigate();
+
+  // Sync DataService mode with global state
+  useDataSync();
+
   return (
-    <AuthProvider>
-      <AppProvider>
-        <div className="h-screen flex flex-col bg-background">
-          <AppHeader />
+    <div className="h-screen flex flex-col bg-background">
+      <AppHeader />
 
-          <div className="flex-1 flex overflow-hidden">
-            <LeftNavigation activePage={activePage} onNavigate={setActivePage} />
+      <div className="flex-1 flex overflow-hidden">
+        <LeftNavigation />
 
-            <main className="flex-1 overflow-y-auto">
-              <div className="container mx-auto p-6 max-w-[1600px]">{renderPage()}</div>
-            </main>
+        <main className="flex-1 overflow-y-auto">
+          <div className="container mx-auto p-8 max-w-[1800px]">
+            <Routes>
+              <Route path="/" element={<OverviewPage />} />
+              <Route path="/compare" element={<RunComparePage />} />
+              <Route path="/deep-dive" element={<DeepDivePage />} />
+              <Route path="/attribution" element={<AttributionPage />} />
+              <Route path="/risk" element={<RiskPage />} />
+              <Route path="/execution" element={<ExecutionPage />} />
+              <Route path="/robustness" element={<RobustnessPage />} />
+              <Route path="/portfolio" element={<PortfolioPage />} />
+              <Route path="/data" element={<DataPage onNavigate={(page) => navigate(`/${page}`)} />} />
+              <Route path="/signals" element={<SignalMonitorPage />} />
+              <Route path="/live-trading" element={<LiveTradingPage />} />
+              <Route path="/alerts" element={<AlertsPage />} />
+              <Route path="/system" element={<SystemStatusPage />} />
+              <Route path="/data-tiers" element={<DataTiersPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           </div>
+        </main>
+      </div>
 
-          <RunCart onCompare={() => setActivePage('compare')} onPortfolioBuilder={() => setActivePage('portfolio')} />
-        </div>
-      </AppProvider>
-    </AuthProvider>
+      <RunCart
+        onCompare={() => navigate('/compare')}
+        onPortfolioBuilder={() => navigate('/portfolio')}
+      />
+      <Toaster />
+    </div>
   );
 }
 
 export default function App() {
-  return <AppContent />;
+  return (
+    <AuthProvider>
+      <QueryProvider>
+        <AppProvider>
+          <AppContent />
+        </AppProvider>
+      </QueryProvider>
+    </AuthProvider>
+  );
 }

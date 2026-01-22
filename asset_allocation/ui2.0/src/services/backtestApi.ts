@@ -1,3 +1,5 @@
+import type { SystemHealth } from '@/types/strategy';
+
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
 
@@ -10,7 +12,7 @@ type RuntimeConfig = {
 };
 
 function getRuntimeConfig(): RuntimeConfig {
-  return ((window as any).__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
+  return (window.__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
 }
 
 export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
@@ -262,5 +264,9 @@ export const backtestApi = {
       offset: params.offset ?? 0,
     });
     return requestJson<TradeListResponse>(`/backtests/${encodeURIComponent(runId)}/trades${query}`, { signal });
+  },
+
+  async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
+    return requestJson<SystemHealth>('/system/health', { signal });
   },
 };

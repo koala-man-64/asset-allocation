@@ -24,27 +24,27 @@ function generateEquityCurve(
   const dates = generateDateSeries(startDate, endDate);
   const curve: TimeSeriesPoint[] = [];
   let value = 100;
-  
+
   const dailyReturn = cagr / 252;
   const dailyVol = volatility / Math.sqrt(252);
-  
+
   dates.forEach((date, i) => {
     // Random walk with drift
     const shock = (Math.random() - 0.5) * 2 * dailyVol;
     const drift = dailyReturn;
     value *= (1 + drift + shock);
-    
+
     // Inject periodic drawdowns
     if (i % 252 === 0 && i > 0) {
       value *= (1 - Math.random() * maxDD * 0.3);
     }
-    
+
     curve.push({
       date: date.toISOString().split('T')[0],
       value: value
     });
   });
-  
+
   return curve;
 }
 
@@ -52,7 +52,7 @@ function generateEquityCurve(
 function generateDrawdownCurve(equityCurve: TimeSeriesPoint[]): TimeSeriesPoint[] {
   const drawdowns: TimeSeriesPoint[] = [];
   let peak = equityCurve[0].value;
-  
+
   equityCurve.forEach(point => {
     if (point.value > peak) peak = point.value;
     const dd = ((point.value - peak) / peak) * 100;
@@ -61,7 +61,7 @@ function generateDrawdownCurve(equityCurve: TimeSeriesPoint[]): TimeSeriesPoint[
       value: dd
     });
   });
-  
+
   return drawdowns;
 }
 
@@ -69,21 +69,21 @@ function generateDrawdownCurve(equityCurve: TimeSeriesPoint[]): TimeSeriesPoint[
 function generateMonthlyReturns(equityCurve: TimeSeriesPoint[]): MonthlyReturn[] {
   const monthlyReturns: MonthlyReturn[] = [];
   const monthlyValues: { [key: string]: number[] } = {};
-  
+
   equityCurve.forEach(point => {
     const date = new Date(point.date);
     const key = `${date.getFullYear()}-${date.getMonth()}`;
     if (!monthlyValues[key]) monthlyValues[key] = [];
     monthlyValues[key].push(point.value);
   });
-  
+
   Object.keys(monthlyValues).forEach(key => {
     const [year, month] = key.split('-').map(Number);
     const values = monthlyValues[key];
     const ret = ((values[values.length - 1] - values[0]) / values[0]) * 100;
     monthlyReturns.push({ year, month: month + 1, return: ret });
   });
-  
+
   return monthlyReturns;
 }
 
@@ -98,7 +98,7 @@ function generateRollingMetrics(equityCurve: TimeSeriesPoint[]): any {
     maxDD: [] as TimeSeriesPoint[],
     turnover: [] as TimeSeriesPoint[]
   };
-  
+
   for (let i = window; i < equityCurve.length; i++) {
     const date = equityCurve[i].date;
     metrics.sharpe.push({ date, value: 0.5 + Math.random() * 2 });
@@ -108,7 +108,7 @@ function generateRollingMetrics(equityCurve: TimeSeriesPoint[]): any {
     metrics.maxDD.push({ date, value: -5 - Math.random() * 15 });
     metrics.turnover.push({ date, value: 50 + Math.random() * 200 });
   }
-  
+
   return metrics;
 }
 
@@ -116,38 +116,38 @@ function generateRollingMetrics(equityCurve: TimeSeriesPoint[]): any {
 function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade[] {
   const trades: Trade[] = [];
   const symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'JPM', 'V', 'WMT', 'UNH', 'JNJ', 'PG', 'MA', 'HD'];
-  
+
   // Calculate approximate number of trades based on turnover
   // Higher turnover = more trades
   const tradesPerYear = Math.floor((turnover / 100) * 50); // Approximate trades per year
   const totalYears = equityCurve.length / 252;
   const totalTrades = Math.floor(tradesPerYear * totalYears);
-  
+
   // Generate trades at semi-random intervals
   const interval = Math.floor(equityCurve.length / totalTrades);
-  
+
   // Track position entry prices for P&L calculation
   const positionEntries: { [symbol: string]: number } = {};
-  
+
   for (let i = 0; i < totalTrades; i++) {
     const dateIndex = Math.min(i * interval + Math.floor(Math.random() * interval), equityCurve.length - 1);
     const date = equityCurve[dateIndex].date;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
-    
+
     // Decide if this is a BUY or SELL
     // If we have a position, 50% chance to sell it, otherwise buy
     const hasPosition = positionEntries[symbol] !== undefined;
     const side: 'BUY' | 'SELL' = hasPosition && Math.random() > 0.5 ? 'SELL' : 'BUY';
-    
+
     const shares = Math.floor(Math.random() * 500 + 100);
     const price = 50 + Math.random() * 300; // Random price between $50-$350
     const notional = shares * price;
     const commission = notional * 0.0005; // 5 bps
     const slippage = notional * 0.0002; // 2 bps
-    
+
     let pnl: number | undefined = undefined;
     let pnlPercent: number | undefined = undefined;
-    
+
     // Calculate P&L for SELL trades
     if (side === 'SELL' && hasPosition) {
       const entryPrice = positionEntries[symbol];
@@ -156,14 +156,14 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
       const costs = commission + slippage;
       pnl = grossPnL - costs;
       pnlPercent = ((exitPrice - entryPrice) / entryPrice) * 100;
-      
+
       // Clear position
       delete positionEntries[symbol];
     } else if (side === 'BUY') {
       // Record entry price for future P&L calculation
       positionEntries[symbol] = price;
     }
-    
+
     trades.push({
       date,
       symbol,
@@ -176,10 +176,10 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
       pnlPercent
     });
   }
-  
+
   // Sort trades by date
   trades.sort((a, b) => a.date.localeCompare(b.date));
-  
+
   return trades;
 }
 
@@ -197,13 +197,13 @@ function createMockStrategyRun(
 ): StrategyRun {
   const startDate = new Date('2020-01-01');
   const endDate = new Date('2025-01-01');
-  
+
   const equityCurve = generateEquityCurve(startDate, endDate, params.cagr / 100, params.volatility / 100, params.maxDD / 100);
   const drawdownCurve = generateDrawdownCurve(equityCurve);
   const monthlyReturns = generateMonthlyReturns(equityCurve);
   const rollingMetrics = generateRollingMetrics(equityCurve);
   const trades = generateTrades(equityCurve, params.turnover);
-  
+
   return {
     id,
     name,
@@ -253,6 +253,7 @@ function createMockStrategyRun(
       dataVersionId: 'v2024.12.01',
       configHash: 'cfg_' + id,
       createdAt: new Date().toISOString(),
+      runDate: new Date().toISOString().split('T')[0],
       warnings: []
     }
   };
@@ -326,7 +327,7 @@ export function getTopDrawdowns(strategy: StrategyRun): Drawdown[] {
   let ddTrough = '';
   let ddDepth = 0;
   let troughValue = 0;
-  
+
   strategy.drawdownCurve.forEach((point, idx) => {
     if (!inDrawdown && point.value < 0) {
       // Starting new drawdown
@@ -348,7 +349,7 @@ export function getTopDrawdowns(strategy: StrategyRun): Drawdown[] {
         const troughIdx = strategy.drawdownCurve.findIndex(p => p.date === ddTrough);
         const duration = troughIdx - startIdx;
         const recovery = idx - troughIdx;
-        
+
         drawdowns.push({
           startDate: ddStart,
           troughDate: ddTrough,
@@ -357,18 +358,18 @@ export function getTopDrawdowns(strategy: StrategyRun): Drawdown[] {
           duration,
           recovery
         });
-        
+
         inDrawdown = false;
       }
     }
   });
-  
+
   // If still in drawdown at end
   if (inDrawdown) {
     const startIdx = strategy.drawdownCurve.findIndex(p => p.date === ddStart);
     const troughIdx = strategy.drawdownCurve.findIndex(p => p.date === ddTrough);
     const duration = troughIdx - startIdx;
-    
+
     drawdowns.push({
       startDate: ddStart,
       troughDate: ddTrough,
@@ -376,7 +377,7 @@ export function getTopDrawdowns(strategy: StrategyRun): Drawdown[] {
       duration
     });
   }
-  
+
   // Sort by depth and return top 5
   return drawdowns.sort((a, b) => a.depth - b.depth).slice(0, 5);
 }
@@ -397,4 +398,72 @@ export const stressEvents: StressEvent[] = [
   { name: 'Tech Selloff 2022', date: '2022-11-10', strategyReturn: -5.2, benchmarkReturn: -4.8 },
   { name: 'Inflation Spike', date: '2021-11-10', strategyReturn: -1.5, benchmarkReturn: -0.9 },
   { name: 'Banking Crisis 2023', date: '2023-03-13', strategyReturn: -2.7, benchmarkReturn: -4.2 }
+];
+// =============================================================================
+// MISSING MOCKS (Appended by Implementation Agent)
+// =============================================================================
+
+import { JobRun, SystemHealth, TradingSignal } from '@/types/strategy';
+
+export const mockJobHistory: JobRun[] = [
+  { jobName: 'import_market_data', jobType: 'data-ingest', status: 'success', startTime: new Date(Date.now() - 3600000).toISOString(), duration: 120, recordsProcessed: 15000, triggeredBy: 'schedule' },
+  { jobName: 'calculate_risk_metrics', jobType: 'risk-calc', status: 'success', startTime: new Date(Date.now() - 1800000).toISOString(), duration: 45, triggeredBy: 'dependency' },
+  { jobName: 'generate_signals', jobType: 'portfolio-build', status: 'running', startTime: new Date(Date.now() - 60000).toISOString(), triggeredBy: 'manual' },
+  { jobName: 'backup_db', jobType: 'data-ingest', status: 'failed', startTime: new Date(Date.now() - 86400000).toISOString(), duration: 10, errors: ['Connection timeout'], triggeredBy: 'schedule' }
+];
+
+export const mockSystemHealth: SystemHealth = {
+  overall: 'healthy',
+  dataLayers: [
+    { name: 'Bronze (Raw)', description: 'Raw ingestion layer', lastUpdated: new Date(Date.now() - 3600000).toISOString(), status: 'healthy', refreshFrequency: 'Daily' },
+    { name: 'Silver (Cleaned)', description: 'Cleaned and normalized', lastUpdated: new Date(Date.now() - 3000000).toISOString(), status: 'healthy', refreshFrequency: 'Daily' },
+    { name: 'Gold (Feature)', description: 'Feature engineering', lastUpdated: new Date(Date.now() - 2000000).toISOString(), status: 'healthy', refreshFrequency: 'Daily' },
+  ],
+  recentJobs: mockJobHistory,
+  alerts: [
+    { severity: 'info', message: 'System maintenance scheduled for Sunday', timestamp: new Date().toISOString(), component: 'Scheduler', acknowledged: false }
+  ]
+};
+
+export const mockSignals: TradingSignal[] = [
+  {
+    id: 'sig_001',
+    date: new Date().toISOString().split('T')[0],
+    strategyId: 'run_001',
+
+    strategyName: 'Momentum Alpha',
+    symbol: 'NVDA',
+    sector: 'Technology',
+    signalType: 'BUY',
+    strength: 85,
+    generatedAt: new Date().toISOString(),
+    expectedReturn: 12.5,
+    targetPrice: 950,
+    stopLoss: 820,
+    timeHorizon: '2W',
+    positionSize: 4.5,
+    riskScore: 65,
+    catalysts: ['Earnings Surprise', 'Sector Momentum'],
+    currentPrice: 880,
+    priceChange24h: 2.1
+  },
+  {
+    id: 'sig_002',
+    date: new Date(Date.now() - 7200000).toISOString().split('T')[0],
+    strategyId: 'run_003',
+
+    strategyName: 'Low Vol Defensive',
+    symbol: 'JNJ',
+    sector: 'Healthcare',
+    signalType: 'SELL',
+    strength: 60,
+    generatedAt: new Date(Date.now() - 7200000).toISOString(),
+    expectedReturn: -2.0,
+    timeHorizon: '1W',
+    positionSize: 0,
+    riskScore: 20,
+    catalysts: ['Technical Breakdown'],
+    currentPrice: 155,
+    priceChange24h: -0.5
+  }
 ];

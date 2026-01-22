@@ -1,7 +1,8 @@
 // Attribution Page - Performance decomposition
 
-import { useState } from 'react';
-import { mockStrategies } from '@/data/strategies';
+import { useState, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+import { StrategyRun } from '@/types/strategy';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -13,10 +14,46 @@ import {
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from 'recharts';
 
 export function AttributionPage() {
-  const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
   const [groupBy, setGroupBy] = useState('symbol');
+  const [loading, setLoading] = useState(true);
 
-  const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true);
+      try {
+        const data = await DataService.getStrategies();
+        setStrategies(data);
+        if (data.length > 0) {
+          setSelectedStrategyId(data[0].id);
+        }
+      } catch (error) {
+        console.error("Failed to load strategies for attribution:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading attribution analysis...</div>
+      </div>
+    );
+  }
+
+  if (!strategy) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">No strategy data available.</div>
+      </div>
+    );
+  }
 
   const contributorsData = strategy.contributions
     .filter(c => c.type === groupBy)
@@ -37,7 +74,7 @@ export function AttributionPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {mockStrategies.map(s => (
+                  {strategies.map(s => (
                     <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                   ))}
                 </SelectContent>

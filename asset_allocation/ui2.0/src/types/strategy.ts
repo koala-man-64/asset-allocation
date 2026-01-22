@@ -100,6 +100,7 @@ export interface AuditTrail {
   dataVersionId: string;
   configHash: string;
   createdAt: string;
+  runDate: string;
   warnings: string[];
 }
 
@@ -117,4 +118,90 @@ export interface StressEvent {
   date: string;
   strategyReturn: number;
   benchmarkReturn: number;
+}
+
+export interface DataLayer {
+  name: string;
+  description: string;
+  status: 'healthy' | 'stale' | 'error';
+  lastUpdated: string;
+  dataVersion?: string;
+  recordCount?: number;
+  refreshFrequency: string;
+  nextExpectedUpdate?: string;
+}
+
+export interface JobRun {
+  jobName: string;
+  jobType: 'backtest' | 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
+  status: 'success' | 'failed' | 'running' | 'pending';
+  startTime: string;
+  duration?: number; // seconds
+  recordsProcessed?: number;
+  gitSha?: string;
+  triggeredBy: string;
+  errors?: string[];
+  warnings?: string[];
+}
+
+export interface SystemAlert {
+  id?: string;
+  severity: 'critical' | 'error' | 'warning' | 'info';
+  title?: string;
+  component: string;
+  timestamp: string;
+  message: string;
+  acknowledged: boolean;
+}
+
+export interface ResourceHealth {
+  name: string;
+  resourceType: string;
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  lastChecked: string;
+  details?: string;
+  azureId?: string;
+  signals?: ResourceSignal[];
+}
+
+export interface ResourceSignal {
+  name: string;
+  value: number | null;
+  unit: string;
+  timestamp: string;
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  source?: 'metrics' | 'logs';
+}
+
+export interface SystemHealth {
+  overall: 'healthy' | 'degraded' | 'critical';
+  dataLayers: DataLayer[];
+  recentJobs: JobRun[];
+  alerts: SystemAlert[];
+  resources?: ResourceHealth[];
+}
+
+export interface TradingSignal {
+  id: string;
+  date: string;
+  generatedAt?: string;
+  symbol: string;
+  strategy?: string;
+  strategyId?: string;
+  strategyName?: string;
+  signal?: number; // -1 to 1
+  signalType?: string;
+  strength?: number;
+  confidence?: number;
+  direction?: 'LONG' | 'SHORT' | 'FLAT';
+  sector?: string;
+  targetPrice?: number;
+  stopLoss?: number;
+  expectedReturn?: number;
+  timeHorizon?: string;
+  positionSize?: number;
+  riskScore?: number;
+  catalysts?: string[];
+  currentPrice?: number;
+  priceChange24h?: number;
 }

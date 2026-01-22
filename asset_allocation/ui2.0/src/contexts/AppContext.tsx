@@ -1,48 +1,14 @@
-// Global application context for managing state across the dashboard
+// Global application context shim
+// DEPRECATED: Use useUIStore directly for better performance
 
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { StrategyRun } from '@/types/strategy';
+import React, { ReactNode, useMemo, useEffect } from 'react';
+import { useUIStore } from '@/stores/useUIStore';
 
-interface AppContextType {
-  // Selected runs for comparison (the "cart")
-  selectedRuns: Set<string>;
-  addToCart: (runId: string) => void;
-  removeFromCart: (runId: string) => void;
-  clearCart: () => void;
-  
-  // Global filters
-  dateRange: { start: string; end: string };
-  setDateRange: (range: { start: string; end: string }) => void;
-  
-  benchmark: string;
-  setBenchmark: (benchmark: string) => void;
-  
-  costModel: string;
-  setCostModel: (model: string) => void;
-  
-  // UI state
-  isDarkMode: boolean;
-  setIsDarkMode: (dark: boolean) => void;
-  
-  environment: 'DEV' | 'PROD';
-  setEnvironment: (env: 'DEV' | 'PROD') => void;
-  
-  cartOpen: boolean;
-  setCartOpen: (open: boolean) => void;
-}
-
-const AppContext = createContext<AppContextType | undefined>(undefined);
-
+// Shim AppProvider to be a simple pass-through to avoid breaking imports
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [selectedRuns, setSelectedRuns] = useState<Set<string>>(new Set());
-  const [dateRange, setDateRange] = useState({ start: '2020-01-01', end: '2025-01-01' });
-  const [benchmark, setBenchmark] = useState('SPY');
-  const [costModel, setCostModel] = useState('Passive bps');
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [environment, setEnvironment] = useState<'DEV' | 'PROD'>('DEV');
-  const [cartOpen, setCartOpen] = useState(false);
-  
-  // Apply dark mode to document
+  const isDarkMode = useUIStore((s) => s.isDarkMode);
+
+  // Maintain the dark mode side-effect here for now
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
@@ -50,51 +16,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
-  
-  const addToCart = (runId: string) => {
-    setSelectedRuns(prev => new Set(prev).add(runId));
-  };
-  
-  const removeFromCart = (runId: string) => {
-    setSelectedRuns(prev => {
-      const next = new Set(prev);
-      next.delete(runId);
-      return next;
-    });
-  };
-  
-  const clearCart = () => {
-    setSelectedRuns(new Set());
-  };
-  
-  return (
-    <AppContext.Provider value={{
-      selectedRuns,
-      addToCart,
-      removeFromCart,
-      clearCart,
-      dateRange,
-      setDateRange,
-      benchmark,
-      setBenchmark,
-      costModel,
-      setCostModel,
-      isDarkMode,
-      setIsDarkMode,
-      environment,
-      setEnvironment,
-      cartOpen,
-      setCartOpen
-    }}>
-      {children}
-    </AppContext.Provider>
-  );
+
+  return <>{children}</>;
 }
 
+// Shim useApp to return the implementation from Zustand
+// Note: This still mimics the broad re-render behavior of the original Context
+// Future Refactor: Update components to import useUIStore and select only what they need
 export function useApp() {
-  const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useApp must be used within AppProvider');
-  }
-  return context;
+  const store = useUIStore();
+
+  // Compatibility layer for Set<string> - conversion happens on every render
+  // This is acceptable for the shim phase
+  const selectedRuns = store.selectedRuns instanceof Set
+    ? store.selectedRuns
+    : new Set(store.selectedRuns);
+
+  return {
+    ...store,
+    selectedRuns, // Override array with Set for backward compat
+  };
 }

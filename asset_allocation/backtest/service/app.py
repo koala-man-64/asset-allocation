@@ -42,6 +42,8 @@ from asset_allocation.backtest.service.security import (
     validate_run_id,
 )
 from asset_allocation.backtest.service.settings import ServiceSettings
+from asset_allocation.monitoring.system_health import collect_system_health_snapshot
+from asset_allocation.monitoring.ttl_cache import TtlCache
 
 
 logger = logging.getLogger("asset_allocation.backtest.api")
@@ -133,6 +135,18 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
 
+    def _system_health_ttl_seconds() -> float:
+        raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "").strip()
+        if not raw:
+            return 30.0
+        try:
+            ttl = float(raw)
+        except ValueError:
+            return 30.0
+        return ttl if ttl > 0 else 30.0
+
+    app.state.system_health_cache = TtlCache(ttl_seconds=_system_health_ttl_seconds())
+
     def _prefer_adls_reads() -> bool:
         settings = _get_settings(app)
         return settings.run_store_mode == "adls"
@@ -178,9 +192,9 @@ def create_app() -> FastAPI:
                 "script-src 'self'; "
                 "style-src 'self' 'unsafe-inline'; "
                 "font-src 'self' data: https:; "
-                "connect-src 'self' https:; "
+                "connect-src 'self' https:"
             )
-        response.headers.setdefault("Content-Security-Policy", csp)
+        response.headers.setdefault("Content-Security-Policy", csp.strip())
 
         return response
 
@@ -214,6 +228,35 @@ def create_app() -> FastAPI:
         if not settings.output_base_dir.exists():
             raise HTTPException(status_code=503, detail="Output dir not ready.")
         return JSONResponse({"status": "ok"})
+
+    @app.get("/system/health")
+    def system_health(request: Request, refresh: bool = Query(False)) -> JSONResponse:
+        logger.info(f"Accessing /system/health endpoint (refresh={refresh})")
+        _require_auth(request)
+        settings = _get_settings(app)
+
+        include_ids = False
+        if settings.auth_mode != "none":
+            raw = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS", "").strip().lower()
+            include_ids = raw in {"1", "true", "t", "yes", "y", "on"}
+
+        cache: TtlCache[Dict[str, Any]] = app.state.system_health_cache
+
+        def _refresh() -> Dict[str, Any]:
+            return collect_system_health_snapshot(include_resource_ids=include_ids)
+
+        try:
+            result = cache.get(_refresh, force_refresh=bool(refresh))
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
+
+        headers: Dict[str, str] = {
+            "Cache-Control": "no-store",
+            "X-System-Health-Cache": "hit" if result.cache_hit else "miss",
+        }
+        if result.refresh_error:
+            headers["X-System-Health-Stale"] = "1"
+        return JSONResponse(result.value, headers=headers)
 
     @app.post("/backtests", response_model=BacktestSubmitResponse)
     def submit_backtest(
