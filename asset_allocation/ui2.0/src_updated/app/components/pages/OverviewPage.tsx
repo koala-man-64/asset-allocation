@@ -1,0 +1,422 @@
+// Overview Page - PM Scoreboard
+
+import { useState, useEffect } from 'react';
+import { getStrategies } from '@/data/dataProvider';
+import { StrategyRun } from '@/types/strategy';
+import { useApp } from '@/contexts/AppContext';
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
+import { Checkbox } from '@/app/components/ui/checkbox';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/app/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/app/components/ui/tooltip';
+import { AlertTriangle, DollarSign, TrendingDown, Settings } from 'lucide-react';
+import { LineChart, Line, ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, Tooltip as RechartsTooltip, ZAxis } from 'recharts';
+import { MetricTooltip, InfoTooltip } from '@/app/components/ui/metric-tooltip';
+import { StrategyConfigModal } from '@/app/components/modals/StrategyConfigModal';
+
+export function OverviewPage() {
+  const { selectedRuns, addToCart, removeFromCart, dataSource } = useApp();
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategyRun | null>(null);
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  
+  // Load strategies based on data source
+  useEffect(() => {
+    async function loadStrategies() {
+      setLoading(true);
+      const data = await getStrategies(dataSource);
+      setStrategies(data);
+      setLoading(false);
+    }
+    loadStrategies();
+  }, [dataSource]);
+  
+  const handleViewConfig = (strategy: StrategyRun) => {
+    setSelectedStrategy(strategy);
+    setConfigModalOpen(true);
+  };
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading strategies...</div>
+      </div>
+    );
+  }
+  
+  if (strategies.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-muted-foreground">No strategies found</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            {dataSource === 'live' ? 'Check your API connection' : 'Mock data unavailable'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  
+  // Calculate best/worst
+  const bestSharpe = strategies.reduce((best, s) => s.sharpe > best.sharpe ? s : best);
+  const worstDD = strategies.reduce((worst, s) => s.maxDD < worst.maxDD ? s : worst);
+  const highestTurnover = strategies.reduce((highest, s) => s.turnoverAnn > highest.turnoverAnn ? s : highest);
+  
+  const scatterData = strategies.map(s => ({
+    name: s.name,
+    sharpe: s.sharpe,
+    maxDD: Math.abs(s.maxDD),
+    cagr: s.cagr
+  }));
+  
+  const handleCheckboxChange = (runId: string, checked: boolean) => {
+    if (checked) {
+      addToCart(runId);
+    } else {
+      removeFromCart(runId);
+    }
+  };
+  
+  return (
+    <div className="space-y-8">
+      {/* Data Source Indicator */}
+      {dataSource === 'live' && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="text-base text-blue-900">
+            <p className="font-semibold">Live mode active - API not connected</p>
+            <p className="text-sm text-blue-700 mt-1">
+              Showing mock data as fallback. Connect your backend API at <code className="bg-blue-100 px-1.5 py-0.5 rounded">POST /api/strategies</code> to see live data.
+            </p>
+          </div>
+        </div>
+      )}
+      
+      {/* KPI Ribbon */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Best Sharpe Ratio</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{bestSharpe.sharpe.toFixed(2)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{bestSharpe.name}</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Worst Max Drawdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-500">{worstDD.maxDD.toFixed(1)}%</div>
+            <p className="text-xs text-muted-foreground mt-1">{worstDD.name}</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-orange-500" />
+              Highest Turnover
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{highestTurnover.turnoverAnn.toFixed(0)}%</div>
+            <p className="text-xs text-muted-foreground mt-1">{highestTurnover.name}</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Strategies</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{strategies.length}</div>
+            <p className="text-xs text-muted-foreground mt-1">Available for analysis</p>
+          </CardContent>
+        </Card>
+      </div>
+      
+      {/* Strategy Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Strategy Universe</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12"></TableHead>
+                  <TableHead>Strategy Name</TableHead>
+                  <TableHead>Tags</TableHead>
+                  <TableHead className="text-right">CAGR</TableHead>
+                  <TableHead className="text-right">Vol</TableHead>
+                  <TableHead className="text-right">Sharpe</TableHead>
+                  <TableHead className="text-right">Sortino</TableHead>
+                  <TableHead className="text-right">Max DD</TableHead>
+                  <TableHead className="text-right">Turnover</TableHead>
+                  <TableHead>Flags</TableHead>
+                  <TableHead className="w-32">12M Trend</TableHead>
+                  <TableHead className="w-24">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {strategies.map((strategy) => {
+                  const recentData = strategy.equityCurve.slice(-252);
+                  const chartData = recentData.map(d => ({ value: d.value }));
+                  
+                  return (
+                    <TableRow key={strategy.id} className="hover:bg-muted/50">
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedRuns.has(strategy.id)}
+                          onCheckedChange={(checked) => handleCheckboxChange(strategy.id, checked as boolean)}
+                        />
+                      </TableCell>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="font-medium cursor-help">{strategy.name}</TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">
+                            <div className="space-y-1">
+                              <p className="font-semibold">{strategy.name}</p>
+                              <p className="text-xs">Run ID: {strategy.id}</p>
+                              <p className="text-xs">Git SHA: {strategy.audit.gitSha}</p>
+                              <p className="text-xs">Data Version: {strategy.audit.dataVersionId}</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TableCell>
+                        <div className="flex gap-1 flex-wrap">
+                          {strategy.tags.slice(0, 2).map(tag => (
+                            <Badge key={tag} variant="outline" className="text-xs">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="text-right font-mono cursor-help">{strategy.cagr.toFixed(1)}%</TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Compound Annual Growth Rate</p>
+                            <p className="text-xs text-muted-foreground">Annualized return over backtest period</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="text-right font-mono cursor-help">{strategy.annVol.toFixed(1)}%</TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Annualized Volatility</p>
+                            <p className="text-xs text-muted-foreground">Standard deviation of returns</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="text-right font-mono font-semibold cursor-help">
+                              {strategy.sharpe.toFixed(2)}
+                            </TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Sharpe Ratio</p>
+                            <p className="text-xs text-muted-foreground">Risk-adjusted return (excess return / volatility)</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="text-right font-mono cursor-help">{strategy.sortino.toFixed(2)}</TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Sortino Ratio</p>
+                            <p className="text-xs text-muted-foreground">Downside risk-adjusted return</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="text-right font-mono text-red-500 cursor-help">
+                              {strategy.maxDD.toFixed(1)}%
+                            </TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Maximum Drawdown</p>
+                            <p className="text-xs text-muted-foreground">Largest peak-to-trough decline</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="text-right font-mono cursor-help">{strategy.turnoverAnn.toFixed(0)}%</TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Annual Turnover</p>
+                            <p className="text-xs text-muted-foreground">Portfolio rebalancing frequency</p>
+                            <p className="text-xs text-muted-foreground mt-1">Avg Daily: {(strategy.turnoverAnn / 252).toFixed(1)}%</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TableCell>
+                        <TooltipProvider>
+                          <div className="flex gap-1">
+                            {strategy.regimeFragility && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <AlertTriangle className="h-4 w-4 text-orange-500 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="font-semibold">Regime Fragility</p>
+                                  <p className="text-xs text-muted-foreground">Performance varies significantly across market regimes</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            {strategy.costSensitive && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <DollarSign className="h-4 w-4 text-yellow-500 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="font-semibold">Cost Sensitive</p>
+                                  <p className="text-xs text-muted-foreground">Returns significantly impacted by transaction costs</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            {strategy.tailRisk && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <TrendingDown className="h-4 w-4 text-red-500 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="font-semibold">Tail Risk</p>
+                                  <p className="text-xs text-muted-foreground">Exhibits negative skew or fat-tailed distribution</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        </TooltipProvider>
+                      </TableCell>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TableCell className="cursor-help">
+                              <div style={{ width: 120, height: 40 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart data={chartData}>
+                                    <Line
+                                      type="monotone"
+                                      dataKey="value"
+                                      stroke="hsl(var(--primary))"
+                                      strokeWidth={1.5}
+                                      dot={false}
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </TableCell>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>12-Month Performance Trend</p>
+                            <p className="text-xs text-muted-foreground">Recent equity curve (last 252 trading days)</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          onClick={() => handleViewConfig(strategy)}
+                        >
+                          Config
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Distribution Sanity Panel */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Distribution Sanity Check</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div style={{ height: 320, minHeight: 320 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 60 }}>
+                <XAxis 
+                  type="number" 
+                  dataKey="maxDD" 
+                  name="Max Drawdown" 
+                  label={{ value: 'Max Drawdown (%)', position: 'bottom', offset: 40 }}
+                />
+                <YAxis 
+                  type="number" 
+                  dataKey="sharpe" 
+                  name="Sharpe Ratio"
+                  label={{ value: 'Sharpe Ratio', angle: -90, position: 'left', offset: 40 }}
+                />
+                <ZAxis type="number" dataKey="cagr" range={[50, 400]} />
+                <RechartsTooltip 
+                  cursor={{ strokeDasharray: '3 3' }}
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="bg-background border rounded-lg p-3 shadow-lg">
+                          <p className="font-semibold">{data.name}</p>
+                          <p className="text-sm">Sharpe: {data.sharpe.toFixed(2)}</p>
+                          <p className="text-sm">Max DD: {data.maxDD.toFixed(1)}%</p>
+                          <p className="text-sm">CAGR: {data.cagr.toFixed(1)}%</p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Scatter data={scatterData} fill="hsl(var(--primary))" />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Strategy Config Modal */}
+      <StrategyConfigModal
+        open={configModalOpen}
+        onClose={() => setConfigModalOpen(false)}
+        strategy={selectedStrategy}
+      />
+    </div>
+  );
+}

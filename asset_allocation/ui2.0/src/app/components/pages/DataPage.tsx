@@ -1,7 +1,6 @@
-// Data & Lineage Page - Audit trail and trust
-
-import { useState } from 'react';
-import { mockStrategies } from '@/data/strategies';
+import { useState, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+import { StrategyRun } from '@/types/strategy';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -11,15 +10,83 @@ import {
   SelectValue,
 } from '@/app/components/ui/select';
 import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
-import { CheckCircle2, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';
 
-export function DataPage() {
-  const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
-  const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
+interface DataPageProps {
+  onNavigate?: (page: string) => void;
+}
+
+export function DataPage({ onNavigate }: DataPageProps) {
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadStrategies() {
+      setLoading(true);
+      try {
+        const data = await DataService.getStrategies();
+        setStrategies(data);
+        if (data.length > 0) {
+          setSelectedStrategyId(data[0].id);
+        }
+      } catch (error) {
+        console.error("Failed to load strategies for data page:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadStrategies();
+  }, []);
+
+  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-muted-foreground">Loading data lineage info...</div>
+      </div>
+    );
+  }
+
+  if (!strategy) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-muted-foreground">No strategy data available.</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
+      {/* Quick Link to Data Tiers */}
+      <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-lg bg-blue-100">
+                <Layers className="h-6 w-6 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-blue-900 mb-1">View Data Architecture</h3>
+                <p className="text-sm text-blue-700">
+                  Explore Bronze, Silver, Gold, and Platinum data tiers with sample data
+                </p>
+              </div>
+            </div>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => onNavigate?.('data-tiers')}
+            >
+              View Data Tiers
+              <ArrowRight className="h-4 w-4 ml-2" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -29,7 +96,7 @@ export function DataPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {mockStrategies.map(s => (
+                {strategies.map(s => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
               </SelectContent>

@@ -1,7 +1,9 @@
 // Execution & Costs Page
 
-import { useState } from 'react';
-import { mockStrategies } from '@/data/strategies';
+import { useState, useEffect } from 'react';
+import { DataService } from '@/services/DataService';
+import { StrategyRun } from '@/types/strategy';
+import { ExecutionMetrics } from '@/types/data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
   Select,
@@ -13,20 +15,67 @@ import {
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 
 export function ExecutionPage() {
-  const [selectedStrategyId, setSelectedStrategyId] = useState(mockStrategies[0].id);
-  const strategy = mockStrategies.find(s => s.id === selectedStrategyId) || mockStrategies[0];
+  const [strategies, setStrategies] = useState<StrategyRun[]>([]);
+  const [executionMetrics, setExecutionMetrics] = useState<ExecutionMetrics | null>(null);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
+  const [loading, setLoading] = useState(true);
 
-  const costBreakdown = [
-    { name: 'Commissions', value: 35, color: '#3b82f6' },
-    { name: 'Slippage', value: 45, color: '#10b981' },
-    { name: 'Financing', value: 20, color: '#f59e0b' },
-  ];
+  useEffect(() => {
+    async function loadInitialData() {
+      setLoading(true);
+      try {
+        const data = await DataService.getStrategies();
+        setStrategies(data);
+        if (data.length > 0) {
+          setSelectedStrategyId(data[0].id);
+        }
+      } catch (error) {
+        console.error("Failed to load strategies for execution analysis:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadInitialData();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedStrategyId) return;
+
+    async function loadExecutionMetrics() {
+      try {
+        const metrics = await DataService.getExecutionMetrics(selectedStrategyId);
+        setExecutionMetrics(metrics);
+      } catch (error) {
+        console.error("Failed to load execution metrics:", error);
+      }
+    }
+    loadExecutionMetrics();
+  }, [selectedStrategyId]);
+
+  const strategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-muted-foreground">Loading execution analysis...</div>
+      </div>
+    );
+  }
+
+  if (!strategy) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-muted-foreground">No strategy data available.</div>
+      </div>
+    );
+  }
 
   const grossNetData = strategy.equityCurve.map((point, idx) => ({
     date: point.date,
     gross: point.value,
-    net: point.value * 0.97 // Simplified cost drag
+    net: point.value * (1 - ((executionMetrics?.totalCostDragBps || 0) / 10000) * (idx / strategy.equityCurve.length)) // Approximated drag over time
   }));
+
 
   return (
     <div className="space-y-6">
@@ -39,7 +88,7 @@ export function ExecutionPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {mockStrategies.map(s => (
+                {strategies.map(s => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -66,7 +115,7 @@ export function ExecutionPage() {
             <CardTitle className="text-base">Total Cost Drag</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-red-500">-312 bps</div>
+            <div className="text-3xl font-bold text-red-500">-{executionMetrics?.totalCostDragBps || 0} bps</div>
             <p className="text-sm text-muted-foreground mt-2">Annual impact on returns</p>
           </CardContent>
         </Card>
@@ -76,7 +125,7 @@ export function ExecutionPage() {
             <CardTitle className="text-base">Avg Holding Period</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">8.5 days</div>
+            <div className="text-3xl font-bold">{executionMetrics?.avgHoldingPeriodDays || 0} days</div>
             <p className="text-sm text-muted-foreground mt-2">Median position duration</p>
           </CardContent>
         </Card>
@@ -112,7 +161,7 @@ export function ExecutionPage() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={costBreakdown}
+                    data={executionMetrics?.costBreakdown || []}
                     cx="50%"
                     cy="50%"
                     labelLine={false}
@@ -121,7 +170,7 @@ export function ExecutionPage() {
                     fill="#8884d8"
                     dataKey="value"
                   >
-                    {costBreakdown.map((entry, index) => (
+                    {(executionMetrics?.costBreakdown || []).map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>

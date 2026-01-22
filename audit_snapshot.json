@@ -34,7 +34,7 @@
     "requirements-dev.txt": true,
     "requirements.txt": true
   },
-  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation",
+  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation - AG/asset-allocation",
   "workflows": {
     "files": [
       {
