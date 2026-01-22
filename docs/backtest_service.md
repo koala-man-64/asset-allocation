@@ -22,11 +22,16 @@ export BACKTEST_MAX_CONCURRENT=1
 
 # Run store mode:
 # - sqlite (default): persists run state to a local sqlite file
-# - adls: persists run state to ADLS/Blob (recommended for cloud deployments)
+# - adls: persists run state to ADLS/Blob (cheap but slower for listing/querying)
+# - postgres: persists run state to Postgres (recommended for cloud deployments)
 export BACKTEST_RUN_STORE_MODE=sqlite
 
-# When BACKTEST_RUN_STORE_MODE=adls, this is required and is used as the default
-# upload location when a submitted config does not set output.adls_dir.
+# When BACKTEST_RUN_STORE_MODE=postgres, this is required:
+export BACKTEST_POSTGRES_DSN="postgresql://backtest_service:<password>@<server>.postgres.database.azure.com:5432/asset_allocation?sslmode=require"
+
+# When BACKTEST_RUN_STORE_MODE=adls, this is required and is used as the run-store location.
+# When BACKTEST_RUN_STORE_MODE=postgres, this is optional and is used as the default upload
+# location when a submitted config does not set output.adls_dir.
 # Format: <container>/<path-prefix> or abfss://<container>@<account>.dfs.core.windows.net/<path-prefix>
 export BACKTEST_ADLS_RUNS_DIR="platinum/backtest-api-results"
 
@@ -91,7 +96,7 @@ curl -X POST "http://localhost:8000/backtests" \
 
 Set `output.adls_dir` in the backtest config to enable upload after a run completes.
 
-If `BACKTEST_RUN_STORE_MODE=adls` and `BACKTEST_ADLS_RUNS_DIR` is set, uploads will default to that
+If `BACKTEST_ADLS_RUNS_DIR` is set, uploads will default to that
 location even when `output.adls_dir` is not provided.
 
 Supported formats:

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 
 # Import routers
-from backend.api.endpoints import data, ranking
+from backend.api.endpoints import aliases, data, ranking
 
 app = FastAPI(title="Asset Allocation API", version="1.0.0")
 
@@ -29,3 +29,4 @@ def health_check():
 # Include Routers
 app.include_router(data.router, prefix="/data", tags=["Data"])
 app.include_router(ranking.router, prefix="/ranking", tags=["Ranking"])
+app.include_router(aliases.router, tags=["Aliases"])

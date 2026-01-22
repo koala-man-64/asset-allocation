@@ -8,7 +8,7 @@ from typing import List, Literal, Optional
 from asset_allocation.backtest.service.security import assert_allowed_container, parse_container_and_path
 
 
-RunStoreMode = Literal["sqlite", "adls"]
+RunStoreMode = Literal["sqlite", "adls", "postgres"]
 AuthMode = Literal["none", "api_key", "oidc", "api_key_or_oidc"]
 
 
@@ -110,7 +110,9 @@ def _get_run_store_mode() -> RunStoreMode:
         return "sqlite"
     if raw in {"adls", "blob"}:
         return "adls"
-    raise ValueError(f"Invalid BACKTEST_RUN_STORE_MODE={raw!r} (expected sqlite|adls).")
+    if raw in {"postgres", "pg"}:
+        return "postgres"
+    raise ValueError(f"Invalid BACKTEST_RUN_STORE_MODE={raw!r} (expected sqlite|adls|postgres).")
 
 
 def _parse_auth_mode(value: str) -> AuthMode:
@@ -144,6 +146,7 @@ class ServiceSettings:
     adls_container_allowlist: List[str]
     run_store_mode: RunStoreMode
     adls_runs_dir: Optional[str]
+    postgres_dsn: Optional[str]
 
     @staticmethod
     def from_env() -> "ServiceSettings":
@@ -217,6 +220,10 @@ class ServiceSettings:
             container, _ = parse_container_and_path(adls_runs_dir)
             assert_allowed_container(container, adls_container_allowlist)
 
+        postgres_dsn = os.environ.get("BACKTEST_POSTGRES_DSN", "").strip() or None
+        if run_store_mode == "postgres" and not postgres_dsn:
+            raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires BACKTEST_POSTGRES_DSN to be set.")
+
         return ServiceSettings(
             output_base_dir=output_base_dir,
             db_path=db_path,
@@ -234,4 +241,5 @@ class ServiceSettings:
             adls_container_allowlist=adls_container_allowlist,
             run_store_mode=run_store_mode,
             adls_runs_dir=adls_runs_dir,
+            postgres_dsn=postgres_dsn,
         )

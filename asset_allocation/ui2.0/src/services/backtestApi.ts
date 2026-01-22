@@ -10,7 +10,7 @@ type RuntimeConfig = {
 };
 
 function getRuntimeConfig(): RuntimeConfig {
-  return ((window as any).__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
+  return (window.__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
 }
 
 export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
