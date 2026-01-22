@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { DataService } from '@/services/DataService';
 import { StrategyRun } from '@/types/strategy';
-import { getTopDrawdowns } from '@/data/mockData';
+import { getTopDrawdowns } from '@/data/mock-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -502,12 +502,12 @@ export function DeepDivePage() {
                           ${totalCost.toFixed(2)}
                         </TableCell>
                         <TableCell className={`text-right font-mono font-semibold ${!hasPnL ? 'text-muted-foreground' :
-                            trade.pnl! > 0 ? 'text-green-600' : 'text-red-600'
+                          trade.pnl! > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>
                           {hasPnL ? `$${trade.pnl!.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
                         </TableCell>
                         <TableCell className={`text-right font-mono font-semibold ${!hasPnL ? 'text-muted-foreground' :
-                            trade.pnlPercent! > 0 ? 'text-green-600' : 'text-red-600'
+                          trade.pnlPercent! > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>
                           {hasPnL ? `${trade.pnlPercent!.toFixed(2)}%` : '-'}
                         </TableCell>

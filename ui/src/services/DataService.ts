@@ -2,7 +2,7 @@ import { config } from '@/config';
 import { MarketData, FinanceData, Position, Order, Alert, AlertConfig, RiskMetrics, ExecutionMetrics } from '@/types/data';
 import { StrategyRun, SystemHealth, TradingSignal, StressEvent } from '@/types/strategy';
 import { backtestApi } from '@/services/backtestApi';
-import { mockStrategies, mockSystemHealth, mockSignals, stressEvents } from '@/data/mockData';
+import { mockStrategies, mockSystemHealth, mockSignals, stressEvents } from '@/data/mock-data';
 
 export type { MarketData, FinanceData };
 
