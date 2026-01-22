@@ -15,10 +15,10 @@ jobs:
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-    - name: Build UI (ui2.0)
+    - name: Build UI (ui)
       run: |
         docker run --rm \
-          -v "${{ github.workspace }}/asset_allocation/ui2.0:/app" \
+          -v "${{ github.workspace }}/ui:/app" \
           -v /app/node_modules \
           -w /app \
           node:20-bookworm-slim@sha256:6c51af7dc83f4708aaac35991306bca8f478351cfd2bda35750a62d7efcf05bb \
