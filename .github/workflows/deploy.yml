@@ -67,6 +67,78 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate required secrets
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
+          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
+          BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+          BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+
+          require_secret() {
+            local name="$1"
+            local value="${!name:-}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            if [ -z "$value" ]; then
+              echo "::error::Missing required GitHub Actions secret: $name"
+              exit 1
+            fi
+          }
+
+          require_secret AZURE_CLIENT_ID
+          require_secret AZURE_TENANT_ID
+          require_secret AZURE_SUBSCRIPTION_ID
+          require_secret AZURE_STORAGE_CONNECTION_STRING
+          require_secret YAHOO_USERNAME
+          require_secret YAHOO_PASSWORD
+          require_secret NASDAQ_API_KEY
+          require_secret RANKING_POSTGRES_DSN
+          require_secret BACKTEST_API_KEY
+          require_secret BACKTEST_POSTGRES_DSN
+
+          python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlparse
+          
+          
+          def parse_postgres_url(name: str) -> tuple[str, int, str]:
+              raw = os.environ.get(name, "")
+              value = raw.strip()
+              parsed = urlparse(value)
+              if parsed.scheme not in {"postgresql", "postgres"}:
+                  print(f"::error::{name} must be a postgresql:// URL")
+                  sys.exit(1)
+              host = (parsed.hostname or "").strip().lower()
+              if not host:
+                  print(f"::error::{name} is missing host")
+                  sys.exit(1)
+              port = parsed.port or 5432
+              db = (parsed.path or "").lstrip("/").strip()
+              if not db:
+                  print(f"::error::{name} is missing database name")
+                  sys.exit(1)
+              return host, int(port), db
+          
+          
+          ranking = parse_postgres_url("RANKING_POSTGRES_DSN")
+          backtest = parse_postgres_url("BACKTEST_POSTGRES_DSN")
+          if ranking != backtest:
+              print(
+                  "::error::RANKING_POSTGRES_DSN and BACKTEST_POSTGRES_DSN must point to the same host/port/database "
+                  "(single Postgres server + database)."
+              )
+              sys.exit(1)
+          PY
+
       - name: Detect Market Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: market_changes

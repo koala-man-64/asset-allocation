@@ -31,6 +31,12 @@ Add these secrets in your GitHub repo settings:
 - `RANKING_POSTGRES_DSN` — DSN for the ranking job (future Phase 2 writer).
 - `BACKTEST_POSTGRES_DSN` — DSN for the backtest API (future Phase 3 run store).
 
+**Single Postgres server + database**
+
+This repo assumes **one Postgres server** and **one database** (with multiple schemas like `ranking` and `backtest`).
+`RANKING_POSTGRES_DSN` and `BACKTEST_POSTGRES_DSN` should therefore point to the **same host/port/database** and typically
+only differ by **username/password** (separate least-privileged roles).
+
 Recommended DSN format:
 
 - `postgresql://<user>:<password>@<server>.postgres.database.azure.com:5432/<db>?sslmode=require`
