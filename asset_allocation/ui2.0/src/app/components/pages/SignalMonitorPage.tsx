@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
-import { FixedSizeList as VirtualList } from 'react-window';
-import Sizer from 'react-virtualized-auto-sizer';
+import { useState } from 'react';
+import { List as VirtualList } from 'react-window';
+// @ts-ignore: Runtime requires named import, but TS definitions are conflicting
+import { AutoSizer as Sizer } from 'react-virtualized-auto-sizer';
 
 import { DataService } from '@/services/DataService';
 import { TradingSignal } from '@/types/strategy';
@@ -19,10 +20,8 @@ import { Input } from '@/app/components/ui/input';
 import {
     TrendingUp,
     TrendingDown,
-    X,
     ArrowUpRight,
     ArrowDownRight,
-    Search,
     Filter,
     RefreshCw,
     Zap
@@ -32,44 +31,29 @@ import { useSignalsQuery } from '@/hooks/useDataQueries';
 
 export function SignalMonitorPage() {
     const { dataSource } = useApp();
-    const { data: signals = [], isLoading: loading } = useSignalsQuery();
-
-    // Legacy client-side state replaced by Hook
-    // const [signals, setSignals] = useState<TradingSignal[]>([]);
-    // const [loading, setLoading] = useState(true);
+    const { data: signals = [], isLoading: loading, refetch } = useSignalsQuery();
 
     const [searchTerm, setSearchTerm] = useState('');
     const [signalTypeFilter, setSignalTypeFilter] = useState<string>('all');
     const [strengthFilter, setStrengthFilter] = useState<string>('all');
 
-    // Load signals based on data source -> HANDLED BY REACT QUERY
-    // useEffect(() => {
-    //     loadSignals();
-    // }, [dataSource]);
-
-    // async function loadSignals() {
-    //     setLoading(true);
-    //     const data = await DataService.getSignals();
-    //     setSignals(data);
-    //     setLoading(false);
-    // }
-
     // Filter signals
     const filteredSignals = signals.filter(signal => {
         // Search filter
         const matchesSearch = searchTerm === '' ||
-            signal.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            signal.strategyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            signal.sector.toLowerCase().includes(searchTerm.toLowerCase());
+            (signal.symbol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (signal.strategyName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (signal.sector || '').toLowerCase().includes(searchTerm.toLowerCase());
 
         // Signal type filter
         const matchesType = signalTypeFilter === 'all' || signal.signalType === signalTypeFilter;
 
         // Strength filter
+        const strength = signal.strength ?? 0;
         const matchesStrength = strengthFilter === 'all' ||
-            (strengthFilter === 'high' && signal.strength >= 85) ||
-            (strengthFilter === 'medium' && signal.strength >= 70 && signal.strength < 85) ||
-            (strengthFilter === 'low' && signal.strength < 70);
+            (strengthFilter === 'high' && strength >= 85) ||
+            (strengthFilter === 'medium' && strength >= 70 && strength < 85) ||
+            (strengthFilter === 'low' && strength < 70);
 
         return matchesSearch && matchesType && matchesStrength;
     });
@@ -77,13 +61,14 @@ export function SignalMonitorPage() {
     // Calculate summary stats
     const buySignals = filteredSignals.filter(s => s.signalType === 'BUY').length;
     const sellSignals = filteredSignals.filter(s => s.signalType === 'SELL').length;
-    const exitSignals = filteredSignals.filter(s => s.signalType === 'EXIT').length;
+    // Unused: const exitSignals = filteredSignals.filter(s => s.signalType === 'EXIT').length;
     const avgStrength = filteredSignals.length > 0
-        ? Math.round(filteredSignals.reduce((sum, s) => sum + s.strength, 0) / filteredSignals.length)
+        ? Math.round(filteredSignals.reduce((sum, s) => sum + (s.strength ?? 0), 0) / filteredSignals.length)
         : 0;
 
     // Format time ago
-    function formatTimeAgo(isoString: string): string {
+    function formatTimeAgo(isoString?: string): string {
+        if (!isoString) return '-';
         const date = new Date(isoString);
         const now = new Date();
         const diffMs = now.getTime() - date.getTime();
@@ -98,7 +83,7 @@ export function SignalMonitorPage() {
     }
 
     // Get badge variant based on signal type
-    function getSignalBadgeVariant(type: string) {
+    function getSignalBadgeVariant(type?: string) {
         switch (type) {
             case 'BUY': return 'default';
             case 'SELL': return 'destructive';
@@ -108,13 +93,14 @@ export function SignalMonitorPage() {
     }
 
     // Get strength badge color
-    function getStrengthBadge(strength: number) {
-        if (strength >= 85) {
-            return <Badge className="bg-green-600 text-white">High: {strength}</Badge>;
-        } else if (strength >= 70) {
-            return <Badge className="bg-blue-600 text-white">Med: {strength}</Badge>;
+    function getStrengthBadge(strength?: number) {
+        const val = strength ?? 0;
+        if (val >= 85) {
+            return <Badge className="bg-green-600 text-white">High: {val}</Badge>;
+        } else if (val >= 70) {
+            return <Badge className="bg-blue-600 text-white">Med: {val}</Badge>;
         } else {
-            return <Badge variant="outline">Low: {strength}</Badge>;
+            return <Badge variant="outline">Low: {val}</Badge>;
         }
     }
 
@@ -214,21 +200,7 @@ export function SignalMonitorPage() {
                         <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => {
-                                // Re-fetch signals
-                                async function loadSignals() {
-                                    setLoading(true);
-                                    try {
-                                        const data = await DataService.getSignals();
-                                        setSignals(data);
-                                    } catch (error) {
-                                        console.error("Failed to load signals:", error);
-                                    } finally {
-                                        setLoading(false);
-                                    }
-                                }
-                                loadSignals();
-                            }}
+                            onClick={() => refetch()}
                             className="gap-2"
                         >
                             <RefreshCw className="h-4 w-4" />
@@ -329,14 +301,17 @@ export function SignalMonitorPage() {
                                 <Sizer>
                                     {({ height, width }: { height: number, width: number }) => (
                                         <VirtualList
-                                            height={height}
-                                            width={width}
-                                            itemCount={filteredSignals.length}
-                                            itemSize={60}
-                                            itemData={filteredSignals}
-                                        >
-                                            {({ index, style, data }: any) => {
+                                            style={{ height, width }}
+                                            rowCount={filteredSignals.length}
+                                            rowHeight={60}
+                                            rowProps={{ data: filteredSignals }}
+                                            rowComponent={({ index, style, data }: any) => {
                                                 const signal = data[index];
+                                                const currentPrice = signal.currentPrice ?? 0;
+                                                const priceChange24h = signal.priceChange24h ?? 0;
+                                                const expectedReturn = signal.expectedReturn ?? 0;
+                                                const positionSize = signal.positionSize ?? 0;
+
                                                 return (
                                                     <div style={style} className="flex border-b items-center text-sm px-4 hover:bg-muted/50 transition-colors">
                                                         <div className="w-[100px] shrink-0">
@@ -344,32 +319,32 @@ export function SignalMonitorPage() {
                                                         </div>
                                                         <div className="w-[80px] shrink-0">
                                                             <Badge variant={getSignalBadgeVariant(signal.signalType)}>
-                                                                {signal.signalType}
+                                                                {signal.signalType || '?'}
                                                             </Badge>
                                                         </div>
                                                         <div className="w-[80px] font-semibold shrink-0">
-                                                            {signal.symbol}
+                                                            {signal.symbol || '-'}
                                                         </div>
                                                         <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
-                                                            {signal.strategyName}
+                                                            {signal.strategyName || '-'}
                                                         </div>
                                                         <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
-                                                            {signal.sector}
+                                                            {signal.sector || '-'}
                                                         </div>
                                                         <div className="w-[80px] text-right font-mono shrink-0">
-                                                            ${signal.currentPrice.toFixed(2)}
+                                                            ${currentPrice.toFixed(2)}
                                                         </div>
                                                         <div className="w-[80px] text-right shrink-0">
-                                                            <div className={`flex items-center justify-end gap-1 ${signal.priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                {signal.priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                                                            <div className={`flex items-center justify-end gap-1 ${priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
                                                                 <span className="font-mono text-xs">
-                                                                    {Math.abs(signal.priceChange24h).toFixed(2)}%
+                                                                    {Math.abs(priceChange24h).toFixed(2)}%
                                                                 </span>
                                                             </div>
                                                         </div>
                                                         <div className="w-[80px] text-right shrink-0">
-                                                            <span className={`font-mono font-semibold ${signal.expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                {signal.expectedReturn > 0 ? '+' : ''}{signal.expectedReturn.toFixed(1)}%
+                                                            <span className={`font-mono font-semibold ${expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {expectedReturn > 0 ? '+' : ''}{expectedReturn.toFixed(1)}%
                                                             </span>
                                                         </div>
                                                         <div className="w-[80px] text-right font-mono text-xs shrink-0">
@@ -380,21 +355,21 @@ export function SignalMonitorPage() {
                                                         </div>
                                                         <div className="w-[80px] shrink-0">
                                                             <Badge variant="outline" className="font-mono text-[10px]">
-                                                                {signal.timeHorizon}
+                                                                {signal.timeHorizon || '-'}
                                                             </Badge>
                                                         </div>
                                                         <div className="w-[60px] text-right font-mono text-xs shrink-0">
-                                                            {signal.positionSize.toFixed(1)}%
+                                                            {positionSize.toFixed(1)}%
                                                         </div>
                                                         <div className="w-[150px] shrink-0 pl-2 overflow-hidden">
                                                             <div className="flex flex-wrap gap-1 h-full items-center overflow-hidden">
-                                                                {signal.catalysts.slice(0, 1).map((catalyst, idx) => (
+                                                                {(signal.catalysts || []).slice(0, 1).map((catalyst: string, idx: number) => (
                                                                     <Badge key={idx} variant="secondary" className="text-[10px] px-1 h-5 truncate max-w-full">
                                                                         {catalyst}
                                                                     </Badge>
                                                                 ))}
-                                                                {signal.catalysts.length > 1 && (
-                                                                    <span className="text-[10px] text-muted-foreground">+{signal.catalysts.length - 1}</span>
+                                                                {(signal.catalysts || []).length > 1 && (
+                                                                    <span className="text-[10px] text-muted-foreground">+{signal.catalysts!.length - 1}</span>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -404,7 +379,7 @@ export function SignalMonitorPage() {
                                                     </div>
                                                 );
                                             }}
-                                        </VirtualList>
+                                        />
                                     )}
                                 </Sizer>
                             )}
