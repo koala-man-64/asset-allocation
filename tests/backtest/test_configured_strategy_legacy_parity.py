@@ -6,15 +6,15 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from asset_allocation.backtest.config import BacktestConfig
-from asset_allocation.backtest.configured_strategy import ConfiguredStrategy
-from asset_allocation.backtest.configured_strategy.legacy_migrations import (
+from backtest.config import BacktestConfig
+from backtest.configured_strategy import ConfiguredStrategy
+from backtest.configured_strategy.legacy_migrations import (
     configured_config_for_long_short_topn_strategy,
     configured_config_for_topn_signal_strategy,
 )
-from asset_allocation.backtest.models import PortfolioSnapshot, PositionState
-from asset_allocation.backtest.runner import run_backtest
-from asset_allocation.backtest.strategy import LongShortTopNStrategy
+from backtest.models import PortfolioSnapshot, PositionState
+from backtest.runner import run_backtest
+from backtest.strategy import LongShortTopNStrategy
 
 
 def _dates(n: int = 5) -> list[date]:

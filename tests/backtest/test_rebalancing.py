@@ -2,15 +2,15 @@
 import unittest
 from datetime import date
 import pandas as pd
-from asset_allocation.backtest.config import (
+from backtest.config import (
     BacktestConfig, UniverseConfig, DataConfig, ComponentConfig, ConstraintsConfig, BrokerConfig, OutputConfig
 )
-from asset_allocation.backtest.engine import BacktestEngine
-from asset_allocation.backtest.strategy import Strategy, StrategyDecision
-from asset_allocation.backtest.sizer import EqualWeightSizer
-from asset_allocation.backtest.constraints import Constraints
-from asset_allocation.backtest.reporter import Reporter
-from asset_allocation.backtest.models import PortfolioSnapshot
+from backtest.engine import BacktestEngine
+from backtest.strategy import Strategy, StrategyDecision
+from backtest.sizer import EqualWeightSizer
+from backtest.constraints import Constraints
+from backtest.reporter import Reporter
+from backtest.models import PortfolioSnapshot
 
 class MockStrategy(Strategy):
     """Always targets 50% allocation to 'AAPL' to force rebalancing if price moves."""
@@ -63,7 +63,7 @@ class TestRebalancing(unittest.TestCase):
         # Override Sizer for test
         class FixedWeightSizer(EqualWeightSizer):
             def size(self, as_of, decision, prices, portfolio):
-                from asset_allocation.backtest.sizer import TargetWeights
+                from backtest.sizer import TargetWeights
                 return TargetWeights(weights=decision.scores) # Use raw scores as weights
 
         sizer = FixedWeightSizer()

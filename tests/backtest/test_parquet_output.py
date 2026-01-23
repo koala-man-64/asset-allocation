@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from asset_allocation.backtest.cli import main as cli_main
+from backtest.cli import main as cli_main
 
 def _make_config_dict(tmp_path: Path) -> dict:
     return {

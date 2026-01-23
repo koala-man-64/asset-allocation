@@ -5,9 +5,9 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from asset_allocation.backtest.models import PortfolioSnapshot
-from asset_allocation.backtest.sizer import LongShortScoreSizer
-from asset_allocation.backtest.strategy import StrategyDecision
+from backtest.models import PortfolioSnapshot
+from backtest.sizer import LongShortScoreSizer
+from backtest.strategy import StrategyDecision
 
 
 def _snapshot(*, positions: dict[str, float] | None = None) -> PortfolioSnapshot:

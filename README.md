@@ -28,7 +28,7 @@ The backtest execution model is:
 
 ### CLI
 ```bash
-python3 -m asset_allocation.backtest.cli -c backtests/platinum_vcp_breakout_long.yaml
+python3 -m backtest.cli -c backtests/platinum_vcp_breakout_long.yaml
 ```
 
 Artifacts are written under `backtest_results/<RUN_ID>/` (configurable via `output.local_dir`) and include:
@@ -43,7 +43,7 @@ Artifacts are written under `backtest_results/<RUN_ID>/` (configurable via `outp
 
 ### Python API
 ```python
-from asset_allocation.backtest import BacktestConfig, run_backtest
+from backtest import BacktestConfig, run_backtest
 
 cfg = BacktestConfig.from_yaml("backtests/platinum_vcp_breakout_long.yaml", strict=True)
 result = run_backtest(cfg)
@@ -53,7 +53,7 @@ print(result.run_id, result.output_dir)
 ### Service API (FastAPI)
 See `docs/backtest_service.md`. Locally:
 ```bash
-uvicorn asset_allocation.backtest.service.app:app --reload
+uvicorn backtest.service.app:app --reload
 ```
 
 ## Backend API (UI data)

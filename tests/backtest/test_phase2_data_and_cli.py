@@ -7,9 +7,9 @@ import pandas as pd
 import pytest
 import yaml
 
-from asset_allocation.backtest.cli import main as cli_main
-from asset_allocation.backtest.config import BacktestConfig
-from asset_allocation.backtest.data_access import load_backtest_inputs
+from backtest.cli import main as cli_main
+from backtest.config import BacktestConfig
+from backtest.data_access import load_backtest_inputs
 from scripts.common import delta_core
 
 

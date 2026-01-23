@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from asset_allocation.backtest.config import BacktestConfig, validate_config_dict_strict
-from asset_allocation.backtest.runner import run_backtest
+from backtest.config import BacktestConfig, validate_config_dict_strict
+from backtest.runner import run_backtest
 
 
 def _dates() -> list[date]:

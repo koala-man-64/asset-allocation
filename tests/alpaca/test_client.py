@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from asset_allocation.alpaca.config import AlpacaConfig, HttpConfig
-from asset_allocation.alpaca.trading_rest import AlpacaTradingClient
+from alpaca.config import AlpacaConfig, HttpConfig
+from alpaca.trading_rest import AlpacaTradingClient
 
 @pytest.fixture
 def mock_config():
@@ -14,7 +14,7 @@ def mock_config():
 
 @pytest.fixture
 def client(mock_config):
-    with patch("asset_allocation.alpaca.trading_rest.AlpacaHttpTransport") as mock_transport_cls:
+    with patch("alpaca.trading_rest.AlpacaHttpTransport") as mock_transport_cls:
         mock_transport = mock_transport_cls.return_value
         client = AlpacaTradingClient(mock_config)
         client._transport = mock_transport # Swap the instance

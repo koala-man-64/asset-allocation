@@ -2,10 +2,10 @@ FROM node:20-bookworm-slim AS ui-builder
 
 WORKDIR /ui
 
-COPY asset_allocation/ui2.0/package.json asset_allocation/ui2.0/pnpm-lock.yaml ./
-COPY asset_allocation/ui2.0/index.html asset_allocation/ui2.0/postcss.config.mjs asset_allocation/ui2.0/tsconfig.json asset_allocation/ui2.0/vite.config.ts ./
-COPY asset_allocation/ui2.0/public ./public
-COPY asset_allocation/ui2.0/src ./src
+COPY ui/package.json ui/pnpm-lock.yaml ./
+COPY ui/index.html ui/postcss.config.mjs ui/tsconfig.json ui/vite.config.ts ./
+COPY ui/public ./public
+COPY ui/src ./src
 
 RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
 
@@ -18,7 +18,10 @@ COPY requirements.lock.txt .
 RUN pip install --no-cache-dir -r requirements.lock.txt
 
 COPY pyproject.toml README.md ./
-COPY asset_allocation/ asset_allocation/
+COPY alpaca/ alpaca/
+COPY api/ api/
+COPY backtest/ backtest/
+COPY monitoring/ monitoring/
 COPY scripts/ scripts/
 RUN pip install --no-cache-dir .
 
@@ -30,4 +33,4 @@ COPY --from=ui-builder /ui/dist /app/ui-dist
 
 EXPOSE 8000
 
-CMD ["uvicorn", "asset_allocation.backtest.service.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backtest.service.app:app", "--host", "0.0.0.0", "--port", "8000"]

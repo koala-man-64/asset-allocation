@@ -248,8 +248,8 @@ jobs:
         with:
           filters: |
             backtest_api:
-              - "asset_allocation/backtest/**"
-              - "asset_allocation/ui2.0/**"
+              - "backtest/**"
+              - "ui/**"
               - "Dockerfile.backtest_api"
               - "requirements.txt"
               - "requirements.lock.txt"
@@ -261,7 +261,7 @@ jobs:
         with:
           filters: |
             ui:
-              - "asset_allocation/ui2.0/**"
+              - "ui/**"
               - "deploy/app_ui.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -310,12 +310,12 @@ jobs:
       - name: Build and Push UI Image
         if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true'
         run: |
-          cd asset_allocation/ui2.0
+          cd ui
           docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
           docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
-          cd ../..
+          cd ..
 
       - name: Ensure Storage Containers Exist
         run: |

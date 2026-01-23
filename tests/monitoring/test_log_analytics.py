@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from asset_allocation.monitoring.log_analytics import (
+from monitoring.log_analytics import (
     extract_primary_scalar,
     parse_log_analytics_queries_json,
     render_query,
