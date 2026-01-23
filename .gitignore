@@ -33,13 +33,17 @@ local.settings.json
 # --- Project Specific ---
 # Data Directory
 data/
-!asset_allocation/ui2.0/src/data/
+!ui/src/data/
+!ui/src/data/**
 # Backtest Artifacts
 backtest_results/
 
 # --- Node / Frontend ---
 node_modules/
 **/node_modules/
+ui/dist/
+ui/.vite/
+ui/.pnpm-store/
 asset_allocation/ui2.0/dist/
 asset_allocation/ui2.0/.vite/
 asset_allocation/ui2.0/.pnpm-store/

@@ -4,7 +4,7 @@ FastAPI service for config-driven backtest execution with persistent run state a
 
 ## UI Hosting (Phase 4, Option A)
 
-When the service is built with `Dockerfile.backtest_api`, the React SPA is built from `asset_allocation/ui2.0`
+When the service is built with `Dockerfile.backtest_api`, the React SPA is built from `ui/`
 and served from the same FastAPI process:
 
 - UI: `GET /`
@@ -120,7 +120,7 @@ The service uploads to:
 The UI supports OIDC in the browser (preferred) and **dev-only** API keys.
 
 For Option A hosting, the FastAPI service serves a runtime config file at `GET /config.js`.
-The SPA loads it from `asset_allocation/ui2.0/index.html` and reads values from `window.__BACKTEST_UI_CONFIG__`.
+The SPA loads it from `ui/index.html` and reads values from `window.__BACKTEST_UI_CONFIG__`.
 
 ### Runtime UI config (served by API)
 
