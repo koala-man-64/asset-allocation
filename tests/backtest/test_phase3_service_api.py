@@ -83,7 +83,7 @@ def test_service_rejects_local_data_when_disabled(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
-    monkeypatch.delenv("BACKTEST_ALLOW_LOCAL_DATA", raising=False)
+    monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "false")
     monkeypatch.delenv("BACKTEST_ALLOWED_DATA_DIRS", raising=False)
 
     app = create_app()
@@ -180,7 +180,7 @@ def test_service_serves_ui_when_dist_dir_present(tmp_path: Path, monkeypatch: py
 def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
-    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
 
     app = create_app()
@@ -194,7 +194,7 @@ def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: p
 def test_service_honors_custom_api_key_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
-    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
     monkeypatch.setenv("BACKTEST_API_KEY_HEADER", "X-Backtest-Key")
 

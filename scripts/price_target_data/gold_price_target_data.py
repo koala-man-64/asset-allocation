@@ -302,7 +302,7 @@ if __name__ == "__main__":
     from scripts.common.by_date_pipeline import run_partner_then_by_date
     from scripts.price_target_data.materialize_gold_price_target_by_date import main as by_date_main
 
-    job_name = "feature-engineering-targets"
+    job_name = "gold-price-target-job"
     raise SystemExit(
         run_partner_then_by_date(
             job_name=job_name,

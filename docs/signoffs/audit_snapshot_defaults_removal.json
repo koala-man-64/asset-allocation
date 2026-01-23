@@ -1,0 +1,99 @@
+{
+  "generated_at_utc": "2026-01-23T21:07:58.281281+00:00",
+  "git": {
+    "branch": "vsc-main",
+    "commit": "77ed35e89fd4c428110348488359601dc00a57bd",
+    "status_porcelain": "M .env.template\n M .github/workflows/deploy.yml\n M .github/workflows/run_tests.yml\n M api/main.py\n M backtest/service/app.py\n M backtest/service/settings.py\n M deploy/app_backtest_api.yaml\n M deploy/job_bronze_earnings_data.yaml\n M deploy/job_bronze_finance_data.yaml\n M deploy/job_bronze_market_data.yaml\n M deploy/job_bronze_price_target_data.yaml\n M deploy/job_gold_earnings_data.yaml\n M deploy/job_gold_finance_data.yaml\n M deploy/job_gold_market_data.yaml\n M deploy/job_gold_price_target_data.yaml\n M deploy/job_platinum_ranking.yaml\n M deploy/job_silver_earnings_data.yaml\n M deploy/job_silver_finance_data.yaml\n M deploy/job_silver_market_data.yaml\n M deploy/job_silver_price_target_data.yaml\n M monitoring/azure_blob_store.py\n M monitoring/system_health.py\n M scripts/common/by_date_pipeline.py\n M scripts/common/config.py\n M scripts/common/config_shared.py\n M scripts/common/core.py\n M scripts/common/logging_config.py\n M scripts/earnings_data/bronze_earnings_data.py\n M scripts/earnings_data/gold_earnings_data.py\n M scripts/earnings_data/materialize_gold_earnings_by_date.py\n M scripts/earnings_data/materialize_silver_earnings_by_date.py\n M scripts/earnings_data/silver_earnings_data.py\n M scripts/finance_data/bronze_finance_data.py\n M scripts/finance_data/gold_finance_data.py\n M scripts/finance_data/materialize_gold_finance_by_date.py\n M scripts/finance_data/materialize_silver_finance_by_date.py\n M scripts/finance_data/silver_finance_data.py\n M scripts/market_data/bronze_market_data.py\n M scripts/market_data/gold_market_data.py\n M scripts/market_data/materialize_gold_market_by_date.py\n M scripts/market_data/materialize_silver_market_by_date.py\n M scripts/market_data/silver_market_data.py\n M scripts/price_target_data/bronze_price_target_data.py\n M scripts/price_target_data/gold_price_target_data.py\n M scripts/price_target_data/materialize_gold_price_target_by_date.py\n M scripts/price_target_data/materialize_silver_price_target_by_date.py\n M scripts/price_target_data/silver_price_target_data.py\n M scripts/ranking/runner.py\n M scripts/ranking/signals.py\n M tests/backtest/test_phase3_service_api.py\n M tests/conftest.py\n M tests/monitoring/test_system_health.py"
+  },
+  "github": {
+    ".github/workflows": true,
+    ".github/workflows/deploy.yml": true,
+    ".github/workflows/run_tests.yml": true
+  },
+  "instruction_files": {
+    "AGENTS.md": [],
+    "CONTRIBUTING.md": [
+      "CONTRIBUTING.md"
+    ],
+    "SECURITY.md": [
+      "SECURITY.md"
+    ]
+  },
+  "project_files": {
+    ".editorconfig": false,
+    ".github/CODEOWNERS": true,
+    ".github/dependabot.yml": false,
+    ".pre-commit-config.yaml": false,
+    "CODEOWNERS": false,
+    "Dockerfile": true,
+    "LICENSE": false,
+    "Makefile": false,
+    "README.md": true,
+    "docker-compose.yml": false,
+    "pyproject.toml": true,
+    "requirements-dev.txt": true,
+    "requirements.txt": true
+  },
+  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation",
+  "workflows": {
+    "files": [
+      {
+        "path": ".github/workflows/deploy.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/lint_workflows.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/run_tests.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/trigger_all_jobs.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      }
+    ],
+    "path": ".github/workflows"
+  }
+}

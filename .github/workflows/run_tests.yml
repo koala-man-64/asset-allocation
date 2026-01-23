@@ -76,6 +76,8 @@ jobs:
         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
         # Runtime settings for CI
         DISABLE_DOTENV: "true"
+        LOG_FORMAT: "JSON"
+        LOG_LEVEL: "INFO"
         HEADLESS_MODE: "True"
         DOWNLOADS_PATH: "/tmp/downloads"
         PLAYWRIGHT_USER_DATA_DIR: "/tmp/playwright_userdata"
@@ -88,5 +90,22 @@ jobs:
         AZURE_CONTAINER_RANKING: "ranking-data"
         AZURE_CONTAINER_BRONZE: "bronze"
         AZURE_CONTAINER_SILVER: "silver"
+        AZURE_CONTAINER_GOLD: "gold"
+
+        # Backtest service defaults for CI
+        BACKTEST_OUTPUT_DIR: "/tmp/backtest_results"
+        BACKTEST_DB_PATH: "/tmp/backtest_results/runs.sqlite3"
+        BACKTEST_MAX_CONCURRENT: "1"
+        BACKTEST_API_KEY_HEADER: "X-API-Key"
+        BACKTEST_AUTH_MODE: "none"
+        BACKTEST_ALLOW_LOCAL_DATA: "false"
+        BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,ranking-data,common"
+        BACKTEST_RUN_STORE_MODE: "sqlite"
+        BACKTEST_CSP: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+        # System health config (required by monitoring/system_health.py)
+        SYSTEM_HEALTH_TTL_SECONDS: "30"
+        SYSTEM_HEALTH_MAX_AGE_SECONDS: "129600"
+        SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS: "259200"
       run: |
         python -m pytest

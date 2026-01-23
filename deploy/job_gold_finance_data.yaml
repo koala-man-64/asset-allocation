@@ -44,6 +44,10 @@ properties:
         value: ${AZURE_CONTAINER_BRONZE}
       - name: LOG_FORMAT
         value: JSON
+      - name: LOG_LEVEL
+        value: INFO
+      - name: DISABLE_DOTENV
+        value: "true"
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
