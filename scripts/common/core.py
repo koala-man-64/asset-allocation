@@ -73,30 +73,80 @@ def get_storage_client(container_name: str) -> Optional[BlobStorageClient]:
 
 def log_environment_diagnostics():
     """
-    Logs environment variables for debugging purposes.
-    SECURITY: Masks values for keys containing 'KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'CONN'.
+    Logs selected environment variables for debugging purposes.
+
+    SECURITY:
+    - Does not dump the full environment by default.
+    - Redacts values for sensitive keys (secrets/credentials/PII).
+
+    Set ENABLE_ENV_DIAGNOSTICS=true to log a broader (still allowlisted) set.
     """
-    write_section("ENVIRONMENT DIAGNOSTICS", "Dumping Environment Variables...")
-    
-    sensitive_patterns = ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'CONN', 'AUTH']
-    
-    sorted_keys = sorted(os.environ.keys())
-    for key in sorted_keys:
-        value = os.environ[key]
-        
-        # Masking Logic
+
+    def _is_truthy(value: str) -> bool:
+        return (value or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+    write_section("ENVIRONMENT DIAGNOSTICS", "Logging selected environment variables...")
+
+    sensitive_patterns = [
+        "KEY",
+        "SECRET",
+        "PASSWORD",
+        "TOKEN",
+        "CONN",
+        "DSN",
+        "AUTH",
+        "USERNAME",
+        "USER",
+        "EMAIL",
+    ]
+
+    base_allowlist = [
+        # Container Apps / runtime context
+        "CONTAINER_APP_JOB_NAME",
+        "CONTAINER_APP_JOB_EXECUTION_NAME",
+        "CONTAINER_APP_REPLICA_NAME",
+        "CONTAINER_APP_ENV_DNS_SUFFIX",
+        # Storage + container routing (non-secret identifiers)
+        "AZURE_STORAGE_ACCOUNT_NAME",
+        "AZURE_CONTAINER_COMMON",
+        "AZURE_CONTAINER_BRONZE",
+        "AZURE_CONTAINER_SILVER",
+        "AZURE_CONTAINER_GOLD",
+        "AZURE_CONTAINER_FINANCE",
+        "AZURE_CONTAINER_MARKET",
+        "AZURE_CONTAINER_EARNINGS",
+        "AZURE_CONTAINER_TARGETS",
+        "AZURE_CONTAINER_RANKING",
+        # Job behavior toggles
+        "LOG_FORMAT",
+        "HEADLESS_MODE",
+        "FEATURE_ENGINEERING_MAX_WORKERS",
+        "MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR",
+        "MATERIALIZE_YEAR_MONTH",
+        "TEST_MODE",
+    ]
+
+    verbose_allowlist = [
+        "PYTHONUNBUFFERED",
+        "PYTHONIOENCODING",
+        "LANG",
+        "TZ",
+        "PLAYWRIGHT_BROWSERS_PATH",
+    ]
+
+    keys = list(base_allowlist)
+    if _is_truthy(os.environ.get("ENABLE_ENV_DIAGNOSTICS", "")):
+        keys.extend(verbose_allowlist)
+
+    for key in sorted(set(keys)):
+        value = os.environ.get(key, "")
         is_sensitive = any(pattern in key.upper() for pattern in sensitive_patterns)
-        
-        if is_sensitive and value:
-            # Show first 3 chars if long enough, else full mask
-            if len(value) > 4:
-                masked_value = f"{value[:3]}...***({len(value)} chars)"
-            else:
-                masked_value = "***"
-            logger.info(f"{key} = {masked_value}")
+
+        if is_sensitive:
+            logger.info("%s = [REDACTED]", key)
         else:
-            logger.info(f"{key} = {value}")
-            
+            logger.info("%s = %s", key, value)
+
     sys.stdout.flush()
 
 # ------------------------------------------------------------------------------

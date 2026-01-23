@@ -385,13 +385,10 @@ export function SystemStatusPage() {
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>Layer</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Last Updated</TableHead>
-                                    <TableHead>Version</TableHead>
-                                    <TableHead className="text-right">Records</TableHead>
-                                    <TableHead>Refresh Frequency</TableHead>
-                                    <TableHead>Next Expected</TableHead>
+                                    <TableHead title="The name of the data layer (Bronze, Silver, Gold, etc.)">Layer</TableHead>
+                                    <TableHead title="Current health status (Healthy, Stale, Error)">Status</TableHead>
+                                    <TableHead title="Timestamp of the most recent update to any dataset in this layer">Last Updated</TableHead>
+                                    <TableHead title="How often this layer is expected to update">Refresh Frequency</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -426,17 +423,8 @@ export function SystemStatusPage() {
                                             <TableCell className="font-mono text-sm">
                                                 {formatTimestamp(layer.lastUpdated)}
                                             </TableCell>
-                                            <TableCell className="font-mono text-xs text-muted-foreground">
-                                                {layer.dataVersion || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono">
-                                                {formatRecordCount(layer.recordCount)}
-                                            </TableCell>
                                             <TableCell className="text-sm text-muted-foreground">
                                                 {layer.refreshFrequency}
-                                            </TableCell>
-                                            <TableCell className="font-mono text-xs text-muted-foreground">
-                                                {layer.nextExpectedUpdate ? formatTimestamp(layer.nextExpectedUpdate) : '-'}
                                             </TableCell>
                                         </TableRow>
                                         {(layer.domains || []).map((domain: any, dIdx: number) => {
@@ -491,25 +479,27 @@ export function SystemStatusPage() {
                                                     <TableCell className="font-mono text-xs text-muted-foreground">
                                                         {formatTimestamp(domain.lastUpdated)}
                                                     </TableCell>
-                                                    <TableCell colSpan={4}>
-                                                        {latestJob && (
-                                                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                                                                <div className="flex items-center gap-1.5" title={`Job: ${latestJob.jobName}`}>
-                                                                    <span className="text-muted-foreground/70">Last Job:</span>
-                                                                    {getStatusIcon(latestJob.status)}
-                                                                    <span className={
-                                                                        latestJob.status === 'success' ? 'text-green-600' :
-                                                                            latestJob.status === 'failed' ? 'text-red-600' : ''
-                                                                    }>
-                                                                        {latestJob.status}
-                                                                    </span>
+                                                    <TableCell className="text-sm text-muted-foreground">
+                                                        <div className="flex flex-col gap-1">
+                                                            <div className="font-mono text-xs">{domain.frequency || domain.cron || '-'}</div>
+                                                            {latestJob && (
+                                                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground/80 mt-1">
+                                                                    <div className="flex items-center gap-1" title={`Job: ${latestJob.jobName}`}>
+                                                                        <span className="opacity-70">Job:</span>
+                                                                        <span className={
+                                                                            latestJob.status === 'success' ? 'text-green-600' :
+                                                                                latestJob.status === 'failed' ? 'text-red-600' : ''
+                                                                        }>
+                                                                            {latestJob.status}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="hidden xl:flex items-center gap-1">
+                                                                        <Clock className="h-2.5 w-2.5" />
+                                                                        {formatTimestamp(latestJob.startTime)}
+                                                                    </div>
                                                                 </div>
-                                                                <div className="flex items-center gap-1.5">
-                                                                    <Clock className="h-3 w-3" />
-                                                                    {formatTimestamp(latestJob.startTime)}
-                                                                </div>
-                                                            </div>
-                                                        )}
+                                                            )}
+                                                        </div>
                                                     </TableCell>
                                                 </TableRow>
                                             );

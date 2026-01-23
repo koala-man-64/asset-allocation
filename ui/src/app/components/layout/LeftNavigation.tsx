@@ -43,6 +43,14 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
+    title: 'SYSTEM',
+    items: [
+      { path: '/system', label: 'System Status', icon: Activity },
+      { path: '/data', label: 'Data & Lineage', icon: Database },
+      { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
+    ]
+  },
+  {
     title: 'ANALYSIS',
     items: [
       { path: '/', label: 'Overview', icon: LayoutDashboard },
@@ -71,14 +79,6 @@ const navSections: NavSection[] = [
       { path: '/signals', label: 'Signal Monitor', icon: Zap },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alert Management', icon: Bell },
-    ]
-  },
-  {
-    title: 'SYSTEM',
-    items: [
-      { path: '/data', label: 'Data & Lineage', icon: Database },
-      { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
-      { path: '/system', label: 'System Status', icon: Activity },
     ]
   }
 ];

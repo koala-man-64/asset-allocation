@@ -171,10 +171,13 @@ def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
         df = load_delta(
             cfg.container,
             src_path,
-            filters=[("date", ">=", start.to_pydatetime()), ("date", "<", end.to_pydatetime())],
+            filters=[("obs_date", ">=", start.to_pydatetime()), ("obs_date", "<", end.to_pydatetime())],
         )
         if df is None or df.empty:
             continue
+
+        if "date" not in df.columns and "obs_date" in df.columns:
+            df["date"] = pd.to_datetime(df["obs_date"], errors="coerce").dt.normalize()
             
         if "symbol" not in df.columns and "Symbol" not in df.columns:
             df["symbol"] = ticker

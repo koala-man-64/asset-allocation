@@ -107,14 +107,19 @@ def _append_signal_details(details: str, signals: Sequence[Dict[str, Any]]) -> s
 
 
 @dataclass(frozen=True)
+class DomainSpec:
+    path: str
+    cron: str = "0 0 * * *"  # Default Daily
+
+
+@dataclass(frozen=True)
 class LayerProbeSpec:
     name: str
     description: str
-    refresh_frequency: str
     container_env: str
     max_age_seconds: int
-    marker_blobs: Sequence[str] = ()
-    delta_tables: Sequence[str] = ()
+    marker_blobs: Sequence[DomainSpec] = ()
+    delta_tables: Sequence[DomainSpec] = ()
     job_name: Optional[str] = None
 
     def container_name(self) -> str:
@@ -175,55 +180,69 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
     max_age_default = _get_int("SYSTEM_HEALTH_MAX_AGE_SECONDS", 36 * 3600)
     max_age_ranking = _get_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS", 72 * 3600)
 
+    # Deployed job schedules (see deploy/job_*.yaml)
+    CRON_BRONZE_MARKET = "0 14-22 * * *"
+    CRON_BRONZE_PRICE_TARGET = "0 12 * * *"
+    CRON_BRONZE_FINANCE = "0 22 * * *"
+    CRON_BRONZE_EARNINGS = "0 23 * * *"
+
+    CRON_SILVER_MARKET = "30 14-23 * * *"
+    CRON_SILVER_FINANCE = "30 0 * * *"
+    CRON_SILVER_PRICE_TARGET = "30 1 * * *"
+    CRON_SILVER_EARNINGS = "30 23 * * *"
+
+    CRON_GOLD_MARKET = "30 14-22 * * *"
+    CRON_GOLD_FINANCE = "30 22 * * *"
+    CRON_GOLD_EARNINGS = "30 23 * * *"
+    CRON_GOLD_PRICE_TARGET = "30 12 * * *"
+
+    CRON_PLATINUM_RANKING = "0 5 * * *"
+
     return [
         LayerProbeSpec(
             name="Bronze",
             description="Landing zone for raw data. Immutable source of truth for replayability.",
-            refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_BRONZE",
             max_age_seconds=max_age_default,
             marker_blobs=(
-                "market-data/whitelist.csv",
-                "finance-data/whitelist.csv",
-                "earnings-data/whitelist.csv",
-                "price-target-data/whitelist.csv",
+                DomainSpec("market-data/whitelist.csv", CRON_BRONZE_MARKET),
+                DomainSpec("finance-data/whitelist.csv", CRON_BRONZE_FINANCE),
+                DomainSpec("earnings-data/whitelist.csv", CRON_BRONZE_EARNINGS),
+                DomainSpec("price-target-data/whitelist.csv", CRON_BRONZE_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
             name="Silver",
             description="Cleaned, standardized tabular data. Enforced schemas for reliable querying.",
-            refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_SILVER",
             max_age_seconds=max_age_default,
             delta_tables=(
-                "market-data-by-date",
-                "finance-data-by-date",
-                "earnings-data-by-date",
-                "price-target-data-by-date",
+                DomainSpec("market-data-by-date", CRON_SILVER_MARKET),
+                DomainSpec("finance-data-by-date", CRON_SILVER_FINANCE),
+                DomainSpec("earnings-data-by-date", CRON_SILVER_EARNINGS),
+                DomainSpec("price-target-data-by-date", CRON_SILVER_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
             name="Gold",
             description="Entity-resolved feature store. Financial metrics ready for modeling.",
-            refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_GOLD",
             max_age_seconds=max_age_default,
             delta_tables=(
-                "market_by_date",
-                "finance_by_date",
-                "earnings_by_date",
-                "targets_by_date",
+                DomainSpec("market_by_date", CRON_GOLD_MARKET),
+                DomainSpec("finance_by_date", CRON_GOLD_FINANCE),
+                DomainSpec("earnings_by_date", CRON_GOLD_EARNINGS),
+                DomainSpec("targets_by_date", CRON_GOLD_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
             name="Platinum",
             description="Final analytical outputs. Multi-factor rankings and portfolio signals.",
-            refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_PLATINUM",
             max_age_seconds=max_age_ranking,
             delta_tables=(
-                "rankings",
-                "signals/daily",
+                DomainSpec("rankings", CRON_PLATINUM_RANKING),
+                DomainSpec("signals/daily", CRON_PLATINUM_RANKING),
             ),
         ),
     ]
@@ -280,6 +299,26 @@ def _get_domain_description(layer_name: str, name: str) -> str:
         return "Daily trade signals and portfolio adjustments"
     
     return ""  # Fallback empty
+
+
+def _describe_cron(expression: str) -> str:
+    # Frequent mappings for this system
+    mapping = {
+        "0 12 * * *": "Daily at 12:00 PM UTC",
+        "30 12 * * *": "Daily at 12:30 PM UTC",
+        "0 14-22 * * *": "Daily, hourly 2:00–10:00 PM UTC",
+        "30 14-22 * * *": "Daily, hourly 2:30–10:30 PM UTC",
+        "30 14-23 * * *": "Daily, hourly 2:30–11:30 PM UTC",
+        "30 0 * * *": "Daily at 12:30 AM UTC",
+        "30 1 * * *": "Daily at 1:30 AM UTC",
+        "0 22 * * *": "Daily at 10:00 PM UTC",
+        "30 22 * * *": "Daily at 10:30 PM UTC",
+        "0 23 * * *": "Daily at 11:00 PM UTC",
+        "30 23 * * *": "Daily at 11:30 PM UTC",
+        "0 5 * * *": "Daily at 5:00 AM UTC",
+        "0 0 * * *": "Daily at Midnight UTC",
+    }
+    return mapping.get(expression, expression)
 
 
 def _derive_job_name(layer_name: str, domain_clean: str) -> str:
@@ -355,7 +394,8 @@ def collect_system_health_snapshot(
         domain_items: List[Dict[str, Any]] = []
 
         # Collect markers (CSV/Blobs)
-        for blob_name in spec.marker_blobs:
+        for domain_spec in spec.marker_blobs:
+            blob_name = domain_spec.path
             d_name = os.path.dirname(blob_name) or blob_name
             name_clean = d_name.replace("/whitelist.csv", "").replace("-data", "")
             
@@ -363,14 +403,22 @@ def collect_system_health_snapshot(
             job_url = _make_job_portal_url(sub_id, rg, job_name)
             folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
 
+            # If the config points to a specific file (e.g. whitelist.csv), we want to scan the folder it's in.
+            # If it points to a folder (e.g. data/), dirname handles it appropriately (usually).
+            search_prefix = os.path.dirname(blob_name) 
+            # If search_prefix is empty (file at root), we scan the whole container (prefix=None or "").
+            # Ideally we might want to restrict this, but for "latest update" in a container used for data, scanning root is correct.
+            
             try:
-                lm = store.get_blob_last_modified(container=container, blob_name=blob_name)
+                lm = store.get_container_last_modified(container=container, prefix=search_prefix)
                 status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
                 domain_items.append({
                     "name": name_clean,
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": _iso(lm),
                     "status": status,
                     "portalUrl": folder_url,
@@ -383,6 +431,8 @@ def collect_system_health_snapshot(
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": None,
                     "status": "error",
                     "portalUrl": folder_url,
@@ -390,7 +440,8 @@ def collect_system_health_snapshot(
                 })
 
         # Collect Delta tables
-        for table_path in spec.delta_tables:
+        for domain_spec in spec.delta_tables:
+            table_path = domain_spec.path
             d_name = table_path
             name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
             if name_clean == "targets":
@@ -408,6 +459,8 @@ def collect_system_health_snapshot(
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "delta",
                     "path": table_path,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": _iso(lm),
                     "status": status,
                     "version": ver if ver is not None else None,
@@ -421,6 +474,8 @@ def collect_system_health_snapshot(
                     "description": "",
                     "type": "delta",
                     "path": table_path,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": None,
                     "status": "error",
                     "version": None,
@@ -436,15 +491,6 @@ def collect_system_health_snapshot(
         ]
         layer_last_updated = max(valid_times) if valid_times else None
         
-        # Calculate next expected update
-        next_expected: Optional[datetime] = None
-        if layer_last_updated and spec.refresh_frequency:
-             # Very simple heuristic for now
-             freq_map = {"Daily": timedelta(days=1), "Hourly": timedelta(hours=1)}
-             delta = freq_map.get(spec.refresh_frequency)
-             if delta:
-                 next_expected = layer_last_updated + delta
-
         # If any domain is error/stale, layer is that status (worst of)
         layer_statuses = [d["status"] for d in domain_items]
         if "error" in layer_statuses:
@@ -456,10 +502,6 @@ def collect_system_health_snapshot(
 
         statuses.append(layer_status)
 
-        # Use latest version from any domain as layer version (if all match desirable, but taking max is safe proxy for now)
-        layer_versions = [d.get("version") for d in domain_items if d.get("version") is not None]
-        layer_version = max(layer_versions) if layer_versions else None
-
         portal_url = _make_container_portal_url(sub_id, rg, storage_account, container)
 
         layers.append(
@@ -468,9 +510,6 @@ def collect_system_health_snapshot(
                 "description": spec.description,
                 "lastUpdated": _iso(layer_last_updated),
                 "status": layer_status,
-                "refreshFrequency": spec.refresh_frequency,
-                "nextExpectedUpdate": _iso(next_expected) if next_expected else None,
-                "dataVersion": str(layer_version) if layer_version is not None else None,
                 "portalUrl": portal_url,
                 "domains": domain_items,
             }

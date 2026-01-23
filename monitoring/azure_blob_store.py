@@ -100,3 +100,27 @@ class AzureBlobStore:
         latest_blob = f"{delta_prefix}{latest_version:020d}.json"
         return latest_version, self.get_blob_last_modified(container=container, blob_name=latest_blob)
 
+    def get_container_last_modified(self, *, container: str, prefix: Optional[str] = None) -> Optional[datetime]:
+        """
+        Recursively finds the latest last_modified timestamp among all blobs in the container 
+        (optionally filtered by prefix).
+        """
+        client = self._client(container)
+        try:
+            # list_blobs(name_starts_with=prefix) returns a flat listing of all blobs matching the prefix,
+            # effectively recursing into all "subfolders" (virtual directories).
+            # We iterate directly to find the max last_modified without loading all into memory.
+            blobs_iter = client.container_client.list_blobs(name_starts_with=prefix)
+            
+            max_lm: Optional[datetime] = None
+            for blob in blobs_iter:
+                lm = blob.last_modified
+                if lm:
+                    if max_lm is None or lm > max_lm:
+                        max_lm = lm
+            
+            return max_lm
+        except Exception:
+            # If listing fails (e.g. permission error, container specific error), return None
+            return None
+

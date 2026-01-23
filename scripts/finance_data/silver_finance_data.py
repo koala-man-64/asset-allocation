@@ -1,5 +1,7 @@
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Optional
 
-import os
 import pandas as pd
 import warnings
 from io import BytesIO
@@ -13,7 +15,14 @@ warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
+
+
+@dataclass(frozen=True)
+class BlobProcessResult:
+    blob_name: str
+    silver_path: Optional[str]
+    status: str  # ok|skipped|failed
+    error: Optional[str] = None
 
 def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
@@ -34,7 +43,11 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     df_t['Symbol'] = ticker
     return df_t
 
-def resample_daily_ffill(df: pd.DataFrame) -> pd.DataFrame:
+def _utc_today() -> pd.Timestamp:
+    return pd.Timestamp(datetime.now(timezone.utc).date())
+
+
+def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] = None) -> pd.DataFrame:
     """
     Resamples sparse dataframe to daily frequency using forward fill.
     """
@@ -42,7 +55,11 @@ def resample_daily_ffill(df: pd.DataFrame) -> pd.DataFrame:
         return df
         
     df = df.copy()
-    df['Date'] = pd.to_datetime(df['Date'])
+    df['Date'] = pd.to_datetime(df['Date'], errors="coerce", utc=True).dt.tz_convert(None)
+    df = df.dropna(subset=["Date"])
+    if df.empty:
+        return df
+
     df = df.set_index('Date')
     df = df.sort_index()
     
@@ -51,25 +68,41 @@ def resample_daily_ffill(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
         
-    # Resample 'D' will create daily rows. ffill() propagates last observation.
-    df_daily = df.resample('D').ffill()
+    end = df.index.max()
+    if extend_to is not None and extend_to > end:
+        end = extend_to
+
+    full_range = pd.date_range(start=df.index.min(), end=end, freq="D", name="Date")
+    df_daily = df.reindex(full_range).ffill()
     
     return df_daily.reset_index()
 
-def process_blob(blob):
+def _try_get_delta_max_date(container: str, path: str) -> Optional[pd.Timestamp]:
+    df = delta_core.load_delta(container, path, columns=["Date"])
+    if df is None or df.empty or "Date" not in df.columns:
+        return None
+
+    dates = pd.to_datetime(df["Date"], errors="coerce")
+    dates = dates.dropna()
+    if dates.empty:
+        return None
+    return pd.Timestamp(dates.max()).normalize()
+
+
+def process_blob(blob, *, desired_end: pd.Timestamp) -> BlobProcessResult:
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
     # e.g. finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.csv
     
     parts = blob_name.split('/')
     if len(parts) < 3:
-        return
+        return BlobProcessResult(blob_name=blob_name, silver_path=None, status="skipped")
         
     folder_name = parts[1]
     filename = parts[2]
     
     if not filename.endswith('.csv'):
-        return
+        return BlobProcessResult(blob_name=blob_name, silver_path=None, status="skipped")
         
     # extract ticker
     # filename: ticker_suffix.csv
@@ -91,7 +124,7 @@ def process_blob(blob):
             
     if not suffix:
         mdc.write_line(f"Skipping unknown file format: {filename}")
-        return
+        return BlobProcessResult(blob_name=blob_name, silver_path=None, status="skipped")
         
     ticker = filename.replace(f"_{suffix}.csv", "")
     
@@ -107,9 +140,9 @@ def process_blob(blob):
     silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
     
     if silver_lm and (silver_lm > bronze_lm):
-        # Silver is newer than Bronze (already processed)
-        # mdc.write_line(f"Skipping {ticker}/{folder_name} (Silver up to date)")
-        return
+        max_date = _try_get_delta_max_date(cfg.AZURE_CONTAINER_SILVER, silver_path)
+        if max_date is not None and max_date >= desired_end:
+            return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
     
@@ -120,7 +153,9 @@ def process_blob(blob):
         df_clean = transpose_dataframe(df_raw, ticker)
         
         # Resample to daily frequency (forward fill)
-        df_clean = resample_daily_ffill(df_clean)
+        df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
+        if df_clean is None or df_clean.empty:
+            raise ValueError("No valid dated rows after cleaning/resample.")
         
         # Write to Silver (Overwrite is fine for finance snapshots, or merge? 
         # Typically Finance Sheets are full snapshots. Replacing is safer for consistency, 
@@ -134,29 +169,38 @@ def process_blob(blob):
         
         delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
         mdc.write_line(f"Updated Silver {silver_path}")
+        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="ok")
         
     except Exception as e:
         mdc.write_error(f"Failed to process {blob_name}: {e}")
+        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="failed", error=str(e))
 
-def main():
+
+def main() -> int:
     mdc.log_environment_diagnostics()
     
     mdc.write_line("Listing Bronze Finance files...")
     # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
     blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
     
-    count = 0 
+    desired_end = _utc_today()
+
+    results: list[BlobProcessResult] = []
     for blob in blobs:
-        process_blob(blob)
-        count += 1
+        results.append(process_blob(blob, desired_end=desired_end))
         
-    mdc.write_line(f"Processed {count} blobs.")
+    processed = sum(1 for r in results if r.status == "ok")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    failed = sum(1 for r in results if r.status == "failed")
+    mdc.write_line(f"Silver finance ingest complete: processed={processed}, skipped={skipped}, failed={failed}")
+
+    return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
     from scripts.common.by_date_pipeline import run_partner_then_by_date
     from scripts.finance_data.materialize_silver_finance_by_date import main as by_date_main
 
-    job_name = "branze-finance-job-silver"
+    job_name = "silver-finance-job"
     raise SystemExit(
         run_partner_then_by_date(
             job_name=job_name,
