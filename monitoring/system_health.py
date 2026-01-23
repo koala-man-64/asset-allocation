@@ -112,13 +112,13 @@ class LayerProbeSpec:
     description: str
     refresh_frequency: str
     container_env: str
-    container_default: str
     max_age_seconds: int
     marker_blobs: Sequence[str] = ()
     delta_tables: Sequence[str] = ()
+    job_name: Optional[str] = None
 
     def container_name(self) -> str:
-        return _env_or(self.container_env, self.container_default)
+        return _env_or(self.container_env, "")
 
 
 def _compute_layer_status(now: datetime, last_updated: Optional[datetime], *, max_age_seconds: int, had_error: bool) -> str:
@@ -178,10 +178,9 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
     return [
         LayerProbeSpec(
             name="Bronze",
-            description="Raw ingestion (blob snapshots + whitelists)",
+            description="Landing zone for raw data. Immutable source of truth for replayability.",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_BRONZE",
-            container_default="bronze",
             max_age_seconds=max_age_default,
             marker_blobs=(
                 "market-data/whitelist.csv",
@@ -192,10 +191,9 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
         ),
         LayerProbeSpec(
             name="Silver",
-            description="Normalized Delta tables (by-date aggregates)",
+            description="Cleaned, standardized tabular data. Enforced schemas for reliable querying.",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_SILVER",
-            container_default="silver",
             max_age_seconds=max_age_default,
             delta_tables=(
                 "market-data-by-date",
@@ -206,10 +204,9 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
         ),
         LayerProbeSpec(
             name="Gold",
-            description="Feature store Delta tables (by-date aggregates)",
+            description="Entity-resolved feature store. Financial metrics ready for modeling.",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_GOLD",
-            container_default="gold",
             max_age_seconds=max_age_default,
             delta_tables=(
                 "market_by_date",
@@ -219,19 +216,106 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             ),
         ),
         LayerProbeSpec(
-            name="Ranking",
-            description="Platinum rankings + derived signals",
+            name="Platinum",
+            description="Final analytical outputs. Multi-factor rankings and portfolio signals.",
             refresh_frequency="Daily",
-            container_env="AZURE_CONTAINER_RANKING",
-            container_default="ranking-data",
+            container_env="AZURE_CONTAINER_PLATINUM",
             max_age_seconds=max_age_ranking,
             delta_tables=(
-                "platinum/rankings",
-                "platinum/signals/daily",
+                "rankings",
+                "signals/daily",
             ),
         ),
     ]
 
+
+def _make_container_portal_url(sub_id: str, rg: str, account: str, container: str) -> Optional[str]:
+    if not all([sub_id, rg, account, container]):
+        return None
+    
+    # Construct Storage Account Resource ID
+    storage_id = (
+        f"/subscriptions/{sub_id}/resourceGroups/{rg}"
+        f"/providers/Microsoft.Storage/storageAccounts/{account}"
+    )
+    
+    # URL to Container Menu Blade
+    return (
+        f"https://portal.azure.com/#view/Microsoft_Azure_Storage/ContainerMenuBlade"
+        f"/~/overview/storageAccountId/{storage_id.replace('/', '%2F')}/path/{container}"
+    )
+
+
+def _get_domain_description(layer_name: str, name: str) -> str:
+    l_name = layer_name.lower()
+    n = name.lower()
+    
+    if "market" in n:
+        if "bronze" in l_name: return "Raw historical OHLCV files"
+        if "silver" in l_name: return "Standardized daily OHLCV tables"
+        if "gold" in l_name: return "Entity-resolved market features"
+        return "Historical price and volume data"
+
+    if "finance" in n:
+        if "bronze" in l_name: return "Raw financial statements"
+        if "silver" in l_name: return "Standardized financial tables"
+        if "gold" in l_name: return "Financial ratios & growth metrics"
+        return "Fundamental financial data"
+
+    if "earnings" in n:
+        if "bronze" in l_name: return "Raw earnings calendar/surprises"
+        if "silver" in l_name: return "Standardized earnings history"
+        if "gold" in l_name: return "Earnings surprise metrics"
+        return "Earnings data"
+
+    if "target" in n:
+        if "bronze" in l_name: return "Raw analyst price targets"
+        if "silver" in l_name: return "Standardized consensus targets"
+        if "gold" in l_name: return "Consensus upside/downside metrics"
+        return "Analyst price targets"
+
+    if "ranking" in n:
+        return "Composite scores for universe selection"
+    if "signal" in n or "daily" in n:
+        return "Daily trade signals and portfolio adjustments"
+    
+    return ""  # Fallback empty
+
+
+def _derive_job_name(layer_name: str, domain_clean: str) -> str:
+    l_name = layer_name.lower()
+    d_name = domain_clean.lower()
+    
+    # Special cases
+    if l_name == "platinum":
+        return "platinum-ranking-job"
+    
+    return f"{l_name}-{d_name}-job"
+
+
+def _make_job_portal_url(sub_id: str, rg: str, job_name: str) -> Optional[str]:
+    if not all([sub_id, rg, job_name]):
+        return None
+    return (
+        f"https://portal.azure.com/#@/resource/subscriptions/{sub_id}"
+        f"/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job_name}/overview"
+    )
+
+def _make_folder_portal_url(sub_id: str, rg: str, account: str, container: str, folder_path: str) -> Optional[str]:
+    if not all([sub_id, rg, account, container, folder_path]):
+        return None
+    
+    storage_id = (
+        f"/subscriptions/{sub_id}/resourceGroups/{rg}"
+        f"/providers/Microsoft.Storage/storageAccounts/{account}"
+    )
+    # Folder path needs to be encoded properly for the hash fragment
+    # usually /path/{container}/{folder}
+    full_path = f"{container}/{folder_path}".strip("/")
+    return (
+        f"https://portal.azure.com/#view/Microsoft_Azure_Storage/ContainerMenuBlade"
+        f"/~/overview/storageAccountId/{storage_id.replace('/', '%2F')}/path/{full_path.replace('/', '%2F')}"
+    )
 
 def collect_system_health_snapshot(
     *,
@@ -259,6 +343,11 @@ def collect_system_health_snapshot(
     job_runs: List[Dict[str, Any]] = []
     statuses: List[str] = []
 
+    # Env vars for URL construction
+    sub_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
+    rg = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
+    storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip()
+
     for spec in _default_layer_specs():
         layer_last_updated: Optional[datetime] = None
         had_layer_error = False
@@ -268,49 +357,75 @@ def collect_system_health_snapshot(
         # Collect markers (CSV/Blobs)
         for blob_name in spec.marker_blobs:
             d_name = os.path.dirname(blob_name) or blob_name
+            name_clean = d_name.replace("/whitelist.csv", "").replace("-data", "")
+            
+            job_name = _derive_job_name(spec.name, name_clean)
+            job_url = _make_job_portal_url(sub_id, rg, job_name)
+            folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
+
             try:
                 lm = store.get_blob_last_modified(container=container, blob_name=blob_name)
                 status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
                 domain_items.append({
-                    "name": d_name.replace("/whitelist.csv", "").replace("-data", ""), # Simple cleanup for UI
+                    "name": name_clean,
+                    "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
                     "lastUpdated": _iso(lm),
                     "status": status,
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
                 })
             except Exception:
                 had_layer_error = True
                 domain_items.append({
-                    "name": d_name,
+                    "name": name_clean,
+                    "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
                     "lastUpdated": None,
                     "status": "error",
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
                 })
 
         # Collect Delta tables
         for table_path in spec.delta_tables:
             d_name = table_path
+            name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
+            if name_clean == "targets":
+                name_clean = "price-target"
+            
+            job_name = _derive_job_name(spec.name, name_clean)
+            job_url = _make_job_portal_url(sub_id, rg, job_name)
+            folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
+
             try:
                 ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
                 status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
                 domain_items.append({
-                    "name": d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", ""),
+                    "name": name_clean,
+                    "description": _get_domain_description(spec.name, name_clean),
                     "type": "delta",
                     "path": table_path,
                     "lastUpdated": _iso(lm),
                     "status": status,
                     "version": ver if ver is not None else None,
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
                 })
             except Exception:
                 had_layer_error = True
                 domain_items.append({
-                    "name": d_name,
+                    "name": name_clean,  # Use raw name on error if cleaning is ambiguous
+                    "description": "",
                     "type": "delta",
                     "path": table_path,
                     "lastUpdated": None,
                     "status": "error",
                     "version": None,
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
                 })
 
         # Aggregate layer status
@@ -345,6 +460,8 @@ def collect_system_health_snapshot(
         layer_versions = [d.get("version") for d in domain_items if d.get("version") is not None]
         layer_version = max(layer_versions) if layer_versions else None
 
+        portal_url = _make_container_portal_url(sub_id, rg, storage_account, container)
+
         layers.append(
             {
                 "name": spec.name,
@@ -354,14 +471,15 @@ def collect_system_health_snapshot(
                 "refreshFrequency": spec.refresh_frequency,
                 "nextExpectedUpdate": _iso(next_expected) if next_expected else None,
                 "dataVersion": str(layer_version) if layer_version is not None else None,
+                "portalUrl": portal_url,
                 "domains": domain_items,
             }
         )
         alerts.extend(_layer_alerts(now, layer_name=spec.name, status=layer_status, last_updated=layer_last_updated, error=None))
 
     # Optional Phase 2: Azure control-plane probes (Container Apps + Jobs + Executions).
-    subscription_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
-    resource_group = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
+    subscription_id = sub_id
+    resource_group = rg
     app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS", ""))
     job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
 

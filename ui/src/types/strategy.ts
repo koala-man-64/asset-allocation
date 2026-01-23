@@ -127,6 +127,9 @@ export interface DataDomain {
   lastUpdated: string | null;
   status: 'healthy' | 'stale' | 'error';
   version?: number | null;
+  description?: string;
+  portalUrl?: string;
+  jobUrl?: string;
 }
 
 export interface DataLayer {
@@ -139,6 +142,7 @@ export interface DataLayer {
   refreshFrequency: string;
   nextExpectedUpdate?: string;
   domains?: DataDomain[];
+  portalUrl?: string;
 }
 
 export interface JobRun {

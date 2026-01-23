@@ -1,5 +1,5 @@
-// System Status & Health Monitoring Page
 
+import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
@@ -18,7 +18,9 @@ import {
     Loader2,
     AlertCircle,
     Info,
-    TrendingUp
+    TrendingUp,
+    ExternalLink,
+    Folder
 } from 'lucide-react';
 
 export function SystemStatusPage() {
@@ -394,11 +396,24 @@ export function SystemStatusPage() {
                             </TableHeader>
                             <TableBody>
                                 {dataLayers.map((layer, idx) => (
-                                    <>
-                                        <TableRow key={idx} className={layer.domains?.length ? "border-b-0" : ""}>
+                                    <React.Fragment key={idx}>
+                                        <TableRow className={layer.domains?.length ? "border-b-0" : ""}>
                                             <TableCell>
                                                 <div>
-                                                    <div className="font-medium">{layer.name}</div>
+                                                    <div className="font-medium flex items-center gap-1.5">
+                                                        {layer.name}
+                                                        {layer.portalUrl && (
+                                                            <a
+                                                                href={layer.portalUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-muted-foreground hover:text-primary transition-colors"
+                                                                title="View Container in Azure Portal"
+                                                            >
+                                                                <ExternalLink className="h-4 w-4" />
+                                                            </a>
+                                                        )}
+                                                    </div>
                                                     <div className="text-xs text-muted-foreground">{layer.description}</div>
                                                 </div>
                                             </TableCell>
@@ -424,29 +439,82 @@ export function SystemStatusPage() {
                                                 {layer.nextExpectedUpdate ? formatTimestamp(layer.nextExpectedUpdate) : '-'}
                                             </TableCell>
                                         </TableRow>
-                                        {(layer.domains || []).map((domain: any, dIdx: number) => (
-                                            <TableRow key={`${idx}-d-${dIdx}`} className="bg-muted/30 border-t-0">
-                                                <TableCell className="pl-6">
-                                                    <div className="relatve flex items-center gap-2">
-                                                        <div className="w-2 h-px bg-border" />
-                                                        <span className="text-sm text-muted-foreground capitalize">{domain.name}</span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-2 scale-90 origin-left">
-                                                        {getStatusIcon(domain.status)}
-                                                        <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">
-                                                            {domain.status}
-                                                        </span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="font-mono text-xs text-muted-foreground">
-                                                    {formatTimestamp(domain.lastUpdated)}
-                                                </TableCell>
-                                                <TableCell colSpan={4} />
-                                            </TableRow>
-                                        ))}
-                                    </>
+                                        {(layer.domains || []).map((domain: any, dIdx: number) => {
+                                            const jobName = domain.jobUrl ? domain.jobUrl.split('/jobs/')[1]?.split('/')[0] : null;
+                                            const latestJob = jobName ? recentJobs.find(j => j.jobName === jobName) : null;
+
+                                            return (
+                                                <TableRow key={`${idx}-d-${dIdx}`} className="bg-muted/30 border-t-0 group">
+                                                    <TableCell className="pl-6">
+                                                        <div className="relatve flex items-center gap-2">
+                                                            <div className="w-2 h-px bg-border flex-shrink-0" />
+                                                            <div className="flex flex-col">
+                                                                <span className="text-sm text-muted-foreground capitalize">{domain.name}</span>
+                                                                {domain.description && (
+                                                                    <span className="text-[10px] text-muted-foreground/70">{domain.description}</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                {domain.portalUrl && (
+                                                                    <a
+                                                                        href={domain.portalUrl}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="text-muted-foreground hover:text-primary transition-colors"
+                                                                        title="View Folder in Azure Storage"
+                                                                    >
+                                                                        <Folder className="h-4 w-4" />
+                                                                    </a>
+                                                                )}
+                                                                {domain.jobUrl && (
+                                                                    <a
+                                                                        href={domain.jobUrl}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="text-muted-foreground hover:text-primary transition-colors"
+                                                                        title="View Job in Azure Portal"
+                                                                    >
+                                                                        <PlayCircle className="h-4 w-4" />
+                                                                    </a>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <div className="flex items-center gap-2 scale-90 origin-left">
+                                                            {getStatusIcon(domain.status)}
+                                                            <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">
+                                                                {domain.status}
+                                                            </span>
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell className="font-mono text-xs text-muted-foreground">
+                                                        {formatTimestamp(domain.lastUpdated)}
+                                                    </TableCell>
+                                                    <TableCell colSpan={4}>
+                                                        {latestJob && (
+                                                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                                                <div className="flex items-center gap-1.5" title={`Job: ${latestJob.jobName}`}>
+                                                                    <span className="text-muted-foreground/70">Last Job:</span>
+                                                                    {getStatusIcon(latestJob.status)}
+                                                                    <span className={
+                                                                        latestJob.status === 'success' ? 'text-green-600' :
+                                                                            latestJob.status === 'failed' ? 'text-red-600' : ''
+                                                                    }>
+                                                                        {latestJob.status}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <Clock className="h-3 w-3" />
+                                                                    {formatTimestamp(latestJob.startTime)}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        })}
+                                    </React.Fragment>
                                 ))}
                             </TableBody>
                         </Table>
