@@ -3,6 +3,7 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { AppProvider } from '@/contexts/AppContext';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { useDataSync } from '@/hooks/useDataQueries';
+import { useRealtime } from '@/hooks/useRealtime';
 
 import { AppHeader } from '@/app/components/layout/AppHeader';
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
@@ -28,6 +29,8 @@ function AppContent() {
 
   // Sync DataService mode with global state
   useDataSync();
+  // Enable real-time updates from backend
+  useRealtime();
 
   return (
     <div className="h-screen flex flex-col bg-background">

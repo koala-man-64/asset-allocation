@@ -12,9 +12,12 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 import yaml
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+
+import asyncio
+from backtest.service.realtime import manager, listen_to_postgres
 
 from backtest.config import BacktestConfig, generate_run_id, validate_config_dict_strict
 from backtest.service.artifacts import download_remote_artifact, list_local_artifacts, list_remote_artifacts
@@ -131,9 +134,19 @@ def create_app() -> FastAPI:
         app.state.store = store
         app.state.manager = manager
         app.state.auth = auth
+        
+        # Start Postgres listener for real-time updates
+        app.state.listener_task = asyncio.create_task(listen_to_postgres(settings))
+        
         try:
             yield
         finally:
+            if hasattr(app.state, "listener_task"):
+                app.state.listener_task.cancel()
+                try:
+                    await app.state.listener_task
+                except asyncio.CancelledError:
+                    pass
             manager.shutdown()
 
     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
@@ -260,6 +273,16 @@ def create_app() -> FastAPI:
         if result.refresh_error:
             headers["X-System-Health-Stale"] = "1"
         return JSONResponse(result.value, headers=headers)
+
+    @app.websocket("/ws/updates")
+    async def websocket_endpoint(websocket: WebSocket):
+        await manager.connect(websocket)
+        try:
+            while True:
+                # Keep the connection open and listen for any client messages (ping/pong)
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            manager.disconnect(websocket)
 
     @app.post("/backtests", response_model=BacktestSubmitResponse)
     def submit_backtest(
