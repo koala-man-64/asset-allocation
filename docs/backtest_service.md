@@ -59,7 +59,7 @@ export BACKTEST_OIDC_REQUIRED_ROLES=""
 # Optional: override default Content-Security-Policy header:
 export BACKTEST_CSP=""
 
-uvicorn asset_allocation.backtest.service.app:app --reload --port 8000
+uvicorn backtest.service.app:app --reload --port 8000
 ```
 
 ## API

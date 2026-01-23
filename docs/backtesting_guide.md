@@ -161,17 +161,17 @@ Run the backtest using the Python module CLI from the project root.
 
 **Basic Command:**
 ```bash
-python -m asset_allocation.backtest.cli --config backtests/my_strategy.yaml
+python -m backtest.cli --config backtests/my_strategy.yaml
 ```
 
 **Custom Run ID (Overrides YAML):**
 ```bash
-python -m asset_allocation.backtest.cli --config backtests/my_strategy.yaml --run-id "TEST-RUN-v2"
+python -m backtest.cli --config backtests/my_strategy.yaml --run-id "TEST-RUN-v2"
 ```
 
 **Output Directory (Overrides YAML):**
 ```bash
-python -m asset_allocation.backtest.cli --config backtests/my_strategy.yaml --output-dir ./my_results
+python -m backtest.cli --config backtests/my_strategy.yaml --output-dir ./my_results
 ```
 
 ## 4. Evaluating Results

@@ -22,6 +22,7 @@ export interface IDataService {
     getExecutionMetrics(strategyId: string): Promise<ExecutionMetrics>;
 }
 
+// Mock implementation
 class MockDataService implements IDataService {
     async getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
         await new Promise(r => setTimeout(r, 100));
