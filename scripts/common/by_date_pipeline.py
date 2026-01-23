@@ -23,9 +23,11 @@ def _get_materialize_year_month(now: Optional[datetime] = None) -> str:
       - Otherwise default to yesterday's year-month in UTC.
     """
 
-    override = os.environ.get("MATERIALIZE_YEAR_MONTH", "").strip()
-    if override:
-        return override
+    override_raw = os.environ.get("MATERIALIZE_YEAR_MONTH")
+    if override_raw:
+        override = override_raw.strip()
+        if override:
+            return override
 
     now_utc = now or datetime.now(timezone.utc)
     return (now_utc - timedelta(days=1)).strftime("%Y-%m")
@@ -92,4 +94,3 @@ def run_partner_then_by_date(
         year_month = _get_materialize_year_month()
         mdc.write_line(f"Running by-date materialization for job={job_name} year_month={year_month}...")
         return by_date_main(["--year-month", year_month])
-

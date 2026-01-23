@@ -19,8 +19,12 @@ class AzureBlobStoreConfig:
 
     @staticmethod
     def from_env() -> "AzureBlobStoreConfig":
-        account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip() or None
-        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip() or None
+        account_name_raw = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+        account_name = account_name_raw.strip() if account_name_raw and account_name_raw.strip() else None
+        connection_string_raw = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        connection_string = (
+            connection_string_raw.strip() if connection_string_raw and connection_string_raw.strip() else None
+        )
         return AzureBlobStoreConfig(account_name=account_name, connection_string=connection_string)
 
 

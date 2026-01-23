@@ -91,6 +91,13 @@ export interface RollingMetricsResponse {
   truncated: boolean;
 }
 
+export interface JobTriggerResponse {
+  jobName: string;
+  status: string;
+  executionId?: string | null;
+  executionName?: string | null;
+}
+
 export interface TradeResponse {
   execution_date: string;
   symbol: string;
@@ -268,5 +275,10 @@ export const backtestApi = {
 
   async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
     return requestJson<SystemHealth>('/system/health', { signal });
+  },
+
+  async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
+    const encoded = encodeURIComponent(jobName);
+    return requestJson<JobTriggerResponse>(`/system/jobs/${encoded}/run`, { method: 'POST', signal });
   },
 };

@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -46,6 +47,7 @@ from backtest.service.security import (
     validate_run_id,
 )
 from backtest.service.settings import ServiceSettings
+from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 
@@ -108,6 +110,12 @@ def _get_auth(app: FastAPI) -> AuthManager:
 
 
 def create_app() -> FastAPI:
+    def _require_env(name: str) -> str:
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            raise ValueError(f"{name} is required.")
+        return raw.strip()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         settings = ServiceSettings.from_env()
@@ -152,16 +160,17 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
 
     def _system_health_ttl_seconds() -> float:
-        raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "").strip()
-        if not raw:
-            return 30.0
+        raw = _require_env("SYSTEM_HEALTH_TTL_SECONDS")
         try:
             ttl = float(raw)
-        except ValueError:
-            return 30.0
-        return ttl if ttl > 0 else 30.0
+        except ValueError as exc:
+            raise ValueError(f"Invalid float for SYSTEM_HEALTH_TTL_SECONDS={raw!r}") from exc
+        if ttl <= 0:
+            raise ValueError("SYSTEM_HEALTH_TTL_SECONDS must be > 0.")
+        return ttl
 
     app.state.system_health_cache = TtlCache(ttl_seconds=_system_health_ttl_seconds())
+    content_security_policy = _require_env("BACKTEST_CSP")
 
     def _prefer_adls_reads() -> bool:
         settings = _get_settings(app)
@@ -197,20 +206,7 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-        csp = os.environ.get("BACKTEST_CSP", "").strip()
-        if not csp:
-            csp = (
-                "default-src 'self'; "
-                "base-uri 'none'; "
-                "frame-ancestors 'none'; "
-                "object-src 'none'; "
-                "img-src 'self' data: https:; "
-                "script-src 'self'; "
-                "style-src 'self' 'unsafe-inline'; "
-                "font-src 'self' data: https:; "
-                "connect-src 'self' https:"
-            )
-        response.headers.setdefault("Content-Security-Policy", csp.strip())
+        response.headers.setdefault("Content-Security-Policy", content_security_policy)
 
         return response
 
@@ -253,7 +249,8 @@ def create_app() -> FastAPI:
 
         include_ids = False
         if settings.auth_mode != "none":
-            raw = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS", "").strip().lower()
+            raw_env = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS")
+            raw = raw_env.strip().lower() if raw_env else ""
             include_ids = raw in {"1", "true", "t", "yes", "y", "on"}
 
         cache: TtlCache[Dict[str, Any]] = app.state.system_health_cache
@@ -273,6 +270,72 @@ def create_app() -> FastAPI:
         if result.refresh_error:
             headers["X-System-Health-Stale"] = "1"
         return JSONResponse(result.value, headers=headers)
+
+    @app.post("/system/jobs/{job_name}/run")
+    def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
+        _require_auth(request)
+
+        subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+        subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+        resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+        resource_group = resource_group_raw.strip() if resource_group_raw else ""
+
+        job_names_raw = os.environ.get("SYSTEM_HEALTH_ARM_JOBS")
+        job_allowlist = [item.strip() for item in (job_names_raw or "").split(",") if item.strip()]
+
+        if not (subscription_id and resource_group and job_allowlist):
+            raise HTTPException(status_code=503, detail="Azure job triggering is not configured.")
+
+        resolved = (job_name or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?", resolved or ""):
+            raise HTTPException(status_code=400, detail="Invalid job name.")
+
+        if resolved not in job_allowlist:
+            raise HTTPException(status_code=404, detail="Job not found.")
+
+        api_version_env = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION")
+        api_version = api_version_env.strip() if api_version_env else ""
+        if not api_version:
+            api_version = ArmConfig.api_version
+
+        timeout_env = os.environ.get("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
+        try:
+            timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
+        except ValueError:
+            timeout_seconds = 5.0
+
+        cfg = ArmConfig(
+            subscription_id=subscription_id,
+            resource_group=resource_group,
+            api_version=api_version,
+            timeout_seconds=timeout_seconds,
+        )
+
+        try:
+            with AzureArmClient(cfg) as arm:
+                job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=resolved)
+                start_url = f"{job_url}/start"
+                payload = arm.post_json(start_url)
+        except Exception as exc:
+            logger.exception("Failed to trigger Azure job run: job=%s", resolved)
+            raise HTTPException(status_code=502, detail=f"Failed to trigger job: {exc}") from exc
+
+        execution_id: Optional[str] = None
+        execution_name: Optional[str] = None
+        if isinstance(payload, dict):
+            execution_id = str(payload.get("id") or "") or None
+            execution_name = str(payload.get("name") or "") or None
+
+        logger.info("Triggered Azure job run: job=%s execution=%s", resolved, execution_name or execution_id or "?")
+        return JSONResponse(
+            {
+                "jobName": resolved,
+                "status": "queued",
+                "executionId": execution_id,
+                "executionName": execution_name,
+            },
+            status_code=202,
+        )
 
     @app.websocket("/ws/updates")
     async def websocket_endpoint(websocket: WebSocket):
@@ -783,16 +846,16 @@ def create_app() -> FastAPI:
     def ui_runtime_config() -> Response:
         settings = _get_settings(app)
 
-        backtest_api_base_url = os.environ.get("BACKTEST_UI_API_BASE_URL", "").strip()
-        ui_mode = _normalize_ui_auth_mode(os.environ.get("BACKTEST_UI_AUTH_MODE", ""), settings)
+        backtest_api_base_url = (os.environ.get("BACKTEST_UI_API_BASE_URL") or "").strip()
+        ui_mode = _normalize_ui_auth_mode(os.environ.get("BACKTEST_UI_AUTH_MODE") or "", settings)
 
-        oidc_client_id = os.environ.get("BACKTEST_UI_OIDC_CLIENT_ID", "").strip()
-        oidc_authority = os.environ.get("BACKTEST_UI_OIDC_AUTHORITY", "").strip()
+        oidc_client_id = (os.environ.get("BACKTEST_UI_OIDC_CLIENT_ID") or "").strip()
+        oidc_authority = (os.environ.get("BACKTEST_UI_OIDC_AUTHORITY") or "").strip()
         if not oidc_authority:
             issuer = (settings.oidc_issuer or "").strip()
             oidc_authority = issuer.removesuffix("/v2.0") if issuer else ""
 
-        oidc_scopes = _parse_ui_scopes(os.environ.get("BACKTEST_UI_OIDC_SCOPES", ""))
+        oidc_scopes = _parse_ui_scopes(os.environ.get("BACKTEST_UI_OIDC_SCOPES") or "")
 
         if ui_mode == "oidc" and not (oidc_client_id and oidc_authority):
             ui_mode = "none"
@@ -818,7 +881,7 @@ def create_app() -> FastAPI:
         )
 
     def _find_ui_dist_dir() -> Optional[Path]:
-        raw = os.environ.get("BACKTEST_UI_DIST_DIR", "").strip()
+        raw = (os.environ.get("BACKTEST_UI_DIST_DIR") or "").strip()
         candidates: list[Path] = []
         if raw:
             candidates.append(Path(raw).expanduser())

@@ -158,7 +158,8 @@ def _get_market_feature_tickers(
 def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
     from scripts.common.pipeline import DataPaths
 
-    by_date_path = os.environ.get("RANKING_MARKET_BY_DATE_DELTA_PATH", "").strip().lstrip("/")
+    by_date_path_raw = os.environ.get("RANKING_MARKET_BY_DATE_DELTA_PATH")
+    by_date_path = by_date_path_raw.strip().lstrip("/") if by_date_path_raw else None
     if by_date_path:
         by_date = load_delta(cfg.AZURE_CONTAINER_MARKET, by_date_path)
         if by_date is not None and not by_date.empty:
@@ -295,7 +296,8 @@ def _log_strategy_configuration(strategy: AbstractStrategy, ranking_container: s
     for source_name in strategy.sources_used:
         source = SOURCE_LOOKUP.get(source_name, {})
         container = source.get("container")
-        base_path = os.environ.get(source.get("path_env", ""))
+        path_env = source.get("path_env")
+        base_path = os.environ.get(path_env) if path_env else None
         suffix = "/<symbol>" if source.get("per_symbol") else ""
         source_specs.append(f"{source_name}={_format_value(container)}/{_format_value(base_path)}{suffix}")
 

@@ -83,7 +83,7 @@ def test_service_rejects_local_data_when_disabled(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
-    monkeypatch.delenv("BACKTEST_ALLOW_LOCAL_DATA", raising=False)
+    monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "false")
     monkeypatch.delenv("BACKTEST_ALLOWED_DATA_DIRS", raising=False)
 
     app = create_app()
@@ -180,7 +180,7 @@ def test_service_serves_ui_when_dist_dir_present(tmp_path: Path, monkeypatch: py
 def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
-    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
 
     app = create_app()
@@ -194,7 +194,7 @@ def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: p
 def test_service_honors_custom_api_key_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
-    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
     monkeypatch.setenv("BACKTEST_API_KEY_HEADER", "X-Backtest-Key")
 
@@ -427,3 +427,71 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
         summary2 = client2.get(f"/backtests/{run_id}/summary")
         assert summary2.status_code == 200
         assert summary2.json()["run_id"] == run_id
+
+
+def test_service_job_trigger_requires_arm_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_JOBS", raising=False)
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post("/system/jobs/platinum-ranking-job/run")
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["detail"].lower()
+
+
+def test_service_job_trigger_rejects_unknown_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "platinum-ranking-job")
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post("/system/jobs/unknown-job/run")
+        assert resp.status_code == 404
+
+
+def test_service_job_trigger_starts_allowed_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "platinum-ranking-job")
+
+    calls: List[str] = []
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            return (
+                f"https://management.azure.com/subscriptions/{self.cfg.subscription_id}"
+                f"/resourceGroups/{self.cfg.resource_group}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def post_json(self, url: str, *, params=None, json_body=None):  # type: ignore[no-untyped-def]
+            calls.append(url)
+            return {"id": "execution-id", "name": "execution-name"}
+
+    monkeypatch.setattr("backtest.service.app.AzureArmClient", FakeAzureArmClient)
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.post("/system/jobs/platinum-ranking-job/run")
+        assert resp.status_code == 202
+        payload = resp.json()
+        assert payload["jobName"] == "platinum-ranking-job"
+        assert payload["status"] == "queued"
+        assert payload["executionId"] == "execution-id"
+        assert payload["executionName"] == "execution-name"
+
+    assert calls == [
+        "https://management.azure.com/subscriptions/sub-123/resourceGroups/rg-123/providers/Microsoft.App/jobs/platinum-ranking-job/start"
+    ]

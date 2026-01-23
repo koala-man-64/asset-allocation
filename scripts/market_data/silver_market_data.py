@@ -28,7 +28,7 @@ def process_file(blob_name):
         df_new = pd.read_csv(BytesIO(raw_bytes))
     except Exception as e:
         mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
-        return
+        return False
 
     # 2. Clean/Normalize
     if "Adj Close" in df_new.columns:
@@ -70,8 +70,14 @@ def process_file(blob_name):
     df_merged = df_merged.drop(columns=[c for c in cols_to_drop if c in df_merged.columns])
 
     # 7. Write to Silver
-    delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
+    try:
+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
+    except Exception as e:
+        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
+        return False
+
     mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+    return True
 
 def main():
     mdc.log_environment_diagnostics()
@@ -93,15 +99,23 @@ def main():
         blob_list = [b for b in blob_list if any(s in b for s in cfg.DEBUG_SYMBOLS)]
 
     mdc.write_line(f"Found {len(blob_list)} files to process.")
-    
+
+    processed = 0
+    failed = 0
     for blob_name in blob_list:
-        process_file(blob_name)
+        if process_file(blob_name):
+            processed += 1
+        else:
+            failed += 1
+
+    mdc.write_line(f"Silver market job complete: processed={processed} failed={failed}")
+    return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
     from scripts.common.by_date_pipeline import run_partner_then_by_date
     from scripts.market_data.materialize_silver_market_by_date import main as by_date_main
 
-    job_name = "bronze-market-job-silver"
+    job_name = "silver-market-job"
     raise SystemExit(
         run_partner_then_by_date(
             job_name=job_name,

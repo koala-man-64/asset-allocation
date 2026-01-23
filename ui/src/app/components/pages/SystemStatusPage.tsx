@@ -4,9 +4,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 import { Badge } from '@/app/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { Button } from '@/app/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { useLiveSystemHealthQuery } from '@/hooks/useDataQueries';
 import { useAuth } from '@/contexts/AuthContext';
-import { ApiError } from '@/services/backtestApi';
+import { ApiError, backtestApi } from '@/services/backtestApi';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { useState } from 'react';
 import {
     Activity,
     Database,
@@ -15,6 +19,7 @@ import {
     XCircle,
     Clock,
     PlayCircle,
+    Play,
     Loader2,
     AlertCircle,
     Info,
@@ -24,6 +29,8 @@ import {
 export function SystemStatusPage() {
     const auth = useAuth();
     const { data: systemHealth, isLoading: loading, error } = useLiveSystemHealthQuery();
+    const queryClient = useQueryClient();
+    const [triggeringJob, setTriggeringJob] = useState<string | null>(null);
 
     if (loading) {
         return (
@@ -483,7 +490,43 @@ export function SystemStatusPage() {
                                 {recentJobs.map((job, idx) => (
                                     <TableRow key={idx}>
                                         <TableCell>
-                                            <div className="font-medium">{job.jobName}</div>
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="font-medium">{job.jobName}</div>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-7 w-7"
+                                                            disabled={Boolean(triggeringJob)}
+                                                            onClick={async () => {
+                                                                setTriggeringJob(job.jobName);
+                                                                try {
+                                                                    await backtestApi.triggerJob(job.jobName);
+                                                                    toast.success(`Triggered ${job.jobName}`);
+                                                                    void queryClient.invalidateQueries({ queryKey: ['liveSystemHealth'] });
+                                                                } catch (err) {
+                                                                    const message =
+                                                                        err instanceof ApiError
+                                                                            ? `${err.status}: ${err.message}`
+                                                                            : (err as any)?.message || String(err);
+                                                                    toast.error(`Failed to trigger ${job.jobName}: ${message}`);
+                                                                } finally {
+                                                                    setTriggeringJob(null);
+                                                                }
+                                                            }}
+                                                            aria-label={`Run ${job.jobName}`}
+                                                        >
+                                                            {triggeringJob === job.jobName ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <Play className="h-4 w-4" />
+                                                            )}
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="left">Run job</TooltipContent>
+                                                </Tooltip>
+                                            </div>
                                             {(job.errors || job.warnings) && (
                                                 <div className="text-xs mt-1 space-y-0.5">
                                                     {job.errors?.map((err, i) => (

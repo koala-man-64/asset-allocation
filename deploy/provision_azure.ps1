@@ -11,12 +11,7 @@ param(
     "silver",
     "gold",
     "platinum",
-    "ranking-data",
-    "common",
-    "market-data",
-    "finance-data",
-    "earnings-data",
-    "price-target-data"
+    "common"
   ),
 
   [string]$AcrName = "assetallocationacr",

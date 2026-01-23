@@ -5,6 +5,7 @@ import os
 import sys
 import re
 import random
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ import nasdaqdatalink
 # Local imports
 from scripts.common.blob_storage import BlobStorageClient
 from azure.storage.blob import BlobLeaseClient
+from azure.core.exceptions import HttpResponseError, ResourceExistsError
 from scripts.common import config_shared as cfg 
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
@@ -543,6 +545,21 @@ class JobLock:
         self.lock_blob_name = f"locks/{job_name}.lock"
         self.lease_client = None
         self.blob_client = None
+        self._renew_stop = threading.Event()
+        self._renew_thread: Optional[threading.Thread] = None
+
+    def _renew_loop(self) -> None:
+        interval = max(1, int(self.lease_duration * 0.5))
+        while not self._renew_stop.wait(timeout=interval):
+            if not self.lease_client:
+                continue
+            try:
+                self.lease_client.renew()
+                write_line(f"Lock renewed for {self.job_name}. Lease ID: {self.lease_client.id}")
+            except Exception as exc:
+                write_error(f"Lock renewal failed for {self.job_name}: {exc}")
+                # Fail fast: if we can't renew, we may lose exclusivity and corrupt shared state.
+                os._exit(1)
 
     def __enter__(self):
         write_line(f"Acquiring lock for {self.job_name}...")
@@ -568,23 +585,40 @@ class JobLock:
         # We need to access the underlying ContainerClient to get a BlobClient.
         
         try:
-             # Access internal container client
-             container_client = common_storage_client.container_client
-             self.blob_client = container_client.get_blob_client(self.lock_blob_name)
-             self.lease_client = BlobLeaseClient(self.blob_client)
-             
-             # 3. Acquire Lease
-             self.lease_client.acquire(lease_duration=self.lease_duration)
-             write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
-             return self
-             
-        except Exception as e:
-            # If acquire fails (Conflict/409), it means locked.
+            # Access internal container client
+            container_client = common_storage_client.container_client
+            self.blob_client = container_client.get_blob_client(self.lock_blob_name)
+            self.lease_client = BlobLeaseClient(self.blob_client)
+
+            # 3. Acquire Lease
+            self.lease_client.acquire(lease_duration=self.lease_duration)
+            write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
+
+            # 4. Keep lease alive for long-running jobs
+            self._renew_stop.clear()
+            self._renew_thread = threading.Thread(
+                target=self._renew_loop,
+                name=f"job-lock-renew:{self.job_name}",
+                daemon=True,
+            )
+            self._renew_thread.start()
+            return self
+
+        except (ResourceExistsError, HttpResponseError) as e:
+            status_code = getattr(e, "status_code", None)
+            if status_code == 409:
+                write_warning(f"Lock already held for {self.job_name}. Skipping execution.")
+                raise SystemExit(0)
             write_error(f"Failed to acquire lock for {self.job_name}: {e}")
-            write_line("Another instance is likely running. Exiting.")
-            sys.exit(0) # Graceful exit
+            raise
+        except Exception as e:
+            write_error(f"Failed to acquire lock for {self.job_name}: {e}")
+            raise
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self._renew_stop.set()
+        if self._renew_thread and self._renew_thread.is_alive():
+            self._renew_thread.join(timeout=2)
         if self.lease_client:
             try:
                 write_line(f"Releasing lock for {self.job_name}...")

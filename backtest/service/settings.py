@@ -20,18 +20,19 @@ def _parse_bool(value: str) -> bool:
         return False
     raise ValueError(f"Invalid boolean value: {value!r}")
 
-
-def _get_bool(name: str, default: bool) -> bool:
+def _require_env(name: str) -> str:
     raw = os.environ.get(name)
     if raw is None or not raw.strip():
-        return default
-    return _parse_bool(raw)
+        raise ValueError(f"{name} is required.")
+    return raw
 
 
-def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 256) -> int:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
+def _require_bool(name: str) -> bool:
+    return _parse_bool(_require_env(name))
+
+
+def _require_int(name: str, *, min_value: int = 1, max_value: int = 256) -> int:
+    raw = _require_env(name)
     try:
         parsed = int(raw)
     except ValueError as exc:
@@ -41,18 +42,19 @@ def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 25
     return parsed
 
 
-def _split_csv(value: str) -> List[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
+def _split_csv(value: Optional[str]) -> List[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
 def _get_optional_str(name: str) -> Optional[str]:
-    raw = os.environ.get(name, "")
-    value = raw.strip()
+    raw = os.environ.get(name)
+    value = raw.strip() if raw else ""
     return value or None
 
 
 def _get_path_list(name: str) -> List[Path]:
-    raw = os.environ.get(name, "").strip()
+    raw_env = os.environ.get(name)
+    raw = raw_env.strip() if raw_env else ""
     if not raw:
         return []
     paths = []
@@ -67,18 +69,8 @@ def _get_path_list(name: str) -> List[Path]:
 
 
 def _get_container_allowlist() -> List[str]:
-    explicit = os.environ.get("BACKTEST_ADLS_CONTAINER_ALLOWLIST", "").strip()
-    if explicit:
-        return _split_csv(explicit)
-
-    defaults = [
-        "bronze",
-        "silver",
-        "gold",
-        "platinum",
-        "ranking-data",
-        "common",
-    ]
+    explicit = _require_env("BACKTEST_ADLS_CONTAINER_ALLOWLIST").strip()
+    allowlist = _split_csv(explicit)
     env_names = [
         "AZURE_CONTAINER_MARKET",
         "AZURE_CONTAINER_FINANCE",
@@ -91,13 +83,14 @@ def _get_container_allowlist() -> List[str]:
         "AZURE_CONTAINER_GOLD",
     ]
     for name in env_names:
-        value = os.environ.get(name, "").strip()
+        value_raw = os.environ.get(name)
+        value = value_raw.strip() if value_raw else ""
         if value:
-            defaults.append(value)
+            allowlist.append(value)
 
     seen = set()
     ordered = []
-    for item in defaults:
+    for item in allowlist:
         if item and item not in seen:
             ordered.append(item)
             seen.add(item)
@@ -105,7 +98,7 @@ def _get_container_allowlist() -> List[str]:
 
 
 def _get_run_store_mode() -> RunStoreMode:
-    raw = os.environ.get("BACKTEST_RUN_STORE_MODE", "sqlite").strip().lower()
+    raw = _require_env("BACKTEST_RUN_STORE_MODE").strip().lower()
     if raw in {"sqlite", "local"}:
         return "sqlite"
     if raw in {"adls", "blob"}:
@@ -150,47 +143,33 @@ class ServiceSettings:
 
     @staticmethod
     def from_env() -> "ServiceSettings":
-        output_base_dir = Path(os.environ.get("BACKTEST_OUTPUT_DIR", "./backtest_results")).expanduser()
+        output_base_dir = Path(_require_env("BACKTEST_OUTPUT_DIR")).expanduser()
         if not output_base_dir.is_absolute():
             output_base_dir = (Path.cwd() / output_base_dir).resolve(strict=False)
         else:
             output_base_dir = output_base_dir.resolve(strict=False)
         output_base_dir.mkdir(parents=True, exist_ok=True)
 
-        db_path_raw = os.environ.get("BACKTEST_DB_PATH", "").strip()
-        if db_path_raw:
-            db_path = Path(db_path_raw).expanduser()
-            if not db_path.is_absolute():
-                db_path = (Path.cwd() / db_path).resolve(strict=False)
-            else:
-                db_path = db_path.resolve(strict=False)
+        db_path_raw = _require_env("BACKTEST_DB_PATH").strip()
+        db_path = Path(db_path_raw).expanduser()
+        if not db_path.is_absolute():
+            db_path = (Path.cwd() / db_path).resolve(strict=False)
         else:
-            db_path = output_base_dir / "runs.sqlite3"
+            db_path = db_path.resolve(strict=False)
 
-        max_concurrent_runs = _get_int("BACKTEST_MAX_CONCURRENT", 1, min_value=1, max_value=64)
+        max_concurrent_runs = _require_int("BACKTEST_MAX_CONCURRENT", min_value=1, max_value=64)
         api_key = os.environ.get("BACKTEST_API_KEY") or None
-        api_key_header = os.environ.get("BACKTEST_API_KEY_HEADER", "X-API-Key").strip() or "X-API-Key"
+        api_key_header = _require_env("BACKTEST_API_KEY_HEADER").strip()
+        if not api_key_header:
+            raise ValueError("BACKTEST_API_KEY_HEADER must not be empty.")
 
         oidc_issuer = _get_optional_str("BACKTEST_OIDC_ISSUER")
-        oidc_audience = _split_csv(_get_optional_str("BACKTEST_OIDC_AUDIENCE") or "")
+        oidc_audience = _split_csv(_get_optional_str("BACKTEST_OIDC_AUDIENCE"))
         oidc_jwks_url = _get_optional_str("BACKTEST_OIDC_JWKS_URL")
-        oidc_required_scopes = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_SCOPES") or "")
-        oidc_required_roles = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_ROLES") or "")
+        oidc_required_scopes = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_SCOPES"))
+        oidc_required_roles = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_ROLES"))
 
-        auth_mode_raw = _get_optional_str("BACKTEST_AUTH_MODE")
-        if auth_mode_raw:
-            auth_mode = _parse_auth_mode(auth_mode_raw)
-        else:
-            has_oidc = bool(oidc_issuer and oidc_audience)
-            has_api_key = bool(api_key and str(api_key).strip())
-            if has_oidc and has_api_key:
-                auth_mode = "api_key_or_oidc"
-            elif has_oidc:
-                auth_mode = "oidc"
-            elif has_api_key:
-                auth_mode = "api_key"
-            else:
-                auth_mode = "none"
+        auth_mode = _parse_auth_mode(_require_env("BACKTEST_AUTH_MODE"))
 
         if auth_mode in {"api_key", "api_key_or_oidc"} and not (api_key and str(api_key).strip()):
             if auth_mode == "api_key":
@@ -203,7 +182,7 @@ class ServiceSettings:
             if not oidc_audience:
                 raise ValueError(f"BACKTEST_AUTH_MODE={auth_mode} requires BACKTEST_OIDC_AUDIENCE to be set (csv).")
 
-        allow_local_data = _get_bool("BACKTEST_ALLOW_LOCAL_DATA", False)
+        allow_local_data = _require_bool("BACKTEST_ALLOW_LOCAL_DATA")
         allowed_local_data_dirs = _get_path_list("BACKTEST_ALLOWED_DATA_DIRS")
         if allow_local_data and not allowed_local_data_dirs:
             raise ValueError(
@@ -213,14 +192,14 @@ class ServiceSettings:
         adls_container_allowlist = _get_container_allowlist()
 
         run_store_mode = _get_run_store_mode()
-        adls_runs_dir = os.environ.get("BACKTEST_ADLS_RUNS_DIR", "").strip() or None
+        adls_runs_dir = _get_optional_str("BACKTEST_ADLS_RUNS_DIR")
         if run_store_mode == "adls" and not adls_runs_dir:
             raise ValueError("BACKTEST_RUN_STORE_MODE=adls requires BACKTEST_ADLS_RUNS_DIR to be set.")
         if adls_runs_dir:
             container, _ = parse_container_and_path(adls_runs_dir)
             assert_allowed_container(container, adls_container_allowlist)
 
-        postgres_dsn = os.environ.get("BACKTEST_POSTGRES_DSN", "").strip() or None
+        postgres_dsn = _get_optional_str("BACKTEST_POSTGRES_DSN")
         if run_store_mode == "postgres" and not postgres_dsn:
             raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires BACKTEST_POSTGRES_DSN to be set.")
 

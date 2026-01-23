@@ -79,6 +79,7 @@ jobs:
           RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
+          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
           set -euo pipefail
 
@@ -103,6 +104,7 @@ jobs:
           require_secret RANKING_POSTGRES_DSN
           require_secret BACKTEST_API_KEY
           require_secret BACKTEST_POSTGRES_DSN
+          require_secret BACKTEST_CSP
 
           python3 - <<'PY'
           import os

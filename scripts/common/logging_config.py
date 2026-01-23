@@ -38,11 +38,11 @@ class JsonFormatter(logging.Formatter):
             
         return json.dumps(log_record)
 
-def configure_logging(name: str = "root") -> logging.Logger:
+def configure_logging() -> logging.Logger:
     """
     Configures the root logger based on environment variables.
-    ENV: LOG_FORMAT (JSON | TEXT) - Defaults to TEXT if missing (Safe default)
-    ENV: LOG_LEVEL (DEBUG | INFO | WARNING | ERROR) - Defaults to INFO
+    ENV: LOG_FORMAT (JSON | TEXT) - Required
+    ENV: LOG_LEVEL (DEBUG | INFO | WARNING | ERROR) - Required
     """
     logger = logging.getLogger()
     
@@ -50,10 +50,29 @@ def configure_logging(name: str = "root") -> logging.Logger:
     if logger.handlers:
         return logger
         
-    log_format = os.environ.get("LOG_FORMAT", "TEXT").upper()
-    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
-    
-    level = getattr(logging, log_level_str, logging.INFO)
+    log_format_raw = os.environ.get("LOG_FORMAT")
+    if log_format_raw is None or not log_format_raw.strip():
+        raise ValueError("LOG_FORMAT is required (set to JSON or TEXT).")
+    log_format = log_format_raw.strip().upper()
+
+    log_level_raw = os.environ.get("LOG_LEVEL")
+    if log_level_raw is None or not log_level_raw.strip():
+        raise ValueError("LOG_LEVEL is required (DEBUG|INFO|WARNING|ERROR).")
+    log_level_str = log_level_raw.strip().upper()
+
+    if log_format not in {"JSON", "TEXT"}:
+        raise ValueError(f"Invalid LOG_FORMAT={log_format_raw!r} (expected JSON or TEXT).")
+
+    try:
+        level = getattr(logging, log_level_str)
+    except AttributeError as exc:
+        raise ValueError(
+            f"Invalid LOG_LEVEL={log_level_raw!r} (expected DEBUG|INFO|WARNING|ERROR|CRITICAL)."
+        ) from exc
+    if not isinstance(level, int):
+        raise ValueError(
+            f"Invalid LOG_LEVEL={log_level_raw!r} (expected DEBUG|INFO|WARNING|ERROR|CRITICAL)."
+        )
     logger.setLevel(level)
     
     handler = logging.StreamHandler(sys.stdout)
