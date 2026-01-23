@@ -8,13 +8,13 @@ from typing import Optional
 import pandas as pd
 import pytest
 
-from asset_allocation.backtest.config import BacktestConfig
-from asset_allocation.backtest.constraints import Constraints
-from asset_allocation.backtest.engine import BacktestEngine
-from asset_allocation.backtest.reporter import Reporter
-from asset_allocation.backtest.runner import run_backtest
-from asset_allocation.backtest.sizer import Sizer, TargetWeights
-from asset_allocation.backtest.strategy import Strategy, StrategyDecision
+from backtest.config import BacktestConfig
+from backtest.constraints import Constraints
+from backtest.engine import BacktestEngine
+from backtest.reporter import Reporter
+from backtest.runner import run_backtest
+from backtest.sizer import Sizer, TargetWeights
+from backtest.strategy import Strategy, StrategyDecision
 
 
 def _prices_frame() -> pd.DataFrame:

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from asset_allocation.monitoring import system_health
+from monitoring import system_health
 
 
 class FakeAzureArmClient:

@@ -6,11 +6,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from asset_allocation.backtest.config import BacktestConfig
-from asset_allocation.backtest.models import PortfolioSnapshot
-from asset_allocation.backtest.runner import run_backtest
-from asset_allocation.backtest.sizer import KellySizer
-from asset_allocation.backtest.strategy import StrategyDecision
+from backtest.config import BacktestConfig
+from backtest.models import PortfolioSnapshot
+from backtest.runner import run_backtest
+from backtest.sizer import KellySizer
+from backtest.strategy import StrategyDecision
 
 
 def _dates(start: date, n: int) -> list[date]:

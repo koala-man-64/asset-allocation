@@ -2,8 +2,8 @@
 import pandas as pd
 import pytest
 from datetime import date, timedelta
-from asset_allocation.backtest.strategy import Strategy
-from asset_allocation.backtest.models import PortfolioSnapshot
+from backtest.strategy import Strategy
+from backtest.models import PortfolioSnapshot
 
 class MockStrategy(Strategy):
     """Simple concrete strategy to expose risk methods for testing."""

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from asset_allocation.monitoring.control_plane import collect_jobs_and_executions
+from monitoring.control_plane import collect_jobs_and_executions
 
 
 class FakeArmClient:

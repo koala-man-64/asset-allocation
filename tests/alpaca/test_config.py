@@ -1,6 +1,6 @@
 import pytest
 import yaml
-from asset_allocation.alpaca.config import LiveConfig, validate_live_config_dict_strict
+from alpaca.config import LiveConfig, validate_live_config_dict_strict
 
 def test_config_strict_validation_success():
     data = {
@@ -54,7 +54,7 @@ def test_live_config_from_dict():
 
 def test_execution_config_defaults():
     data = {}
-    from asset_allocation.alpaca.config import ExecutionConfig
+    from alpaca.config import ExecutionConfig
     cfg = ExecutionConfig.from_dict(data)
     assert cfg.allow_fractional_shares is True
     assert cfg.default_order_type == "market"

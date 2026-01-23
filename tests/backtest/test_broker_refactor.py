@@ -4,10 +4,10 @@ from datetime import date
 
 import pytest
 
-from asset_allocation.backtest.broker import SimulatedBroker
-from asset_allocation.backtest.config import BrokerConfig
-from asset_allocation.backtest.models import MarketBar, MarketSnapshot
-from asset_allocation.backtest.portfolio import Portfolio
+from backtest.broker import SimulatedBroker
+from backtest.config import BrokerConfig
+from backtest.models import MarketBar, MarketSnapshot
+from backtest.portfolio import Portfolio
 
 
 def test_broker_tracks_position_state_and_avg_entry_price() -> None:

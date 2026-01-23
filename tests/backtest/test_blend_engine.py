@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from asset_allocation.backtest.blend import normalize_alphas, normalize_exposure, weighted_sum
+from backtest.blend import normalize_alphas, normalize_exposure, weighted_sum
 
 
 def test_normalize_alphas() -> None:

@@ -7,10 +7,10 @@ from typing import Any, Dict, Optional
 import pytest
 from fastapi.testclient import TestClient
 
-from asset_allocation.backtest.service.app import create_app
-from asset_allocation.monitoring.delta_log import find_latest_delta_version
-from asset_allocation.monitoring import system_health
-from asset_allocation.monitoring.ttl_cache import TtlCache
+from backtest.service.app import create_app
+from monitoring.delta_log import find_latest_delta_version
+from monitoring import system_health
+from monitoring.ttl_cache import TtlCache
 
 
 def test_find_latest_delta_version_finds_highest_contiguous() -> None:

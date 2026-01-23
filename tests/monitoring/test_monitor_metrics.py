@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from asset_allocation.monitoring.monitor_metrics import collect_monitor_metrics, parse_metric_thresholds_json
+from monitoring.monitor_metrics import collect_monitor_metrics, parse_metric_thresholds_json
 
 
 class FakeArmClient:

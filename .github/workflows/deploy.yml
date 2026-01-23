@@ -248,7 +248,7 @@ jobs:
         with:
           filters: |
             backtest_api:
-              - "asset_allocation/backtest/**"
+              - "backtest/**"
               - "ui/**"
               - "Dockerfile.backtest_api"
               - "requirements.txt"
