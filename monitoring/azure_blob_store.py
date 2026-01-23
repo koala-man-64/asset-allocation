@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from azure.core.exceptions import ResourceNotFoundError
 
@@ -66,9 +66,9 @@ class AzureBlobStore:
         base = table_path.strip().lstrip("/").rstrip("/")
         return f"{base}/_delta_log/"
 
-    def get_delta_table_last_modified(self, *, container: str, table_path: str) -> Optional[datetime]:
+    def get_delta_table_last_modified(self, *, container: str, table_path: str) -> Tuple[Optional[int], Optional[datetime]]:
         """
-        Returns the last-modified time of the latest Delta commit JSON file for a table.
+        Returns (version, last-modified) of the latest Delta commit JSON file for a table.
 
         This is an efficient probe that avoids listing the entire container by:
         - reading _delta_log/_last_checkpoint (when present) to pick a start version
@@ -95,8 +95,8 @@ class AzureBlobStore:
 
         latest_version = find_latest_delta_version(_commit_exists, start_version=start_version)
         if latest_version is None:
-            return None
+            return None, None
 
         latest_blob = f"{delta_prefix}{latest_version:020d}.json"
-        return self.get_blob_last_modified(container=container, blob_name=latest_blob)
+        return latest_version, self.get_blob_last_modified(container=container, blob_name=latest_blob)
 

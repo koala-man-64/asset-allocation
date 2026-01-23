@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig
@@ -260,40 +260,104 @@ def collect_system_health_snapshot(
     statuses: List[str] = []
 
     for spec in _default_layer_specs():
-        last_updated: Optional[datetime] = None
-        had_error = False
-        err_text: Optional[str] = None
+        layer_last_updated: Optional[datetime] = None
+        had_layer_error = False
         container = spec.container_name()
+        domain_items: List[Dict[str, Any]] = []
 
-        try:
-            candidate_times: List[datetime] = []
-            for blob_name in spec.marker_blobs:
+        # Collect markers (CSV/Blobs)
+        for blob_name in spec.marker_blobs:
+            d_name = os.path.dirname(blob_name) or blob_name
+            try:
                 lm = store.get_blob_last_modified(container=container, blob_name=blob_name)
-                if lm is not None:
-                    candidate_times.append(lm)
-            for table_path in spec.delta_tables:
-                lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
-                if lm is not None:
-                    candidate_times.append(lm)
-            last_updated = max(candidate_times) if candidate_times else None
-        except Exception as exc:
-            had_error = True
-            err_text = str(exc)
-            last_updated = None
+                status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
+                domain_items.append({
+                    "name": d_name.replace("/whitelist.csv", "").replace("-data", ""), # Simple cleanup for UI
+                    "type": "blob",
+                    "path": blob_name,
+                    "lastUpdated": _iso(lm),
+                    "status": status,
+                })
+            except Exception:
+                had_layer_error = True
+                domain_items.append({
+                    "name": d_name,
+                    "type": "blob",
+                    "path": blob_name,
+                    "lastUpdated": None,
+                    "status": "error",
+                })
 
-        status = _compute_layer_status(now, last_updated, max_age_seconds=spec.max_age_seconds, had_error=had_error)
-        statuses.append(status)
+        # Collect Delta tables
+        for table_path in spec.delta_tables:
+            d_name = table_path
+            try:
+                ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
+                status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
+                domain_items.append({
+                    "name": d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", ""),
+                    "type": "delta",
+                    "path": table_path,
+                    "lastUpdated": _iso(lm),
+                    "status": status,
+                    "version": ver if ver is not None else None,
+                })
+            except Exception:
+                had_layer_error = True
+                domain_items.append({
+                    "name": d_name,
+                    "type": "delta",
+                    "path": table_path,
+                    "lastUpdated": None,
+                    "status": "error",
+                    "version": None,
+                })
+
+        # Aggregate layer status
+        valid_times = [
+            datetime.fromisoformat(d["lastUpdated"])
+            for d in domain_items
+            if d["lastUpdated"] and d["status"] != "error"
+        ]
+        layer_last_updated = max(valid_times) if valid_times else None
+        
+        # Calculate next expected update
+        next_expected: Optional[datetime] = None
+        if layer_last_updated and spec.refresh_frequency:
+             # Very simple heuristic for now
+             freq_map = {"Daily": timedelta(days=1), "Hourly": timedelta(hours=1)}
+             delta = freq_map.get(spec.refresh_frequency)
+             if delta:
+                 next_expected = layer_last_updated + delta
+
+        # If any domain is error/stale, layer is that status (worst of)
+        layer_statuses = [d["status"] for d in domain_items]
+        if "error" in layer_statuses:
+            layer_status = "error"
+        elif "stale" in layer_statuses:
+            layer_status = "stale"
+        else:
+            layer_status = _compute_layer_status(now, layer_last_updated, max_age_seconds=spec.max_age_seconds, had_error=had_layer_error)
+
+        statuses.append(layer_status)
+
+        # Use latest version from any domain as layer version (if all match desirable, but taking max is safe proxy for now)
+        layer_versions = [d.get("version") for d in domain_items if d.get("version") is not None]
+        layer_version = max(layer_versions) if layer_versions else None
 
         layers.append(
             {
                 "name": spec.name,
                 "description": spec.description,
-                "lastUpdated": _iso(last_updated),
-                "status": status,
+                "lastUpdated": _iso(layer_last_updated),
+                "status": layer_status,
                 "refreshFrequency": spec.refresh_frequency,
+                "nextExpectedUpdate": _iso(next_expected) if next_expected else None,
+                "dataVersion": str(layer_version) if layer_version is not None else None,
+                "domains": domain_items,
             }
         )
-        alerts.extend(_layer_alerts(now, layer_name=spec.name, status=status, last_updated=last_updated, error=err_text))
+        alerts.extend(_layer_alerts(now, layer_name=spec.name, status=layer_status, last_updated=layer_last_updated, error=None))
 
     # Optional Phase 2: Azure control-plane probes (Container Apps + Jobs + Executions).
     subscription_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()

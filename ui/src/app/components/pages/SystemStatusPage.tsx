@@ -208,7 +208,7 @@ export function SystemStatusPage() {
             </div>
 
             {/* Overall Health Summary */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Card>
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -232,107 +232,140 @@ export function SystemStatusPage() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="space-y-1 text-sm">
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Healthy:</span>
+                        <div className="flex items-center gap-6 text-sm">
+                            <div className="flex items-center gap-2">
+                                <span className="text-muted-foreground w-16">Healthy:</span>
                                 <span className="font-semibold text-green-600">{healthyLayers}</span>
                             </div>
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Stale:</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-muted-foreground w-16">Stale:</span>
                                 <span className="font-semibold text-yellow-600">{staleLayers}</span>
                             </div>
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Error:</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-muted-foreground w-16">Error:</span>
                                 <span className="font-semibold text-red-600">{errorLayers}</span>
                             </div>
                         </div>
                     </CardContent>
                 </Card>
+            </div>
 
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2">
-                            <PlayCircle className="h-4 w-4" />
-                            Recent Jobs
-                        </CardTitle>
+            {/* Split View: Recent Jobs & Alerts */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Recent Job Executions */}
+                <Card className="h-full flex flex-col">
+                    <CardHeader>
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="flex items-center gap-2">
+                                <PlayCircle className="h-5 w-5" />
+                                Recent Jobs
+                            </CardTitle>
+                            <div className="flex gap-3 text-xs">
+                                <span className="flex items-center gap-1">
+                                    <div className="h-2 w-2 rounded-full bg-green-500" />
+                                    {successJobs}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <div className="h-2 w-2 rounded-full bg-blue-500" />
+                                    {runningJobs}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <div className="h-2 w-2 rounded-full bg-red-500" />
+                                    {failedJobs}
+                                </span>
+                            </div>
+                        </div>
+                        <CardDescription>
+                            Execution history (last {recentJobs.length})
+                        </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <div className="space-y-1 text-sm">
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Success:</span>
-                                <span className="font-semibold text-green-600">{successJobs}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Running:</span>
-                                <span className="font-semibold text-blue-600">{runningJobs}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Failed:</span>
-                                <span className="font-semibold text-red-600">{failedJobs}</span>
-                            </div>
+                    <CardContent className="flex-1 overflow-auto">
+                        <div className="rounded-md border">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Job</TableHead>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead>Time</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {recentJobs.slice(0, 5).map((job, idx) => (
+                                        <TableRow key={idx}>
+                                            <TableCell className="py-2">
+                                                <div className="flex flex-col">
+                                                    <span className="font-medium text-xs">{job.jobName}</span>
+                                                    <span className="text-[10px] text-muted-foreground">{job.jobType}</span>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="py-2">
+                                                {getStatusBadge(job.status)}
+                                            </TableCell>
+                                            <TableCell className="py-2 font-mono text-xs">
+                                                {formatTimestamp(job.startTime)}
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                    {recentJobs.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={3} className="text-center text-muted-foreground text-sm py-4">
+                                                No recent jobs found
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
                         </div>
                     </CardContent>
                 </Card>
 
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2">
-                            <AlertCircle className="h-4 w-4" />
-                            Active Alerts
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-semibold">
-                            {unacknowledgedAlerts.length}
+                {/* Active Alerts */}
+                <Card className="h-full flex flex-col">
+                    <CardHeader>
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="flex items-center gap-2">
+                                <AlertCircle className="h-5 w-5" />
+                                Active Alerts
+                            </CardTitle>
+                            {unacknowledgedAlerts.length > 0 && (
+                                <Badge variant="destructive">
+                                    {unacknowledgedAlerts.length} Active
+                                </Badge>
+                            )}
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            {alerts.length} total alerts
-                        </p>
+                        <CardDescription>
+                            System alerts requiring attention
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex-1 overflow-auto">
+                        {unacknowledgedAlerts.length > 0 ? (
+                            <div className="space-y-3">
+                                {unacknowledgedAlerts.map((alert, idx) => (
+                                    <div key={idx} className="flex items-start gap-3 p-3 border rounded-lg">
+                                        <div className="mt-0.5">{getSeverityIcon(alert.severity)}</div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-xs font-semibold">{alert.component}</span>
+                                                <span className="text-[10px] text-muted-foreground ml-auto">
+                                                    {formatTimestamp(alert.timestamp)}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground line-clamp-2">{alert.message}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+                                <CheckCircle2 className="h-8 w-8 mb-2 opacity-20" />
+                                <p className="text-sm">No active alerts</p>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             </div>
 
-            {/* Active Alerts */}
-            {unacknowledgedAlerts.length > 0 && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <AlertCircle className="h-5 w-5" />
-                            Active Alerts
-                        </CardTitle>
-                        <CardDescription>
-                            Unacknowledged system alerts requiring attention
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="space-y-3">
-                            {unacknowledgedAlerts.map((alert, idx) => (
-                                <div key={idx} className="flex items-start gap-3 p-3 border rounded-lg">
-                                    <div className="mt-0.5">{getSeverityIcon(alert.severity)}</div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <Badge variant={
-                                                alert.severity === 'critical' || alert.severity === 'error'
-                                                    ? 'destructive'
-                                                    : alert.severity === 'warning'
-                                                        ? 'secondary'
-                                                        : 'outline'
-                                            }>
-                                                {alert.severity.toUpperCase()}
-                                            </Badge>
-                                            <span className="text-xs text-muted-foreground">{alert.component}</span>
-                                            <span className="text-xs text-muted-foreground ml-auto">
-                                                {formatTimestamp(alert.timestamp)}
-                                            </span>
-                                        </div>
-                                        <p className="text-sm">{alert.message}</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
+
 
             {/* Data Layer Freshness */}
             <Card>
@@ -361,35 +394,59 @@ export function SystemStatusPage() {
                             </TableHeader>
                             <TableBody>
                                 {dataLayers.map((layer, idx) => (
-                                    <TableRow key={idx}>
-                                        <TableCell>
-                                            <div>
-                                                <div className="font-medium">{layer.name}</div>
-                                                <div className="text-xs text-muted-foreground">{layer.description}</div>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex items-center gap-2">
-                                                {getStatusIcon(layer.status)}
-                                                {getStatusBadge(layer.status)}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="font-mono text-sm">
-                                            {formatTimestamp(layer.lastUpdated)}
-                                        </TableCell>
-                                        <TableCell className="font-mono text-xs text-muted-foreground">
-                                            {layer.dataVersion || '-'}
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono">
-                                            {formatRecordCount(layer.recordCount)}
-                                        </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">
-                                            {layer.refreshFrequency}
-                                        </TableCell>
-                                        <TableCell className="font-mono text-xs text-muted-foreground">
-                                            {layer.nextExpectedUpdate ? formatTimestamp(layer.nextExpectedUpdate) : '-'}
-                                        </TableCell>
-                                    </TableRow>
+                                    <>
+                                        <TableRow key={idx} className={layer.domains?.length ? "border-b-0" : ""}>
+                                            <TableCell>
+                                                <div>
+                                                    <div className="font-medium">{layer.name}</div>
+                                                    <div className="text-xs text-muted-foreground">{layer.description}</div>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    {getStatusIcon(layer.status)}
+                                                    {getStatusBadge(layer.status)}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="font-mono text-sm">
+                                                {formatTimestamp(layer.lastUpdated)}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-xs text-muted-foreground">
+                                                {layer.dataVersion || '-'}
+                                            </TableCell>
+                                            <TableCell className="text-right font-mono">
+                                                {formatRecordCount(layer.recordCount)}
+                                            </TableCell>
+                                            <TableCell className="text-sm text-muted-foreground">
+                                                {layer.refreshFrequency}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-xs text-muted-foreground">
+                                                {layer.nextExpectedUpdate ? formatTimestamp(layer.nextExpectedUpdate) : '-'}
+                                            </TableCell>
+                                        </TableRow>
+                                        {(layer.domains || []).map((domain: any, dIdx: number) => (
+                                            <TableRow key={`${idx}-d-${dIdx}`} className="bg-muted/30 border-t-0">
+                                                <TableCell className="pl-6">
+                                                    <div className="relatve flex items-center gap-2">
+                                                        <div className="w-2 h-px bg-border" />
+                                                        <span className="text-sm text-muted-foreground capitalize">{domain.name}</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex items-center gap-2 scale-90 origin-left">
+                                                        {getStatusIcon(domain.status)}
+                                                        <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">
+                                                            {domain.status}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="font-mono text-xs text-muted-foreground">
+                                                    {formatTimestamp(domain.lastUpdated)}
+                                                </TableCell>
+                                                <TableCell colSpan={4} />
+                                            </TableRow>
+                                        ))}
+                                    </>
                                 ))}
                             </TableBody>
                         </Table>
@@ -397,16 +454,66 @@ export function SystemStatusPage() {
                 </CardContent>
             </Card>
 
-            {/* Azure Resource Health */}
-            {showAzureResources && (
+            {/* Scheduled Jobs Status */}
+            {resources.filter(r => r.resourceType === 'Microsoft.App/jobs').length > 0 && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Clock className="h-5 w-5" />
+                            Scheduled Jobs Status
+                        </CardTitle>
+                        <CardDescription>
+                            Configuration and health status of background jobs
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="rounded-md border">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Job Name</TableHead>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead>Last Checked</TableHead>
+                                        <TableHead>Details</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {resources
+                                        .filter(r => r.resourceType === 'Microsoft.App/jobs')
+                                        .map((job, idx) => (
+                                            <TableRow key={idx}>
+                                                <TableCell className="font-medium">{job.name}</TableCell>
+                                                <TableCell>
+                                                    <div className="flex items-center gap-2">
+                                                        {getStatusIcon(job.status)}
+                                                        {getStatusBadge(job.status)}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="font-mono text-xs">
+                                                    {formatTimestamp(job.lastChecked)}
+                                                </TableCell>
+                                                <TableCell className="text-sm text-muted-foreground">
+                                                    {job.details || '-'}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Azure Resource Health (Other) */}
+            {showAzureResources && resources.some(r => r.resourceType !== 'Microsoft.App/jobs') && (
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <Activity className="h-5 w-5" />
-                            Azure Resource Health
+                            Azure Infrastructure Health
                         </CardTitle>
                         <CardDescription>
-                            Control-plane status for configured Azure resources
+                            Control-plane status for container apps and other resources
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -423,29 +530,31 @@ export function SystemStatusPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {resources.map((resource, idx) => (
-                                        <TableRow key={idx}>
-                                            <TableCell className="font-medium">{resource.name}</TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {resource.resourceType}
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-2">
-                                                    {getStatusIcon(resource.status)}
-                                                    {getStatusBadge(resource.status)}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="font-mono text-xs">
-                                                {formatTimestamp(resource.lastChecked)}
-                                            </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {resource.details || '-'}
-                                            </TableCell>
-                                            <TableCell className="font-mono text-xs text-muted-foreground max-w-[240px] truncate">
-                                                {resource.azureId || '-'}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                    {resources
+                                        .filter(r => r.resourceType !== 'Microsoft.App/jobs')
+                                        .map((resource, idx) => (
+                                            <TableRow key={idx}>
+                                                <TableCell className="font-medium">{resource.name}</TableCell>
+                                                <TableCell className="text-sm text-muted-foreground">
+                                                    {resource.resourceType}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex items-center gap-2">
+                                                        {getStatusIcon(resource.status)}
+                                                        {getStatusBadge(resource.status)}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="font-mono text-xs">
+                                                    {formatTimestamp(resource.lastChecked)}
+                                                </TableCell>
+                                                <TableCell className="text-sm text-muted-foreground">
+                                                    {resource.details || '-'}
+                                                </TableCell>
+                                                <TableCell className="font-mono text-xs text-muted-foreground max-w-[240px] truncate">
+                                                    {resource.azureId || '-'}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
                                 </TableBody>
                             </Table>
                         </div>
@@ -453,88 +562,6 @@ export function SystemStatusPage() {
                 </Card>
             )}
 
-            {/* Recent Job Runs */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <PlayCircle className="h-5 w-5" />
-                        Recent Job Executions
-                    </CardTitle>
-                    <CardDescription>
-                        Last 10 job runs across all pipeline components
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="rounded-md border">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Job Name</TableHead>
-                                    <TableHead>Type</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Started</TableHead>
-                                    <TableHead>Duration</TableHead>
-                                    <TableHead className="text-right">Records</TableHead>
-                                    <TableHead>Git SHA</TableHead>
-                                    <TableHead>Triggered By</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {recentJobs.map((job, idx) => (
-                                    <TableRow key={idx}>
-                                        <TableCell>
-                                            <div className="font-medium">{job.jobName}</div>
-                                            {(job.errors || job.warnings) && (
-                                                <div className="text-xs mt-1 space-y-0.5">
-                                                    {job.errors?.map((err, i) => (
-                                                        <div key={i} className="text-red-600 flex items-start gap-1">
-                                                            <XCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                                                            <span>{err}</span>
-                                                        </div>
-                                                    ))}
-                                                    {job.warnings?.map((warn, i) => (
-                                                        <div key={i} className="text-yellow-600 flex items-start gap-1">
-                                                            <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                                                            <span>{warn}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex items-center gap-2">
-                                                {getJobTypeIcon(job.jobType)}
-                                                <span className="text-sm">{job.jobType}</span>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex items-center gap-2">
-                                                {getStatusIcon(job.status)}
-                                                {getStatusBadge(job.status)}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="font-mono text-xs">
-                                            {formatTimestamp(job.startTime)}
-                                        </TableCell>
-                                        <TableCell className="font-mono text-sm">
-                                            {formatDuration(job.duration)}
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono">
-                                            {formatRecordCount(job.recordsProcessed)}
-                                        </TableCell>
-                                        <TableCell className="font-mono text-xs text-muted-foreground">
-                                            {job.gitSha || '-'}
-                                        </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">
-                                            {job.triggeredBy}
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </div>
-                </CardContent>
-            </Card>
 
             {/* All Alerts History */}
             <Card>

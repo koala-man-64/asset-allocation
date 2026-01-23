@@ -120,15 +120,25 @@ export interface StressEvent {
   benchmarkReturn: number;
 }
 
+export interface DataDomain {
+  name: string;
+  type: 'blob' | 'delta';
+  path: string;
+  lastUpdated: string | null;
+  status: 'healthy' | 'stale' | 'error';
+  version?: number | null;
+}
+
 export interface DataLayer {
   name: string;
   description: string;
-  status: 'healthy' | 'stale' | 'error';
+  status: 'healthy' | 'stale' | 'error' | 'degraded' | 'critical' | 'warning';
   lastUpdated: string;
   dataVersion?: string;
   recordCount?: number;
   refreshFrequency: string;
   nextExpectedUpdate?: string;
+  domains?: DataDomain[];
 }
 
 export interface JobRun {
