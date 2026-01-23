@@ -77,10 +77,15 @@ const tradesCache = new Map<string, CacheEntry<TradeListResponse | null>>();
 
 const summarySemaphore = new Semaphore(4);
 
-function normalizeListRunsParams(params: ListRunsParams): Required<ListRunsParams> {
+function normalizeListRunsParams(params: ListRunsParams): {
+  status: NonNullable<ListRunsParams['status']> | null;
+  q: NonNullable<ListRunsParams['q']> | null;
+  limit: number;
+  offset: number;
+} {
   return {
-    status: params.status,
-    q: params.q,
+    status: params.status ?? null,
+    q: params.q ?? null,
     limit: params.limit ?? 200,
     offset: params.offset ?? 0,
   };
@@ -496,4 +501,3 @@ export function useTrades(
 
   return state;
 }
-

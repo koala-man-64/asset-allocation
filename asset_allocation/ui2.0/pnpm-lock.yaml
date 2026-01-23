@@ -116,9 +116,6 @@ importers:
       '@types/react-virtualized-auto-sizer':
         specifier: ^1.0.4
         version: 1.0.8(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@types/react-window':
-        specifier: ^1.8.8
-        version: 1.8.8
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -1812,9 +1809,6 @@ packages:
   '@types/react-virtualized-auto-sizer@1.0.8':
     resolution: {integrity: sha512-keJpNyhiwfl2+N12G1ocCVA5ZDBArbPLe/S90X3kt7fam9naeHdaYYWbpe2sHczp70JWJ+2QLhBE8kLvLuVNjA==}
     deprecated: This is a stub types definition. react-virtualized-auto-sizer provides its own type definitions, so you do not need this installed.
-
-  '@types/react-window@1.8.8':
-    resolution: {integrity: sha512-8Ls660bHR1AUA2kuRvVG9D/4XpRC6wjAaPT9dil7Ckc76eP9TKWZwwmgfq8Q1LANX3QNDnoU4Zp48A3w+zK69Q==}
 
   '@types/react@18.3.18':
     resolution: {integrity: sha512-t4yC+vtgnkYjNSKlFx1jkAhH8LgTo2N/7Qvi83kdEaUtMDiwpbLAktKDaAMlRcJ5eSxZkH74eEGt1ky31d7kfQ==}
@@ -5138,10 +5132,6 @@ snapshots:
     transitivePeerDependencies:
       - react
       - react-dom
-
-  '@types/react-window@1.8.8':
-    dependencies:
-      '@types/react': 18.3.18
 
   '@types/react@18.3.18':
     dependencies:

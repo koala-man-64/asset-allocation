@@ -3,7 +3,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import { Button } from '@/app/components/ui/button';
 import { useLiveSystemHealthQuery } from '@/hooks/useDataQueries';
+import { useAuth } from '@/contexts/AuthContext';
+import { ApiError } from '@/services/backtestApi';
 import {
     Activity,
     Database,
@@ -19,12 +22,48 @@ import {
 } from 'lucide-react';
 
 export function SystemStatusPage() {
+    const auth = useAuth();
     const { data: systemHealth, isLoading: loading, error } = useLiveSystemHealthQuery();
 
-    if (loading || !systemHealth) {
+    if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
                 <div className="text-muted-foreground">Loading system health...</div>
+            </div>
+        );
+    }
+
+    if (error && !systemHealth) {
+        const isUnauthorized = error instanceof ApiError && error.status === 401;
+
+        return (
+            <div className="space-y-4">
+                <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-start gap-3">
+                    <XCircle className="h-5 w-5 text-destructive mt-0.5 flex-shrink-0" />
+                    <div className="text-base text-destructive">
+                        <p className="font-semibold">{isUnauthorized ? 'Authentication required' : 'Live Data Connection Error'}</p>
+                        <p className="text-sm opacity-90 mt-1">
+                            {isUnauthorized
+                                ? 'The Backtest API rejected this request. Configure auth (API key or OIDC) and try again.'
+                                : (error as any).message || 'Failed to connect to live system health API.'}
+                        </p>
+                        {isUnauthorized && auth.enabled && !auth.authenticated && (
+                            <div className="mt-3">
+                                <Button variant="secondary" onClick={auth.signIn}>
+                                    Sign in
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!systemHealth) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="text-muted-foreground">System health unavailable.</div>
             </div>
         );
     }

@@ -15,6 +15,29 @@ jobs:
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+    - name: Validate required secrets
+      env:
+        AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}
+        NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+      run: |
+        set -euo pipefail
+
+        require_secret() {
+          local name="$1"
+          local value="${!name:-}"
+          value="${value#"${value%%[![:space:]]*}"}"
+          value="${value%"${value##*[![:space:]]}"}"
+          if [ -z "$value" ]; then
+            echo "::error::Missing required GitHub Actions secret: $name"
+            exit 1
+          fi
+        }
+
+        require_secret AZURE_STORAGE_CONNECTION_STRING
+        require_secret AZURE_STORAGE_ACCOUNT_NAME
+        require_secret NASDAQ_API_KEY
+
     - name: Build UI (ui2.0)
       run: |
         docker run --rm \

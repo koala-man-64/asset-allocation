@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 import { useUIStore } from '@/stores/useUIStore';
 import { useEffect } from 'react';
+import { ApiError } from '@/services/backtestApi';
 
 // Key Factory for consistent query keys
 export const queryKeys = {
@@ -54,7 +55,15 @@ export function useLiveSystemHealthQuery() {
     return useQuery({
         queryKey: queryKeys.liveSystemHealth(),
         queryFn: () => DataService.getLiveSystemHealth(),
-        refetchInterval: 10000, // Faster refresh for live monitor
+        refetchInterval: (query) => {
+            const error = query.state.error;
+            if (error instanceof ApiError && error.status === 401) return false;
+            return 10000; // Faster refresh for live monitor
+        },
+        retry: (failureCount, error) => {
+            if (error instanceof ApiError && error.status === 401) return false;
+            return failureCount < 3;
+        },
     });
 }
 
