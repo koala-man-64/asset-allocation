@@ -4,6 +4,7 @@
 - Removed configuration/environment fallback defaults (notably `os.environ.get(..., default)` patterns) to enforce explicit runtime configuration.
 - Hardened Azure Container Apps Jobs reliability: lease renewal for distributed locks, standardized job identity strings, and non-zero exit codes on failed Silver processing.
 - Updated deploy manifests + CI to set newly-required env vars; added deploy-time validation for `BACKTEST_CSP`.
+- Updated lockfiles to include Postgres realtime dependency (`asyncpg`) so CI and Docker builds don’t fail during import.
 
 **Out of scope**
 - Removing all defaults repo-wide (function parameter defaults and algorithmic constants) beyond config/env defaults.
@@ -40,6 +41,7 @@
 - Container Apps Jobs scripts + shared runtime: `scripts/common/*`, `scripts/*/*_*.py`, `scripts/ranking/*`
 - Backtest service + monitoring: `backtest/service/*`, `monitoring/*`
 - Deploy/CI/config templates: `deploy/job_*.yaml`, `deploy/app_backtest_api.yaml`, `.github/workflows/*`, `.env.template`
+- Dependency lockfiles: `requirements.lock.txt`, `requirements-dev.lock.txt`
 - Tests: `tests/conftest.py`, `tests/backtest/test_phase3_service_api.py`, `tests/monitoring/test_system_health.py`
 
 **Key Interfaces**

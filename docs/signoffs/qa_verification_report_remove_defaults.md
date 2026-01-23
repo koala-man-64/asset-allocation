@@ -4,6 +4,7 @@
 - **Overall confidence level:** High
 - **Scope verified:** removal of env/config fallback defaults + Container Apps Jobs reliability hardening + deploy/CI alignment for required env vars.
 - **Top remaining risks:** no live Azure Job log validation in this run; ambiguity remains on whether “remove defaults” includes all function parameter defaults and algorithm constants.
+- **CI note:** addressed `ModuleNotFoundError: asyncpg` in GitHub Actions by adding `asyncpg` to `requirements.lock.txt` / `requirements-dev.lock.txt` (Dockerfiles also use `requirements.lock.txt`).
 
 ## 2. Test Matrix (Functionality Coverage)
 | Feature/Flow | Risk | Test Type (Unit/Int/E2E/Manual) | Local | Dev | Prod | Status | Notes |
@@ -56,6 +57,7 @@
 ## 6. CI/CD Verification (If applicable)
 - Reviewed and updated `.github/workflows/run_tests.yml` to set newly-required env vars (`LOG_LEVEL`, `LOG_FORMAT`, `AZURE_CONTAINER_GOLD`, backtest/system health env).
 - Reviewed and updated `.github/workflows/deploy.yml` to validate `BACKTEST_CSP` secret before deploy.
+- Updated `requirements.lock.txt` / `requirements-dev.lock.txt` to include `asyncpg` so CI/imports succeed when collecting backtest/monitoring tests.
 
 ## 7. Release Readiness Gate
 - **Decision:** Pass

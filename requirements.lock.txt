@@ -1,6 +1,7 @@
 annotated-types==0.7.0
 anyio==4.12.1
 arro3-core==0.6.5
+asyncpg==0.30.0
 azure-core==1.38.0
 azure-identity==1.15.0
 azure-storage-blob==12.24.0
@@ -54,4 +55,5 @@ typing_extensions==4.15.0
 tzdata==2025.3
 urllib3==2.6.3
 uvicorn==0.34.0
+websockets==14.2
 wrapt==2.0.1
