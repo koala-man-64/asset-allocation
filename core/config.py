@@ -47,24 +47,27 @@ class AppSettings(BaseSettings):
     AZURE_STORAGE_ACCOUNT_NAME: Optional[str] = None
     AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
 
-    # Azure container routing (required).
-    AZURE_CONTAINER_MARKET: str
-    AZURE_CONTAINER_FINANCE: str
-    AZURE_CONTAINER_EARNINGS: str
-    AZURE_CONTAINER_TARGETS: str
-    AZURE_CONTAINER_COMMON: str
-    AZURE_CONTAINER_RANKING: str
-    AZURE_CONTAINER_BRONZE: str
-    AZURE_CONTAINER_SILVER: str
-    AZURE_CONTAINER_GOLD: str
-    AZURE_CONTAINER_PLATINUM: Optional[str] = None
+    # Azure container routing.
+    #
+    # Defaults match the deployment manifests. Override via env vars when running
+    # against a different storage account/container topology.
+    AZURE_CONTAINER_MARKET: str = "market-data"
+    AZURE_CONTAINER_FINANCE: str = "finance-data"
+    AZURE_CONTAINER_EARNINGS: str = "earnings-data"
+    AZURE_CONTAINER_TARGETS: str = "price-target-data"
+    AZURE_CONTAINER_COMMON: str = "common"
+    AZURE_CONTAINER_RANKING: str = "ranking-data"
+    AZURE_CONTAINER_BRONZE: str = "bronze"
+    AZURE_CONTAINER_SILVER: str = "silver"
+    AZURE_CONTAINER_GOLD: str = "gold"
+    AZURE_CONTAINER_PLATINUM: Optional[str] = "platinum"
 
     # Optional data source credentials (varies by workflow).
     YAHOO_USERNAME: Optional[str] = None
     YAHOO_PASSWORD: Optional[str] = None
 
     # Playwright configuration.
-    HEADLESS_MODE: bool
+    HEADLESS_MODE: bool = True
     DOWNLOADS_PATH: Optional[Path] = None
     USER_DATA_DIR: Optional[Path] = Field(default=None, validation_alias="PLAYWRIGHT_USER_DATA_DIR")
 
@@ -90,8 +93,11 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_storage_auth(self):
-        if not self.AZURE_STORAGE_ACCOUNT_NAME and not self.AZURE_STORAGE_CONNECTION_STRING:
-            raise ValueError("AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING is required.")
+        # Storage credentials are only required for workflows that actually read/write to Azure.
+        # Allow FastAPI/local tooling to start without Azure configured.
+        if _is_truthy(os.environ.get("ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE")):
+            if not self.AZURE_STORAGE_ACCOUNT_NAME and not self.AZURE_STORAGE_CONNECTION_STRING:
+                raise ValueError("AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING is required.")
         return self
 
 

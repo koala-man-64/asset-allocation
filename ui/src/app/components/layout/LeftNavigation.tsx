@@ -54,25 +54,15 @@ const navSections: NavSection[] = [
     ]
   },
   {
-    title: 'ANALYSIS',
+    title: 'STRATEGY',
     items: [
       { path: '/overview', label: 'Overview', icon: LayoutDashboard },
       { path: '/compare', label: 'Run Compare', icon: GitCompare },
       { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
       { path: '/attribution', label: 'Attribution', icon: PieChart },
-    ]
-  },
-  {
-    title: 'RISK & PERFORMANCE',
-    items: [
       { path: '/risk', label: 'Risk & Exposures', icon: Shield },
       { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
       { path: '/robustness', label: 'Robustness', icon: Target },
-    ]
-  },
-  {
-    title: 'PORTFOLIO',
-    items: [
       { path: '/portfolio', label: 'Portfolio Builder', icon: Folder },
     ]
   },

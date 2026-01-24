@@ -29,7 +29,7 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
                 lastUpdated: now,
                 status: 'healthy',
                 portalUrl: 'https://example.com/storage/bronze/market',
-                jobUrl: 'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
+                jobUrl: 'https://portal.azure.com/#resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
                 frequency: 'Daily',
                 cron: '0 0 * * *',
               },

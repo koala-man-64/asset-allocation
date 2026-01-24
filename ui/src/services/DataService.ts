@@ -141,7 +141,7 @@ class ApiDataService implements IDataService {
     }
 
     async getSystemHealth(): Promise<SystemHealth> {
-        return mockSystemHealth as any;
+        return backtestApi.getSystemHealth();
     }
 
     async getLiveSystemHealth(): Promise<SystemHealth> {

@@ -418,9 +418,9 @@ export const mockSystemHealth: SystemHealth = {
       lastUpdated: new Date(Date.now() - 3600000).toISOString(),
       status: 'healthy',
       refreshFrequency: 'Daily',
-      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/bronze',
-      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-bronze-ingest/overview',
-      triggerUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Logic/workflows/sync-bronze'
+      portalUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/bronze',
+      jobUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-bronze-ingest/overview',
+      triggerUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Logic/workflows/sync-bronze'
     },
     {
       name: 'Silver (Cleaned)',
@@ -428,8 +428,8 @@ export const mockSystemHealth: SystemHealth = {
       lastUpdated: new Date(Date.now() - 3000000).toISOString(),
       status: 'healthy',
       refreshFrequency: 'Daily',
-      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/silver',
-      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-silver-normalize/overview'
+      portalUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/silver',
+      jobUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-silver-normalize/overview'
     },
     {
       name: 'Gold (Feature)',
@@ -437,8 +437,8 @@ export const mockSystemHealth: SystemHealth = {
       lastUpdated: new Date(Date.now() - 2000000).toISOString(),
       status: 'healthy',
       refreshFrequency: 'Daily',
-      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/gold',
-      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-gold-features/overview'
+      portalUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/gold',
+      jobUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-gold-features/overview'
     },
     {
       name: 'Platinum (Ranking)',
@@ -446,8 +446,8 @@ export const mockSystemHealth: SystemHealth = {
       lastUpdated: new Date(Date.now() - 1000000).toISOString(),
       status: 'healthy',
       refreshFrequency: 'Daily',
-      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/platinum',
-      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-platinum-signals/overview'
+      portalUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/platinum',
+      jobUrl: 'https://portal.azure.com/#resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-platinum-signals/overview'
     }
   ],
   recentJobs: mockJobHistory,

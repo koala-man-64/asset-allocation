@@ -66,6 +66,14 @@ def test_ttl_cache_returns_stale_value_on_refresh_error() -> None:
     assert third.refresh_error is not None
 
 
+def test_make_job_portal_url_uses_resource_anchor() -> None:
+    url = system_health._make_job_portal_url("sub", "rg", "myjob")
+    assert url == (
+        "https://portal.azure.com/#resource/subscriptions/sub"
+        "/resourceGroups/rg/providers/Microsoft.App/jobs/myjob/overview"
+    )
+
+
 def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))

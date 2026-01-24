@@ -348,7 +348,7 @@ def _make_job_portal_url(sub_id: str, rg: str, job_name: str) -> Optional[str]:
     if not all([sub_id, rg, job_name]):
         return None
     return (
-        f"https://portal.azure.com/#@/resource/subscriptions/{sub_id}"
+        f"https://portal.azure.com/#resource/subscriptions/{sub_id}"
         f"/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job_name}/overview"
     )
 
