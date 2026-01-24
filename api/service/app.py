@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
@@ -22,7 +22,6 @@ from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
 
 logger = logging.getLogger("backtest.api")
-
 
 def create_app() -> FastAPI:
     def _require_env(name: str) -> str:
@@ -45,7 +44,7 @@ def create_app() -> FastAPI:
         if reconciled:
             logger.warning("Reconciled %d incomplete runs on startup.", reconciled)
 
-        manager = JobManager(
+        manager_instance = JobManager(
             store=store,
             output_base_dir=settings.output_base_dir,
             max_workers=settings.max_concurrent_runs,
@@ -54,7 +53,7 @@ def create_app() -> FastAPI:
 
         app.state.settings = settings
         app.state.store = store
-        app.state.manager = manager
+        app.state.manager = manager_instance
         app.state.auth = AuthManager(settings)
 
         if settings.postgres_dsn and settings.run_store_mode == "postgres":
@@ -84,7 +83,7 @@ def create_app() -> FastAPI:
                     await app.state.listener_task
                 except asyncio.CancelledError:
                     pass
-            manager.shutdown()
+            manager_instance.shutdown()
 
     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
     print(">>> BACKTEST SERVICE APPLICATION STARTING <<<")
@@ -115,12 +114,7 @@ def create_app() -> FastAPI:
     # CORS Configuration
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:3000",
-            "http://localhost:8000",
-        ],
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -146,6 +140,22 @@ def create_app() -> FastAPI:
             logger.error("Readiness check failed: %s", exc)
             return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
 
+    @app.get("/config.js")
+    async def serve_runtime_config(request: Request):
+         s = get_settings(request)
+         cfg = {
+             "authMode": s.auth_mode,
+             "oidcIssuer": s.oidc_issuer,
+             "oidcAudience": s.oidc_audience,
+             "oidcClientId": s.ui_oidc_config.get("clientId"),
+             "oidcAuthority": s.ui_oidc_config.get("authority"),
+             "oidcScopes": s.ui_oidc_config.get("scopes"),
+             "backtestApiBaseUrl": s.ui_oidc_config.get("apiBaseUrl") or "/api",
+             "oidcRedirectUri": s.ui_oidc_config.get("redirectUri") or "/oauth2-callback",
+         }
+         content = f"window.__BACKTEST_UI_CONFIG__ = {json.dumps(cfg)};"
+         return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
     ui_dist_env = os.environ.get("BACKTEST_UI_DIST_DIR")
     if ui_dist_env:
         dist_path = Path(ui_dist_env).resolve()
@@ -156,38 +166,16 @@ def create_app() -> FastAPI:
             if assets_path.exists():
                  app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
 
-            @app.get("/config.js")
-            async def serve_config_js(request: Request):
-                 s = get_settings(request)
-                 cfg = {
-                     "authMode": s.auth_mode,
-                     "oidcIssuer": s.oidc_issuer,
-                     "oidcAudience": s.oidc_audience,
-                     "oidcClientId": s.ui_oidc_config.get("clientId"),
-                     "oidcAuthority": s.ui_oidc_config.get("authority"),
-                     "oidcScopes": s.ui_oidc_config.get("scopes"),
-                     "apiBaseUrl": s.ui_oidc_config.get("apiBaseUrl") or "/api",
-                     "oidcRedirectUri": s.ui_oidc_config.get("redirectUri") or "/oauth2-callback",
-                 }
-                 content = f"window.__BACKTEST_UI_CONFIG__ = {json.dumps(cfg)};"
-                 return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
-
             @app.get("/{rest_of_path:path}")
             async def serve_index(rest_of_path: str):
                  file_path = dist_path / rest_of_path
                  if rest_of_path and file_path.exists() and file_path.is_file():
                      return FileResponse(file_path)
                  return FileResponse(dist_path / "index.html", headers={"Cache-Control": "no-store"})
-
         else:
-            logger.warning("BACKTEST_UI_DIST_DIR not set or invalid. UI will not be served.")
-
+            logger.warning("BACKTEST_UI_DIST_DIR set but invalid: %s", ui_dist_env)
     else:
-        logger.warning("BACKTEST_UI_DIST_DIR not set or invalid. UI will not be served.")
-
-
-    # Websocket endpoint moved to /api/ws/updates
-    from fastapi import WebSocket, WebSocketDisconnect
+        logger.warning("BACKTEST_UI_DIST_DIR not set. UI will not be served.")
 
     @app.websocket("/api/ws/updates")
     async def websocket_endpoint(websocket: WebSocket):
@@ -200,6 +188,5 @@ def create_app() -> FastAPI:
             mgr.disconnect(websocket)
             
     return app
-
 
 app = create_app()

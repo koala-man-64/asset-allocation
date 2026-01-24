@@ -158,9 +158,14 @@ export interface GetTradesParams {
   offset?: number;
 }
 
+
 function getBaseUrl(): string {
   const runtime = getRuntimeConfig();
-  const raw = String(runtime.backtestApiBaseUrl ?? import.meta.env.VITE_BACKTEST_API_BASE_URL ?? '').trim();
+  const raw = String(
+    runtime.backtestApiBaseUrl ||
+    import.meta.env.VITE_BACKTEST_API_BASE_URL ||
+    'http://localhost:8000'
+  ).trim();
   return raw.replace(/\/+$/, '');
 }
 

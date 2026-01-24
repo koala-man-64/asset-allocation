@@ -11,7 +11,7 @@ export function useRealtime() {
         // Construct WebSocket URL
         // Replace http/https with ws/wss
         const baseUrl = config.apiBaseUrl.replace(/^http/, 'ws');
-        const wsUrl = `${baseUrl}/ws/updates`;
+        const wsUrl = `${baseUrl}/api/ws/updates`;
 
         function connect() {
             if (wsRef.current?.readyState === WebSocket.OPEN) return;

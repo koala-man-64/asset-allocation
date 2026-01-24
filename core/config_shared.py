@@ -10,9 +10,7 @@ init(autoreset=True)
 
 # Load environment variables from .env file for local development.
 # CI/tests can disable this via DISABLE_DOTENV=true.
-_disable_dotenv_raw = os.environ.get("DISABLE_DOTENV")
-if _disable_dotenv_raw is None or not _disable_dotenv_raw.strip():
-    raise ValueError("DISABLE_DOTENV is required (set to true to disable local .env loading).")
+_disable_dotenv_raw = os.environ.get("DISABLE_DOTENV", "false")
 if _disable_dotenv_raw.strip().lower() not in {"1", "true", "yes"}:
     load_dotenv(override=False)
 
@@ -58,9 +56,9 @@ AZURE_CONTAINER_COMMON = require_env("AZURE_CONTAINER_COMMON")
 
 # Optional lake/medallion containers (may be unused depending on deployment contract).
 # Kept optional to preserve backward compatibility for environments that still use per-domain containers.
-AZURE_CONTAINER_BRONZE = require_env("AZURE_CONTAINER_BRONZE")
-AZURE_CONTAINER_SILVER = require_env("AZURE_CONTAINER_SILVER")
-AZURE_CONTAINER_GOLD = require_env("AZURE_CONTAINER_GOLD")
+AZURE_CONTAINER_BRONZE = os.environ.get("AZURE_CONTAINER_BRONZE")
+AZURE_CONTAINER_SILVER = os.environ.get("AZURE_CONTAINER_SILVER")
+AZURE_CONTAINER_GOLD = os.environ.get("AZURE_CONTAINER_GOLD")
 
 # Yahoo Credentials
 YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")
