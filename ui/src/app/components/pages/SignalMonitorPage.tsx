@@ -1,11 +1,9 @@
 import { useState } from 'react';
-import { FixedSizeList as VirtualList } from 'react-window';
-// @ts-ignore: Runtime requires named import, but TS definitions are conflicting
-import { AutoSizer as Sizer } from 'react-virtualized-auto-sizer';
+import { List } from 'react-window';
+import type { RowComponentProps } from 'react-window';
+import { AutoSizer } from 'react-virtualized-auto-sizer';
 
-import { DataService } from '@/services/DataService';
-import { TradingSignal } from '@/types/strategy';
-import { useApp } from '@/contexts/AppContext';
+import type { TradingSignal } from '@/types/strategy';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -29,8 +27,78 @@ import {
 
 import { useSignalsQuery } from '@/hooks/useDataQueries';
 
+function getSignalBadgeVariant(type?: string) {
+    switch (type) {
+        case 'BUY': return 'default';
+        case 'SELL': return 'destructive';
+        case 'EXIT': return 'secondary';
+        default: return 'outline';
+    }
+}
+
+function getStrengthBadge(strength?: number) {
+    const val = strength ?? 0;
+    if (val >= 85) {
+        return <Badge className="bg-green-600 text-white">High: {val}</Badge>;
+    }
+    if (val >= 70) {
+        return <Badge className="bg-blue-600 text-white">Med: {val}</Badge>;
+    }
+    return <Badge variant="outline">Low: {val}</Badge>;
+}
+
+type SignalRowData = {
+    signals: TradingSignal[];
+};
+
+function SignalRow({ index, style, ariaAttributes, signals }: RowComponentProps<SignalRowData>) {
+    const signal = signals[index];
+    const currentPrice = signal.currentPrice ?? 0;
+    const priceChange24h = signal.priceChange24h ?? 0;
+    const expectedReturn = signal.expectedReturn ?? 0;
+
+    return (
+        <div
+            style={style}
+            className="flex border-b items-center text-sm px-4 hover:bg-muted/50 transition-colors"
+            {...ariaAttributes}
+        >
+            <div className="w-[100px] shrink-0">
+                {getStrengthBadge(signal.strength)}
+            </div>
+            <div className="w-[80px] shrink-0">
+                <Badge variant={getSignalBadgeVariant(signal.signalType)}>
+                    {signal.signalType || '?'}
+                </Badge>
+            </div>
+            <div className="w-[80px] font-semibold shrink-0">
+                {signal.symbol || '-'}
+            </div>
+            <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
+                {signal.strategyName || '-'}
+            </div>
+            <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
+                {signal.sector || '-'}
+            </div>
+            <div className="w-[80px] text-right font-mono shrink-0">
+                ${currentPrice.toFixed(2)}
+            </div>
+            <div className="w-[80px] text-right shrink-0">
+                <div className={`flex items-center justify-end gap-1 ${priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                    <span className="font-mono text-xs">{Math.abs(priceChange24h).toFixed(2)}%</span>
+                </div>
+            </div>
+            <div className="w-[80px] text-right shrink-0">
+                <span className={`font-mono font-semibold ${expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {expectedReturn > 0 ? '+' : ''}{expectedReturn.toFixed(1)}%
+                </span>
+            </div>
+        </div>
+    );
+}
+
 export function SignalMonitorPage() {
-    const { dataSource } = useApp();
     const { data: signals = [], isLoading: loading, refetch } = useSignalsQuery();
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -64,44 +132,6 @@ export function SignalMonitorPage() {
     const avgStrength = filteredSignals.length > 0
         ? Math.round(filteredSignals.reduce((sum, s) => sum + (s.strength ?? 0), 0) / filteredSignals.length)
         : 0;
-
-    // Format time ago
-    function formatTimeAgo(isoString?: string): string {
-        if (!isoString) return '-';
-        const date = new Date(isoString);
-        const now = new Date();
-        const diffMs = now.getTime() - date.getTime();
-        const diffMins = Math.floor(diffMs / 60000);
-
-        if (diffMins < 1) return 'Just now';
-        if (diffMins < 60) return `${diffMins}m ago`;
-        const diffHours = Math.floor(diffMins / 60);
-        if (diffHours < 24) return `${diffHours}h ago`;
-        const diffDays = Math.floor(diffHours / 24);
-        return `${diffDays}d ago`;
-    }
-
-    // Get badge variant based on signal type
-    function getSignalBadgeVariant(type?: string) {
-        switch (type) {
-            case 'BUY': return 'default';
-            case 'SELL': return 'destructive';
-            case 'EXIT': return 'secondary';
-            default: return 'outline';
-        }
-    }
-
-    // Get strength badge color
-    function getStrengthBadge(strength?: number) {
-        const val = strength ?? 0;
-        if (val >= 85) {
-            return <Badge className="bg-green-600 text-white">High: {val}</Badge>;
-        } else if (val >= 70) {
-            return <Badge className="bg-blue-600 text-white">Med: {val}</Badge>;
-        } else {
-            return <Badge variant="outline">Low: {val}</Badge>;
-        }
-    }
 
     if (loading) {
         return (
@@ -272,59 +302,20 @@ export function SignalMonitorPage() {
                                     No signals found matching your filters
                                 </div>
                             ) : (
-                                <Sizer>
-                                    {({ height, width }: { height: number; width: number }) => (
-                                        <VirtualList
-                                            height={height}
-                                            width={width}
-                                            itemCount={filteredSignals.length}
-                                            itemSize={60}
-                                            itemData={filteredSignals}
-                                        >
-                                            {({ index, style, data }: any) => {
-                                                const signal = data[index];
-                                                const currentPrice = signal.currentPrice ?? 0;
-                                                const priceChange24h = signal.priceChange24h ?? 0;
-                                                const expectedReturn = signal.expectedReturn ?? 0;
-                                                return (
-                                                    <div style={style} className="flex border-b items-center text-sm px-4 hover:bg-muted/50 transition-colors">
-                                                        <div className="w-[100px] shrink-0">
-                                                            {getStrengthBadge(signal.strength)}
-                                                        </div>
-                                                        <div className="w-[80px] shrink-0">
-                                                            <Badge variant={getSignalBadgeVariant(signal.signalType)}>
-                                                                {signal.signalType || '?'}
-                                                            </Badge>
-                                                        </div>
-                                                        <div className="w-[80px] font-semibold shrink-0">
-                                                            {signal.symbol || '-'}
-                                                        </div>
-                                                        <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
-                                                            {signal.strategyName || '-'}
-                                                        </div>
-                                                        <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
-                                                            {signal.sector || '-'}
-                                                        </div>
-                                                        <div className="w-[80px] text-right font-mono shrink-0">
-                                                            ${currentPrice.toFixed(2)}
-                                                        </div>
-                                                        <div className="w-[80px] text-right shrink-0">
-                                                            <div className={`flex items-center justify-end gap-1 ${priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                {priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                                                                <span className="font-mono text-xs">{Math.abs(priceChange24h).toFixed(2)}%</span>
-                                                            </div>
-                                                        </div>
-                                                        <div className="w-[80px] text-right shrink-0">
-                                                            <span className={`font-mono font-semibold ${expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                {expectedReturn > 0 ? '+' : ''}{expectedReturn.toFixed(1)}%
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }}
-                                        </VirtualList>
-                                    )}
-                                </Sizer>
+                                <AutoSizer
+                                    renderProp={({ height, width }) => {
+                                        if (height == null || width == null) return null;
+                                        return (
+                                            <List
+                                                rowCount={filteredSignals.length}
+                                                rowHeight={60}
+                                                rowComponent={SignalRow}
+                                                rowProps={{ signals: filteredSignals }}
+                                                style={{ height, width }}
+                                            />
+                                        );
+                                    }}
+                                />
                             )}
                         </div>
                     </div>
