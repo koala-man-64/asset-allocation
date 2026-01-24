@@ -1,0 +1,49 @@
+from typing import Any, Dict
+from fastapi import Request
+from monitoring.ttl_cache import TtlCache
+
+from backtest.service.auth import AuthManager
+from backtest.service.job_manager import JobManager
+from backtest.service.run_store import RunStore
+from backtest.service.settings import ServiceSettings
+
+
+def get_settings(request: Request) -> ServiceSettings:
+    return request.app.state.settings
+
+
+def get_store(request: Request) -> RunStore:
+    return request.app.state.store
+
+
+def get_manager(request: Request) -> JobManager:
+    return request.app.state.manager
+
+
+def get_auth_manager(request: Request) -> AuthManager:
+    return request.app.state.auth
+
+
+def get_system_health_cache(request: Request) -> TtlCache[Dict[str, Any]]:
+    return request.app.state.system_health_cache
+
+
+from fastapi import HTTPException
+from backtest.service.auth import AuthError
+
+
+def validate_auth(request: Request) -> None:
+    settings = get_settings(request)
+    auth = get_auth_manager(request)
+    
+    if settings.auth_mode == "none":
+        return
+        
+    try:
+        auth.authenticate_headers(dict(request.headers))
+    except AuthError as exc:
+        headers: Dict[str, str] = {}
+        if exc.www_authenticate:
+            headers["WWW-Authenticate"] = exc.www_authenticate
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers=headers) from exc
+

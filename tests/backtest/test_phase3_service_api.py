@@ -480,7 +480,7 @@ def test_service_job_trigger_starts_allowed_job(tmp_path: Path, monkeypatch: pyt
             calls.append(url)
             return {"id": "execution-id", "name": "execution-name"}
 
-    monkeypatch.setattr("backtest.service.app.AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr("api.endpoints.system.AzureArmClient", FakeAzureArmClient)
 
     app = create_app()
     with TestClient(app) as client:
