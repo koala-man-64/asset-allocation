@@ -9,7 +9,7 @@ and served from the same FastAPI process:
 
 - UI: `GET /`
 - Static assets: `GET /assets/*`
-- API: `GET /backtests/*`
+- API: `GET /api/backtests/*`
 
 You can override the UI dist directory with `BACKTEST_UI_DIST_DIR` (must contain `index.html` and `assets/`).
 
@@ -59,28 +59,28 @@ export BACKTEST_OIDC_REQUIRED_ROLES=""
 # Required: Content-Security-Policy header (override as needed)
 export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
 
-# Required: system-health cache TTL (used by /system/* endpoints)
+# Required: system-health cache TTL (used by /api/system/* endpoints)
 export SYSTEM_HEALTH_TTL_SECONDS=30
 
-uvicorn backtest.service.app:create_app --factory --reload --port 8000
+uvicorn services.backtest_api.app:create_app --factory --reload --port 8000
 ```
 
 ## API
 
-- `POST /backtests` - submit a run (YAML or JSON config)
-- `GET /backtests` - list runs (filters: `status`, `q`, `limit`, `offset`)
-- `GET /backtests/{run_id}/status`
-- `GET /backtests/{run_id}/summary` (query: `source=auto|local|adls`)
-- `GET /backtests/{run_id}/artifacts` (query: `remote=true`)
-- `GET /backtests/{run_id}/artifacts/{name}` (query: `source=auto|local|adls`)
-- `GET /backtests/{run_id}/metrics/timeseries` (query: `source=auto|local|adls`, `max_points=...`)
-- `GET /backtests/{run_id}/metrics/rolling` (query: `window_days=...`, `source=auto|local|adls`, `max_points=...`)
-- `GET /backtests/{run_id}/trades` (query: `source=auto|local|adls`, `limit=...`, `offset=...`)
+- `POST /api/backtests` - submit a run (YAML or JSON config)
+- `GET /api/backtests` - list runs (filters: `status`, `q`, `limit`, `offset`)
+- `GET /api/backtests/{run_id}/status`
+- `GET /api/backtests/{run_id}/summary` (query: `source=auto|local|adls`)
+- `GET /api/backtests/{run_id}/artifacts` (query: `remote=true`)
+- `GET /api/backtests/{run_id}/artifacts/{name}` (query: `source=auto|local|adls`)
+- `GET /api/backtests/{run_id}/metrics/timeseries` (query: `source=auto|local|adls`, `max_points=...`)
+- `GET /api/backtests/{run_id}/metrics/rolling` (query: `window_days=...`, `source=auto|local|adls`, `max_points=...`)
+- `GET /api/backtests/{run_id}/trades` (query: `source=auto|local|adls`, `limit=...`, `offset=...`)
 
 ### Example: Submit (JSON)
 
 ```bash
-curl -X POST "http://localhost:8000/backtests" \
+curl -X POST "http://localhost:8000/api/backtests" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: change-me" \
   -d @backtest.json
@@ -89,7 +89,7 @@ curl -X POST "http://localhost:8000/backtests" \
 ### Example: Submit (YAML)
 
 ```bash
-curl -X POST "http://localhost:8000/backtests" \
+curl -X POST "http://localhost:8000/api/backtests" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: change-me" \
   -d '{"config_yaml": "'"$(cat backtest.yaml | sed 's/"/\\"/g')"'"}'

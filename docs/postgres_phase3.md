@@ -13,7 +13,7 @@ Phase 3 moves **backtest run-state** (queued/running/completed/failed + metadata
   - `backtest/service/postgres_run_store.py`
 - Backtest API wiring:
   - `backtest/service/settings.py` adds `BACKTEST_RUN_STORE_MODE=postgres` and requires `BACKTEST_POSTGRES_DSN`
-  - `backtest/service/app.py` selects `PostgresRunStore` when configured
+  - `services/backtest_api/app.py` selects `PostgresRunStore` when configured
 
 ## Required configuration
 

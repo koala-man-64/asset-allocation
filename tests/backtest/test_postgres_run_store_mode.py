@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backtest.service.app import create_app
+from services.backtest_api.app import create_app
 from backtest.service.settings import ServiceSettings
 
 
@@ -61,7 +61,7 @@ def test_create_app_uses_postgres_run_store_when_configured(tmp_path: Path, monk
         def list_runs(self, **_: object):
             raise NotImplementedError
 
-    monkeypatch.setattr("backtest.service.app.PostgresRunStore", _FakePostgresRunStore)
+    monkeypatch.setattr("services.backtest_api.app.PostgresRunStore", _FakePostgresRunStore)
 
     app = create_app()
     with TestClient(app) as client:

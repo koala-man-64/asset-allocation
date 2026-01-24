@@ -53,7 +53,7 @@ print(result.run_id, result.output_dir)
 ### Service API (FastAPI)
 See `docs/backtest_service.md`. Locally:
 ```bash
-uvicorn backtest.service.app:create_app --factory --reload
+uvicorn services.backtest_api.app:create_app --factory --reload
 ```
 
 ## Backend API (UI data)

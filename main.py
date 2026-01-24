@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import os
+from pathlib import Path
 
 import uvicorn
 
@@ -45,7 +47,7 @@ def main():
 
         print(f"Starting server on {args.host}:{args.port}...")
         uvicorn.run(
-            "backtest.service.app:create_app",
+            "services.backtest_api.app:create_app",
             host=args.host,
             port=args.port,
             reload=args.reload,
