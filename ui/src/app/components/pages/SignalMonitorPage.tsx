@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { List as VirtualList } from 'react-window';
+import { FixedSizeList as VirtualList } from 'react-window';
 // @ts-ignore: Runtime requires named import, but TS definitions are conflicting
 import { AutoSizer as Sizer } from 'react-virtualized-auto-sizer';
 
@@ -61,7 +61,6 @@ export function SignalMonitorPage() {
     // Calculate summary stats
     const buySignals = filteredSignals.filter(s => s.signalType === 'BUY').length;
     const sellSignals = filteredSignals.filter(s => s.signalType === 'SELL').length;
-    // Unused: const exitSignals = filteredSignals.filter(s => s.signalType === 'EXIT').length;
     const avgStrength = filteredSignals.length > 0
         ? Math.round(filteredSignals.reduce((sum, s) => sum + (s.strength ?? 0), 0) / filteredSignals.length)
         : 0;
@@ -211,7 +210,6 @@ export function SignalMonitorPage() {
                 <CardContent>
                     <div className="grid grid-cols-4 gap-4">
                         <div className="relative">
-                            {/* <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /> */}
                             <Input
                                 placeholder="Search symbol, strategy, sector..."
                                 value={searchTerm}
@@ -243,33 +241,16 @@ export function SignalMonitorPage() {
                                 <SelectItem value="low">Low (&lt;70)</SelectItem>
                             </SelectContent>
                         </Select>
-
-                        {(searchTerm || signalTypeFilter !== 'all' || strengthFilter !== 'all') && (
-                            <Button
-                                variant="ghost"
-                                onClick={() => {
-                                    setSearchTerm('');
-                                    setSignalTypeFilter('all');
-                                    setStrengthFilter('all');
-                                }}
-                                className="gap-2"
-                            >
-                                {/* <X className="h-4 w-4" /> */}
-                                Clear Filters
-                            </Button>
-                        )}
                     </div>
                 </CardContent>
             </Card>
 
-            {/* Signals Table - Virtualized */}
             <Card className="flex-1 flex flex-col min-h-[500px]">
                 <CardHeader>
                     <CardTitle>Active Signals ({filteredSignals.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1 p-0">
                     <div className="h-[600px] w-full flex flex-col">
-                        {/* Header Row */}
                         <div className="flex border-b bg-muted/50 font-medium text-xs px-4 py-3">
                             <div className="w-[100px] shrink-0">Strength</div>
                             <div className="w-[80px] shrink-0">Type</div>
@@ -279,15 +260,8 @@ export function SignalMonitorPage() {
                             <div className="w-[80px] text-right shrink-0">Price</div>
                             <div className="w-[80px] text-right shrink-0">24h Chg</div>
                             <div className="w-[80px] text-right shrink-0">Exp. Ret</div>
-                            <div className="w-[80px] text-right shrink-0">Target</div>
-                            <div className="w-[80px] text-right shrink-0">Stop</div>
-                            <div className="w-[80px] shrink-0">Horizon</div>
-                            <div className="w-[60px] text-right shrink-0">Size</div>
-                            <div className="w-[150px] shrink-0 pl-2">Catalysts</div>
-                            <div className="w-[100px] text-right shrink-0">Generated</div>
                         </div>
 
-                        {/* Virtualized Body */}
                         <div className="flex-1">
                             {loading ? (
                                 <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -301,85 +275,54 @@ export function SignalMonitorPage() {
                                 <Sizer>
                                     {({ height, width }: { height: number; width: number }) => (
                                         <VirtualList
-                                            style={{ height, width }}
-                                            rowCount={filteredSignals.length}
-                                            rowHeight={60}
-                                            rowProps={{ data: filteredSignals }}
-                                            rowComponent={({ index, style, data }: any) => {
-	                                                const signal = data[index];
-	                                                const currentPrice = signal.currentPrice ?? 0;
-	                                                const priceChange24h = signal.priceChange24h ?? 0;
-	                                                const expectedReturn = signal.expectedReturn ?? 0;
-	                                                const positionSize = signal.positionSize ?? 0;
-	
-	                                                return (
-	                                                    <div style={style} className="flex border-b items-center text-sm px-4 hover:bg-muted/50 transition-colors">
-	                                                        <div className="w-[100px] shrink-0">
-	                                                            {getStrengthBadge(signal.strength)}
-	                                                        </div>
-	                                                        <div className="w-[80px] shrink-0">
-	                                                            <Badge variant={getSignalBadgeVariant(signal.signalType)}>
-	                                                                {signal.signalType || '?'}
-	                                                            </Badge>
-	                                                        </div>
-	                                                        <div className="w-[80px] font-semibold shrink-0">
-	                                                            {signal.symbol || '-'}
-	                                                        </div>
-	                                                        <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
-	                                                            {signal.strategyName || '-'}
-	                                                        </div>
-	                                                        <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
-	                                                            {signal.sector || '-'}
-	                                                        </div>
-	                                                        <div className="w-[80px] text-right font-mono shrink-0">
-	                                                            ${currentPrice.toFixed(2)}
-	                                                        </div>
-	                                                        <div className="w-[80px] text-right shrink-0">
-	                                                            <div className={`flex items-center justify-end gap-1 ${priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
-	                                                                {priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-	                                                                <span className="font-mono text-xs">
-	                                                                    {Math.abs(priceChange24h).toFixed(2)}%
-	                                                                </span>
-	                                                            </div>
-	                                                        </div>
-	                                                        <div className="w-[80px] text-right shrink-0">
-	                                                            <span className={`font-mono font-semibold ${expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
-	                                                                {expectedReturn > 0 ? '+' : ''}{expectedReturn.toFixed(1)}%
-	                                                            </span>
-	                                                        </div>
-	                                                        <div className="w-[80px] text-right font-mono text-xs shrink-0">
-	                                                            {signal.targetPrice ? `$${signal.targetPrice.toFixed(0)}` : '-'}
-	                                                        </div>
-	                                                        <div className="w-[80px] text-right font-mono text-xs shrink-0">
-	                                                            {signal.stopLoss ? `$${signal.stopLoss.toFixed(0)}` : '-'}
-	                                                        </div>
-	                                                        <div className="w-[80px] shrink-0">
-	                                                            <Badge variant="outline" className="font-mono text-[10px]">
-	                                                                {signal.timeHorizon || '-'}
-	                                                            </Badge>
-	                                                        </div>
-	                                                        <div className="w-[60px] text-right font-mono text-xs shrink-0">
-	                                                            {positionSize.toFixed(1)}%
-	                                                        </div>
-	                                                        <div className="w-[150px] shrink-0 pl-2 overflow-hidden">
-	                                                            <div className="flex flex-wrap gap-1 h-full items-center overflow-hidden">
-	                                                                {(signal.catalysts || []).slice(0, 1).map((catalyst: string, idx: number) => (
-	                                                                    <Badge key={idx} variant="secondary" className="text-[10px] px-1 h-5 truncate max-w-full">
-	                                                                        {catalyst}
-	                                                                    </Badge>
-	                                                                ))}
-	                                                                {(signal.catalysts || []).length > 1 && (
-	                                                                    <span className="text-[10px] text-muted-foreground">+{signal.catalysts!.length - 1}</span>
-	                                                                )}
-	                                                            </div>
-	                                                        </div>
-	                                                        <div className="w-[100px] text-right text-xs text-muted-foreground shrink-0">
-	                                                            {formatTimeAgo(signal.generatedAt)}
-	                                                        </div>
-	                                                    </div>
-	                                                );
+                                            height={height}
+                                            width={width}
+                                            itemCount={filteredSignals.length}
+                                            itemSize={60}
+                                            itemData={filteredSignals}
+                                        >
+                                            {({ index, style, data }: any) => {
+                                                const signal = data[index];
+                                                const currentPrice = signal.currentPrice ?? 0;
+                                                const priceChange24h = signal.priceChange24h ?? 0;
+                                                const expectedReturn = signal.expectedReturn ?? 0;
+                                                return (
+                                                    <div style={style} className="flex border-b items-center text-sm px-4 hover:bg-muted/50 transition-colors">
+                                                        <div className="w-[100px] shrink-0">
+                                                            {getStrengthBadge(signal.strength)}
+                                                        </div>
+                                                        <div className="w-[80px] shrink-0">
+                                                            <Badge variant={getSignalBadgeVariant(signal.signalType)}>
+                                                                {signal.signalType || '?'}
+                                                            </Badge>
+                                                        </div>
+                                                        <div className="w-[80px] font-semibold shrink-0">
+                                                            {signal.symbol || '-'}
+                                                        </div>
+                                                        <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
+                                                            {signal.strategyName || '-'}
+                                                        </div>
+                                                        <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
+                                                            {signal.sector || '-'}
+                                                        </div>
+                                                        <div className="w-[80px] text-right font-mono shrink-0">
+                                                            ${currentPrice.toFixed(2)}
+                                                        </div>
+                                                        <div className="w-[80px] text-right shrink-0">
+                                                            <div className={`flex items-center justify-end gap-1 ${priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                                                                <span className="font-mono text-xs">{Math.abs(priceChange24h).toFixed(2)}%</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="w-[80px] text-right shrink-0">
+                                                            <span className={`font-mono font-semibold ${expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {expectedReturn > 0 ? '+' : ''}{expectedReturn.toFixed(1)}%
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                );
                                             }}
-                                        />
+                                        </VirtualList>
                                     )}
                                 </Sizer>
                             )}

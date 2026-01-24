@@ -1,52 +1,66 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/utils';
-import { AuthProvider } from '@/contexts/AuthContext';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
-import { backtestApi } from '@/services/backtestApi';
 
-vi.mock('@/hooks/useDataQueries', () => ({
-  useLiveSystemHealthQuery: () => ({
-    data: {
-      overall: 'healthy',
-      dataLayers: [],
-      recentJobs: [
-        {
-          jobName: 'platinum-ranking-job',
-          jobType: 'data-ingest',
-          status: 'success',
-          startTime: new Date().toISOString(),
-          triggeredBy: 'azure',
-        },
-      ],
-      alerts: [],
-      resources: [],
-    },
-    isLoading: false,
-    error: null,
-  }),
-}));
+vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
+  const now = new Date().toISOString();
+
+  return {
+    ...actual,
+    useSystemHealthQuery: () => ({
+      data: {
+        overall: 'healthy',
+        dataLayers: [
+          {
+            name: 'Bronze',
+            description: 'Raw ingestion layer',
+            status: 'healthy',
+            lastUpdated: now,
+            refreshFrequency: 'Daily',
+            domains: [
+              {
+                name: 'market',
+                description: 'Market data',
+                type: 'blob',
+                path: 'bronze/market',
+                lastUpdated: now,
+                status: 'healthy',
+                portalUrl: 'https://example.com/storage/bronze/market',
+                jobUrl: 'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
+                frequency: 'Daily',
+                cron: '0 0 * * *',
+              },
+            ],
+            portalUrl: 'https://example.com/storage/bronze',
+          },
+        ],
+        recentJobs: [
+          {
+            jobName: 'aca-job-market',
+            jobType: 'data-ingest',
+            status: 'success',
+            startTime: now,
+            triggeredBy: 'azure',
+          },
+        ],
+        alerts: [],
+        resources: [],
+      },
+      isLoading: false,
+      error: null,
+    }),
+  };
+});
 
 describe('SystemStatusPage', () => {
-  it('triggers a job run when clicking the run icon', async () => {
-    const user = userEvent.setup();
+  it('renders domain folder + job details in Data Layer Freshness', () => {
+    renderWithProviders(<SystemStatusPage />);
 
-    const triggerJobSpy = vi
-      .spyOn(backtestApi, 'triggerJob')
-      .mockResolvedValue({ jobName: 'platinum-ranking-job', status: 'queued' });
-
-    renderWithProviders(
-      <AuthProvider>
-        <SystemStatusPage />
-      </AuthProvider>,
-    );
-
-    const button = screen.getByLabelText('Run platinum-ranking-job');
-    await user.click(button);
-
-    expect(triggerJobSpy).toHaveBeenCalledWith('platinum-ranking-job');
+    expect(screen.getByRole('link', { name: 'bronze/market' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'aca-job-market' })).toBeInTheDocument();
   });
 });
 

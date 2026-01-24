@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 // Mocking AppContent since App.tsx usually has providers which we might duplicate or want to skip
@@ -30,12 +30,31 @@ import { renderWithProviders } from '@/test/utils';
 
 import App from '../App';
 
+vi.mock('@/hooks/useRealtime', () => ({
+    useRealtime: () => undefined,
+}));
+
+vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
+
+    return {
+        ...actual,
+        useSystemHealthQuery: () => ({
+            data: {
+                overall: 'healthy',
+                dataLayers: [],
+                recentJobs: [],
+                alerts: [],
+            },
+            isLoading: false,
+            error: null,
+        }),
+    };
+});
+
 describe('App Smoke Test', () => {
-    it('renders without crashing', () => {
+    it('renders without crashing', async () => {
         renderWithProviders(<App />);
-        // Just check if the main container or a known text appears
-        // The AppHeader usually is present.
-        // "Overview" string from LeftNavigation?
-        expect(screen.getByText(/System Status/i)).toBeInTheDocument();
+        expect(await screen.findByRole('heading', { name: /system status/i })).toBeInTheDocument();
     });
 });

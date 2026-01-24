@@ -48,7 +48,7 @@ const navSections: NavSection[] = [
   {
     title: 'SYSTEM',
     items: [
-      { path: '/system', label: 'System Status', icon: Activity },
+      { path: '/system-status', label: 'System Status', icon: Activity },
       { path: '/data', label: 'Data & Lineage', icon: Database },
       { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
     ]

@@ -217,3 +217,8 @@ def create_app() -> FastAPI:
             mgr.disconnect(websocket)
             
     return app
+
+
+# Uvicorn entrypoint (used by `uvicorn backtest.service.app:app` and Dockerfile.backtest_api).
+# Note: tests should import and call `create_app()` directly when they need to control env vars.
+app = create_app()
