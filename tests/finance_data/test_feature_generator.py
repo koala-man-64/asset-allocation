@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from asset_allocation.tasks.finance_data.gold_finance_data import compute_features
+from tasks.finance_data.gold_finance_data import compute_features
 
 def _make_finance_df(rows: int = 8) -> pd.DataFrame:
     # Create quarterly dates

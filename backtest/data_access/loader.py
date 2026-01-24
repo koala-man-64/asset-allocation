@@ -113,7 +113,7 @@ def _read_delta_table(
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
 ) -> pd.DataFrame:
-    from asset_allocation.core import delta_core
+    from core import delta_core
 
     uri = delta_core.get_delta_table_uri(ref.container, ref.path)
     opts = delta_core.get_delta_storage_options(ref.container)

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from asset_allocation.tasks.price_target_data.gold_price_target_data import compute_features
+from tasks.price_target_data.gold_price_target_data import compute_features
 
 
 def _make_price_target_df(rows: int = 200, freq: str = "D") -> pd.DataFrame:

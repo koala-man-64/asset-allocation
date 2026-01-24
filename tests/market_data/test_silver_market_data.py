@@ -4,9 +4,9 @@ import uuid
 import os
 from unittest.mock import MagicMock, patch
 
-from asset_allocation.tasks.market_data import silver_market_data as silver
-from asset_allocation.core import config as cfg
-from asset_allocation.core.pipeline import DataPaths
+from tasks.market_data import silver_market_data as silver
+from core import config as cfg
+from core.pipeline import DataPaths
 
 @pytest.fixture
 def unique_ticker():
@@ -24,9 +24,9 @@ def test_silver_processing(unique_ticker):
     
     csv_content = b"Date,Open,High,Low,Close,Adj Close,Volume\n2023-01-01,100,105,95,102,102,1000"
     
-    with patch('asset_allocation.core.core.read_raw_bytes') as mock_read, \
-         patch('asset_allocation.core.delta_core.store_delta') as mock_store_delta, \
-         patch('asset_allocation.core.delta_core.load_delta') as mock_load_delta:
+    with patch('core.core.read_raw_bytes') as mock_read, \
+         patch('core.delta_core.store_delta') as mock_store_delta, \
+         patch('core.delta_core.load_delta') as mock_load_delta:
          
         mock_read.return_value = csv_content
         

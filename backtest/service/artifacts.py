@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from asset_allocation.core.blob_storage import BlobStorageClient
+from core.blob_storage import BlobStorageClient
 
 
 @dataclass(frozen=True)

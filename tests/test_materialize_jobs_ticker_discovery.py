@@ -2,7 +2,7 @@ import pandas as pd
 
 
 def test_materialize_gold_market_by_date_prefers_container_listing(monkeypatch):
-    from asset_allocation.tasks.market_data import materialize_gold_market_by_date as job
+    from tasks.market_data import materialize_gold_market_by_date as job
 
     cfg = job.MaterializeConfig(
         container="market",
@@ -38,7 +38,7 @@ def test_materialize_gold_market_by_date_prefers_container_listing(monkeypatch):
 
 
 def test_materialize_gold_earnings_by_date_prefers_container_listing(monkeypatch):
-    from asset_allocation.tasks.earnings_data import materialize_gold_earnings_by_date as job
+    from tasks.earnings_data import materialize_gold_earnings_by_date as job
 
     cfg = job.MaterializeConfig(
         container="gold",
@@ -67,7 +67,7 @@ def test_materialize_gold_earnings_by_date_prefers_container_listing(monkeypatch
 
 
 def test_materialize_gold_finance_by_date_prefers_container_listing(monkeypatch):
-    from asset_allocation.tasks.finance_data import materialize_gold_finance_by_date as job
+    from tasks.finance_data import materialize_gold_finance_by_date as job
 
     cfg = job.MaterializeConfig(
         container="gold",
@@ -96,7 +96,7 @@ def test_materialize_gold_finance_by_date_prefers_container_listing(monkeypatch)
 
 
 def test_materialize_gold_price_target_by_date_prefers_container_listing(monkeypatch):
-    from asset_allocation.tasks.price_target_data import materialize_gold_price_target_by_date as job
+    from tasks.price_target_data import materialize_gold_price_target_by_date as job
 
     cfg = job.MaterializeConfig(
         container="gold",
@@ -125,7 +125,7 @@ def test_materialize_gold_price_target_by_date_prefers_container_listing(monkeyp
 
 
 def test_materialize_silver_earnings_by_date_prefers_container_listing(monkeypatch):
-    from asset_allocation.tasks.earnings_data import materialize_silver_earnings_by_date as job
+    from tasks.earnings_data import materialize_silver_earnings_by_date as job
 
     cfg = job.MaterializeConfig(
         container="earnings",
@@ -154,7 +154,7 @@ def test_materialize_silver_earnings_by_date_prefers_container_listing(monkeypat
 
 
 def test_materialize_silver_price_target_by_date_prefers_container_listing(monkeypatch):
-    from asset_allocation.tasks.price_target_data import materialize_silver_price_target_by_date as job
+    from tasks.price_target_data import materialize_silver_price_target_by_date as job
 
     cfg = job.MaterializeConfig(
         container="targets",
@@ -183,7 +183,7 @@ def test_materialize_silver_price_target_by_date_prefers_container_listing(monke
 
 
 def test_materialize_silver_finance_by_date_prefers_container_listing_and_skips_missing_tables(monkeypatch):
-    from asset_allocation.tasks.finance_data import materialize_silver_finance_by_date as job
+    from tasks.finance_data import materialize_silver_finance_by_date as job
 
     cfg = job.MaterializeConfig(
         container="silver",

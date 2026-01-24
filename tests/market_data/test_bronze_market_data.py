@@ -1,9 +1,9 @@
 import pytest
 import uuid
 from unittest.mock import MagicMock, AsyncMock, patch
-from asset_allocation.tasks.market_data import bronze_market_data as bronze
-from asset_allocation.core import config as cfg
-from asset_allocation.core import core as mdc
+from tasks.market_data import bronze_market_data as bronze
+from core import config as cfg
+from core import core as mdc
 import os
 
 @pytest.fixture
@@ -25,12 +25,12 @@ def test_bronze_ingestion(unique_ticker):
     mock_page = AsyncMock()
     
     async def run_test():
-        with patch('asset_allocation.core.playwright_lib.download_yahoo_price_data_async') as mock_dl, \
-             patch('asset_allocation.core.core.store_raw_bytes') as mock_store, \
+        with patch('core.playwright_lib.download_yahoo_price_data_async') as mock_dl, \
+             patch('core.core.store_raw_bytes') as mock_store, \
              patch('builtins.open', new_callable=MagicMock) as mock_open_func, \
              patch('os.remove') as mock_remove, \
              patch('os.path.exists') as mock_exists, \
-             patch('asset_allocation.tasks.market_data.bronze_market_data.list_manager') as mock_list_manager:
+             patch('tasks.market_data.bronze_market_data.list_manager') as mock_list_manager:
              
             # Mock download returning a fake path
             fake_path = "temp_download.csv"

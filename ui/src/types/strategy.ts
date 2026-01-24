@@ -144,6 +144,8 @@ export interface DataLayer {
   nextExpectedUpdate?: string;
   domains?: DataDomain[];
   portalUrl?: string;
+  jobUrl?: string;
+  triggerUrl?: string;
 }
 
 export interface JobRun {

@@ -5,10 +5,10 @@ import uuid
 import os
 from unittest.mock import MagicMock, patch
 
-from asset_allocation.tasks.price_target_data import bronze_price_target_data as bronze
-from asset_allocation.core import config as cfg
-from asset_allocation.core import core as mdc
-from asset_allocation.core.pipeline import DataPaths
+from tasks.price_target_data import bronze_price_target_data as bronze
+from core import config as cfg
+from core import core as mdc
+from core.pipeline import DataPaths
 
 # --- Helpers ---
 
@@ -25,9 +25,9 @@ def storage_cleanup(unique_ticker):
 # --- Integration Tests ---
 
 
-@patch('asset_allocation.tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
-@patch('asset_allocation.tasks.price_target_data.bronze_price_target_data.bronze_client')
-@patch('asset_allocation.tasks.price_target_data.bronze_price_target_data.list_manager')
+@patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
+@patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
+@patch('tasks.price_target_data.bronze_price_target_data.list_manager')
 def test_process_batch_bronze(mock_list_manager, mock_client, mock_nasdaq, unique_ticker, storage_cleanup):
     symbol = unique_ticker
     
@@ -49,7 +49,7 @@ def test_process_batch_bronze(mock_list_manager, mock_client, mock_nasdaq, uniqu
     
     async def run_test():
         # We patch store_raw_bytes to verify write
-        with patch('asset_allocation.core.core.store_raw_bytes') as mock_store:
+        with patch('core.core.store_raw_bytes') as mock_store:
             await bronze.process_batch_bronze([symbol], semaphore)
             
             # 4. Verify

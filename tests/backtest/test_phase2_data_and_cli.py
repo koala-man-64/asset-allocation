@@ -10,7 +10,7 @@ import yaml
 from backtest.cli import main as cli_main
 from backtest.config import BacktestConfig
 from backtest.data_access import load_backtest_inputs
-from asset_allocation.core import delta_core
+from core import delta_core
 
 
 def _make_config_dict(tmp_path: Path) -> dict:

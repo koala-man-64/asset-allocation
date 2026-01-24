@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from asset_allocation.tasks.earnings_data.gold_earnings_data import compute_features
+from tasks.earnings_data.gold_earnings_data import compute_features
 
 
 def _make_earnings_df(rows: int = 12) -> pd.DataFrame:

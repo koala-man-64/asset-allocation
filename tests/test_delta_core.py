@@ -3,7 +3,7 @@ import logging
 import pandas as pd
 import pytest
 
-from asset_allocation.core import delta_core
+from core import delta_core
 
 
 def _patch_delta_core_for_unit(monkeypatch, tmp_path):

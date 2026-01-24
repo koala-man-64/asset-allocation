@@ -2,7 +2,7 @@ from datetime import date
 
 import pandas as pd
 
-from asset_allocation.tasks.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
+from tasks.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
 
 
 def test_broken_growth_strategy_selects_valid_rows():
