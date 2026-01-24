@@ -251,10 +251,14 @@ jobs:
           filters: |
             backtest_api:
               - "backtest/**"
+              - "services/**"
+              - "api/**"
               - "core/**"
               - "monitoring/**"
               - "ui/**"
               - "Dockerfile.backtest_api"
+              - "deploy/app_backtest_api.yaml"
+              - "pyproject.toml"
               - "requirements.txt"
               - "requirements.lock.txt"
               - ".github/workflows/deploy.yml"
@@ -421,6 +425,15 @@ jobs:
           ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           export ACR_PASSWORD
           export IMAGE_TAG="${{ github.sha }}"
+
+          api_fqdn="$(az containerapp show --name "${{ env.BACKTEST_API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)"
+          api_fqdn="$(echo "$api_fqdn" | xargs || true)"
+          if [ -n "$api_fqdn" ]; then
+            export BACKTEST_API_ORIGIN="https://${api_fqdn}"
+          else
+            echo "WARNING: Unable to resolve ${BACKTEST_API_APP} FQDN; falling back to http://${BACKTEST_API_APP}:8000"
+            export BACKTEST_API_ORIGIN="http://${BACKTEST_API_APP}:8000"
+          fi
 
           echo "Deploying UI App from YAML..."
           envsubst < deploy/app_ui.yaml > deploy/app_ui.tmp.yaml

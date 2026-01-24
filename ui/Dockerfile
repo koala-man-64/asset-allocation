@@ -2,6 +2,12 @@
 FROM node:20-slim AS builder
 WORKDIR /app
 
+# Build-time defaults (can be overridden via `--build-arg`).
+ARG VITE_API_BASE_URL=/api
+ARG VITE_BACKTEST_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_BACKTEST_API_BASE_URL=${VITE_BACKTEST_API_BASE_URL}
+
 # Install pnpm
 RUN npm install -g pnpm
 
@@ -22,22 +28,17 @@ RUN pnpm run build
 FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
 
+# Default backend origin for local runs; overridden in Azure Container Apps.
+ENV BACKTEST_API_ORIGIN=http://localhost:8000
+
 # Remove default nginx static assets
 RUN rm -rf ./*
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist .
 
-# Copy custom nginx config if we had one (using default for now, but enabling SPA fallback is good practice)
-# For now, we'll use a simple command to overwrite the default config to support SPA routing
-RUN echo 'server { \
-    listen 80; \
-    location / { \
-        root /usr/share/nginx/html; \
-        index index.html index.htm; \
-        try_files $uri $uri/ /index.html; \
-    } \
-}' > /etc/nginx/conf.d/default.conf
+# Render reverse-proxy config from a template at container startup.
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 80
 

@@ -1,0 +1,42 @@
+pandas==2.2.3
+numpy==1.26.4
+beautifulsoup4==4.12.3
+colorama==0.4.6
+pyarrow==19.0.1
+nasdaq-data-link==1.0.4
+playwright==1.57.0
+filelock==3.20.1
+pytz==2025.2
+requests==2.32.3
+
+# Added during Azure Migration & Testing Audit
+azure-storage-blob==12.24.0
+azure-identity==1.15.0
+deltalake==1.3.0
+python-dotenv==1.0.1
+python-dateutil==2.9.0.post0
+
+# Postgres serving/state layer (Phase 2+)
+psycopg==3.2.3
+psycopg-binary==3.2.3
+
+# UI Service
+fastapi==0.115.8
+jinja2==3.1.5
+uvicorn==0.34.0
+httpx==0.27.2
+
+# Backtest config (YAML)
+
+# Real-time Updates
+asyncpg==0.30.0
+websockets==14.2
+
+# Auth / crypto
+PyJWT==2.10.1
+cryptography==46.0.3
+
+# Configuration System
+pydantic-settings==2.12.0
+PyYAML==6.0.3
+pydantic==2.12.5

@@ -165,16 +165,22 @@ def create_app() -> FastAPI:
         @app.get("/config.js")
         def get_ui_config(request: Request) -> Response:
             settings: ServiceSettings = get_settings(request)
+            api_base_url_raw = settings.ui_oidc_config.get("apiBaseUrl")
+            api_base_url = api_base_url_raw.strip() if isinstance(api_base_url_raw, str) else ""
+            if not api_base_url:
+                api_base_url = api_prefix
             cfg = {
-                "backtestApiBaseUrl": settings.ui_oidc_config.get("apiBaseUrl") or "",
-                "authMode": settings.auth_mode,
+                "backtestApiBaseUrl": api_base_url,
+                "authMode": settings.ui_auth_mode,
             }
-            if settings.auth_mode == "oidc":
+            if settings.ui_auth_mode == "oidc":
+                scope = settings.ui_oidc_config.get("scope")
                 cfg.update(
                     {
                         "oidcAuthority": settings.ui_oidc_config.get("authority"),
                         "oidcClientId": settings.ui_oidc_config.get("clientId"),
-                        "oidcScope": settings.ui_oidc_config.get("scope"),
+                        "oidcScope": scope,
+                        "oidcScopes": scope,
                         "oidcRedirectUri": settings.ui_oidc_config.get("redirectUri") or "/oauth2-callback",
                     }
                 )

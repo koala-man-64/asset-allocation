@@ -25,6 +25,9 @@ properties:
     - image: assetallocationacr.azurecr.io/asset-allocation-ui:${IMAGE_TAG}
       imageType: ContainerImage
       name: asset-allocation-ui
+      env:
+      - name: BACKTEST_API_ORIGIN
+        value: "${BACKTEST_API_ORIGIN}"
       resources:
         cpu: 0.5
         memory: 1Gi

@@ -10,6 +10,7 @@ from backtest.service.security import assert_allowed_container, parse_container_
 
 RunStoreMode = Literal["sqlite", "adls", "postgres"]
 AuthMode = Literal["none", "api_key", "oidc", "api_key_or_oidc"]
+UiAuthMode = Literal["none", "api_key", "oidc"]
 
 
 def _parse_bool(value: str) -> bool:
@@ -121,6 +122,17 @@ def _parse_auth_mode(value: str) -> AuthMode:
     raise ValueError(f"Invalid BACKTEST_AUTH_MODE={value!r} (expected none|api_key|oidc|api_key_or_oidc).")
 
 
+def _parse_ui_auth_mode(value: Optional[str]) -> UiAuthMode:
+    raw = (value or "").strip().lower()
+    if raw in {"", "none", "noauth", "disabled"}:
+        return "none"
+    if raw in {"api_key", "apikey", "key"}:
+        return "api_key"
+    if raw in {"oidc", "jwt", "bearer"}:
+        return "oidc"
+    raise ValueError(f"Invalid BACKTEST_UI_AUTH_MODE={value!r} (expected none|api_key|oidc).")
+
+
 @dataclass(frozen=True)
 class ServiceSettings:
     output_base_dir: Path
@@ -140,6 +152,7 @@ class ServiceSettings:
     run_store_mode: RunStoreMode
     adls_runs_dir: Optional[str]
     postgres_dsn: Optional[str]
+    ui_auth_mode: UiAuthMode
     ui_oidc_config: dict[str, Optional[str]]
 
     @staticmethod
@@ -204,8 +217,20 @@ class ServiceSettings:
         if run_store_mode == "postgres" and not postgres_dsn:
             raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires BACKTEST_POSTGRES_DSN to be set.")
         
+        ui_auth_mode_raw = _get_optional_str("BACKTEST_UI_AUTH_MODE")
+        if ui_auth_mode_raw is None:
+            if auth_mode in {"oidc", "api_key_or_oidc"}:
+                ui_auth_mode = "oidc"
+            elif auth_mode == "api_key":
+                ui_auth_mode = "api_key"
+            else:
+                ui_auth_mode = "none"
+        else:
+            ui_auth_mode = _parse_ui_auth_mode(ui_auth_mode_raw)
+        ui_authority = _get_optional_str("BACKTEST_UI_OIDC_AUTHORITY") or _get_optional_str("BACKTEST_OIDC_ISSUER")
+
         ui_oidc_config = {
-            "authority": _get_optional_str("BACKTEST_OIDC_ISSUER"),
+            "authority": ui_authority,
             "clientId": _get_optional_str("BACKTEST_UI_OIDC_CLIENT_ID"),
             "scope": _get_optional_str("BACKTEST_UI_OIDC_SCOPES"),
             "redirectUri": _get_optional_str("BACKTEST_UI_OIDC_REDIRECT_URI"),
@@ -230,5 +255,6 @@ class ServiceSettings:
             run_store_mode=run_store_mode,
             adls_runs_dir=adls_runs_dir,
             postgres_dsn=postgres_dsn,
+            ui_auth_mode=ui_auth_mode,
             ui_oidc_config=ui_oidc_config,
         )
