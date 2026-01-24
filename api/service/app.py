@@ -179,13 +179,14 @@ def create_app() -> FastAPI:
 
     @app.websocket("/api/ws/updates")
     async def websocket_endpoint(websocket: WebSocket):
-        mgr: JobManager = websocket.app.state.manager
-        await mgr.connect(websocket)
+        await manager.connect(websocket)
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            mgr.disconnect(websocket)
+            pass
+        finally:
+            manager.disconnect(websocket)
             
     return app
 

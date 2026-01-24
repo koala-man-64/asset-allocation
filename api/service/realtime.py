@@ -19,7 +19,7 @@ class BroadcastManager:
         logger.info(f"WebSocket connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        self.active_connections.discard(websocket)
         logger.info(f"WebSocket disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):

@@ -1,6 +1,7 @@
 /* global RequestInit */
 import type { FinanceData, MarketData } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
+import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
@@ -161,12 +162,10 @@ export interface GetTradesParams {
 
 function getBaseUrl(): string {
   const runtime = getRuntimeConfig();
-  const raw = String(
+  return normalizeApiBaseUrl(
     runtime.backtestApiBaseUrl ||
-    import.meta.env.VITE_BACKTEST_API_BASE_URL ||
-    'http://localhost:8000'
-  ).trim();
-  return raw.replace(/\/+$/, '');
+    import.meta.env.VITE_BACKTEST_API_BASE_URL,
+  );
 }
 
 function getApiKey(): string {

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { config } from '@/config';
 import { backtestKeys } from '@/services/backtestHooks';
+import { toWebSocketBaseUrl } from '@/utils/apiBaseUrl';
 
 export function useRealtime() {
     const queryClient = useQueryClient();
@@ -10,8 +11,8 @@ export function useRealtime() {
     useEffect(() => {
         // Construct WebSocket URL
         // Replace http/https with ws/wss
-        const baseUrl = config.apiBaseUrl.replace(/^http/, 'ws');
-        const wsUrl = `${baseUrl}/api/ws/updates`;
+        const baseUrl = toWebSocketBaseUrl(config.apiBaseUrl);
+        const wsUrl = `${baseUrl}/ws/updates`;
 
         function connect() {
             if (wsRef.current?.readyState === WebSocket.OPEN) return;
