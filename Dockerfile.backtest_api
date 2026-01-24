@@ -14,17 +14,18 @@ FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock.txt .
+RUN pip install --no-cache-dir -r requirements.lock.txt
 
 COPY pyproject.toml README.md ./
+COPY asset_allocation/ asset_allocation/
 COPY core/ core/
 COPY services/ services/
 COPY alpaca/ alpaca/
 COPY api/ api/
 COPY backtest/ backtest/
 COPY monitoring/ monitoring/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 ENV BACKTEST_OUTPUT_DIR=/app/backtest_results
 ENV BACKTEST_DB_PATH=/app/backtest_results/runs.sqlite3

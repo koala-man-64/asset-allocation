@@ -263,11 +263,14 @@ jobs:
           filters: |
             backtest_api:
               - "backtest/**"
+              - "asset_allocation/**"
               - "core/**"
               - "monitoring/**"
               - "ui/**"
               - "Dockerfile.backtest_api"
               - "requirements.txt"
+              - "requirements.lock.txt"
+              - "pyproject.toml"
               - ".github/workflows/deploy.yml"
 
       - name: Detect UI Changes

@@ -102,6 +102,7 @@ def create_app() -> FastAPI:
         if path.startswith("/assets/") and response.status_code == 200:
             response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
 
+        response.headers.setdefault("Content-Security-Policy", content_security_policy)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")

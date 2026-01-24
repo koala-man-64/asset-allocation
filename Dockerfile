@@ -4,11 +4,12 @@ FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 WORKDIR /app
 
 # Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock.txt .
+RUN pip install --no-cache-dir -r requirements.lock.txt
 
 # Install application code as a package (avoids PYTHONPATH hacks).
 COPY pyproject.toml README.md ./
+COPY asset_allocation/ asset_allocation/
 COPY core/ core/
 COPY tasks/ tasks/
 COPY services/ services/
@@ -16,7 +17,7 @@ COPY alpaca/ alpaca/
 COPY api/ api/
 COPY backtest/ backtest/
 COPY monitoring/ monitoring/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 # Default entrypoint (will be overridden by ACA Job command)
 CMD ["python", "-m", "tasks.market_data.bronze_market_data"]

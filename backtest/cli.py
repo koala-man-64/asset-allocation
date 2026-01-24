@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
 from backtest.config import BacktestConfig
 from backtest.runner import run_backtest
+
+
+def _maybe_load_dotenv() -> None:
+    raw = os.environ.get("DISABLE_DOTENV")
+    if raw is not None and raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}:
+        return
+
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+
+    load_dotenv(override=False)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -29,6 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    _maybe_load_dotenv()
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
 
     try:
@@ -45,7 +60,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"output_dir={result.output_dir}")
         return 0
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        message = str(exc).strip() or exc.__class__.__name__
+        print(f"Error: {message}", file=sys.stderr)
+        if "AZURE_STORAGE_ACCOUNT_NAME must be set" in message:
+            print(
+                "Hint: set AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING "
+                "(you can place them in a local .env file; set DISABLE_DOTENV=true to disable loading).",
+                file=sys.stderr,
+            )
         return 2
 
 
