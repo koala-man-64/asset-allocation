@@ -26,7 +26,7 @@ def main():
     if args.command == "serve":
         print(f"Starting server on {args.host}:{args.port}...")
         uvicorn.run(
-            "api.main:app",
+            "backtest.service.app:app",
             host=args.host,
             port=args.port,
             reload=args.reload

@@ -875,6 +875,33 @@ export function SystemStatusPage() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Footer with Version Watermark & Icon Debug */}
+            <div className="border-t pt-8 mt-12 pb-4 text-center">
+                <div className="inline-flex flex-col items-center gap-2">
+                    <p className="text-xs text-muted-foreground font-mono">
+                        v1.0.1-debug • Use cached version if possible
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/50">
+                        {new Date().toISOString()}
+                    </p>
+
+                    {/* Icon Debug Strip */}
+                    <div className="flex items-center gap-4 p-2 bg-muted/20 rounded-lg mt-2 border border-dashed border-muted">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-widest mr-2">Debug Icons:</span>
+                        <div className="flex gap-2 text-muted-foreground" title="If you can see these icons, the font/svg system is working">
+                            <Activity className="h-4 w-4" />
+                            <Database className="h-4 w-4" />
+                            <CheckCircle2 className="h-4 w-4" />
+                            <AlertTriangle className="h-4 w-4" />
+                            <XCircle className="h-4 w-4" />
+                            <Clock className="h-4 w-4" />
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <TrendingUp className="h-4 w-4" />
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
