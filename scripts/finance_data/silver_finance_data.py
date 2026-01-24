@@ -63,13 +63,13 @@ def process_blob(blob):
     
     parts = blob_name.split('/')
     if len(parts) < 3:
-        return
+        return True
         
     folder_name = parts[1]
     filename = parts[2]
     
     if not filename.endswith('.csv'):
-        return
+        return True
         
     # extract ticker
     # filename: ticker_suffix.csv
@@ -91,7 +91,7 @@ def process_blob(blob):
             
     if not suffix:
         mdc.write_line(f"Skipping unknown file format: {filename}")
-        return
+        return True
         
     ticker = filename.replace(f"_{suffix}.csv", "")
     
@@ -109,7 +109,7 @@ def process_blob(blob):
     if silver_lm and (silver_lm > bronze_lm):
         # Silver is newer than Bronze (already processed)
         # mdc.write_line(f"Skipping {ticker}/{folder_name} (Silver up to date)")
-        return
+        return True
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
     
@@ -134,9 +134,10 @@ def process_blob(blob):
         
         delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
         mdc.write_line(f"Updated Silver {silver_path}")
-        
+        return True
     except Exception as e:
         mdc.write_error(f"Failed to process {blob_name}: {e}")
+        return False
 
 def main():
     mdc.log_environment_diagnostics()
@@ -145,18 +146,24 @@ def main():
     # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
     blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
     
-    count = 0 
+    total = 0
+    ok_or_skipped = 0
+    failed = 0
     for blob in blobs:
-        process_blob(blob)
-        count += 1
+        total += 1
+        if process_blob(blob):
+            ok_or_skipped += 1
+        else:
+            failed += 1
         
-    mdc.write_line(f"Processed {count} blobs.")
+    mdc.write_line(f"Processed {total} blobs (ok_or_skipped={ok_or_skipped}, failed={failed}).")
+    return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
     from scripts.common.by_date_pipeline import run_partner_then_by_date
     from scripts.finance_data.materialize_silver_finance_by_date import main as by_date_main
 
-    job_name = "branze-finance-job-silver"
+    job_name = "silver-finance-job"
     raise SystemExit(
         run_partner_then_by_date(
             job_name=job_name,

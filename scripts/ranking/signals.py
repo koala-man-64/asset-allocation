@@ -269,9 +269,12 @@ def materialize_signals_for_year_month(
         predicate=predicate,
     )
 
-    postgres_dsn = os.environ.get("POSTGRES_DSN", "").strip()
+    postgres_dsn_raw = os.environ.get("POSTGRES_DSN")
+    postgres_dsn = postgres_dsn_raw.strip() if postgres_dsn_raw else ""
     if postgres_dsn:
-        required_raw = os.environ.get("POSTGRES_SIGNALS_WRITE_REQUIRED", "true")
+        required_raw = os.environ.get("POSTGRES_SIGNALS_WRITE_REQUIRED")
+        if required_raw is None or not str(required_raw).strip():
+            raise ValueError("POSTGRES_SIGNALS_WRITE_REQUIRED is required when POSTGRES_DSN is set.")
         required = str(required_raw).strip().lower() not in {"0", "false", "no", "off"}
         try:
             from scripts.ranking.postgres_signals import write_signals_for_year_month

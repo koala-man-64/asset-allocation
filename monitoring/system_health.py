@@ -33,23 +33,33 @@ def _iso(dt: Optional[datetime]) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-def _is_truthy(raw: str) -> bool:
+def _is_truthy(raw: Optional[str]) -> bool:
     value = (raw or "").strip().lower()
     return value in {"1", "true", "t", "yes", "y", "on"}
 
 
-def _is_test_mode() -> bool:
-    if _is_truthy(os.environ.get("SYSTEM_HEALTH_RUN_IN_TEST", "")):
-        return False
-    if "PYTEST_CURRENT_TEST" in os.environ:
+def _require_env(name: str) -> str:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        raise ValueError(f"Missing required environment variable: {name}")
+    return raw.strip()
+
+
+def _parse_bool(value: str) -> bool:
+    text = value.strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "on"}:
         return True
-    return _is_truthy(os.environ.get("TEST_MODE", ""))
+    if text in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
 
 
-def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 365 * 24 * 3600) -> int:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
+def _require_bool(name: str) -> bool:
+    return _parse_bool(_require_env(name))
+
+
+def _require_int(name: str, *, min_value: int = 1, max_value: int = 365 * 24 * 3600) -> int:
+    raw = _require_env(name)
     try:
         value = int(raw)
     except ValueError as exc:
@@ -59,18 +69,8 @@ def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 36
     return value
 
 
-def _env_or(name: str, default: str) -> str:
-    return os.environ.get(name, "").strip() or default
-
-
-def _split_csv(raw: str) -> List[str]:
-    return [item.strip() for item in (raw or "").split(",") if item.strip()]
-
-
-def _get_float(name: str, default: float, *, min_value: float = 0.1, max_value: float = 120.0) -> float:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
+def _require_float(name: str, *, min_value: float = 0.1, max_value: float = 120.0) -> float:
+    raw = _require_env(name)
     try:
         value = float(raw)
     except ValueError as exc:
@@ -78,6 +78,18 @@ def _get_float(name: str, default: float, *, min_value: float = 0.1, max_value: 
     if value < min_value or value > max_value:
         raise ValueError(f"{name} must be in [{min_value}, {max_value}] (got {value}).")
     return value
+
+
+def _is_test_mode() -> bool:
+    if _is_truthy(os.environ.get("SYSTEM_HEALTH_RUN_IN_TEST")):
+        return False
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return True
+    return _is_truthy(os.environ.get("TEST_MODE"))
+
+
+def _split_csv(raw: Optional[str]) -> List[str]:
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
 def _worse_resource_status(primary: str, secondary: str) -> str:
@@ -112,13 +124,12 @@ class LayerProbeSpec:
     description: str
     refresh_frequency: str
     container_env: str
-    container_default: str
     max_age_seconds: int
     marker_blobs: Sequence[str] = ()
     delta_tables: Sequence[str] = ()
 
     def container_name(self) -> str:
-        return _env_or(self.container_env, self.container_default)
+        return _require_env(self.container_env)
 
 
 def _compute_layer_status(now: datetime, last_updated: Optional[datetime], *, max_age_seconds: int, had_error: bool) -> str:
@@ -172,8 +183,8 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
 
 
 def _default_layer_specs() -> List[LayerProbeSpec]:
-    max_age_default = _get_int("SYSTEM_HEALTH_MAX_AGE_SECONDS", 36 * 3600)
-    max_age_ranking = _get_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS", 72 * 3600)
+    max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
+    max_age_ranking = _require_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS")
 
     return [
         LayerProbeSpec(
@@ -181,7 +192,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Raw ingestion (blob snapshots + whitelists)",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_BRONZE",
-            container_default="bronze",
             max_age_seconds=max_age_default,
             marker_blobs=(
                 "market-data/whitelist.csv",
@@ -195,7 +205,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Normalized Delta tables (by-date aggregates)",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_SILVER",
-            container_default="silver",
             max_age_seconds=max_age_default,
             delta_tables=(
                 "market-data-by-date",
@@ -209,7 +218,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Feature store Delta tables (by-date aggregates)",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_GOLD",
-            container_default="gold",
             max_age_seconds=max_age_default,
             delta_tables=(
                 "market_by_date",
@@ -223,7 +231,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Platinum rankings + derived signals",
             refresh_frequency="Daily",
             container_env="AZURE_CONTAINER_RANKING",
-            container_default="ranking-data",
             max_age_seconds=max_age_ranking,
             delta_tables=(
                 "platinum/rankings",
@@ -296,33 +303,48 @@ def collect_system_health_snapshot(
         alerts.extend(_layer_alerts(now, layer_name=spec.name, status=status, last_updated=last_updated, error=err_text))
 
     # Optional Phase 2: Azure control-plane probes (Container Apps + Jobs + Executions).
-    subscription_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
-    resource_group = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
-    app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS", ""))
-    job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
+    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+    resource_group = resource_group_raw.strip() if resource_group_raw else ""
+    app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS"))
+    job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS"))
 
     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
     if arm_enabled:
         try:
-            api_version = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION", "").strip() or "2023-05-01"
-            timeout_seconds = _get_float("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", 5.0, min_value=0.5, max_value=30.0)
-            resource_health_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED", ""))
+            api_version = _require_env("SYSTEM_HEALTH_ARM_API_VERSION")
+            timeout_seconds = _require_float(
+                "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0
+            )
+            resource_health_enabled = _require_bool("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED")
             resource_health_api_version = (
-                os.environ.get("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION", "").strip()
-                or DEFAULT_RESOURCE_HEALTH_API_VERSION
+                _require_env("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION")
+                if resource_health_enabled
+                else DEFAULT_RESOURCE_HEALTH_API_VERSION
             )
 
-            monitor_metrics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED", ""))
+            monitor_metrics_enabled = _require_bool("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED")
             monitor_metrics_api_version = (
-                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", "").strip()
-                or DEFAULT_MONITOR_METRICS_API_VERSION
+                _require_env("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION")
+                if monitor_metrics_enabled
+                else DEFAULT_MONITOR_METRICS_API_VERSION
             )
-            monitor_metrics_timespan_minutes = _get_int(
-                "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", 15, min_value=1, max_value=24 * 60
+            monitor_metrics_timespan_minutes = (
+                _require_int("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", min_value=1, max_value=24 * 60)
+                if monitor_metrics_enabled
+                else 0
             )
-            monitor_metrics_interval = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", "").strip() or "PT1M"
-            monitor_metrics_aggregation = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", "").strip() or "Average"
-            monitor_metrics_thresholds_raw = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON", "").strip()
+            monitor_metrics_interval = (
+                _require_env("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL") if monitor_metrics_enabled else ""
+            )
+            monitor_metrics_aggregation = (
+                _require_env("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION") if monitor_metrics_enabled else ""
+            )
+            monitor_metrics_thresholds_raw = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON")
+            monitor_metrics_thresholds_raw = (
+                monitor_metrics_thresholds_raw.strip() if monitor_metrics_thresholds_raw else ""
+            )
             monitor_metrics_thresholds: Dict[str, Any] = {}
             if monitor_metrics_thresholds_raw:
                 try:
@@ -337,20 +359,29 @@ def collect_system_health_snapshot(
                             "timestamp": _iso(now),
                             "message": f"SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: {exc}",
                             "acknowledged": False,
-                        }
-                    )
-            containerapp_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS", ""))
-            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS", ""))
+                            }
+                        )
+            containerapp_metric_names = _split_csv(
+                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
+            )
+            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
 
-            log_analytics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", ""))
-            log_analytics_workspace_id = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "").strip()
-            log_analytics_timeout_seconds = _get_float(
-                "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", 5.0, min_value=0.5, max_value=30.0
+            log_analytics_enabled = _require_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED")
+            log_analytics_workspace_id = (
+                _require_env("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") if log_analytics_enabled else ""
             )
-            log_analytics_timespan_minutes = _get_int(
-                "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", 15, min_value=1, max_value=24 * 60
+            log_analytics_timeout_seconds = (
+                _require_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0)
+                if log_analytics_enabled
+                else 0.0
             )
-            log_analytics_queries_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON", "").strip()
+            log_analytics_timespan_minutes = (
+                _require_int("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", min_value=1, max_value=24 * 60)
+                if log_analytics_enabled
+                else 0
+            )
+            log_analytics_queries_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON")
+            log_analytics_queries_raw = log_analytics_queries_raw.strip() if log_analytics_queries_raw else ""
             log_analytics_queries = []
             if log_analytics_queries_raw:
                 try:
@@ -380,7 +411,7 @@ def collect_system_health_snapshot(
                         "message": "Log Analytics enabled but workspace ID or queries are missing.",
                         "acknowledged": False,
                     }
-                )
+                    )
 
             arm_cfg = ArmConfig(
                 subscription_id=subscription_id,
@@ -481,8 +512,8 @@ def collect_system_health_snapshot(
                             job_names=job_names,
                             last_checked_iso=checked_iso,
                             include_ids=include_resource_ids,
-                            max_executions_per_job=_get_int(
-                                "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", 3, min_value=1, max_value=25
+                            max_executions_per_job=_require_int(
+                                "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", min_value=1, max_value=25
                             ),
                             resource_health_enabled=resource_health_enabled,
                             resource_health_api_version=resource_health_api_version,

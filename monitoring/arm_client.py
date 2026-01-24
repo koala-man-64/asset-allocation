@@ -69,6 +69,26 @@ class AzureArmClient:
             raise ValueError("ARM response was not a JSON object.")
         return payload
 
+    def post_json(
+        self,
+        url: str,
+        *,
+        params: Optional[Dict[str, str]] = None,
+        json_body: Any = None,
+    ) -> Any:
+        query = {"api-version": self._cfg.api_version}
+        if params:
+            query.update({k: str(v) for k, v in params.items() if v is not None})
+
+        resp = self._http.post(url, headers=self._headers(), params=query, json=json_body)
+        resp.raise_for_status()
+        if not resp.content:
+            return {}
+        try:
+            return resp.json()
+        except ValueError:
+            return {"raw": resp.text}
+
     def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
         sub = self._cfg.subscription_id
         rg = self._cfg.resource_group

@@ -26,6 +26,9 @@ Thumbs.db
 scripts/common/Yahoo/
 # Secrets (Do not commit)
 .env
+.env.*
+!.env.template
+!.env.example
 nasdaq_key.txt
 scripts/common/nasdaq_key.txt
 pw_cookies.json
@@ -33,13 +36,38 @@ local.settings.json
 # --- Project Specific ---
 # Data Directory
 data/
-!asset_allocation/ui2.0/src/data/
+!ui/src/data/
+!ui/src/data/**
 # Backtest Artifacts
 backtest_results/
 
 # --- Node / Frontend ---
 node_modules/
 **/node_modules/
+ui/dist/
+ui/.vite/
+ui/.pnpm-store/
+ui/coverage/
+ui/.eslintcache
+pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+*.tsbuildinfo
 asset_allocation/ui2.0/dist/
 asset_allocation/ui2.0/.vite/
 asset_allocation/ui2.0/.pnpm-store/
+
+# --- Tooling / Test Artifacts ---
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.hypothesis/
+**/playwright-report/
+**/test-results/
+**/blob-report/
+coverage/
+audit_snapshot*.json
+.pytest_blob_store/
+.direnv/
+.envrc
