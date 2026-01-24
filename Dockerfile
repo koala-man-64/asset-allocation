@@ -9,7 +9,6 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 
 # Install application code as a package (avoids PYTHONPATH hacks).
 COPY pyproject.toml README.md ./
-COPY asset_allocation/ asset_allocation/
 COPY core/ core/
 COPY tasks/ tasks/
 COPY services/ services/

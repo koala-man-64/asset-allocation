@@ -263,7 +263,6 @@ jobs:
           filters: |
             backtest_api:
               - "backtest/**"
-              - "asset_allocation/**"
               - "core/**"
               - "monitoring/**"
               - "ui/**"

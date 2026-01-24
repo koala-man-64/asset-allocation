@@ -10,10 +10,10 @@ Phase 3 moves **backtest run-state** (queued/running/completed/failed + metadata
   - `backtest.runs`
   - Migration: `deploy/sql/postgres/migrations/0004_backtest_runs.sql`
 - Backtest service Postgres store implementation:
-  - `asset_allocation/backtest/service/postgres_run_store.py`
+  - `backtest/service/postgres_run_store.py`
 - Backtest API wiring:
-  - `asset_allocation/backtest/service/settings.py` adds `BACKTEST_RUN_STORE_MODE=postgres` and requires `BACKTEST_POSTGRES_DSN`
-  - `asset_allocation/backtest/service/app.py` selects `PostgresRunStore` when configured
+  - `backtest/service/settings.py` adds `BACKTEST_RUN_STORE_MODE=postgres` and requires `BACKTEST_POSTGRES_DSN`
+  - `backtest/service/app.py` selects `PostgresRunStore` when configured
 
 ## Required configuration
 

@@ -218,3 +218,6 @@ def create_app() -> FastAPI:
             mgr.disconnect(websocket)
             
     return app
+
+
+app: FastAPI = create_app()

@@ -22,13 +22,13 @@ Phase 4 adds **optional** support for reading **platinum composite signals** fro
 
 - **DEC-401 Canonical truth remains Delta:** Postgres is a **serving cache** and is always optional.
 - **DEC-402 Reader is opt-in:** Backtests default to current behavior unless explicitly configured.
-- **DEC-403 Keep merge-conflict surface low:** Avoid changes to `asset_allocation/backtest/service/app.py` for Phase 4.
+- **DEC-403 Keep merge-conflict surface low:** Avoid changes to `backtest/service/app.py` for Phase 4.
 
 ## Implementation steps
 
 ### 1) Extend backtest config to support a signal source selector
 
-Update `asset_allocation/backtest/config.py`:
+Update `backtest/config.py`:
 
 - Add `signal_source` to `DataConfig`, e.g.:
   - `signal_source: Literal["auto", "local", "ADLS", "postgres"] = "auto"`
@@ -42,7 +42,7 @@ Acceptance criteria:
 
 ### 2) Implement a Postgres signals loader (composite daily)
 
-Update `asset_allocation/backtest/data_access/loader.py`:
+Update `backtest/data_access/loader.py`:
 
 - Add `_load_signals_postgres(config: BacktestConfig, data: DataConfig) -> Optional[pd.DataFrame]`
   - DSN source: `BACKTEST_POSTGRES_DSN` (default) with an optional override env var if needed later.
@@ -88,12 +88,12 @@ Acceptance criteria:
 The local `ag-ui-wiring` copy introduces API and UI changes that are likely to conflict if Phase 4 touches shared files. To minimize future merge conflicts:
 
 - Keep Phase 4 changes isolated to:
-  - `asset_allocation/backtest/config.py`
-  - `asset_allocation/backtest/data_access/loader.py`
+  - `backtest/config.py`
+  - `backtest/data_access/loader.py`
 - Account for UI contract drift:
-  - `ag-ui-wiring` UI calls `/system/health` via `asset_allocation/ui2.0/src/services/backtestApi.ts`.
+  - `ag-ui-wiring` UI calls `/system/health` via `ui/src/services/backtestApi.ts`.
   - `ag-ui-wiring` UI also uses different “live” market/finance endpoints (`/market/...`, `/finance/...`) than the current backend API (`/data/...`).
-- When merging later, reconcile `asset_allocation/backtest/service/app.py` carefully:
+- When merging later, reconcile `backtest/service/app.py` carefully:
   - `ag-ui-wiring` adds `/system/health` and a monitoring package.
   - Postgres Phase 3 adds Postgres run-store readiness (`/readyz` pings the configured store).
 
