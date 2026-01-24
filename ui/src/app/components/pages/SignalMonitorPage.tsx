@@ -18,8 +18,6 @@ import { Input } from '@/app/components/ui/input';
 import {
     TrendingUp,
     TrendingDown,
-    ArrowUpRight,
-    ArrowDownRight,
     Filter,
     RefreshCw,
     Zap
@@ -53,9 +51,12 @@ type SignalRowData = {
 
 function SignalRow({ index, style, ariaAttributes, signals }: RowComponentProps<SignalRowData>) {
     const signal = signals[index];
-    const currentPrice = signal.currentPrice ?? 0;
-    const priceChange24h = signal.priceChange24h ?? 0;
-    const expectedReturn = signal.expectedReturn ?? 0;
+    const confidence =
+        typeof signal.confidence === 'number'
+            ? signal.confidence
+            : typeof signal.strength === 'number'
+                ? signal.strength / 100
+                : null;
 
     return (
         <div
@@ -77,22 +78,14 @@ function SignalRow({ index, style, ariaAttributes, signals }: RowComponentProps<
             <div className="flex-1 min-w-[100px] truncate pr-2" title={signal.strategyName}>
                 {signal.strategyName || '-'}
             </div>
-            <div className="w-[120px] text-muted-foreground text-xs truncate pr-2 shrink-0">
-                {signal.sector || '-'}
+            <div className="w-[90px] text-right font-mono text-xs shrink-0">
+                {confidence == null ? '—' : `${Math.round(confidence * 100)}%`}
             </div>
-            <div className="w-[80px] text-right font-mono shrink-0">
-                ${currentPrice.toFixed(2)}
+            <div className="w-[100px] text-right font-mono text-xs shrink-0">
+                {signal.rank && signal.nSymbols ? `${signal.rank}/${signal.nSymbols}` : '—'}
             </div>
-            <div className="w-[80px] text-right shrink-0">
-                <div className={`flex items-center justify-end gap-1 ${priceChange24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {priceChange24h > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                    <span className="font-mono text-xs">{Math.abs(priceChange24h).toFixed(2)}%</span>
-                </div>
-            </div>
-            <div className="w-[80px] text-right shrink-0">
-                <span className={`font-mono font-semibold ${expectedReturn > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {expectedReturn > 0 ? '+' : ''}{expectedReturn.toFixed(1)}%
-                </span>
+            <div className="w-[90px] text-right font-mono text-xs shrink-0">
+                {signal.score == null ? '—' : String(signal.score)}
             </div>
         </div>
     );
@@ -110,8 +103,7 @@ export function SignalMonitorPage() {
         // Search filter
         const matchesSearch = searchTerm === '' ||
             (signal.symbol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (signal.strategyName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (signal.sector || '').toLowerCase().includes(searchTerm.toLowerCase());
+            (signal.strategyName || '').toLowerCase().includes(searchTerm.toLowerCase());
 
         // Signal type filter
         const matchesType = signalTypeFilter === 'all' || signal.signalType === signalTypeFilter;
@@ -286,10 +278,9 @@ export function SignalMonitorPage() {
                             <div className="w-[80px] shrink-0">Type</div>
                             <div className="w-[80px] shrink-0">Symbol</div>
                             <div className="flex-1 min-w-[100px]">Strategy</div>
-                            <div className="w-[120px] shrink-0">Sector</div>
-                            <div className="w-[80px] text-right shrink-0">Price</div>
-                            <div className="w-[80px] text-right shrink-0">24h Chg</div>
-                            <div className="w-[80px] text-right shrink-0">Exp. Ret</div>
+                            <div className="w-[90px] text-right shrink-0">Conf.</div>
+                            <div className="w-[100px] text-right shrink-0">Rank</div>
+                            <div className="w-[90px] text-right shrink-0">Score</div>
                         </div>
 
                         <div className="flex-1">

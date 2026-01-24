@@ -7,11 +7,11 @@ from typing import Any, Dict, List, Optional
 
 from core.blob_storage import BlobStorageClient
 
-from backtest.service.run_store import RunRecord, RunStatus
-from backtest.service.security import parse_container_and_path
+from api.service.run_store import RunRecord, RunStatus
+from api.service.security import parse_container_and_path
 
 
-logger = logging.getLogger("backtest.service.adls_run_store")
+logger = logging.getLogger("api.service.adls_run_store")
 
 
 def _utc_now() -> datetime:

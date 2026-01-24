@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
+from core.data_contract import CANONICAL_COMPOSITE_SIGNALS_PATH, CANONICAL_RANKINGS_PATH
 from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.control_plane import ResourceHealthItem, collect_container_apps, collect_jobs_and_executions
@@ -165,6 +168,7 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
     if status == "error":
         return [
             {
+                "id": _alert_id(severity="error", title="Layer probe error", component=layer_name),
                 "severity": "error",
                 "title": "Layer probe error",
                 "component": layer_name,
@@ -178,6 +182,7 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
     last_text = _iso(last_updated) if last_updated else "unknown"
     return [
         {
+            "id": _alert_id(severity="warning", title="Layer stale", component=layer_name),
             "severity": "warning",
             "title": "Layer stale",
             "component": layer_name,
@@ -250,14 +255,25 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
         LayerProbeSpec(
             name="Platinum",
             description="Platinum rankings + derived signals",
-            container_env="AZURE_CONTAINER_PLATINUM",
+            container_env="AZURE_CONTAINER_RANKING",
             max_age_seconds=max_age_ranking,
             delta_tables=(
-                DomainSpec("rankings", CRON_PLATINUM_RANKING),
-                DomainSpec("signals/daily", CRON_PLATINUM_RANKING),
+                DomainSpec(CANONICAL_RANKINGS_PATH, CRON_PLATINUM_RANKING),
+                DomainSpec(CANONICAL_COMPOSITE_SIGNALS_PATH, CRON_PLATINUM_RANKING),
             ),
         ),
     ]
+
+
+def _slug(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+    return cleaned[:80] if cleaned else "alert"
+
+
+def _alert_id(*, severity: str, title: str, component: str) -> str:
+    raw = f"{severity}|{title}|{component}".encode("utf-8")
+    digest = hashlib.sha1(raw).hexdigest()[:10]
+    return f"{_slug(component)}--{_slug(title)}--{digest}"
 
 
 def _make_container_portal_url(sub_id: str, rg: str, account: str, container: str) -> Optional[str]:
@@ -378,7 +394,7 @@ def collect_system_health_snapshot(
 
     Phase 1 scope:
     - ADLS/Blob data-layer freshness probes (no ARM/resource health yet)
-    - No persisted alert acknowledgements (all alerts unacknowledged)
+    - Alerts include stable IDs for persisted lifecycle actions (ack/snooze/resolve via API)
     - recentJobs left empty (Container App Job executions are Phase 2)
     """
     now = now or _utc_now()
@@ -429,12 +445,14 @@ def collect_system_health_snapshot(
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
+                    "maxAgeSeconds": spec.max_age_seconds,
                     "cron": domain_spec.cron,
                     "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": _iso(lm),
                     "status": status,
                     "portalUrl": folder_url,
                     "jobUrl": job_url,
+                    "jobName": job_name,
                 })
             except Exception:
                 had_layer_error = True
@@ -443,12 +461,14 @@ def collect_system_health_snapshot(
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
+                    "maxAgeSeconds": spec.max_age_seconds,
                     "cron": domain_spec.cron,
                     "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": None,
                     "status": "error",
                     "portalUrl": folder_url,
                     "jobUrl": job_url,
+                    "jobName": job_name,
                 })
 
         # Collect Delta tables
@@ -456,6 +476,8 @@ def collect_system_health_snapshot(
             table_path = domain_spec.path
             d_name = table_path
             name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
+            if "/signals/" in d_name:
+                name_clean = "signals"
             if name_clean == "targets":
                 name_clean = "price-target"
             
@@ -471,6 +493,7 @@ def collect_system_health_snapshot(
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "delta",
                     "path": table_path,
+                    "maxAgeSeconds": spec.max_age_seconds,
                     "cron": domain_spec.cron,
                     "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": _iso(lm),
@@ -478,6 +501,7 @@ def collect_system_health_snapshot(
                     "version": ver if ver is not None else None,
                     "portalUrl": folder_url,
                     "jobUrl": job_url,
+                    "jobName": job_name,
                 })
             except Exception:
                 had_layer_error = True
@@ -486,6 +510,7 @@ def collect_system_health_snapshot(
                     "description": "",
                     "type": "delta",
                     "path": table_path,
+                    "maxAgeSeconds": spec.max_age_seconds,
                     "cron": domain_spec.cron,
                     "frequency": _describe_cron(domain_spec.cron),
                     "lastUpdated": None,
@@ -493,6 +518,7 @@ def collect_system_health_snapshot(
                     "version": None,
                     "portalUrl": folder_url,
                     "jobUrl": job_url,
+                    "jobName": job_name,
                 })
 
         # Aggregate layer status
@@ -515,6 +541,8 @@ def collect_system_health_snapshot(
         statuses.append(layer_status)
 
         portal_url = _make_container_portal_url(sub_id, rg, storage_account, container)
+        unique_frequencies = sorted({str(item.get("frequency") or "").strip() for item in domain_items if item.get("frequency")})
+        refresh_frequency = unique_frequencies[0] if len(unique_frequencies) == 1 else "Multiple schedules"
 
         layers.append(
             {
@@ -522,6 +550,8 @@ def collect_system_health_snapshot(
                 "description": spec.description,
                 "lastUpdated": _iso(layer_last_updated),
                 "status": layer_status,
+                "maxAgeSeconds": spec.max_age_seconds,
+                "refreshFrequency": refresh_frequency,
                 "portalUrl": portal_url,
                 "domains": domain_items,
             }
@@ -577,6 +607,11 @@ def collect_system_health_snapshot(
                     monitor_metrics_thresholds = {}
                     alerts.append(
                         {
+                            "id": _alert_id(
+                                severity="warning",
+                                title="Monitor metrics thresholds invalid",
+                                component="AzureMonitorMetrics",
+                            ),
                             "severity": "warning",
                             "title": "Monitor metrics thresholds invalid",
                             "component": "AzureMonitorMetrics",
@@ -615,6 +650,11 @@ def collect_system_health_snapshot(
                     log_analytics_enabled = False
                     alerts.append(
                         {
+                            "id": _alert_id(
+                                severity="warning",
+                                title="Log Analytics queries invalid",
+                                component="AzureLogAnalytics",
+                            ),
                             "severity": "warning",
                             "title": "Log Analytics queries invalid",
                             "component": "AzureLogAnalytics",
@@ -628,6 +668,11 @@ def collect_system_health_snapshot(
                 log_analytics_enabled = False
                 alerts.append(
                     {
+                        "id": _alert_id(
+                            severity="warning",
+                            title="Log Analytics monitoring disabled",
+                            component="AzureLogAnalytics",
+                        ),
                         "severity": "warning",
                         "title": "Log Analytics monitoring disabled",
                         "component": "AzureLogAnalytics",
@@ -707,6 +752,11 @@ def collect_system_health_snapshot(
                         statuses.append("stale" if item.status == "warning" else "error")
                         alerts.append(
                             {
+                                "id": _alert_id(
+                                    severity="warning" if item.status == "warning" else "error",
+                                    title=title,
+                                    component=item.name,
+                                ),
                                 "severity": "warning" if item.status == "warning" else "error",
                                 "title": title,
                                 "component": item.name,
@@ -752,6 +802,11 @@ def collect_system_health_snapshot(
                                 statuses.append("error")
                                 alerts.append(
                                     {
+                                        "id": _alert_id(
+                                            severity="error",
+                                            title="Job execution failed",
+                                            component=str(run.get("jobName") or "job"),
+                                        ),
                                         "severity": "error",
                                         "title": "Job execution failed",
                                         "component": str(run.get("jobName") or "job"),
@@ -767,6 +822,11 @@ def collect_system_health_snapshot(
             checked_iso = _iso(now)
             alerts.append(
                 {
+                    "id": _alert_id(
+                        severity="warning",
+                        title="Azure monitoring disabled",
+                        component="AzureControlPlane",
+                    ),
                     "severity": "warning",
                     "title": "Azure monitoring disabled",
                     "component": "AzureControlPlane",

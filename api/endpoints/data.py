@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List, Dict, Any
-from services.data_service import DataService
+from ..data_service import DataService
 
 router = APIRouter()
 

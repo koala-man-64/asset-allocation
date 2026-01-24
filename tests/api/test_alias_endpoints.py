@@ -2,7 +2,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 from api import dependencies as deps
-from api.main import app
+from api.service.app import app
 
 
 class _DummyDeltaTable:
@@ -14,9 +14,9 @@ class _DummyDeltaTable:
 
 
 def test_market_alias_rejects_unknown_layer():
-    client = TestClient(app)
-    resp = client.get("/market/bronze/AAPL")
-    assert resp.status_code == 400
+    with TestClient(app) as client:
+        resp = client.get("/api/market/bronze/AAPL")
+        assert resp.status_code == 400
 
 
 def test_market_alias_silver_calls_delta(monkeypatch):
@@ -33,13 +33,13 @@ def test_market_alias_silver_calls_delta(monkeypatch):
     monkeypatch.setattr(deps, "resolve_container", fake_resolve_container)
     monkeypatch.setattr(deps, "get_delta_table", fake_get_delta_table)
 
-    client = TestClient(app)
-    resp = client.get("/market/silver/AAPL")
-    assert resp.status_code == 200
-    assert calls == [
-        ("resolve_container", "silver", "market"),
-        ("get_delta_table", "container:silver:market", "market-data/AAPL"),
-    ]
+    with TestClient(app) as client:
+        resp = client.get("/api/market/silver/AAPL")
+        assert resp.status_code == 200
+        assert calls == [
+            ("resolve_container", "silver", "market"),
+            ("get_delta_table", "container:silver:market", "market-data/AAPL"),
+        ]
 
 
 def test_market_alias_gold_calls_delta(monkeypatch):
@@ -56,13 +56,13 @@ def test_market_alias_gold_calls_delta(monkeypatch):
     monkeypatch.setattr(deps, "resolve_container", fake_resolve_container)
     monkeypatch.setattr(deps, "get_delta_table", fake_get_delta_table)
 
-    client = TestClient(app)
-    resp = client.get("/market/gold/AAPL")
-    assert resp.status_code == 200
-    assert calls == [
-        ("resolve_container", "gold", "market"),
-        ("get_delta_table", "container:gold:market", "market/AAPL"),
-    ]
+    with TestClient(app) as client:
+        resp = client.get("/api/market/gold/AAPL")
+        assert resp.status_code == 200
+        assert calls == [
+            ("resolve_container", "gold", "market"),
+            ("get_delta_table", "container:gold:market", "market/AAPL"),
+        ]
 
 
 def test_finance_alias_rejects_unknown_subdomain(monkeypatch):
@@ -71,9 +71,9 @@ def test_finance_alias_rejects_unknown_subdomain(monkeypatch):
 
     monkeypatch.setattr(deps, "resolve_container", fake_resolve_container)
 
-    client = TestClient(app)
-    resp = client.get("/finance/silver/not-a-domain/AAPL")
-    assert resp.status_code == 400
+    with TestClient(app) as client:
+        resp = client.get("/api/finance/silver/not-a-domain/AAPL")
+        assert resp.status_code == 400
 
 
 def test_finance_alias_silver_calls_delta(monkeypatch):
@@ -90,17 +90,17 @@ def test_finance_alias_silver_calls_delta(monkeypatch):
     monkeypatch.setattr(deps, "resolve_container", fake_resolve_container)
     monkeypatch.setattr(deps, "get_delta_table", fake_get_delta_table)
 
-    client = TestClient(app)
-    resp = client.get("/finance/silver/balance_sheet/AAPL")
-    assert resp.status_code == 200
-    assert calls == [
-        ("resolve_container", "silver", "finance"),
-        (
-            "get_delta_table",
-            "container:silver:finance",
-            "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
-        ),
-    ]
+    with TestClient(app) as client:
+        resp = client.get("/api/finance/silver/balance_sheet/AAPL")
+        assert resp.status_code == 200
+        assert calls == [
+            ("resolve_container", "silver", "finance"),
+            (
+                "get_delta_table",
+                "container:silver:finance",
+                "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
+            ),
+        ]
 
 
 def test_finance_alias_gold_calls_delta(monkeypatch):
@@ -117,13 +117,13 @@ def test_finance_alias_gold_calls_delta(monkeypatch):
     monkeypatch.setattr(deps, "resolve_container", fake_resolve_container)
     monkeypatch.setattr(deps, "get_delta_table", fake_get_delta_table)
 
-    client = TestClient(app)
-    resp = client.get("/finance/gold/all/AAPL")
-    assert resp.status_code == 200
-    assert calls == [
-        ("resolve_container", "gold", "finance"),
-        ("get_delta_table", "container:gold:finance", "finance/AAPL"),
-    ]
+    with TestClient(app) as client:
+        resp = client.get("/api/finance/gold/all/AAPL")
+        assert resp.status_code == 200
+        assert calls == [
+            ("resolve_container", "gold", "finance"),
+            ("get_delta_table", "container:gold:finance", "finance/AAPL"),
+        ]
 
 
 def test_strategies_alias_calls_delta(monkeypatch):
@@ -140,11 +140,11 @@ def test_strategies_alias_calls_delta(monkeypatch):
     monkeypatch.setattr(deps, "resolve_container", fake_resolve_container)
     monkeypatch.setattr(deps, "get_delta_table", fake_get_delta_table)
 
-    client = TestClient(app)
-    resp = client.get("/strategies")
-    assert resp.status_code == 200
-    assert calls == [
-        ("resolve_container", "platinum", None),
-        ("get_delta_table", "container:platinum:None", "strategies"),
-    ]
+    with TestClient(app) as client:
+        resp = client.get("/api/strategies")
+        assert resp.status_code == 200
+        assert calls == [
+            ("resolve_container", "platinum", None),
+            ("get_delta_table", "container:platinum:None", "strategies"),
+        ]
 

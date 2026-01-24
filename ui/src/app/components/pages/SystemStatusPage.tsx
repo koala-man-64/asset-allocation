@@ -1,5 +1,5 @@
-import React from 'react';
-import { useSystemHealthQuery } from '@/hooks/useDataQueries';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useLineageQuery, useSignalsQuery, useSystemHealthQuery } from '@/hooks/useDataQueries';
 import { StatusOverview } from './system-status/StatusOverview';
 import { DataLayerHealth } from './system-status/DataLayerHealth';
 import { JobMonitor } from './system-status/JobMonitor';
@@ -7,7 +7,27 @@ import { AlertHistory } from './system-status/AlertHistory';
 import { AzureResources } from './system-status/AzureResources';
 
 export function SystemStatusPage() {
-    const { data, isLoading, error } = useSystemHealthQuery();
+    const { data, isLoading, error, isFetching, dataUpdatedAt } = useSystemHealthQuery();
+    const { data: lineage } = useLineageQuery();
+    const { data: signals = [] } = useSignalsQuery();
+    const [now, setNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        const handle = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(handle);
+    }, []);
+
+    const secondsSinceRefresh = useMemo(() => {
+        if (!dataUpdatedAt) return null;
+        return Math.max(0, Math.floor((now - dataUpdatedAt) / 1000));
+    }, [dataUpdatedAt, now]);
+
+    const impactsByDomain = useMemo<Record<string, string[]>>(() => {
+        if (!lineage || typeof lineage !== 'object') return {};
+        const impacts = (lineage as { impactsByDomain?: unknown }).impactsByDomain;
+        if (!impacts || typeof impacts !== 'object') return {};
+        return impacts as Record<string, string[]>;
+    }, [lineage]);
 
     if (isLoading) {
         return (
@@ -38,6 +58,14 @@ export function SystemStatusPage() {
                     <h1 className="text-3xl font-bold tracking-tight">System Status</h1>
                     <p className="text-muted-foreground mt-1">Real-time monitoring of data layers, pipelines, and infrastructure</p>
                 </div>
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${isFetching ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/40'}`} />
+                        <span className="font-mono">
+                            {secondsSinceRefresh === null ? '—' : `Last refresh: ${secondsSinceRefresh}s`}
+                        </span>
+                    </div>
+                </div>
             </div>
 
             <StatusOverview overall={overall} dataLayers={dataLayers} recentJobs={recentJobs} />
@@ -47,7 +75,12 @@ export function SystemStatusPage() {
                 <AlertHistory alerts={alerts} />
             </div>
 
-            <DataLayerHealth dataLayers={dataLayers} recentJobs={recentJobs} />
+            <DataLayerHealth
+                dataLayers={dataLayers}
+                recentJobs={recentJobs}
+                impactsByDomain={impactsByDomain}
+                signals={signals}
+            />
 
             {resources && resources.length > 0 && (
                 <AzureResources resources={resources} />

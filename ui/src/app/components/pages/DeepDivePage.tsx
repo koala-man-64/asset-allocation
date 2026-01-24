@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { DataService } from '@/services/DataService';
 import { StrategyRun } from '@/types/strategy';
-import { getTopDrawdowns } from '@/data/mock-data';
+import { getTopDrawdowns } from '@/utils/drawdowns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -34,8 +34,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  CartesianGrid,
-  Cell
+  CartesianGrid
 } from 'recharts';
 import { Copy, Download, RotateCcw, TrendingUp, TrendingDown } from 'lucide-react';
 

@@ -47,6 +47,7 @@ export function PortfolioPage() {
         return newWeights;
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, selectedStrategies.length]);
 
   const updateWeight = (id: string, value: number) => {

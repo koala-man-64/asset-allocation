@@ -28,7 +28,7 @@ export function RobustnessPage() {
         <CardContent>
           <div className="mb-4">
             <p className="text-sm text-muted-foreground">
-              Testing robustness by varying key parameters. We want broad "plateaus" of good performance, not single "peaks" which suggest overfitting.
+              Testing robustness by varying key parameters. We want broad “plateaus” of good performance, not single “peaks” which suggest overfitting.
             </p>
           </div>
           

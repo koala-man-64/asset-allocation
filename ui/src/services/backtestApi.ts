@@ -1,4 +1,6 @@
-import type { SystemHealth } from '@/types/strategy';
+/* global RequestInit */
+import type { FinanceData, MarketData } from '@/types/data';
+import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
@@ -156,9 +158,14 @@ export interface GetTradesParams {
   offset?: number;
 }
 
+
 function getBaseUrl(): string {
   const runtime = getRuntimeConfig();
-  const raw = String(runtime.backtestApiBaseUrl ?? import.meta.env.VITE_BACKTEST_API_BASE_URL ?? '').trim();
+  const raw = String(
+    runtime.backtestApiBaseUrl ||
+    import.meta.env.VITE_BACKTEST_API_BASE_URL ||
+    'http://localhost:8000'
+  ).trim();
   return raw.replace(/\/+$/, '');
 }
 
@@ -275,6 +282,69 @@ export const backtestApi = {
 
   async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
     return requestJson<SystemHealth>('/system/health', { signal });
+  },
+
+  async getLineage(signal?: AbortSignal): Promise<unknown> {
+    return requestJson<unknown>('/system/lineage', { signal });
+  },
+
+  async getSignals(
+    params: { date?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<TradingSignal[]> {
+    const query = buildQuery({
+      date: params.date,
+      limit: params.limit ?? 500,
+    });
+    return requestJson<TradingSignal[]>(`/signals${query}`, { signal });
+  },
+
+  async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
+    const encoded = encodeURIComponent(alertId);
+    return requestJson<unknown>(`/system/alerts/${encoded}/ack`, { method: 'POST', signal });
+  },
+
+  async snoozeAlert(
+    alertId: string,
+    payload: { minutes?: number; until?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const encoded = encodeURIComponent(alertId);
+    return requestJson<unknown>(`/system/alerts/${encoded}/snooze`, {
+      method: 'POST',
+      signal,
+      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+
+  async resolveAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
+    const encoded = encodeURIComponent(alertId);
+    return requestJson<unknown>(`/system/alerts/${encoded}/resolve`, { method: 'POST', signal });
+  },
+
+  async getStrategies(signal?: AbortSignal): Promise<StrategyRun[]> {
+    return requestJson<StrategyRun[]>('/strategies', { signal });
+  },
+
+  async getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver', signal?: AbortSignal): Promise<MarketData[]> {
+    const encoded = encodeURIComponent(ticker);
+    return requestJson<MarketData[]>(`/market/${layer}/${encoded}`, { signal });
+  },
+
+  async getFinanceData(
+    ticker: string,
+    subDomain: string,
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal,
+  ): Promise<FinanceData[]> {
+    const encodedTicker = encodeURIComponent(ticker);
+    const encodedSub = encodeURIComponent(subDomain);
+    return requestJson<FinanceData[]>(`/finance/${layer}/${encodedSub}/${encodedTicker}`, { signal });
+  },
+
+  async getStressEvents(_signal?: AbortSignal): Promise<StressEvent[]> {
+    return [];
   },
 
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {

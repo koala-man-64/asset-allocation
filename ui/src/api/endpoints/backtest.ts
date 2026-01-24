@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client';
-import { ApiResponse, PaginatedResponse } from '@/api/types';
+import { PaginatedResponse } from '@/api/types';
 import type { StrategyRun } from '@/types/strategy';
 
 export const backtestApi = {

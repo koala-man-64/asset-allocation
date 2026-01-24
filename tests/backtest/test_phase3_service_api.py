@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from fastapi.testclient import TestClient
 
-from services.backtest_api.app import create_app
+from api.service.app import create_app
 
 
 def _make_config_dict(tmp_path: Path, *, run_id: str, adls_dir: Optional[str] = None) -> Dict[str, Any]:
@@ -253,7 +253,7 @@ def test_service_accepts_oidc_bearer_tokens_when_configured(tmp_path: Path, monk
         assert url == jwks_url
         return _FakeHttpResponse(jwks)
 
-    monkeypatch.setattr("backtest.service.auth.requests.get", _fake_requests_get)
+    monkeypatch.setattr("api.service.auth.requests.get", _fake_requests_get)
 
     app = create_app()
     with TestClient(app) as client:
@@ -331,8 +331,8 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
 
     # Patch Azure client to a local fake to avoid network.
-    monkeypatch.setattr("backtest.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
-    monkeypatch.setattr("backtest.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
 
     app = create_app()
     with TestClient(app) as client:
@@ -377,9 +377,9 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
     monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "true")
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
 
-    monkeypatch.setattr("backtest.service.adls_run_store.BlobStorageClient", _LocalBlobStorageClient)
-    monkeypatch.setattr("backtest.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
-    monkeypatch.setattr("backtest.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.adls_run_store.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
 
     app = create_app()
     run_id = "RUNTEST-SVC-ADLS-STORE"

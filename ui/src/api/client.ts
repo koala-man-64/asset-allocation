@@ -1,3 +1,4 @@
+/* global RequestInit */
 import { config } from '@/config';
 
 /**

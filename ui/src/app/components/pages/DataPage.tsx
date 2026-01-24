@@ -9,7 +9,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/app/components/ui/select';
-import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
 import { CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';

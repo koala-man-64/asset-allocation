@@ -5,7 +5,7 @@ from typing import Set
 
 import asyncpg
 from fastapi import WebSocket, WebSocketDisconnect
-from backtest.service.settings import ServiceSettings
+from api.service.settings import ServiceSettings
 
 logger = logging.getLogger("backtest.realtime")
 

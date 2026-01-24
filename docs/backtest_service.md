@@ -62,7 +62,7 @@ export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'
 # Required: system-health cache TTL (used by /api/system/* endpoints)
 export SYSTEM_HEALTH_TTL_SECONDS=30
 
-uvicorn services.backtest_api.app:create_app --factory --reload --port 8000
+uvicorn api.service.app:app --reload --port 8000
 ```
 
 ## API

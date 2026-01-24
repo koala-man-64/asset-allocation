@@ -35,4 +35,4 @@ COPY --from=ui-builder /ui/dist /app/ui-dist
 
 EXPOSE 8000
 
-CMD ["uvicorn", "services.backtest_api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.service.app:app", "--host", "0.0.0.0", "--port", "8000"]

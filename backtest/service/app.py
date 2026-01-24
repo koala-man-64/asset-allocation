@@ -1,8 +1,7 @@
 """
-Deprecated: this module used to host the Backtest API FastAPI app.
-
-The service entrypoint now lives at `services.backtest_api.app` so the deployed API
-is not rooted under the `backtest` package.
+Compatibility shim for legacy entrypoints. 
+Re-exports the application instance from the new consolidated api/ location.
 """
+from api.service.app import app
 
-from services.backtest_api.app import app, create_app  # noqa: F401
+__all__ = ["app"]

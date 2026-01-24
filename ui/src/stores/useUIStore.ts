@@ -21,9 +21,6 @@ interface UIState {
     costModel: string;
     setCostModel: (model: string) => void;
 
-    // Domain Config
-    dataSource: 'mock' | 'live';
-    setDataSource: (source: 'mock' | 'live') => void;
     environment: 'DEV' | 'PROD';
     setEnvironment: (env: 'DEV' | 'PROD') => void;
 
@@ -44,7 +41,6 @@ export const useUIStore = create<UIState>()(
             dateRange: { start: '2020-01-01', end: '2025-01-01' },
             benchmark: 'SPY',
             costModel: 'Passive bps',
-            dataSource: 'mock',
             environment: 'DEV',
             selectedRuns: [],
 
@@ -56,7 +52,6 @@ export const useUIStore = create<UIState>()(
             setDateRange: (range) => set({ dateRange: range }),
             setBenchmark: (benchmark) => set({ benchmark }),
             setCostModel: (model) => set({ costModel: model }),
-            setDataSource: (source) => set({ dataSource: source }),
             setEnvironment: (env) => set({ environment: env }),
 
             addToCart: (runId) =>
@@ -74,7 +69,6 @@ export const useUIStore = create<UIState>()(
             partialize: (state) => ({
                 // Only persist settings the user would expect to stick
                 isDarkMode: state.isDarkMode,
-                dataSource: state.dataSource,
                 benchmark: state.benchmark,
                 costModel: state.costModel,
                 dateRange: state.dateRange,

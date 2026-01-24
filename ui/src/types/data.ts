@@ -57,7 +57,7 @@ export interface FinanceData {
     date: string;
     symbol: string;
     sub_domain: string;
-    [key: string]: any;
+    [key: string]: unknown;
 }
 
 export interface FactorExposure {

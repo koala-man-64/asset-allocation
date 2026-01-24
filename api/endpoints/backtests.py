@@ -11,19 +11,19 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from backtest.config import BacktestConfig, generate_run_id, validate_config_dict_strict
-from backtest.service.adls_run_store import AdlsRunStore
-from backtest.service.artifacts import (
+from api.service.adls_run_store import AdlsRunStore
+from api.service.artifacts import (
     download_remote_artifact,
     list_local_artifacts,
     list_remote_artifacts,
 )
-from backtest.service.dependencies import (
+from api.service.dependencies import (
     get_manager,
     get_settings,
     get_store,
     validate_auth,
 )
-from backtest.service.schemas import (
+from api.service.schemas import (
     ArtifactInfoResponse,
     ArtifactListResponse,
     BacktestSubmitRequest,
@@ -34,14 +34,14 @@ from backtest.service.schemas import (
     TimeseriesResponse,
     TradeListResponse,
 )
-from backtest.service.security import (
+from api.service.security import (
     assert_allowed_container,
     assert_path_under_allowlist,
     parse_container_and_path,
     resolve_under_base,
     validate_run_id,
 )
-from backtest.service.settings import ServiceSettings
+from api.service.settings import ServiceSettings
 
 logger = logging.getLogger("backtest.api.backtests")
 

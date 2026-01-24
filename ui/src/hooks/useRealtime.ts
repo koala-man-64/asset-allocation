@@ -11,7 +11,7 @@ export function useRealtime() {
         // Construct WebSocket URL
         // Replace http/https with ws/wss
         const baseUrl = config.apiBaseUrl.replace(/^http/, 'ws');
-        const wsUrl = `${baseUrl}/ws/updates`;
+        const wsUrl = `${baseUrl}/api/ws/updates`;
 
         function connect() {
             if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -26,7 +26,7 @@ export function useRealtime() {
 
             ws.onmessage = (event) => {
                 try {
-                    const message = JSON.parse(event.data);
+                    const message: unknown = JSON.parse(event.data);
                     handleMessage(message);
                 } catch (err) {
                     console.error('[Realtime] Failed to parse message:', err);
@@ -45,19 +45,22 @@ export function useRealtime() {
             };
         }
 
-        function handleMessage(message: any) {
-            if (message.type === 'RUN_UPDATE') {
-                const payload = message.payload;
-                console.log('[Realtime] Run update:', payload);
+        function handleMessage(message: unknown) {
+            if (!message || typeof message !== 'object') return;
+            const type = (message as { type?: unknown }).type;
+            if (type !== 'RUN_UPDATE') return;
 
-                // Invalidate specific run
-                if (payload.run_id) {
-                    queryClient.invalidateQueries({ queryKey: backtestKeys.run(payload.run_id) });
+            const payload = (message as { payload?: unknown }).payload;
+            console.log('[Realtime] Run update:', payload);
+
+            if (payload && typeof payload === 'object') {
+                const runId = (payload as { run_id?: unknown }).run_id;
+                if (typeof runId === 'string' && runId) {
+                    void queryClient.invalidateQueries({ queryKey: backtestKeys.run(runId) });
                 }
-
-                // Invalidate list
-                queryClient.invalidateQueries({ queryKey: backtestKeys.runs() });
             }
+
+            void queryClient.invalidateQueries({ queryKey: backtestKeys.runs() });
         }
 
         connect();

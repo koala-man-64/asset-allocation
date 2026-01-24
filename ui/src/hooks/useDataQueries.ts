@@ -1,14 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
-import { useUIStore } from '@/stores/useUIStore';
-import { useEffect } from 'react';
-import { ApiError } from '@/services/backtestApi';
 
 // Key Factory for consistent query keys
 export const queryKeys = {
     strategies: () => ['strategies'] as const,
     systemHealth: () => ['systemHealth'] as const,
-    liveSystemHealth: () => ['liveSystemHealth'] as const,
+    lineage: () => ['lineage'] as const,
     signals: () => ['signals'] as const,
     stressEvents: () => ['stressEvents'] as const,
     positions: (strategyId?: string) => ['positions', strategyId] as const,
@@ -19,82 +16,58 @@ export const queryKeys = {
 };
 
 /**
- * Hook to sync DataService mode with Zustand dataSource state
- */
-export function useDataSync() {
-    const dataSource = useUIStore((s) => s.dataSource);
-
-    useEffect(() => {
-        DataService.setMode(dataSource);
-    }, [dataSource]);
-}
-
-/**
  * Standard Query Hooks
  */
 
 export function useStrategiesQuery() {
-    const dataSource = useUIStore((s) => s.dataSource);
     return useQuery({
-        queryKey: [...queryKeys.strategies(), dataSource],
+        queryKey: queryKeys.strategies(),
         queryFn: () => DataService.getStrategies(),
     });
 }
 
 export function useSystemHealthQuery() {
-    const dataSource = useUIStore((s) => s.dataSource);
     return useQuery({
-        queryKey: [...queryKeys.systemHealth(), dataSource],
+        queryKey: queryKeys.systemHealth(),
         queryFn: () => DataService.getSystemHealth(),
-        refetchInterval: 30000, // Auto refresh health every 30s
+        refetchInterval: 10000,
     });
 }
 
-export function useLiveSystemHealthQuery() {
-    // Always fetches from live API, bypassing global dataSource
+export function useLineageQuery() {
     return useQuery({
-        queryKey: queryKeys.liveSystemHealth(),
-        queryFn: () => DataService.getLiveSystemHealth(),
-        refetchInterval: (query) => {
-            const error = query.state.error;
-            if (error instanceof ApiError && error.status === 401) return false;
-            return 10000; // Faster refresh for live monitor
-        },
-        retry: (failureCount, error) => {
-            if (error instanceof ApiError && error.status === 401) return false;
-            return failureCount < 3;
-        },
+        queryKey: queryKeys.lineage(),
+        queryFn: () => DataService.getLineage(),
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: 60 * 1000,
     });
 }
 
 export function useSignalsQuery() {
-    const dataSource = useUIStore((s) => s.dataSource);
     return useQuery({
-        queryKey: [...queryKeys.signals(), dataSource],
+        queryKey: queryKeys.signals(),
         queryFn: () => DataService.getSignals(),
+        refetchInterval: 10000,
     });
 }
 
 export function usePositionsQuery(strategyId?: string) {
-    const dataSource = useUIStore((s) => s.dataSource);
     return useQuery({
-        queryKey: [...queryKeys.positions(strategyId), dataSource],
+        queryKey: queryKeys.positions(strategyId),
         queryFn: () => DataService.getPositions(strategyId),
     });
 }
 
 export function useRiskMetricsQuery(strategyId: string) {
-    const dataSource = useUIStore((s) => s.dataSource);
     return useQuery({
-        queryKey: [...queryKeys.riskMetrics(strategyId), dataSource],
+        queryKey: queryKeys.riskMetrics(strategyId),
         queryFn: () => DataService.getRiskMetrics(strategyId),
     });
 }
 
 export function useExecutionMetricsQuery(strategyId: string) {
-    const dataSource = useUIStore((s) => s.dataSource);
     return useQuery({
-        queryKey: [...queryKeys.executionMetrics(strategyId), dataSource],
+        queryKey: queryKeys.executionMetrics(strategyId),
         queryFn: () => DataService.getExecutionMetrics(strategyId),
     });
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ElementType } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
@@ -25,8 +25,6 @@ import {
   TrendingUp,
   Bell,
   Layers,
-  ChevronDown,
-  ChevronUp,
   Pin,
   PinOff
 } from 'lucide-react';
@@ -35,7 +33,7 @@ import Cookies from 'js-cookie';
 interface NavItem {
   path: string;
   label: string;
-  icon: React.ElementType;
+  icon: ElementType;
 }
 
 interface NavSection {

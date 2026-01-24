@@ -1,5 +1,4 @@
 import { apiClient } from '@/api/client';
-import { ApiResponse } from '@/api/types';
 
 // TODO: Define strict interfaces for Market Data
 export interface MarketData {

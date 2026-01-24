@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 import pytest
 from fastapi.testclient import TestClient
 
-from services.backtest_api.app import create_app
+from api.service.app import create_app
 from monitoring.delta_log import find_latest_delta_version
 from monitoring import system_health
 from monitoring.ttl_cache import TtlCache

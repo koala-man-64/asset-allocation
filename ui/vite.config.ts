@@ -17,22 +17,15 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
+    port: 5173,
+    strictPort: true,
     proxy: {
-      // Local dev convenience: avoid CORS by proxying API requests to the backtest service.
-      // In production (Option A hosting), the SPA is served by the API service and this is not needed.
-      '/backtests': {
+      '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        ws: true,
       },
-      '/system': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      },
-      // '/config.js': {
-      //   target: 'http://localhost:8000',
-      //   changeOrigin: true,
-      // },
-      '/healthz': {
+      '/config.js': {
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
