@@ -21,9 +21,11 @@ import yaml
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 import asyncio
 from backtest.service.realtime import manager, listen_to_postgres
+from api.endpoints import aliases, data, ranking
 
 from backtest.config import BacktestConfig, generate_run_id, validate_config_dict_strict
 from backtest.service.artifacts import download_remote_artifact, list_local_artifacts, list_remote_artifacts
@@ -163,6 +165,10 @@ def create_app() -> FastAPI:
             manager.shutdown()
 
     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
+    print(">>> BACKTEST SERVICE APPLICATION STARTING (WITH HAMMER) <<<")
+
+    # Allow local UI development
+
 
     def _system_health_ttl_seconds() -> float:
         raw = _require_env("SYSTEM_HEALTH_TTL_SECONDS")
@@ -211,9 +217,25 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-        response.headers.setdefault("Content-Security-Policy", content_security_policy)
-
         return response
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://localhost:8000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Include API Routers
+    app.include_router(data.router, prefix="/data", tags=["Data"])
+    app.include_router(ranking.router, prefix="/ranking", tags=["Ranking"])
+    app.include_router(aliases.router, tags=["Aliases"])
 
     def _get_run_record(run_id: str):
         store = _get_store(app)
