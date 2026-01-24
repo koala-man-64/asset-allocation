@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from azure.core.exceptions import ResourceNotFoundError
 
-from scripts.common.blob_storage import BlobStorageClient
+from asset_allocation.core.blob_storage import BlobStorageClient
 
 from monitoring.delta_log import find_latest_delta_version, parse_last_checkpoint_version
 
@@ -70,9 +70,9 @@ class AzureBlobStore:
         base = table_path.strip().lstrip("/").rstrip("/")
         return f"{base}/_delta_log/"
 
-    def get_delta_table_last_modified(self, *, container: str, table_path: str) -> Optional[datetime]:
+    def get_delta_table_last_modified(self, *, container: str, table_path: str) -> Tuple[Optional[int], Optional[datetime]]:
         """
-        Returns the last-modified time of the latest Delta commit JSON file for a table.
+        Returns (version, last-modified) of the latest Delta commit JSON file for a table.
 
         This is an efficient probe that avoids listing the entire container by:
         - reading _delta_log/_last_checkpoint (when present) to pick a start version
@@ -99,8 +99,32 @@ class AzureBlobStore:
 
         latest_version = find_latest_delta_version(_commit_exists, start_version=start_version)
         if latest_version is None:
-            return None
+            return None, None
 
         latest_blob = f"{delta_prefix}{latest_version:020d}.json"
-        return self.get_blob_last_modified(container=container, blob_name=latest_blob)
+        return latest_version, self.get_blob_last_modified(container=container, blob_name=latest_blob)
+
+    def get_container_last_modified(self, *, container: str, prefix: Optional[str] = None) -> Optional[datetime]:
+        """
+        Recursively finds the latest last_modified timestamp among all blobs in the container 
+        (optionally filtered by prefix).
+        """
+        client = self._client(container)
+        try:
+            # list_blobs(name_starts_with=prefix) returns a flat listing of all blobs matching the prefix,
+            # effectively recursing into all "subfolders" (virtual directories).
+            # We iterate directly to find the max last_modified without loading all into memory.
+            blobs_iter = client.container_client.list_blobs(name_starts_with=prefix)
+            
+            max_lm: Optional[datetime] = None
+            for blob in blobs_iter:
+                lm = blob.last_modified
+                if lm:
+                    if max_lm is None or lm > max_lm:
+                        max_lm = lm
+            
+            return max_lm
+        except Exception:
+            # If listing fails (e.g. permission error, container specific error), return None
+            return None
 

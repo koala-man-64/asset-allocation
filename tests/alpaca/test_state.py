@@ -1,9 +1,9 @@
 import pytest
 from datetime import datetime, timezone
-from alpaca.models import (
+from asset_allocation.alpaca.models import (
     BrokerageState, AlpacaAccount, AlpacaPosition, AlpacaOrder, TradeUpdateEvent
 )
-from alpaca.state import StateManager
+from asset_allocation.alpaca.state import StateManager
 
 @pytest.fixture
 def empty_state():

@@ -4,9 +4,9 @@ import uuid
 import os
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.earnings_data import bronze_earnings_data as bronze
-from scripts.common import config as cfg
-from scripts.common import core as mdc
+from asset_allocation.tasks.earnings_data import bronze_earnings_data as bronze
+from asset_allocation.core import config as cfg
+from asset_allocation.core import core as mdc
 
 @pytest.fixture
 def unique_ticker():
@@ -39,9 +39,9 @@ def test_fetch_and_save_raw(unique_ticker):
     semaphore = asyncio.Semaphore(1)
     
     async def run_test():
-        with patch('scripts.common.playwright_lib.get_yahoo_earnings_data', return_value=mock_df) as mock_get_data, \
-             patch('scripts.earnings_data.bronze_earnings_data.list_manager') as mock_list_manager, \
-             patch('scripts.common.core.store_raw_bytes') as mock_store:
+        with patch('asset_allocation.core.playwright_lib.get_yahoo_earnings_data', return_value=mock_df) as mock_get_data, \
+             patch('asset_allocation.tasks.earnings_data.bronze_earnings_data.list_manager') as mock_list_manager, \
+             patch('asset_allocation.core.core.store_raw_bytes') as mock_store:
              
             mock_list_manager.is_blacklisted.return_value = False
             

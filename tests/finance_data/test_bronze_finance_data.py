@@ -1,10 +1,10 @@
 import pytest
 import uuid
 from unittest.mock import MagicMock, AsyncMock, patch
-from scripts.finance_data import bronze_finance_data as bfs
-from scripts.common import config as cfg
-from scripts.common import core as mdc
-from scripts.common.pipeline import DataPaths
+from asset_allocation.tasks.finance_data import bronze_finance_data as bfs
+from asset_allocation.core import config as cfg
+from asset_allocation.core import core as mdc
+from asset_allocation.core.pipeline import DataPaths
 
 # --- Helpers ---
 
@@ -42,8 +42,8 @@ def storage_cleanup(unique_ticker):
 
 import asyncio
 
-@patch('scripts.finance_data.bronze_finance_data.pl')
-@patch('scripts.finance_data.bronze_finance_data.list_manager')
+@patch('asset_allocation.tasks.finance_data.bronze_finance_data.pl')
+@patch('asset_allocation.tasks.finance_data.bronze_finance_data.list_manager')
 def test_download_report_cloud_integration(mock_list_manager, mock_pl, unique_ticker, storage_cleanup, tmp_path):
     """
     Verifies download_report:

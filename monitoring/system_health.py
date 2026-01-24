@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig
@@ -119,14 +119,20 @@ def _append_signal_details(details: str, signals: Sequence[Dict[str, Any]]) -> s
 
 
 @dataclass(frozen=True)
+class DomainSpec:
+    path: str
+    cron: str = "0 0 * * *"  # Default Daily
+
+
+@dataclass(frozen=True)
 class LayerProbeSpec:
     name: str
     description: str
-    refresh_frequency: str
     container_env: str
     max_age_seconds: int
-    marker_blobs: Sequence[str] = ()
-    delta_tables: Sequence[str] = ()
+    marker_blobs: Sequence[DomainSpec] = ()
+    delta_tables: Sequence[DomainSpec] = ()
+    job_name: Optional[str] = None
 
     def container_name(self) -> str:
         return _require_env(self.container_env)
@@ -186,59 +192,181 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
     max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
     max_age_ranking = _require_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS")
 
+    # Deployed job schedules (see deploy/job_*.yaml)
+    CRON_BRONZE_MARKET = "0 14-22 * * *"
+    CRON_BRONZE_PRICE_TARGET = "0 12 * * *"
+    CRON_BRONZE_FINANCE = "0 22 * * *"
+    CRON_BRONZE_EARNINGS = "0 23 * * *"
+
+    CRON_SILVER_MARKET = "30 14-23 * * *"
+    CRON_SILVER_FINANCE = "30 0 * * *"
+    CRON_SILVER_PRICE_TARGET = "30 1 * * *"
+    CRON_SILVER_EARNINGS = "30 23 * * *"
+
+    CRON_GOLD_MARKET = "30 14-22 * * *"
+    CRON_GOLD_FINANCE = "30 22 * * *"
+    CRON_GOLD_EARNINGS = "30 23 * * *"
+    CRON_GOLD_PRICE_TARGET = "30 12 * * *"
+
+    CRON_PLATINUM_RANKING = "0 5 * * *"
+
     return [
         LayerProbeSpec(
             name="Bronze",
-            description="Raw ingestion (blob snapshots + whitelists)",
-            refresh_frequency="Daily",
+            description="Landing zone for raw data. Immutable source of truth for replayability.",
             container_env="AZURE_CONTAINER_BRONZE",
             max_age_seconds=max_age_default,
             marker_blobs=(
-                "market-data/whitelist.csv",
-                "finance-data/whitelist.csv",
-                "earnings-data/whitelist.csv",
-                "price-target-data/whitelist.csv",
+                DomainSpec("market-data/whitelist.csv", CRON_BRONZE_MARKET),
+                DomainSpec("finance-data/whitelist.csv", CRON_BRONZE_FINANCE),
+                DomainSpec("earnings-data/whitelist.csv", CRON_BRONZE_EARNINGS),
+                DomainSpec("price-target-data/whitelist.csv", CRON_BRONZE_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
             name="Silver",
-            description="Normalized Delta tables (by-date aggregates)",
-            refresh_frequency="Daily",
+            description="Cleaned, standardized tabular data. Enforced schemas for reliable querying.",
             container_env="AZURE_CONTAINER_SILVER",
             max_age_seconds=max_age_default,
             delta_tables=(
-                "market-data-by-date",
-                "finance-data-by-date",
-                "earnings-data-by-date",
-                "price-target-data-by-date",
+                DomainSpec("market-data-by-date", CRON_SILVER_MARKET),
+                DomainSpec("finance-data-by-date", CRON_SILVER_FINANCE),
+                DomainSpec("earnings-data-by-date", CRON_SILVER_EARNINGS),
+                DomainSpec("price-target-data-by-date", CRON_SILVER_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
             name="Gold",
-            description="Feature store Delta tables (by-date aggregates)",
-            refresh_frequency="Daily",
+            description="Entity-resolved feature store. Financial metrics ready for modeling.",
             container_env="AZURE_CONTAINER_GOLD",
             max_age_seconds=max_age_default,
             delta_tables=(
-                "market_by_date",
-                "finance_by_date",
-                "earnings_by_date",
-                "targets_by_date",
+                DomainSpec("market_by_date", CRON_GOLD_MARKET),
+                DomainSpec("finance_by_date", CRON_GOLD_FINANCE),
+                DomainSpec("earnings_by_date", CRON_GOLD_EARNINGS),
+                DomainSpec("targets_by_date", CRON_GOLD_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
-            name="Ranking",
+            name="Platinum",
             description="Platinum rankings + derived signals",
-            refresh_frequency="Daily",
-            container_env="AZURE_CONTAINER_RANKING",
+            container_env="AZURE_CONTAINER_PLATINUM",
             max_age_seconds=max_age_ranking,
             delta_tables=(
-                "platinum/rankings",
-                "platinum/signals/daily",
+                DomainSpec("rankings", CRON_PLATINUM_RANKING),
+                DomainSpec("signals/daily", CRON_PLATINUM_RANKING),
             ),
         ),
     ]
 
+
+def _make_container_portal_url(sub_id: str, rg: str, account: str, container: str) -> Optional[str]:
+    if not all([sub_id, rg, account, container]):
+        return None
+    
+    # Construct Storage Account Resource ID
+    storage_id = (
+        f"/subscriptions/{sub_id}/resourceGroups/{rg}"
+        f"/providers/Microsoft.Storage/storageAccounts/{account}"
+    )
+    
+    # URL to Container Menu Blade
+    return (
+        f"https://portal.azure.com/#view/Microsoft_Azure_Storage/ContainerMenuBlade"
+        f"/~/overview/storageAccountId/{storage_id.replace('/', '%2F')}/path/{container}"
+    )
+
+
+def _get_domain_description(layer_name: str, name: str) -> str:
+    l_name = layer_name.lower()
+    n = name.lower()
+    
+    if "market" in n:
+        if "bronze" in l_name: return "Raw historical OHLCV files"
+        if "silver" in l_name: return "Standardized daily OHLCV tables"
+        if "gold" in l_name: return "Entity-resolved market features"
+        return "Historical price and volume data"
+
+    if "finance" in n:
+        if "bronze" in l_name: return "Raw financial statements"
+        if "silver" in l_name: return "Standardized financial tables"
+        if "gold" in l_name: return "Financial ratios & growth metrics"
+        return "Fundamental financial data"
+
+    if "earnings" in n:
+        if "bronze" in l_name: return "Raw earnings calendar/surprises"
+        if "silver" in l_name: return "Standardized earnings history"
+        if "gold" in l_name: return "Earnings surprise metrics"
+        return "Earnings data"
+
+    if "target" in n:
+        if "bronze" in l_name: return "Raw analyst price targets"
+        if "silver" in l_name: return "Standardized consensus targets"
+        if "gold" in l_name: return "Consensus upside/downside metrics"
+        return "Analyst price targets"
+
+    if "ranking" in n:
+        return "Composite scores for universe selection"
+    if "signal" in n or "daily" in n:
+        return "Daily trade signals and portfolio adjustments"
+    
+    return ""  # Fallback empty
+
+
+def _describe_cron(expression: str) -> str:
+    # Frequent mappings for this system
+    mapping = {
+        "0 12 * * *": "Daily at 12:00 PM UTC",
+        "30 12 * * *": "Daily at 12:30 PM UTC",
+        "0 14-22 * * *": "Daily, hourly 2:00–10:00 PM UTC",
+        "30 14-22 * * *": "Daily, hourly 2:30–10:30 PM UTC",
+        "30 14-23 * * *": "Daily, hourly 2:30–11:30 PM UTC",
+        "30 0 * * *": "Daily at 12:30 AM UTC",
+        "30 1 * * *": "Daily at 1:30 AM UTC",
+        "0 22 * * *": "Daily at 10:00 PM UTC",
+        "30 22 * * *": "Daily at 10:30 PM UTC",
+        "0 23 * * *": "Daily at 11:00 PM UTC",
+        "30 23 * * *": "Daily at 11:30 PM UTC",
+        "0 5 * * *": "Daily at 5:00 AM UTC",
+        "0 0 * * *": "Daily at Midnight UTC",
+    }
+    return mapping.get(expression, expression)
+
+
+def _derive_job_name(layer_name: str, domain_clean: str) -> str:
+    l_name = layer_name.lower()
+    d_name = domain_clean.lower()
+    
+    # Special cases
+    if l_name == "platinum":
+        return "platinum-ranking-job"
+    
+    return f"{l_name}-{d_name}-job"
+
+
+def _make_job_portal_url(sub_id: str, rg: str, job_name: str) -> Optional[str]:
+    if not all([sub_id, rg, job_name]):
+        return None
+    return (
+        f"https://portal.azure.com/#@/resource/subscriptions/{sub_id}"
+        f"/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job_name}/overview"
+    )
+
+def _make_folder_portal_url(sub_id: str, rg: str, account: str, container: str, folder_path: str) -> Optional[str]:
+    if not all([sub_id, rg, account, container, folder_path]):
+        return None
+    
+    storage_id = (
+        f"/subscriptions/{sub_id}/resourceGroups/{rg}"
+        f"/providers/Microsoft.Storage/storageAccounts/{account}"
+    )
+    # Folder path needs to be encoded properly for the hash fragment
+    # usually /path/{container}/{folder}
+    full_path = f"{container}/{folder_path}".strip("/")
+    return (
+        f"https://portal.azure.com/#view/Microsoft_Azure_Storage/ContainerMenuBlade"
+        f"/~/overview/storageAccountId/{storage_id.replace('/', '%2F')}/path/{full_path.replace('/', '%2F')}"
+    )
 
 def collect_system_health_snapshot(
     *,
@@ -266,49 +394,145 @@ def collect_system_health_snapshot(
     job_runs: List[Dict[str, Any]] = []
     statuses: List[str] = []
 
+    # Env vars for URL construction
+    sub_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
+    rg = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
+    storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip()
+
     for spec in _default_layer_specs():
-        last_updated: Optional[datetime] = None
-        had_error = False
-        err_text: Optional[str] = None
+        layer_last_updated: Optional[datetime] = None
+        had_layer_error = False
         container = spec.container_name()
+        domain_items: List[Dict[str, Any]] = []
 
-        try:
-            candidate_times: List[datetime] = []
-            for blob_name in spec.marker_blobs:
-                lm = store.get_blob_last_modified(container=container, blob_name=blob_name)
-                if lm is not None:
-                    candidate_times.append(lm)
-            for table_path in spec.delta_tables:
-                lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
-                if lm is not None:
-                    candidate_times.append(lm)
-            last_updated = max(candidate_times) if candidate_times else None
-        except Exception as exc:
-            had_error = True
-            err_text = str(exc)
-            last_updated = None
+        # Collect markers (CSV/Blobs)
+        for domain_spec in spec.marker_blobs:
+            blob_name = domain_spec.path
+            d_name = os.path.dirname(blob_name) or blob_name
+            name_clean = d_name.replace("/whitelist.csv", "").replace("-data", "")
+            
+            job_name = _derive_job_name(spec.name, name_clean)
+            job_url = _make_job_portal_url(sub_id, rg, job_name)
+            folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
 
-        status = _compute_layer_status(now, last_updated, max_age_seconds=spec.max_age_seconds, had_error=had_error)
-        statuses.append(status)
+            # If the config points to a specific file (e.g. whitelist.csv), we want to scan the folder it's in.
+            # If it points to a folder (e.g. data/), dirname handles it appropriately (usually).
+            search_prefix = os.path.dirname(blob_name) 
+            # If search_prefix is empty (file at root), we scan the whole container (prefix=None or "").
+            # Ideally we might want to restrict this, but for "latest update" in a container used for data, scanning root is correct.
+            
+            try:
+                lm = store.get_container_last_modified(container=container, prefix=search_prefix)
+                status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
+                domain_items.append({
+                    "name": name_clean,
+                    "description": _get_domain_description(spec.name, name_clean),
+                    "type": "blob",
+                    "path": blob_name,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
+                    "lastUpdated": _iso(lm),
+                    "status": status,
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
+                })
+            except Exception:
+                had_layer_error = True
+                domain_items.append({
+                    "name": name_clean,
+                    "description": _get_domain_description(spec.name, name_clean),
+                    "type": "blob",
+                    "path": blob_name,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
+                    "lastUpdated": None,
+                    "status": "error",
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
+                })
+
+        # Collect Delta tables
+        for domain_spec in spec.delta_tables:
+            table_path = domain_spec.path
+            d_name = table_path
+            name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
+            if name_clean == "targets":
+                name_clean = "price-target"
+            
+            job_name = _derive_job_name(spec.name, name_clean)
+            job_url = _make_job_portal_url(sub_id, rg, job_name)
+            folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
+
+            try:
+                ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
+                status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
+                domain_items.append({
+                    "name": name_clean,
+                    "description": _get_domain_description(spec.name, name_clean),
+                    "type": "delta",
+                    "path": table_path,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
+                    "lastUpdated": _iso(lm),
+                    "status": status,
+                    "version": ver if ver is not None else None,
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
+                })
+            except Exception:
+                had_layer_error = True
+                domain_items.append({
+                    "name": name_clean,  # Use raw name on error if cleaning is ambiguous
+                    "description": "",
+                    "type": "delta",
+                    "path": table_path,
+                    "cron": domain_spec.cron,
+                    "frequency": _describe_cron(domain_spec.cron),
+                    "lastUpdated": None,
+                    "status": "error",
+                    "version": None,
+                    "portalUrl": folder_url,
+                    "jobUrl": job_url,
+                })
+
+        # Aggregate layer status
+        valid_times = [
+            datetime.fromisoformat(d["lastUpdated"])
+            for d in domain_items
+            if d["lastUpdated"] and d["status"] != "error"
+        ]
+        layer_last_updated = max(valid_times) if valid_times else None
+        
+        # If any domain is error/stale, layer is that status (worst of)
+        layer_statuses = [d["status"] for d in domain_items]
+        if "error" in layer_statuses:
+            layer_status = "error"
+        elif "stale" in layer_statuses:
+            layer_status = "stale"
+        else:
+            layer_status = _compute_layer_status(now, layer_last_updated, max_age_seconds=spec.max_age_seconds, had_error=had_layer_error)
+
+        statuses.append(layer_status)
+
+        portal_url = _make_container_portal_url(sub_id, rg, storage_account, container)
 
         layers.append(
             {
                 "name": spec.name,
                 "description": spec.description,
-                "lastUpdated": _iso(last_updated),
-                "status": status,
-                "refreshFrequency": spec.refresh_frequency,
+                "lastUpdated": _iso(layer_last_updated),
+                "status": layer_status,
+                "portalUrl": portal_url,
+                "domains": domain_items,
             }
         )
-        alerts.extend(_layer_alerts(now, layer_name=spec.name, status=status, last_updated=last_updated, error=err_text))
+        alerts.extend(_layer_alerts(now, layer_name=spec.name, status=layer_status, last_updated=layer_last_updated, error=None))
 
     # Optional Phase 2: Azure control-plane probes (Container Apps + Jobs + Executions).
-    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
-    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
-    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
-    resource_group = resource_group_raw.strip() if resource_group_raw else ""
-    app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS"))
-    job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS"))
+    subscription_id = sub_id
+    resource_group = rg
+    app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS", ""))
+    job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
 
     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
     if arm_enabled:

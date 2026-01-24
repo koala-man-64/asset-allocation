@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from scripts.common.blob_storage import BlobStorageClient
+from asset_allocation.core.blob_storage import BlobStorageClient
 
 from backtest.service.run_store import RunRecord, RunStatus
 from backtest.service.security import parse_container_and_path

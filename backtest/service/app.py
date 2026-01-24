@@ -1,4 +1,9 @@
-from __future__ import annotations
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 import io
 import json
@@ -890,7 +895,7 @@ def create_app() -> FastAPI:
         candidates.append((Path.cwd() / "ui-dist").resolve(strict=False))
 
         # Local dev: allow serving a locally built UI.
-        candidates.append((Path(__file__).resolve().parents[4] / "ui" / "dist").resolve(strict=False))
+        candidates.append((Path(__file__).resolve().parents[2] / "ui" / "dist").resolve(strict=False))
 
         for candidate in candidates:
             try:

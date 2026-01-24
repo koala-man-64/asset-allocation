@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
-from scripts.common.blob_storage import BlobStorageClient
+from asset_allocation.core.blob_storage import BlobStorageClient
 
 from backtest.service.security import parse_container_and_path
 

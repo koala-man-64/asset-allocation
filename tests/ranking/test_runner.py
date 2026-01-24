@@ -1,9 +1,9 @@
 import pandas as pd
 import pytest
 
-from scripts.ranking import runner
-from scripts.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
-from scripts.common import delta_core
+from asset_allocation.tasks.ranking import runner
+from asset_allocation.tasks.ranking.strategies import BrokenGrowthImprovingInternalsStrategy
+from asset_allocation.core import delta_core
 
 
 class DummyClient:

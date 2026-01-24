@@ -8,10 +8,28 @@ version = "0.1.0"
 description = "Market/finance ETL, ranking signals, and a backtest framework."
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.2.3",
+    "numpy>=1.26.4",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0.1",
+    "fastapi>=0.115.8",
+    "uvicorn>=0.34.0",
+    "azure-storage-blob>=12.24.0",
+    "deltalake>=1.3.0",
+    "psycopg>=3.2.3",
+    "asyncpg>=0.30.0",
+    "httpx>=0.27.2",
+    "pyjwt>=2.8.0",
+    "cryptography>=42.0.0",
+    "jinja2>=3.1.5",
+    "websockets>=14.2",
+    "python-dotenv>=1.0.1",
+]
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["alpaca*", "api*", "backtest*", "monitoring*", "scripts*", "asset_allocation*"]
+where = ["src"]
+include = ["asset_allocation*"]
 
 [tool.setuptools]
 include-package-data = true

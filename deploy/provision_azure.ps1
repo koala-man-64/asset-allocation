@@ -61,7 +61,8 @@ try {
     --name $StorageAccountName `
     --resource-group $ResourceGroup `
     --only-show-errors -o json 2>$null | ConvertFrom-Json
-} catch {
+}
+catch {
   $existingStorage = $null
 }
 
@@ -71,7 +72,8 @@ if ($null -eq $existingStorage) {
     $foundInSubscription = az storage account show `
       --name $StorageAccountName `
       --only-show-errors -o json 2>$null | ConvertFrom-Json
-  } catch {
+  }
+  catch {
     $foundInSubscription = $null
   }
 
@@ -95,7 +97,8 @@ if ($null -eq $existingStorage) {
     --allow-blob-public-access false `
     --hns true `
     --only-show-errors | Out-Null
-} else {
+}
+else {
   if (-not [bool]$existingStorage.isHnsEnabled) {
     Write-Warning "Storage account '$StorageAccountName' exists but Hierarchical Namespace (HNS) is disabled. This cannot be enabled after creation; continuing without updating HNS. To use ADLS Gen2, create a new storage account (or delete & recreate) with --hns true."
   }
@@ -169,18 +172,18 @@ if ($EnableAcrAdmin) {
 }
 
 $outputs = [ordered]@{
-  subscriptionId = $SubscriptionId
-  location = $Location
-  resourceGroup = $ResourceGroup
-  storageAccountName = $StorageAccountName
-  storageConnectionString = if ($EmitSecrets) { $storageConnectionString } else { "<redacted>" }
-  storageContainers = $StorageContainers
-  acrName = $AcrName
-  acrLoginServer = $acrLoginServer
-  acrAdminEnabled = [bool]$EnableAcrAdmin
-  acrPassword = if ($EmitSecrets) { $acrPassword } else { "<redacted>" }
-  logAnalyticsWorkspaceName = $LogAnalyticsWorkspaceName
-  logAnalyticsCustomerId = $lawCustomerId
+  subscriptionId               = $SubscriptionId
+  location                     = $Location
+  resourceGroup                = $ResourceGroup
+  storageAccountName           = $StorageAccountName
+  storageConnectionString      = if ($EmitSecrets) { $storageConnectionString } else { "<redacted>" }
+  storageContainers            = $StorageContainers
+  acrName                      = $AcrName
+  acrLoginServer               = $acrLoginServer
+  acrAdminEnabled              = [bool]$EnableAcrAdmin
+  acrPassword                  = if ($EmitSecrets) { $acrPassword } else { "<redacted>" }
+  logAnalyticsWorkspaceName    = $LogAnalyticsWorkspaceName
+  logAnalyticsCustomerId       = $lawCustomerId
   containerAppsEnvironmentName = $ContainerAppsEnvironmentName
 }
 

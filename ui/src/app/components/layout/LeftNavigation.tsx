@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
@@ -26,8 +26,11 @@ import {
   Bell,
   Layers,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Pin,
+  PinOff
 } from 'lucide-react';
+import Cookies from 'js-cookie';
 
 interface NavItem {
   path: string;
@@ -43,9 +46,17 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
+    title: 'SYSTEM',
+    items: [
+      { path: '/system', label: 'System Status', icon: Activity },
+      { path: '/data', label: 'Data & Lineage', icon: Database },
+      { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
+    ]
+  },
+  {
     title: 'ANALYSIS',
     items: [
-      { path: '/', label: 'Overview', icon: LayoutDashboard },
+      { path: '/overview', label: 'Overview', icon: LayoutDashboard },
       { path: '/compare', label: 'Run Compare', icon: GitCompare },
       { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
       { path: '/attribution', label: 'Attribution', icon: PieChart },
@@ -72,135 +83,172 @@ const navSections: NavSection[] = [
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alert Management', icon: Bell },
     ]
-  },
-  {
-    title: 'SYSTEM',
-    items: [
-      { path: '/data', label: 'Data & Lineage', icon: Database },
-      { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
-      { path: '/system', label: 'System Status', icon: Activity },
-    ]
   }
 ];
 
+// Helper to find item by path
+const findNavItem = (path: string): NavItem | undefined => {
+  for (const section of navSections) {
+    const found = section.items.find(item => item.path === path);
+    if (found) return found;
+  }
+  return undefined;
+};
+
+const PINNED_TABS_COOKIE = 'ag_pinned_tabs';
+
 export function LeftNavigation() {
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    'ANALYSIS': true,
-    'RISK & PERFORMANCE': true,
-    'PORTFOLIO': true,
-    'LIVE OPERATIONS': true,
-    'SYSTEM': true
-  });
+  const [pinnedPaths, setPinnedPaths] = useState<string[]>([]);
+  const [isClient, setIsClient] = useState(false);
 
-  const toggleSection = (sectionTitle: string) => {
-    setExpandedSections(prev => ({
-      ...prev,
-      [sectionTitle]: !prev[sectionTitle]
-    }));
+  useEffect(() => {
+    setIsClient(true);
+    const saved = Cookies.get(PINNED_TABS_COOKIE);
+    if (saved) {
+      try {
+        setPinnedPaths(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to parse pinned tabs cookie', e);
+      }
+    }
+  }, []);
+
+  const togglePin = (path: string) => {
+    setPinnedPaths(prev => {
+      const next = prev.includes(path)
+        ? prev.filter(p => p !== path)
+        : [...prev, path];
+
+      Cookies.set(PINNED_TABS_COOKIE, JSON.stringify(next), { expires: 365 });
+      return next;
+    });
+  };
+
+  const pinnedItems = pinnedPaths
+    .map(path => findNavItem(path))
+    .filter((item): item is NavItem => !!item);
+
+  // Grouped Rendering Helper
+  const renderNavItem = (item: NavItem, isPinnedSection: boolean = false) => {
+    const isPinned = pinnedPaths.includes(item.path);
+
+    return (
+      <div key={item.path} className="group relative flex items-center">
+        <TooltipProvider delayDuration={0}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <NavLink
+                to={item.path}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 px-3 py-2 rounded-md transition-colors w-full',
+                    'hover:bg-accent/50 group-hover:pr-9', // Make space for pin button on hover
+                    isActive
+                      ? 'bg-accent text-accent-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground',
+                    collapsed && 'justify-center px-2'
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
+                    {!collapsed && <span className="truncate">{item.label}</span>}
+                  </>
+                )}
+              </NavLink>
+            </TooltipTrigger>
+            {collapsed && (
+              <TooltipContent side="right" className="flex items-center gap-4">
+                {item.label}
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+
+        {/* Pin Action Button - Absolute positioned to the right */}
+        {!collapsed && isClient && (
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              togglePin(item.path);
+            }}
+            className={cn(
+              "absolute right-2 p-1 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-background/80 hover:text-foreground text-muted-foreground/50",
+              // If it's the pinned section, we show the unpin icon (always visible if desired, or on hover)
+              // If it's the normal section, we show pin icon if not already pinned
+              isPinnedSection && "text-muted-foreground hover:text-red-400",
+              !isPinnedSection && isPinned && "text-primary opacity-100", // Already pinned indicator in main list
+            )}
+            title={isPinned ? "Unpin" : "Pin to top"}
+          >
+            {isPinned ? (
+              <PinOff className="h-3.5 w-3.5" />
+            ) : (
+              <Pin className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
+      </div>
+    );
   };
 
   return (
-    <TooltipProvider>
-      <div className={cn(
-        "border-r transition-all duration-300 flex flex-col bg-sidebar text-sidebar-foreground border-sidebar-border",
-        collapsed ? "w-16" : "w-64"
-      )}>
-
-
-        <div className="flex-1 py-4 overflow-y-auto">
-          {navSections.map((section, sectionIndex) => {
-            const isExpanded = expandedSections[section.title];
-
-            return (
-              <div key={section.title} className={cn(sectionIndex > 0 && "mt-6")}>
-                {!collapsed && (
-                  <button
-                    onClick={() => toggleSection(section.title)}
-                    className="w-full px-4 py-2 text-xs font-bold text-sidebar-foreground/60 tracking-wider hover:text-sidebar-foreground/80 transition-colors flex items-center justify-between group"
-                  >
-                    <span>{section.title}</span>
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3 opacity-60 group-hover:opacity-100 transition-opacity" />
-                    ) : (
-                      <ChevronUp className="h-3 w-3 opacity-60 group-hover:opacity-100 transition-opacity" />
-                    )}
-                  </button>
-                )}
-                {collapsed && sectionIndex > 0 && (
-                  <div className="mx-3 my-2 border-t border-sidebar-border" />
-                )}
-                <div
-                  className={cn(
-                    "space-y-1 overflow-hidden transition-all duration-300",
-                    !collapsed && !isExpanded && "max-h-0 opacity-0",
-                    !collapsed && isExpanded && "max-h-[500px] opacity-100",
-                    collapsed && "max-h-[500px] opacity-100"
-                  )}
-                >
-                  {section.items.map(item => {
-                    const Icon = item.icon;
-
-                    const buttonContent = (
-                      <NavLink
-                        key={item.path}
-                        to={item.path}
-                        className={({ isActive }) => cn(
-                          "w-full flex items-center justify-start text-sm py-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors",
-                          collapsed ? "px-3 justify-center" : "px-4",
-                          isActive && "bg-sidebar-accent text-sidebar-primary font-semibold border-l-4 border-sidebar-primary -ml-[4px] pl-[calc(1rem-4px)]"
-                          // Note: removed rounded-l-none from original as we aren't using Button component here directly to avoid nesting issues or we can wrap Button with asChild
-                        )}
-                        title={collapsed ? item.label : undefined}
-                      >
-                        {({ isActive }) => (
-                          <>
-                            <Icon className={cn("h-5 w-5", !collapsed && "mr-3", isActive && "text-sidebar-primary")} />
-                            {!collapsed && <span>{item.label}</span>}
-                          </>
-                        )}
-                      </NavLink>
-                    );
-
-                    if (collapsed) {
-                      return (
-                        <Tooltip key={item.path}>
-                          <TooltipTrigger asChild>
-                            {buttonContent}
-                          </TooltipTrigger>
-                          <TooltipContent side="right">
-                            {item.label}
-                          </TooltipContent>
-                        </Tooltip>
-                      );
-                    }
-
-                    return buttonContent;
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="p-3 border-t border-sidebar-border">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                onClick={() => setCollapsed(!collapsed)}
-              >
-                {collapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            </TooltipContent>
-          </Tooltip>
-        </div>
+    <div
+      className={cn(
+        'group/sidebar flex flex-col border-r bg-card h-full transition-all duration-300 ease-in-out',
+        collapsed ? 'w-[64px]' : 'w-[240px]'
+      )}
+    >
+      <div className="flex h-14 items-center border-b px-3 justify-between">
+        {!collapsed && <span className="font-semibold px-2">AssetAllocation</span>}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn("h-8 w-8", collapsed && "mx-auto")}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </Button>
       </div>
-    </TooltipProvider>
+
+      <div className="flex-1 overflow-y-auto py-4 gap-6 flex flex-col">
+        {/* HOTLIST SECTION */}
+        {pinnedItems.length > 0 && (
+          <div className="px-3">
+            {!collapsed && (
+              <h4 className="mb-2 px-2 text-xs font-semibold text-muted-foreground/50 tracking-wider flex items-center gap-2">
+                <Pin className="h-3 w-3" /> HOTLIST
+              </h4>
+            )}
+            <div className="space-y-1">
+              {pinnedItems.map(item => renderNavItem(item, true))}
+            </div>
+            {!collapsed && <div className="my-4 border-b border-border/40" />}
+          </div>
+        )}
+
+        {navSections.map((section) => (
+          <div key={section.title} className="px-3">
+            {!collapsed && (
+              <h4 className="mb-2 px-2 text-xs font-semibold text-muted-foreground/70 tracking-wider">
+                {section.title}
+              </h4>
+            )}
+            <div className="space-y-1">
+              {section.items.map((item) => renderNavItem(item))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {!collapsed && (
+        <div className="p-4 border-t text-xs text-muted-foreground text-center">
+          v2.5.0-beta
+        </div>
+      )}
+    </div>
   );
 }

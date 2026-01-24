@@ -58,6 +58,7 @@ asset_allocation/ui2.0/.vite/
 asset_allocation/ui2.0/.pnpm-store/
 
 # --- Tooling / Test Artifacts ---
+docs/signoffs/
 .ruff_cache/
 .mypy_cache/
 .tox/

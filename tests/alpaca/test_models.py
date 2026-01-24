@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from alpaca.models import AlpacaAccount, AlpacaOrder
+from asset_allocation.alpaca.models import AlpacaAccount, AlpacaOrder
 
 def test_alpaca_account_parsing():
     data = {

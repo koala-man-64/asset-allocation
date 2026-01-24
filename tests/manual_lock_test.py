@@ -4,7 +4,7 @@ import os
 import time
 import subprocess
 
-from scripts.common import core as mdc
+from asset_allocation.core import core as mdc
 
 def run_worker(job_name, sleep_time):
     print(f"[Worker] Attempting to acquire lock for {job_name}...")
