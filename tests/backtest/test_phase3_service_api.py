@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from fastapi.testclient import TestClient
 
-from backtest.service.app import create_app
+from api.service.app import create_app
 
 
 def _make_config_dict(tmp_path: Path, *, run_id: str, adls_dir: Optional[str] = None) -> Dict[str, Any]:
@@ -70,7 +70,7 @@ def _poll_status(client: TestClient, run_id: str, *, timeout_s: float = 10.0, ap
     deadline = time.time() + timeout_s
     headers = {"X-API-Key": api_key} if api_key else {}
     while time.time() < deadline:
-        resp = client.get(f"/backtests/{run_id}/status", headers=headers)
+        resp = client.get(f"/api/backtests/{run_id}/status", headers=headers)
         assert resp.status_code == 200
         payload = resp.json()
         if payload["status"] in {"completed", "failed"}:
@@ -90,7 +90,7 @@ def test_service_rejects_local_data_when_disabled(tmp_path: Path, monkeypatch: p
     with TestClient(app) as client:
         _write_inputs(tmp_path)
         payload = {"config": _make_config_dict(tmp_path, run_id="RUNTEST-SVC-LOCAL")}
-        resp = client.post("/backtests", json=payload)
+        resp = client.post("/api/backtests", json=payload)
         assert resp.status_code == 400
         assert "price_source=local" in resp.json()["detail"]
 
@@ -108,24 +108,24 @@ def test_service_runs_backtest_and_serves_artifacts(tmp_path: Path, monkeypatch:
         _write_inputs(tmp_path)
         run_id = "RUNTEST-SVC-0001"
         config = _make_config_dict(tmp_path, run_id=run_id)
-        resp = client.post("/backtests", json={"config": config, "run_id": run_id})
+        resp = client.post("/api/backtests", json={"config": config, "run_id": run_id})
         assert resp.status_code == 200
         assert resp.json()["run_id"] == run_id
 
         status = _poll_status(client, run_id)
         assert status["status"] == "completed"
 
-        summary = client.get(f"/backtests/{run_id}/summary")
+        summary = client.get(f"/api/backtests/{run_id}/summary")
         assert summary.status_code == 200
         assert summary.json()["run_id"] == run_id
 
-        artifacts = client.get(f"/backtests/{run_id}/artifacts")
+        artifacts = client.get(f"/api/backtests/{run_id}/artifacts")
         assert artifacts.status_code == 200
         names = {item["name"] for item in artifacts.json()["local"]}
         assert "summary.json" in names
         assert "config.yaml" in names
 
-        summary_blob = client.get(f"/backtests/{run_id}/artifacts/summary.json")
+        summary_blob = client.get(f"/api/backtests/{run_id}/artifacts/summary.json")
         assert summary_blob.status_code == 200
 
 
@@ -185,9 +185,9 @@ def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: p
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.get("/backtests")
+        resp = client.get("/api/backtests")
         assert resp.status_code == 401
-        resp2 = client.get("/backtests", headers={"X-API-Key": "secret"})
+        resp2 = client.get("/api/backtests", headers={"X-API-Key": "secret"})
         assert resp2.status_code == 200
 
 
@@ -200,10 +200,10 @@ def test_service_honors_custom_api_key_header(tmp_path: Path, monkeypatch: pytes
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.get("/backtests", headers={"X-API-Key": "secret"})
+        resp = client.get("/api/backtests", headers={"X-API-Key": "secret"})
         assert resp.status_code == 401
 
-        resp2 = client.get("/backtests", headers={"X-Backtest-Key": "secret"})
+        resp2 = client.get("/api/backtests", headers={"X-Backtest-Key": "secret"})
         assert resp2.status_code == 200
 
 
@@ -253,14 +253,14 @@ def test_service_accepts_oidc_bearer_tokens_when_configured(tmp_path: Path, monk
         assert url == jwks_url
         return _FakeHttpResponse(jwks)
 
-    monkeypatch.setattr("backtest.service.auth.requests.get", _fake_requests_get)
+    monkeypatch.setattr("api.service.auth.requests.get", _fake_requests_get)
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.get("/backtests")
+        resp = client.get("/api/backtests")
         assert resp.status_code == 401
 
-        resp2 = client.get("/backtests", headers={"Authorization": f"Bearer {token}"})
+        resp2 = client.get("/api/backtests", headers={"Authorization": f"Bearer {token}"})
         assert resp2.status_code == 200
 
 
@@ -331,8 +331,8 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
 
     # Patch Azure client to a local fake to avoid network.
-    monkeypatch.setattr("backtest.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
-    monkeypatch.setattr("backtest.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
 
     app = create_app()
     with TestClient(app) as client:
@@ -341,7 +341,7 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
         from core import config_shared as cfg
         silver_container = cfg.AZURE_CONTAINER_SILVER or "silver"
         config = _make_config_dict(tmp_path, run_id=run_id, adls_dir=f"{silver_container}/backtest-api-results")
-        resp = client.post("/backtests", json={"config": config, "run_id": run_id})
+        resp = client.post("/api/backtests", json={"config": config, "run_id": run_id})
         assert resp.status_code == 200
 
         status = _poll_status(client, run_id)
@@ -350,7 +350,7 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
         assert status["adls_container"] == (cfg.AZURE_CONTAINER_SILVER or "silver")
         assert status["adls_prefix"].endswith(f"backtest-api-results/{run_id}")
 
-        artifacts = client.get(f"/backtests/{run_id}/artifacts", params={"remote": "true"})
+        artifacts = client.get(f"/api/backtests/{run_id}/artifacts", params={"remote": "true"})
         assert artifacts.status_code == 200
         payload = artifacts.json()
         assert payload["remote"] is not None
@@ -358,7 +358,7 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
         assert "summary.json" in remote_names
         assert "artifacts_manifest.json" in remote_names
 
-        remote_summary = client.get(f"/backtests/{run_id}/artifacts/summary.json", params={"source": "adls"})
+        remote_summary = client.get(f"/api/backtests/{run_id}/artifacts/summary.json", params={"source": "adls"})
         assert remote_summary.status_code == 200
         summary_data = json.loads(remote_summary.content.decode("utf-8"))
         assert summary_data["run_id"] == run_id
@@ -377,16 +377,16 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
     monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "true")
     monkeypatch.setenv("BACKTEST_ALLOWED_DATA_DIRS", str(tmp_path))
 
-    monkeypatch.setattr("backtest.service.adls_run_store.BlobStorageClient", _LocalBlobStorageClient)
-    monkeypatch.setattr("backtest.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
-    monkeypatch.setattr("backtest.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.adls_run_store.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.adls_uploader.BlobStorageClient", _LocalBlobStorageClient)
+    monkeypatch.setattr("api.service.artifacts.BlobStorageClient", _LocalBlobStorageClient)
 
     app = create_app()
     run_id = "RUNTEST-SVC-ADLS-STORE"
     with TestClient(app) as client:
         _write_inputs(tmp_path)
         config = _make_config_dict(tmp_path, run_id=run_id, adls_dir=None)
-        resp = client.post("/backtests", json={"config": config, "run_id": run_id})
+        resp = client.post("/api/backtests", json={"config": config, "run_id": run_id})
         assert resp.status_code == 200
 
         status = _poll_status(client, run_id)
@@ -395,27 +395,27 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
         assert status["adls_container"] == (cfg.AZURE_CONTAINER_SILVER or "silver")
         assert status["adls_prefix"].endswith(f"backtest-run-store/{run_id}")
 
-        runs = client.get("/backtests")
+        runs = client.get("/api/backtests")
         assert runs.status_code == 200
         run_ids = {r["run_id"] for r in runs.json()["runs"]}
         assert run_id in run_ids
 
-        summary = client.get(f"/backtests/{run_id}/summary", params={"source": "adls"})
+        summary = client.get(f"/api/backtests/{run_id}/summary", params={"source": "adls"})
         assert summary.status_code == 200
         assert summary.json()["run_id"] == run_id
 
-        ts = client.get(f"/backtests/{run_id}/metrics/timeseries", params={"source": "adls", "max_points": 1000})
+        ts = client.get(f"/api/backtests/{run_id}/metrics/timeseries", params={"source": "adls", "max_points": 1000})
         assert ts.status_code == 200
         assert ts.json()["total_points"] >= 1
         assert len(ts.json()["points"]) >= 1
 
         rolling = client.get(
-            f"/backtests/{run_id}/metrics/rolling",
+            f"/api/backtests/{run_id}/metrics/rolling",
             params={"source": "adls", "window_days": 21, "max_points": 1000},
         )
         assert rolling.status_code == 200
 
-        trades = client.get(f"/backtests/{run_id}/trades", params={"source": "adls"})
+        trades = client.get(f"/api/backtests/{run_id}/trades", params={"source": "adls"})
         assert trades.status_code == 200
         assert trades.json()["total"] >= 0
 
@@ -424,7 +424,7 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir_2))
     app2 = create_app()
     with TestClient(app2) as client2:
-        summary2 = client2.get(f"/backtests/{run_id}/summary")
+        summary2 = client2.get(f"/api/backtests/{run_id}/summary")
         assert summary2.status_code == 200
         assert summary2.json()["run_id"] == run_id
 
@@ -436,7 +436,7 @@ def test_service_job_trigger_requires_arm_config(tmp_path: Path, monkeypatch: py
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.post("/system/jobs/platinum-ranking-job/run")
+        resp = client.post("/api/system/jobs/platinum-ranking-job/run")
         assert resp.status_code == 503
         assert "not configured" in resp.json()["detail"].lower()
 
@@ -448,7 +448,7 @@ def test_service_job_trigger_rejects_unknown_job(tmp_path: Path, monkeypatch: py
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.post("/system/jobs/unknown-job/run")
+        resp = client.post("/api/system/jobs/unknown-job/run")
         assert resp.status_code == 404
 
 
@@ -484,7 +484,7 @@ def test_service_job_trigger_starts_allowed_job(tmp_path: Path, monkeypatch: pyt
 
     app = create_app()
     with TestClient(app) as client:
-        resp = client.post("/system/jobs/platinum-ranking-job/run")
+        resp = client.post("/api/system/jobs/platinum-ranking-job/run")
         assert resp.status_code == 202
         payload = resp.json()
         assert payload["jobName"] == "platinum-ranking-job"

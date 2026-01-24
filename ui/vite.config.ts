@@ -28,6 +28,22 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      '/signals': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/market': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/finance': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/strategies': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // '/config.js': {
       //   target: 'http://localhost:8000',
       //   changeOrigin: true,

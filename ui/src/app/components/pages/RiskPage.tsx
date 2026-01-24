@@ -122,19 +122,25 @@ export function RiskPage() {
           </CardHeader>
           <CardContent>
             <div className="h-64">
-              <ResponsiveContainer width="100%" height={256}>
-                <BarChart data={riskMetrics?.factorExposures || []}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis dataKey="factor" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip />
-                  <Bar dataKey="loading">
-                    {(riskMetrics?.factorExposures || []).map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.loading > 0 ? '#10b981' : '#ef4444'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {riskMetrics?.factorExposures?.length ? (
+                <ResponsiveContainer width="100%" height={256}>
+                  <BarChart data={riskMetrics.factorExposures}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="factor" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="loading">
+                      {riskMetrics.factorExposures.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.loading > 0 ? '#10b981' : '#ef4444'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                  Risk metrics are not available.
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -145,39 +151,43 @@ export function RiskPage() {
           <CardTitle>Stress Test Results</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-3">Event</th>
-                  <th className="text-left p-3">Date</th>
-                  <th className="text-right p-3">Strategy Return</th>
-                  <th className="text-right p-3">Benchmark Return</th>
-                  <th className="text-right p-3">Relative</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stressEventsList.map(event => {
-                  const relative = event.strategyReturn - event.benchmarkReturn;
-                  return (
-                    <tr key={event.name} className="border-b hover:bg-muted/50">
-                      <td className="p-3 font-medium">{event.name}</td>
-                      <td className="p-3 font-mono">{event.date}</td>
-                      <td className={`text-right p-3 font-mono ${event.strategyReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {event.strategyReturn.toFixed(1)}%
-                      </td>
-                      <td className={`text-right p-3 font-mono ${event.benchmarkReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {event.benchmarkReturn.toFixed(1)}%
-                      </td>
-                      <td className={`text-right p-3 font-mono font-semibold ${relative > 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {relative > 0 ? '+' : ''}{relative.toFixed(1)}%
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {stressEventsList.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No stress events configured.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left p-3">Event</th>
+                    <th className="text-left p-3">Date</th>
+                    <th className="text-right p-3">Strategy Return</th>
+                    <th className="text-right p-3">Benchmark Return</th>
+                    <th className="text-right p-3">Relative</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stressEventsList.map(event => {
+                    const relative = event.strategyReturn - event.benchmarkReturn;
+                    return (
+                      <tr key={event.name} className="border-b hover:bg-muted/50">
+                        <td className="p-3 font-medium">{event.name}</td>
+                        <td className="p-3 font-mono">{event.date}</td>
+                        <td className={`text-right p-3 font-mono ${event.strategyReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {event.strategyReturn.toFixed(1)}%
+                        </td>
+                        <td className={`text-right p-3 font-mono ${event.benchmarkReturn > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {event.benchmarkReturn.toFixed(1)}%
+                        </td>
+                        <td className={`text-right p-3 font-mono font-semibold ${relative > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {relative > 0 ? '+' : ''}{relative.toFixed(1)}%
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -193,15 +203,15 @@ export function RiskPage() {
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Value at Risk (95%)</div>
-              <div className="text-2xl font-bold text-red-500">{riskMetrics?.var95.toFixed(1)}%</div>
+              <div className="text-2xl font-bold text-red-500">{riskMetrics ? `${riskMetrics.var95.toFixed(1)}%` : '—'}</div>
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Up Capture</div>
-              <div className="text-2xl font-bold text-green-500">{((riskMetrics?.upCapture || 0) * 100).toFixed(0)}%</div>
+              <div className="text-2xl font-bold text-green-500">{riskMetrics ? `${(riskMetrics.upCapture * 100).toFixed(0)}%` : '—'}</div>
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Down Capture</div>
-              <div className="text-2xl font-bold text-green-500">{((riskMetrics?.downCapture || 0) * 100).toFixed(0)}%</div>
+              <div className="text-2xl font-bold text-green-500">{riskMetrics ? `${(riskMetrics.downCapture * 100).toFixed(0)}%` : '—'}</div>
             </div>
           </div>
         </CardContent>

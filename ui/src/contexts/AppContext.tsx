@@ -1,7 +1,7 @@
 // Global application context shim
 // DEPRECATED: Use useUIStore directly for better performance
 
-import React, { ReactNode, useMemo, useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useUIStore } from '@/stores/useUIStore';
 
 // Shim AppProvider to be a simple pass-through to avoid breaking imports

@@ -1,15 +1,37 @@
 import React from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Button } from '@/app/components/ui/button';
+import { toast } from 'sonner';
+import { AlertCircle, CheckCircle2, Clock, Check, BellOff, XCircle } from 'lucide-react';
 import { getSeverityIcon, formatTimestamp } from './SystemStatusHelpers';
 import { SystemAlert } from '@/types/strategy';
+import { ApiError, backtestApi } from '@/services/backtestApi';
 
 interface AlertHistoryProps {
     alerts: SystemAlert[];
 }
 
 export function AlertHistory({ alerts }: AlertHistoryProps) {
+    const queryClient = useQueryClient();
+
+    const mutate = async (action: string, fn: () => Promise<unknown>) => {
+        try {
+            await fn();
+            toast.success(action);
+            void queryClient.invalidateQueries({ queryKey: ['systemHealth'] });
+        } catch (err: unknown) {
+            const message =
+                err instanceof ApiError
+                    ? `${err.status}: ${err.message}`
+                    : err instanceof Error
+                        ? err.message
+                        : String(err);
+            toast.error(`${action} failed: ${message}`);
+        }
+    };
+
     return (
         <Card>
             <CardHeader>
@@ -47,11 +69,69 @@ export function AlertHistory({ alerts }: AlertHistoryProps) {
                                             Acknowledged
                                         </Badge>
                                     )}
+                                    {alert.snoozedUntil && Date.parse(alert.snoozedUntil) > Date.now() && (
+                                        <Badge variant="outline" className="text-sm">
+                                            <BellOff className="h-3.5 w-3.5 mr-1" />
+                                            Snoozed
+                                        </Badge>
+                                    )}
+                                    {alert.resolvedAt && (
+                                        <Badge variant="outline" className="text-sm">
+                                            <Check className="h-3.5 w-3.5 mr-1" />
+                                            Resolved
+                                        </Badge>
+                                    )}
                                     <span className="text-sm text-muted-foreground ml-auto">
                                         {formatTimestamp(alert.timestamp)}
                                     </span>
                                 </div>
-                                <p className="text-base">{alert.message}</p>
+                                <div className="flex items-start justify-between gap-3">
+                                    <p className="text-base">{alert.message}</p>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 px-2 gap-1"
+                                            disabled={!alert.id || alert.acknowledged}
+                                            onClick={() =>
+                                                alert.id
+                                                    ? mutate('Acknowledged', () => backtestApi.acknowledgeAlert(alert.id!))
+                                                    : Promise.resolve()
+                                            }
+                                        >
+                                            <CheckCircle2 className="h-4 w-4" />
+                                            Ack
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 px-2 gap-1"
+                                            disabled={!alert.id}
+                                            onClick={() =>
+                                                alert.id
+                                                    ? mutate('Snoozed (30m)', () => backtestApi.snoozeAlert(alert.id!, { minutes: 30 }))
+                                                    : Promise.resolve()
+                                            }
+                                        >
+                                            <Clock className="h-4 w-4" />
+                                            Snooze
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 px-2 gap-1"
+                                            disabled={!alert.id || Boolean(alert.resolvedAt)}
+                                            onClick={() =>
+                                                alert.id
+                                                    ? mutate('Resolved', () => backtestApi.resolveAlert(alert.id!))
+                                                    : Promise.resolve()
+                                            }
+                                        >
+                                            <XCircle className="h-4 w-4" />
+                                            Resolve
+                                        </Button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     ))}

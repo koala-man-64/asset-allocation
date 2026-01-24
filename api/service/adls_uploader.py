@@ -9,7 +9,7 @@ from typing import Dict, List
 
 from core.blob_storage import BlobStorageClient
 
-from backtest.service.security import parse_container_and_path
+from api.service.security import parse_container_and_path
 
 
 @dataclass(frozen=True)

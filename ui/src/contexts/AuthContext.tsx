@@ -49,7 +49,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const mode = parseAuthMode(runtime.authMode ?? import.meta.env.VITE_AUTH_MODE);
   const oidcClientId = String(runtime.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? '').trim();
   const oidcAuthority = String(runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? '').trim();
-  const oidcScopes = parseScopes(runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES);
+  const oidcScopesRaw = runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES;
+  const oidcScopes = useMemo(() => parseScopes(oidcScopesRaw), [oidcScopesRaw]);
 
   const enabled = mode === 'oidc' && Boolean(oidcClientId && oidcAuthority);
 
@@ -123,7 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setAccessTokenProvider(null);
     };
-  }, [msal, account, oidcScopes.join(' ')]);
+  }, [msal, account, oidcScopes]);
 
   const signIn = () => {
     if (!msal) return;

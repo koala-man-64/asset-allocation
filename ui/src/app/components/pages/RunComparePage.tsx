@@ -5,7 +5,6 @@ import { DataService } from '@/services/DataService';
 import { StrategyRun } from '@/types/strategy';
 import { useApp } from '@/contexts/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Badge } from '@/app/components/ui/badge';
 import { Switch } from '@/app/components/ui/switch';
 import { Label } from '@/app/components/ui/label';
 import {
@@ -31,6 +30,7 @@ import { X } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 
 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#eab308'];
+type ChartRow = Record<string, number | string>;
 
 export function RunComparePage() {
   const { selectedRuns, removeFromCart } = useApp();
@@ -73,9 +73,9 @@ export function RunComparePage() {
   }
 
   // Prepare equity curve data
-  const equityData = selectedStrategies[0].equityCurve.map((point, idx) => {
-    const dataPoint: any = { date: point.date };
-    selectedStrategies.forEach((strategy, stratIdx) => {
+  const equityData: ChartRow[] = selectedStrategies[0].equityCurve.map((point, idx) => {
+    const dataPoint: ChartRow = { date: point.date };
+    selectedStrategies.forEach((strategy) => {
       const value = strategy.equityCurve[idx]?.value || 0;
       dataPoint[strategy.id] = normalizeToHundred ? (value / strategy.equityCurve[0].value) * 100 : value;
     });
@@ -83,18 +83,18 @@ export function RunComparePage() {
   });
 
   // Prepare drawdown data
-  const drawdownData = selectedStrategies[0].drawdownCurve.map((point, idx) => {
-    const dataPoint: any = { date: point.date };
-    selectedStrategies.forEach((strategy, stratIdx) => {
+  const drawdownData: ChartRow[] = selectedStrategies[0].drawdownCurve.map((point, idx) => {
+    const dataPoint: ChartRow = { date: point.date };
+    selectedStrategies.forEach((strategy) => {
       dataPoint[strategy.id] = strategy.drawdownCurve[idx]?.value || 0;
     });
     return dataPoint;
   });
 
   // Prepare rolling metrics data (using Sharpe as example)
-  const rollingData = selectedStrategies[0].rollingMetrics.sharpe.map((point, idx) => {
-    const dataPoint: any = { date: point.date };
-    selectedStrategies.forEach((strategy, stratIdx) => {
+  const rollingData: ChartRow[] = selectedStrategies[0].rollingMetrics.sharpe.map((point, idx) => {
+    const dataPoint: ChartRow = { date: point.date };
+    selectedStrategies.forEach((strategy) => {
       dataPoint[strategy.id] = strategy.rollingMetrics.sharpe[idx]?.value || 0;
     });
     return dataPoint;
@@ -108,6 +108,18 @@ export function RunComparePage() {
       return 0.3 + Math.random() * 0.4;
     })
   );
+
+  type SummaryMetricKey = 'cagr' | 'annVol' | 'sharpe' | 'sortino' | 'calmar' | 'maxDD' | 'timeToRecovery' | 'turnoverAnn';
+  const summaryMetrics: Array<{ label: string; key: SummaryMetricKey; suffix: string }> = [
+    { label: 'CAGR', key: 'cagr', suffix: '%' },
+    { label: 'Volatility', key: 'annVol', suffix: '%' },
+    { label: 'Sharpe', key: 'sharpe', suffix: '' },
+    { label: 'Sortino', key: 'sortino', suffix: '' },
+    { label: 'Calmar', key: 'calmar', suffix: '' },
+    { label: 'Max DD', key: 'maxDD', suffix: '%' },
+    { label: 'Recovery (days)', key: 'timeToRecovery', suffix: '' },
+    { label: 'Turnover', key: 'turnoverAnn', suffix: '%' },
+  ];
 
   return (
     <div className="space-y-6">
@@ -195,7 +207,7 @@ export function RunComparePage() {
                       return (
                         <div className="bg-background border rounded-lg p-3 shadow-lg">
                           <p className="font-semibold mb-2">{new Date(label).toLocaleDateString()}</p>
-                          {payload.map((entry: any, index: number) => {
+                          {payload.map((entry, index: number) => {
                             const strategy = selectedStrategies.find(s => s.id === entry.dataKey);
                             return (
                               <p key={index} style={{ color: entry.color }}>
@@ -331,21 +343,12 @@ export function RunComparePage() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  { label: 'CAGR', key: 'cagr', suffix: '%' },
-                  { label: 'Volatility', key: 'annVol', suffix: '%' },
-                  { label: 'Sharpe', key: 'sharpe', suffix: '' },
-                  { label: 'Sortino', key: 'sortino', suffix: '' },
-                  { label: 'Calmar', key: 'calmar', suffix: '' },
-                  { label: 'Max DD', key: 'maxDD', suffix: '%' },
-                  { label: 'Recovery (days)', key: 'timeToRecovery', suffix: '' },
-                  { label: 'Turnover', key: 'turnoverAnn', suffix: '%' },
-                ].map(metric => (
+                {summaryMetrics.map(metric => (
                   <tr key={metric.key} className="border-b hover:bg-muted/50">
                     <td className="p-2 font-medium">{metric.label}</td>
                     {selectedStrategies.map(s => (
                       <td key={s.id} className="text-right p-2 font-mono">
-                        {(s as any)[metric.key].toFixed(2)}{metric.suffix}
+                        {s[metric.key].toFixed(2)}{metric.suffix}
                       </td>
                     ))}
                   </tr>

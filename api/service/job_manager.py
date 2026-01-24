@@ -9,11 +9,11 @@ from typing import Dict, Optional
 
 from backtest.config import BacktestConfig
 from backtest.runner import run_backtest
-from backtest.service.adls_uploader import upload_run_artifacts
-from backtest.service.run_store import RunStore
+from api.service.adls_uploader import upload_run_artifacts
+from api.service.run_store import RunStore
 
 
-logger = logging.getLogger("backtest.service")
+logger = logging.getLogger("api.service")
 
 
 def _utc_now() -> datetime:

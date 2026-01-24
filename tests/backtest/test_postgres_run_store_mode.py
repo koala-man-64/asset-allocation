@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backtest.service.app import create_app
-from backtest.service.settings import ServiceSettings
+from api.service.app import create_app
+from api.service.settings import ServiceSettings
 
 
 def test_settings_requires_postgres_dsn_when_mode_postgres(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,7 +61,7 @@ def test_create_app_uses_postgres_run_store_when_configured(tmp_path: Path, monk
         def list_runs(self, **_: object):
             raise NotImplementedError
 
-    monkeypatch.setattr("backtest.service.app.PostgresRunStore", _FakePostgresRunStore)
+    monkeypatch.setattr("api.service.app.PostgresRunStore", _FakePostgresRunStore)
 
     app = create_app()
     with TestClient(app) as client:

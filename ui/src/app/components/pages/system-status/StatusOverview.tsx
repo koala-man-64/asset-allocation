@@ -2,12 +2,12 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Activity, Database, PlayCircle, Zap } from 'lucide-react';
 import { getStatusIcon, getStatusBadge, formatTimestamp } from './SystemStatusHelpers';
-import { DataLayer } from '@/types/strategy';
+import type { DataLayer, JobRun } from '@/types/strategy';
 
 interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
-    recentJobs: any[];
+    recentJobs: JobRun[];
 }
 
 export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {
@@ -45,7 +45,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                             <div className="font-bold text-sm flex items-center gap-1.5">
                                                 {layer.name}
                                                 <div className="flex items-center gap-1 border-l pl-2 ml-1 opacity-70">
-                                                    {(layer.domains || []).map((domain: any, dIdx: number) => (
+                                                    {(layer.domains || []).map((domain, dIdx: number) => (
                                                         <div key={dIdx} title={`${domain.name}: ${domain.status}`} className="scale-75">
                                                             {getStatusIcon(domain.status)}
                                                         </div>
@@ -75,9 +75,9 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
 
                                 {/* Domains List */}
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pl-6">
-                                    {(layer.domains || []).map((domain: any, dIdx: number) => {
+                                    {(layer.domains || []).map((domain, dIdx: number) => {
                                         const jName = domain.jobUrl?.split('/jobs/')[1]?.split('/')[0];
-                                        const job = jName ? recentJobs.find((j: any) => j.jobName === jName) : null;
+                                        const job = jName ? recentJobs.find((j) => j.jobName === jName) : null;
 
                                         return (
                                             <div key={dIdx} className="flex flex-col gap-0.5 border-l border-muted pl-1.5 py-0.5">

@@ -130,9 +130,11 @@ export interface DataDomain {
   description?: string;
   portalUrl?: string;
   jobUrl?: string;
+  jobName?: string;
   triggerUrl?: string;
   frequency?: string;
   cron?: string;
+  maxAgeSeconds?: number;
 }
 
 export interface DataLayer {
@@ -143,6 +145,7 @@ export interface DataLayer {
   dataVersion?: string;
   recordCount?: number;
   refreshFrequency: string;
+  maxAgeSeconds?: number;
   nextExpectedUpdate?: string;
   domains?: DataDomain[];
   portalUrl?: string;
@@ -171,6 +174,11 @@ export interface SystemAlert {
   timestamp: string;
   message: string;
   acknowledged: boolean;
+  acknowledgedAt?: string | null;
+  acknowledgedBy?: string | null;
+  snoozedUntil?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
 }
 
 export interface ResourceHealth {
@@ -212,6 +220,9 @@ export interface TradingSignal {
   signalType?: string;
   strength?: number;
   confidence?: number;
+  rank?: number;
+  nSymbols?: number;
+  score?: number | null;
   direction?: 'LONG' | 'SHORT' | 'FLAT';
   sector?: string;
   targetPrice?: number;

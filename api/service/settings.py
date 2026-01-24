@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from backtest.service.security import assert_allowed_container, parse_container_and_path
+from api.service.security import assert_allowed_container, parse_container_and_path
 
 
 RunStoreMode = Literal["sqlite", "adls", "postgres"]

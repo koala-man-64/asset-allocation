@@ -1,6 +1,6 @@
 // Top sticky header with global controls
 
-import { ShoppingCart, Download, User, Moon, Sun, Database, Bell } from 'lucide-react';
+import { ShoppingCart, Download, User, Moon, Sun, Bell } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
@@ -21,8 +21,6 @@ export function AppHeader() {
     setIsDarkMode,
     environment,
     setEnvironment,
-    dataSource,
-    setDataSource
   } = useApp();
   const auth = useAuth();
 
@@ -41,27 +39,8 @@ export function AppHeader() {
           </Badge>
         </div>
 
-        {/* Center: Global Controls */}
-        <div className="flex items-center gap-4 flex-1 justify-center max-w-4xl mx-4">
-          {/* Data Source Toggle */}
-          <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-sidebar-foreground/70" />
-            <div className="flex bg-sidebar-accent rounded-lg p-0.5">
-              <button
-                className={`px-2 py-0.5 text-xs font-medium rounded-md transition-all ${dataSource === 'mock' ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
-                onClick={() => setDataSource('mock')}
-              >
-                Mock
-              </button>
-              <button
-                className={`px-2 py-0.5 text-xs font-medium rounded-md transition-all ${dataSource === 'live' ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
-                onClick={() => setDataSource('live')}
-              >
-                Live
-              </button>
-            </div>
-          </div>
-        </div>
+        {/* Center */}
+        <div className="flex items-center gap-4 flex-1 justify-center max-w-4xl mx-4" />
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
@@ -71,9 +50,6 @@ export function AppHeader() {
             className="relative h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
             <Bell className="h-5 w-5" />
-            <Badge className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center p-0 bg-orange-500 text-white text-[10px] border-2 border-sidebar">
-              1
-            </Badge>
           </Button>
 
           <Button

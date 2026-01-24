@@ -1,19 +1,51 @@
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-from backtest.service.dependencies import get_settings, get_system_health_cache, validate_auth
+from api.service.dependencies import (
+    get_alert_state_store,
+    get_auth_manager,
+    get_settings,
+    get_system_health_cache,
+    validate_auth,
+)
 from monitoring.arm_client import ArmConfig, AzureArmClient
+from monitoring.lineage import get_lineage_snapshot
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 
 logger = logging.getLogger("backtest.api.system")
 
 router = APIRouter()
+
+
+def _iso(dt: Optional[datetime]) -> Optional[str]:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc).isoformat()
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _get_actor(request: Request) -> Optional[str]:
+    settings = get_settings(request)
+    if settings.auth_mode == "none":
+        return None
+    auth = get_auth_manager(request)
+    ctx = auth.authenticate_headers(dict(request.headers))
+    if ctx.subject:
+        return ctx.subject
+    for key in ("preferred_username", "email", "upn"):
+        value = ctx.claims.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 @router.get("/health")
@@ -38,13 +70,137 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
 
+    payload: Dict[str, Any] = dict(result.value or {})
+    raw_alerts = payload.get("alerts")
+    if isinstance(raw_alerts, list):
+        payload["alerts"] = [dict(item) if isinstance(item, dict) else item for item in raw_alerts]
+
+    alert_store = get_alert_state_store(request)
+    if alert_store and isinstance(payload.get("alerts"), list):
+        alert_ids: list[str] = []
+        for alert in payload["alerts"]:
+            if not isinstance(alert, dict):
+                continue
+            alert_id = str(alert.get("id") or "").strip()
+            if alert_id:
+                alert_ids.append(alert_id)
+        states = alert_store.get_states(alert_ids)
+
+        for alert in payload["alerts"]:
+            if not isinstance(alert, dict):
+                continue
+            alert_id = str(alert.get("id") or "").strip()
+            if not alert_id:
+                continue
+            state = states.get(alert_id)
+            if not state:
+                continue
+
+            alert["acknowledged"] = bool(state.acknowledged_at)
+            alert["acknowledgedAt"] = _iso(state.acknowledged_at)
+            alert["acknowledgedBy"] = state.acknowledged_by
+            alert["snoozedUntil"] = _iso(state.snoozed_until)
+            alert["resolvedAt"] = _iso(state.resolved_at)
+            alert["resolvedBy"] = state.resolved_by
+
     headers: Dict[str, str] = {
         "Cache-Control": "no-store",
         "X-System-Health-Cache": "hit" if result.cache_hit else "miss",
     }
     if result.refresh_error:
         headers["X-System-Health-Stale"] = "1"
-    return JSONResponse(result.value, headers=headers)
+    return JSONResponse(payload, headers=headers)
+
+
+class SnoozeRequest(BaseModel):
+    minutes: Optional[int] = Field(default=None, ge=1, le=7 * 24 * 60)
+    until: Optional[datetime] = None
+
+
+def _require_alert_store(request: Request):
+    store = get_alert_state_store(request)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Alert lifecycle persistence is not configured (BACKTEST_POSTGRES_DSN).",
+        )
+    return store
+
+
+@router.post("/alerts/{alert_id}/ack")
+def acknowledge_alert(alert_id: str, request: Request) -> JSONResponse:
+    validate_auth(request)
+    store = _require_alert_store(request)
+    actor = _get_actor(request)
+    try:
+        state = store.acknowledge(alert_id, actor=actor)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to acknowledge alert: {exc}") from exc
+    return JSONResponse(
+        {
+            "alertId": state.alert_id,
+            "acknowledgedAt": _iso(state.acknowledged_at),
+            "acknowledgedBy": state.acknowledged_by,
+            "snoozedUntil": _iso(state.snoozed_until),
+            "resolvedAt": _iso(state.resolved_at),
+            "resolvedBy": state.resolved_by,
+        }
+    )
+
+
+@router.post("/alerts/{alert_id}/snooze")
+def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    store = _require_alert_store(request)
+    actor = _get_actor(request)
+
+    until = payload.until
+    if until is None:
+        minutes = payload.minutes or 30
+        until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
+
+    try:
+        state = store.snooze(alert_id, until=until, actor=actor)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to snooze alert: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "alertId": state.alert_id,
+            "acknowledgedAt": _iso(state.acknowledged_at),
+            "acknowledgedBy": state.acknowledged_by,
+            "snoozedUntil": _iso(state.snoozed_until),
+            "resolvedAt": _iso(state.resolved_at),
+            "resolvedBy": state.resolved_by,
+        }
+    )
+
+
+@router.post("/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
+    validate_auth(request)
+    store = _require_alert_store(request)
+    actor = _get_actor(request)
+    try:
+        state = store.resolve(alert_id, actor=actor)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {exc}") from exc
+    return JSONResponse(
+        {
+            "alertId": state.alert_id,
+            "acknowledgedAt": _iso(state.acknowledged_at),
+            "acknowledgedBy": state.acknowledged_by,
+            "snoozedUntil": _iso(state.snoozed_until),
+            "resolvedAt": _iso(state.resolved_at),
+            "resolvedBy": state.resolved_by,
+        }
+    )
+
+
+@router.get("/lineage")
+def system_lineage(request: Request) -> JSONResponse:
+    validate_auth(request)
+    return JSONResponse(get_lineage_snapshot(), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/jobs/{job_name}/run")

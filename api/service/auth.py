@@ -12,10 +12,10 @@ from jwt.exceptions import InvalidTokenError
 from jwt.algorithms import RSAAlgorithm
 import requests
 
-from backtest.service.settings import AuthMode, ServiceSettings
+from api.service.settings import AuthMode, ServiceSettings
 
 
-logger = logging.getLogger("backtest.service.auth")
+logger = logging.getLogger("api.service.auth")
 
 
 @dataclass(frozen=True)

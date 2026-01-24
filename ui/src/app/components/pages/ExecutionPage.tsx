@@ -17,6 +17,7 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 export function ExecutionPage() {
   const [strategies, setStrategies] = useState<StrategyRun[]>([]);
   const [executionMetrics, setExecutionMetrics] = useState<ExecutionMetrics | null>(null);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
@@ -43,10 +44,14 @@ export function ExecutionPage() {
 
     async function loadExecutionMetrics() {
       try {
+        setMetricsError(null);
         const metrics = await DataService.getExecutionMetrics(selectedStrategyId);
         setExecutionMetrics(metrics);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error("Failed to load execution metrics:", error);
+        setExecutionMetrics(null);
+        const message = error instanceof Error ? error.message : String(error);
+        setMetricsError(message);
       }
     }
     loadExecutionMetrics();
@@ -73,7 +78,9 @@ export function ExecutionPage() {
   const grossNetData = strategy.equityCurve.map((point, idx) => ({
     date: point.date,
     gross: point.value,
-    net: point.value * (1 - ((executionMetrics?.totalCostDragBps || 0) / 10000) * (idx / strategy.equityCurve.length)) // Approximated drag over time
+    net: executionMetrics
+      ? point.value * (1 - (executionMetrics.totalCostDragBps / 10000) * (idx / strategy.equityCurve.length))
+      : null,
   }));
 
 
@@ -115,8 +122,12 @@ export function ExecutionPage() {
             <CardTitle className="text-base">Total Cost Drag</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-red-500">-{executionMetrics?.totalCostDragBps || 0} bps</div>
-            <p className="text-sm text-muted-foreground mt-2">Annual impact on returns</p>
+            <div className="text-3xl font-bold text-red-500">
+              {executionMetrics ? `-${executionMetrics.totalCostDragBps} bps` : '—'}
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              {executionMetrics ? 'Annual impact on returns' : (metricsError || 'Execution metrics not available')}
+            </p>
           </CardContent>
         </Card>
 
@@ -125,8 +136,12 @@ export function ExecutionPage() {
             <CardTitle className="text-base">Avg Holding Period</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{executionMetrics?.avgHoldingPeriodDays || 0} days</div>
-            <p className="text-sm text-muted-foreground mt-2">Median position duration</p>
+            <div className="text-3xl font-bold">
+              {executionMetrics ? `${executionMetrics.avgHoldingPeriodDays} days` : '—'}
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              {executionMetrics ? 'Median position duration' : (metricsError || 'Execution metrics not available')}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -145,7 +160,9 @@ export function ExecutionPage() {
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip />
                   <Line type="monotone" dataKey="gross" name="Gross" stroke="#10b981" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="net" name="Net" stroke="#ef4444" strokeWidth={2} dot={false} />
+                  {executionMetrics && (
+                    <Line type="monotone" dataKey="net" name="Net" stroke="#ef4444" strokeWidth={2} dot={false} />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -158,25 +175,29 @@ export function ExecutionPage() {
           </CardHeader>
           <CardContent>
             <div className="h-64 flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={executionMetrics?.costBreakdown || []}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                  >
-                    {(executionMetrics?.costBreakdown || []).map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+              {executionMetrics?.costBreakdown?.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={executionMetrics.costBreakdown}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {executionMetrics.costBreakdown.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-sm text-muted-foreground">No execution cost breakdown available.</div>
+              )}
             </div>
           </CardContent>
         </Card>

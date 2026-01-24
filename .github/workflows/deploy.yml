@@ -250,6 +250,7 @@ jobs:
         with:
           filters: |
             backtest_api:
+              - "api/**"
               - "backtest/**"
               - "ui/**"
               - "Dockerfile.backtest_api"

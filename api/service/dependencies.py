@@ -2,10 +2,10 @@ from typing import Any, Dict
 from fastapi import Request
 from monitoring.ttl_cache import TtlCache
 
-from backtest.service.auth import AuthManager
-from backtest.service.job_manager import JobManager
-from backtest.service.run_store import RunStore
-from backtest.service.settings import ServiceSettings
+from api.service.auth import AuthManager
+from api.service.job_manager import JobManager
+from api.service.run_store import RunStore
+from api.service.settings import ServiceSettings
 
 
 def get_settings(request: Request) -> ServiceSettings:
@@ -28,8 +28,12 @@ def get_system_health_cache(request: Request) -> TtlCache[Dict[str, Any]]:
     return request.app.state.system_health_cache
 
 
+def get_alert_state_store(request: Request):
+    return getattr(request.app.state, "alert_state_store", None)
+
+
 from fastapi import HTTPException
-from backtest.service.auth import AuthError
+from api.service.auth import AuthError
 
 
 def validate_auth(request: Request) -> None:

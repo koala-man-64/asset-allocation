@@ -13,6 +13,12 @@ export const backtestKeys = {
   trades: (runId: string, source: DataSource, limit: number, offset: number) => [...backtestKeys.run(runId), 'trades', source, limit, offset] as const,
 };
 
+function isNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const status = (error as { status?: unknown }).status;
+  return status === 404;
+}
+
 export function useRunList(params: ListRunsParams = {}, opts: { enabled?: boolean } = {}) {
   const { data, error, isLoading, refetch } = useQuery({
     queryKey: backtestKeys.runList(params),
@@ -38,9 +44,9 @@ export function useRunSummary(runId: string | undefined, opts: { enabled?: boole
     queryKey: backtestKeys.summary(runId!, source),
     queryFn: ({ signal }) => backtestApi.getSummary(runId!, { source }, signal),
     enabled,
-    retry: (failureCount, error: any) => {
+    retry: (failureCount, error: unknown) => {
       // Don't retry 404s
-      if (error?.status === 404) return false;
+      if (isNotFoundError(error)) return false;
       return failureCount < 3;
     }
   });
@@ -69,8 +75,8 @@ export function useRunSummaries(
       queryKey: backtestKeys.summary(runId, source),
       queryFn: ({ signal }: { signal: AbortSignal }) => backtestApi.getSummary(runId, { source }, signal),
       enabled,
-      retry: (failureCount: number, error: any) => {
-        if (error?.status === 404) return false;
+      retry: (failureCount: number, error: unknown) => {
+        if (isNotFoundError(error)) return false;
         return failureCount < 3;
       }
     }))
@@ -104,14 +110,14 @@ export function useTimeseriesMulti(
       queryKey: backtestKeys.timeseries(runId, source, maxPoints),
       queryFn: ({ signal }: { signal: AbortSignal }) => backtestApi.getTimeseries(runId, { source, maxPoints }, signal),
       enabled,
-      retry: (failureCount: number, error: any) => {
-        if (error?.status === 404) return false;
+      retry: (failureCount: number, error: unknown) => {
+        if (isNotFoundError(error)) return false;
         return failureCount < 3;
       }
     }))
   });
 
-  const timeseriesByRunId: Record<string, any> = {}; // using any to match loose types from before if needed, or specific type
+  const timeseriesByRunId: Record<string, unknown> = {};
   let loading = false;
   let error: string | undefined;
 
@@ -140,14 +146,14 @@ export function useRollingMulti(
       queryKey: backtestKeys.rolling(runId, source, windowDays, maxPoints),
       queryFn: ({ signal }: { signal: AbortSignal }) => backtestApi.getRolling(runId, { source, windowDays, maxPoints }, signal),
       enabled,
-      retry: (failureCount: number, error: any) => {
-        if (error?.status === 404) return false;
+      retry: (failureCount: number, error: unknown) => {
+        if (isNotFoundError(error)) return false;
         return failureCount < 3;
       }
     }))
   });
 
-  const rollingByRunId: Record<string, any> = {};
+  const rollingByRunId: Record<string, unknown> = {};
   let loading = false;
   let error: string | undefined;
 

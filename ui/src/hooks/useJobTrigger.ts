@@ -7,17 +7,19 @@ export function useJobTrigger() {
     const queryClient = useQueryClient();
     const [triggeringJob, setTriggeringJob] = useState<string | null>(null);
 
-    const triggerJob = async (jobName: string, queryKey: string[] = ['liveSystemHealth']) => {
+    const triggerJob = async (jobName: string, queryKey: string[] = ['systemHealth']) => {
         setTriggeringJob(jobName);
         try {
             await backtestApi.triggerJob(jobName);
             toast.success(`Triggered ${jobName}`);
             void queryClient.invalidateQueries({ queryKey });
-        } catch (err) {
+        } catch (err: unknown) {
             const message =
                 err instanceof ApiError
                     ? `${err.status}: ${err.message}`
-                    : (err as any)?.message || String(err);
+                    : err instanceof Error
+                        ? err.message
+                        : String(err);
             toast.error(`Failed to trigger ${jobName}: ${message}`);
         } finally {
             setTriggeringJob(null);

@@ -22,14 +22,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/app/components/ui/tooltip';
-import { AlertTriangle, DollarSign, TrendingDown, Settings } from 'lucide-react';
+import { AlertTriangle, DollarSign, TrendingDown } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, Tooltip as RechartsTooltip, ZAxis } from 'recharts';
 import { MetricTooltip, InfoTooltip } from '@/app/components/ui/metric-tooltip';
 import { StrategyConfigModal } from '@/app/components/modals/StrategyConfigModal';
 
 export function OverviewPage() {
-  const { selectedRuns, addToCart, removeFromCart, dataSource } = useUIStore();
-  const { data: strategies = [], isLoading: loading } = useStrategiesQuery();
+  const { selectedRuns, addToCart, removeFromCart } = useUIStore();
+  const { data: strategies = [], isLoading: loading, error } = useStrategiesQuery();
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyRun | null>(null);
   const [configModalOpen, setConfigModalOpen] = useState(false);
 
@@ -52,9 +52,9 @@ export function OverviewPage() {
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <p className="text-muted-foreground">No strategies found</p>
-          <p className="text-xs text-muted-foreground mt-2">
-            {dataSource === 'live' ? 'Check your API connection' : 'Mock data unavailable'}
-          </p>
+          {error && (
+            <p className="text-xs text-muted-foreground mt-2">{(error as Error).message}</p>
+          )}
         </div>
       </div>
     );
@@ -82,19 +82,6 @@ export function OverviewPage() {
 
   return (
     <div className="space-y-8">
-      {/* Data Source Indicator */}
-      {dataSource === 'live' && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-          <div className="text-base text-blue-900">
-            <p className="font-semibold">Live mode active - API not connected</p>
-            <p className="text-sm text-blue-700 mt-1">
-              Showing mock data as fallback. Connect your backend API at <code className="bg-blue-100 px-1.5 py-0.5 rounded">POST /api/strategies</code> to see live data.
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* KPI Ribbon */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
