@@ -38,8 +38,27 @@ local.settings.json
 data/
 !ui/src/data/
 !ui/src/data/**
+# Backtest Artifacts
+backtest_results/
+
+# --- Node / Frontend ---
+node_modules/
+**/node_modules/
+ui/dist/
+ui/.vite/
+ui/.pnpm-store/
+ui/coverage/
+ui/.eslintcache
+pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+asset_allocation/ui2.0/dist/
+asset_allocation/ui2.0/.vite/
+asset_allocation/ui2.0/.pnpm-store/
 
 # --- Tooling / Test Artifacts ---
+docs/signoffs/
 .ruff_cache/
 .mypy_cache/
 .tox/
