@@ -130,6 +130,7 @@ export interface DataDomain {
   description?: string;
   portalUrl?: string;
   jobUrl?: string;
+  triggerUrl?: string;
 }
 
 export interface DataLayer {

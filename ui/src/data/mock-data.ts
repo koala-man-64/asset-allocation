@@ -415,9 +415,34 @@ export const mockJobHistory: JobRun[] = [
 export const mockSystemHealth: SystemHealth = {
   overall: 'healthy',
   dataLayers: [
-    { name: 'Bronze (Raw)', description: 'Raw ingestion layer', lastUpdated: new Date(Date.now() - 3600000).toISOString(), status: 'healthy', refreshFrequency: 'Daily', jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-bronze-ingest/overview' },
-    { name: 'Silver (Cleaned)', description: 'Cleaned and normalized', lastUpdated: new Date(Date.now() - 3000000).toISOString(), status: 'healthy', refreshFrequency: 'Daily', jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-silver-normalize/overview' },
-    { name: 'Gold (Feature)', description: 'Feature engineering', lastUpdated: new Date(Date.now() - 2000000).toISOString(), status: 'healthy', refreshFrequency: 'Daily', jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-gold-features/overview' },
+    { 
+      name: 'Bronze (Raw)', 
+      description: 'Raw ingestion layer', 
+      lastUpdated: new Date(Date.now() - 3600000).toISOString(), 
+      status: 'healthy', 
+      refreshFrequency: 'Daily', 
+      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/bronze',
+      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-bronze-ingest/overview',
+      triggerUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Logic/workflows/sync-bronze'
+    },
+    { 
+      name: 'Silver (Cleaned)', 
+      description: 'Cleaned and normalized', 
+      lastUpdated: new Date(Date.now() - 3000000).toISOString(), 
+      status: 'healthy', 
+      refreshFrequency: 'Daily', 
+      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/silver',
+      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-silver-normalize/overview' 
+    },
+    { 
+      name: 'Gold (Feature)', 
+      description: 'Feature engineering', 
+      lastUpdated: new Date(Date.now() - 2000000).toISOString(), 
+      status: 'healthy', 
+      refreshFrequency: 'Daily', 
+      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/gold',
+      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-gold-features/overview' 
+    },
   ],
   recentJobs: mockJobHistory,
   alerts: [

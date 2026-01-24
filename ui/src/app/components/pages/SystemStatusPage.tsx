@@ -20,7 +20,8 @@ import {
     Info,
     TrendingUp,
     ExternalLink,
-    Folder
+    Folder,
+    Zap
 } from 'lucide-react';
 
 export function SystemStatusPage() {
@@ -203,8 +204,8 @@ export function SystemStatusPage() {
 
             {/* Header */}
             <div>
-                <h1 className="text-2xl font-semibold">System Status & Health</h1>
-                <p className="text-sm text-muted-foreground mt-1">
+                <h1 className="text-3xl font-bold">System Status & Health</h1>
+                <p className="text-base text-muted-foreground mt-1">
                     Monitor data freshness, job execution, and system alerts
                 </p>
             </div>
@@ -226,8 +227,8 @@ export function SystemStatusPage() {
                         <div className="flex flex-col justify-center gap-4">
                             <div className="flex flex-col items-center justify-center p-4 bg-muted/20 rounded-lg border border-muted h-full">
                                 <div className="scale-150 mb-4">{getStatusIcon(overall)}</div>
-                                <div className="text-3xl font-bold capitalize mb-1">{overall}</div>
-                                <p className="text-sm text-muted-foreground">System Operational Status</p>
+                                <div className="text-4xl font-extrabold capitalize mb-1">{overall}</div>
+                                <p className="text-base text-muted-foreground text-center">System Operational Status</p>
                             </div>
                         </div>
 
@@ -240,8 +241,35 @@ export function SystemStatusPage() {
                                         <div className="flex items-center gap-3">
                                             {getStatusIcon(layer.status)}
                                             <div>
-                                                <div className="font-semibold text-sm">{layer.name}</div>
-                                                <div className="text-[10px] text-muted-foreground">
+                                                <div className="font-bold text-base flex items-center gap-2">
+                                                    {layer.name}
+                                                    <div className="flex items-center gap-1 border-l pl-2 ml-1 opacity-70">
+                                                        {(layer.domains || []).map((domain: any, dIdx: number) => (
+                                                            <div key={dIdx} title={`${domain.name}: ${domain.status}`}>
+                                                                {getStatusIcon(domain.status)}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex items-center gap-1.5 ml-2">
+                                                        {layer.portalUrl && (
+                                                            <a href={layer.portalUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="View Azure Container">
+                                                                <Database className="h-4 w-4" />
+                                                            </a>
+                                                        )}
+                                                        {layer.jobUrl && (
+                                                            <a href={layer.jobUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="View Pipeline Job">
+                                                                <PlayCircle className="h-4 w-4" />
+                                                            </a>
+                                                        )}
+                                                        {layer.triggerUrl && (
+                                                            <a href={layer.triggerUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="View Logic App Trigger">
+                                                                <Zap className="h-4 w-4" />
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="text-xs text-muted-foreground">
                                                     Updated: {formatTimestamp(layer.lastUpdated)}
                                                 </div>
                                             </div>
@@ -256,22 +284,39 @@ export function SystemStatusPage() {
                                             const job = jName ? recentJobs.find((j: any) => j.jobName === jName) : null;
 
                                             return (
-                                                <div key={dIdx} className="flex items-center justify-between text-xs bg-muted/30 p-2 rounded">
+                                                <div key={dIdx} className="flex items-center justify-between text-sm bg-muted/30 p-2 rounded">
                                                     <div className="flex items-center gap-2">
                                                         {getStatusIcon(domain.status)}
                                                         <span className="font-medium">{domain.name}</span>
+                                                        <div className="flex items-center gap-1 ml-1 opacity-50">
+                                                            {domain.portalUrl && (
+                                                                <a href={domain.portalUrl} target="_blank" rel="noopener noreferrer" className="hover:text-blue-500 transition-colors" title="View Azure Resource">
+                                                                    <Database className="h-3.5 w-3.5" />
+                                                                </a>
+                                                            )}
+                                                            {domain.jobUrl && (
+                                                                <a href={domain.jobUrl} target="_blank" rel="noopener noreferrer" className="hover:text-blue-500 transition-colors" title="View Domain Job">
+                                                                    <PlayCircle className="h-3.5 w-3.5" />
+                                                                </a>
+                                                            )}
+                                                            {domain.triggerUrl && (
+                                                                <a href={domain.triggerUrl} target="_blank" rel="noopener noreferrer" className="hover:text-blue-500 transition-colors" title="Trigger Domain Logic">
+                                                                    <Zap className="h-3.5 w-3.5" />
+                                                                </a>
+                                                            )}
+                                                        </div>
                                                     </div>
 
                                                     {job ? (
                                                         <div className="flex items-center gap-1.5" title={`Job: ${job.jobName} (${job.status})`}>
-                                                            <div className={`h-1.5 w-1.5 rounded-full ${job.status === 'success' ? 'bg-green-500' :
+                                                            <div className={`h-2 w-2 rounded-full ${job.status === 'success' ? 'bg-green-500' :
                                                                 job.status === 'failed' ? 'bg-red-500' :
                                                                     job.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
                                                                 }`} />
-                                                            <span className="text-[10px] text-muted-foreground capitalize">{job.status}</span>
+                                                            <span className="text-xs text-muted-foreground capitalize">{job.status}</span>
                                                         </div>
                                                     ) : (
-                                                        <span className="text-[10px] text-muted-foreground italic opacity-50">No job</span>
+                                                        <span className="text-xs text-muted-foreground italic opacity-50">No job</span>
                                                     )}
                                                 </div>
                                             );
@@ -297,7 +342,7 @@ export function SystemStatusPage() {
                                 <PlayCircle className="h-5 w-5" />
                                 Recent Jobs
                             </CardTitle>
-                            <div className="flex gap-3 text-xs">
+                            <div className="flex gap-3 text-sm">
                                 <span className="flex items-center gap-1">
                                     <div className="h-2 w-2 rounded-full bg-green-500" />
                                     {successJobs}
@@ -331,14 +376,14 @@ export function SystemStatusPage() {
                                         <TableRow key={idx}>
                                             <TableCell className="py-2">
                                                 <div className="flex flex-col">
-                                                    <span className="font-medium text-xs">{job.jobName}</span>
-                                                    <span className="text-[10px] text-muted-foreground">{job.jobType}</span>
+                                                    <span className="font-medium text-sm">{job.jobName}</span>
+                                                    <span className="text-xs text-muted-foreground">{job.jobType}</span>
                                                 </div>
                                             </TableCell>
                                             <TableCell className="py-2">
                                                 {getStatusBadge(job.status)}
                                             </TableCell>
-                                            <TableCell className="py-2 font-mono text-xs">
+                                            <TableCell className="py-2 font-mono text-sm">
                                                 {formatTimestamp(job.startTime)}
                                             </TableCell>
                                         </TableRow>
@@ -382,12 +427,12 @@ export function SystemStatusPage() {
                                         <div className="mt-0.5">{getSeverityIcon(alert.severity)}</div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-xs font-semibold">{alert.component}</span>
-                                                <span className="text-[10px] text-muted-foreground ml-auto">
+                                                <span className="text-sm font-semibold">{alert.component}</span>
+                                                <span className="text-xs text-muted-foreground ml-auto">
                                                     {formatTimestamp(alert.timestamp)}
                                                 </span>
                                             </div>
-                                            <p className="text-xs text-muted-foreground line-clamp-2">{alert.message}</p>
+                                            <p className="text-sm text-muted-foreground line-clamp-2">{alert.message}</p>
                                         </div>
                                     </div>
                                 ))}
@@ -432,7 +477,7 @@ export function SystemStatusPage() {
                                         <TableRow className={layer.domains?.length ? "border-b-0" : ""}>
                                             <TableCell>
                                                 <div>
-                                                    <div className="font-medium flex items-center gap-1.5">
+                                                    <div className="font-medium flex items-center gap-2 text-base">
                                                         {layer.name}
                                                         {layer.portalUrl && (
                                                             <a
@@ -442,11 +487,11 @@ export function SystemStatusPage() {
                                                                 className="text-muted-foreground hover:text-primary transition-colors"
                                                                 title="View Container in Azure Portal"
                                                             >
-                                                                <ExternalLink className="h-4 w-4" />
+                                                                <ExternalLink className="h-4.5 w-4.5" />
                                                             </a>
                                                         )}
                                                     </div>
-                                                    <div className="text-xs text-muted-foreground">{layer.description}</div>
+                                                    <div className="text-sm text-muted-foreground">{layer.description}</div>
                                                 </div>
                                             </TableCell>
                                             <TableCell>
@@ -472,9 +517,9 @@ export function SystemStatusPage() {
                                                         <div className="relatve flex items-center gap-2">
                                                             <div className="w-2 h-px bg-border flex-shrink-0" />
                                                             <div className="flex flex-col">
-                                                                <span className="text-sm text-muted-foreground capitalize">{domain.name}</span>
+                                                                <span className="text-sm text-muted-foreground capitalize font-medium">{domain.name}</span>
                                                                 {domain.description && (
-                                                                    <span className="text-[10px] text-muted-foreground/70">{domain.description}</span>
+                                                                    <span className="text-xs text-muted-foreground/70">{domain.description}</span>
                                                                 )}
                                                             </div>
                                                             <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -486,7 +531,7 @@ export function SystemStatusPage() {
                                                                         className="text-muted-foreground hover:text-primary transition-colors"
                                                                         title="View Folder in Azure Storage"
                                                                     >
-                                                                        <Folder className="h-4 w-4" />
+                                                                        <Folder className="h-4.5 w-4.5" />
                                                                     </a>
                                                                 )}
                                                                 {domain.jobUrl && (
@@ -497,28 +542,28 @@ export function SystemStatusPage() {
                                                                         className="text-muted-foreground hover:text-primary transition-colors"
                                                                         title="View Job in Azure Portal"
                                                                     >
-                                                                        <PlayCircle className="h-4 w-4" />
+                                                                        <PlayCircle className="h-4.5 w-4.5" />
                                                                     </a>
                                                                 )}
                                                             </div>
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
-                                                        <div className="flex items-center gap-2 scale-90 origin-left">
+                                                        <div className="flex items-center gap-2">
                                                             {getStatusIcon(domain.status)}
-                                                            <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">
+                                                            <span className="text-sm text-muted-foreground uppercase tracking-wider font-mono">
                                                                 {domain.status}
                                                             </span>
                                                         </div>
                                                     </TableCell>
-                                                    <TableCell className="font-mono text-xs text-muted-foreground">
+                                                    <TableCell className="font-mono text-sm text-muted-foreground">
                                                         {formatTimestamp(domain.lastUpdated)}
                                                     </TableCell>
                                                     <TableCell className="text-sm text-muted-foreground">
                                                         <div className="flex flex-col gap-1">
-                                                            <div className="font-mono text-xs">{domain.frequency || domain.cron || '-'}</div>
+                                                            <div className="font-mono text-sm">{domain.frequency || domain.cron || '-'}</div>
                                                             {latestJob && (
-                                                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground/80 mt-1">
+                                                                <div className="flex items-center gap-2 text-xs text-muted-foreground/80 mt-1">
                                                                     <div className="flex items-center gap-1" title={`Job: ${latestJob.jobName}`}>
                                                                         <span className="opacity-70">Job:</span>
                                                                         <span className={
@@ -529,7 +574,7 @@ export function SystemStatusPage() {
                                                                         </span>
                                                                     </div>
                                                                     <div className="hidden xl:flex items-center gap-1">
-                                                                        <Clock className="h-2.5 w-2.5" />
+                                                                        <Clock className="h-3 w-3" />
                                                                         {formatTimestamp(latestJob.startTime)}
                                                                     </div>
                                                                 </div>
@@ -582,10 +627,10 @@ export function SystemStatusPage() {
                                                         {getStatusBadge(job.status)}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell className="font-mono text-xs">
+                                                <TableCell className="font-mono text-sm">
                                                     {formatTimestamp(job.lastChecked)}
                                                 </TableCell>
-                                                <TableCell className="text-sm text-muted-foreground">
+                                                <TableCell className="text-base text-muted-foreground">
                                                     {job.details || '-'}
                                                 </TableCell>
                                             </TableRow>
@@ -637,10 +682,10 @@ export function SystemStatusPage() {
                                                         {getStatusBadge(resource.status)}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell className="font-mono text-xs">
+                                                <TableCell className="font-mono text-sm">
                                                     {formatTimestamp(resource.lastChecked)}
                                                 </TableCell>
-                                                <TableCell className="text-sm text-muted-foreground">
+                                                <TableCell className="text-base text-muted-foreground">
                                                     {resource.details || '-'}
                                                 </TableCell>
                                                 <TableCell className="font-mono text-xs text-muted-foreground max-w-[240px] truncate">
@@ -687,18 +732,18 @@ export function SystemStatusPage() {
                                         }>
                                             {alert.severity.toUpperCase()}
                                         </Badge>
-                                        <span className="text-xs text-muted-foreground">{alert.component}</span>
+                                        <span className="text-sm text-muted-foreground">{alert.component}</span>
                                         {alert.acknowledged && (
-                                            <Badge variant="outline" className="text-xs">
-                                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                            <Badge variant="outline" className="text-sm">
+                                                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
                                                 Acknowledged
                                             </Badge>
                                         )}
-                                        <span className="text-xs text-muted-foreground ml-auto">
+                                        <span className="text-sm text-muted-foreground ml-auto">
                                             {formatTimestamp(alert.timestamp)}
                                         </span>
                                     </div>
-                                    <p className="text-sm">{alert.message}</p>
+                                    <p className="text-base">{alert.message}</p>
                                 </div>
                             </div>
                         ))}
