@@ -140,6 +140,7 @@ class ServiceSettings:
     run_store_mode: RunStoreMode
     adls_runs_dir: Optional[str]
     postgres_dsn: Optional[str]
+    ui_oidc_config: dict[str, Optional[str]]
 
     @staticmethod
     def from_env() -> "ServiceSettings":
@@ -202,6 +203,14 @@ class ServiceSettings:
         postgres_dsn = _get_optional_str("BACKTEST_POSTGRES_DSN")
         if run_store_mode == "postgres" and not postgres_dsn:
             raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires BACKTEST_POSTGRES_DSN to be set.")
+        
+        ui_oidc_config = {
+            "authority": _get_optional_str("BACKTEST_OIDC_ISSUER"),
+            "clientId": _get_optional_str("BACKTEST_UI_OIDC_CLIENT_ID"),
+            "scope": _get_optional_str("BACKTEST_UI_OIDC_SCOPES"),
+            "redirectUri": _get_optional_str("BACKTEST_UI_OIDC_REDIRECT_URI"),
+            "apiBaseUrl": _get_optional_str("BACKTEST_UI_API_BASE_URL"),
+        }
 
         return ServiceSettings(
             output_base_dir=output_base_dir,
@@ -221,4 +230,5 @@ class ServiceSettings:
             run_store_mode=run_store_mode,
             adls_runs_dir=adls_runs_dir,
             postgres_dsn=postgres_dsn,
+            ui_oidc_config=ui_oidc_config,
         )
