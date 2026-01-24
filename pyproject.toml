@@ -28,17 +28,11 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = [
-    "alpaca*",
-    "api*",
-    "asset_allocation*",
-    "backtest*",
-    "core*",
-    "monitoring*",
-    "services*",
-    "tasks*",
-]
+where = ["src"]
+include = ["asset_allocation*"]
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.package-data]
+"asset_allocation.ui" = ["templates/*.html"]

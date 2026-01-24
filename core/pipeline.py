@@ -3,6 +3,8 @@ import asyncio
 import logging
 from typing import List, Callable, Optional, Set, Any
 
+from . import core as mdc
+
 logger = logging.getLogger(__name__)
 
 class DataPaths:
@@ -95,8 +97,6 @@ class ListManager:
 
     def load(self):
         """Loads lists from Azure Storage."""
-        from . import core as mdc
-
         if not self.client:
              mdc.write_warning("ListManager has no client. Lists will be empty.")
              return
@@ -118,16 +118,12 @@ class ListManager:
         return ticker in self.whitelist
 
     def add_to_whitelist(self, ticker: str):
-        from . import core as mdc
-
         if ticker not in self.whitelist:
             self.whitelist.add(ticker)
             mdc.update_csv_set(self.whitelist_file, ticker, client=self.client)
             # If it was in blacklist, maybe remove it? Policy decision: Keep it simple for now.
 
     def add_to_blacklist(self, ticker: str):
-        from . import core as mdc
-
         if ticker not in self.blacklist:
             self.blacklist.add(ticker)
             mdc.update_csv_set(self.blacklist_file, ticker, client=self.client)
@@ -147,8 +143,6 @@ class ScraperRunner:
         process_func: Callable[[str], Any], 
         list_manager: Optional[ListManager] = None
     ):
-        from . import core as mdc
-
         """
         symbols: List of ticker strings.
         process_func: Async function that takes a ticker and returns a result (or None).

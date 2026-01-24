@@ -69,7 +69,7 @@ properties:
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: gold-market-job
-      command: ["python", "-m", "tasks.market_data.gold_market_data"]
+      command: ["python", "-m", "scripts.market_data.gold_market_data"]
       resources:
         cpu: 2.0
         memory: 4Gi

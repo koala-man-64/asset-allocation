@@ -59,7 +59,7 @@ properties:
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: silver-earnings-job
-      command: ["python", "-m", "tasks.earnings_data.silver_earnings_data"]
+      command: ["python", "-m", "scripts.earnings_data.silver_earnings_data"]
       resources:
         cpu: 2.0
         memory: 4Gi

@@ -67,7 +67,7 @@ properties:
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: gold-finance-job
-      command: ["python", "-m", "tasks.finance_data.gold_finance_data"]
+      command: ["python", "-m", "scripts.finance_data.gold_finance_data"]
       resources:
         cpu: 2.0
         memory: 4Gi
