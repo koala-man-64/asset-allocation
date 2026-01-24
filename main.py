@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
-import sys
+
 import uvicorn
+
 from core.logging import setup_logging
 from core.config import settings
+
 
 def main():
     parser = argparse.ArgumentParser(description="Asset Allocation Command Line Interface")
@@ -26,10 +28,11 @@ def main():
     if args.command == "serve":
         print(f"Starting server on {args.host}:{args.port}...")
         uvicorn.run(
-            "backtest.service.app:app",
+            "backtest.service.app:create_app",
             host=args.host,
             port=args.port,
-            reload=args.reload
+            reload=args.reload,
+            factory=True,
         )
     elif args.command == "task":
         print(f"Executing task: {args.name}")

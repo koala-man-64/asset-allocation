@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from api import dependencies as deps
-from core import config as cfg
 
 router = APIRouter()
 

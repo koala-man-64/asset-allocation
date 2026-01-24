@@ -338,7 +338,7 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
     with TestClient(app) as client:
         _write_inputs(tmp_path)
         run_id = "RUNTEST-SVC-ADLS"
-        from core import config_shared as cfg
+        from core import config as cfg
         silver_container = cfg.AZURE_CONTAINER_SILVER or "silver"
         config = _make_config_dict(tmp_path, run_id=run_id, adls_dir=f"{silver_container}/backtest-api-results")
         resp = client.post("/backtests", json={"config": config, "run_id": run_id})
@@ -346,7 +346,7 @@ def test_service_uploads_artifacts_when_adls_dir_set(tmp_path: Path, monkeypatch
 
         status = _poll_status(client, run_id)
         assert status["status"] == "completed"
-        from core import config_shared as cfg
+        from core import config as cfg
         assert status["adls_container"] == (cfg.AZURE_CONTAINER_SILVER or "silver")
         assert status["adls_prefix"].endswith(f"backtest-api-results/{run_id}")
 
@@ -370,7 +370,7 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
     out_dir = tmp_path / "out"
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(out_dir))
     monkeypatch.setenv("BACKTEST_RUN_STORE_MODE", "adls")
-    from core import config_shared as cfg
+    from core import config as cfg
     silver_container = cfg.AZURE_CONTAINER_SILVER or "silver"
     monkeypatch.setenv("BACKTEST_ADLS_RUNS_DIR", f"{silver_container}/backtest-run-store")
     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
@@ -391,7 +391,7 @@ def test_service_adls_run_store_persists_runs_and_serves_metrics(tmp_path: Path,
 
         status = _poll_status(client, run_id)
         assert status["status"] == "completed"
-        from core import config_shared as cfg
+        from core import config as cfg
         assert status["adls_container"] == (cfg.AZURE_CONTAINER_SILVER or "silver")
         assert status["adls_prefix"].endswith(f"backtest-run-store/{run_id}")
 

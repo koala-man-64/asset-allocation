@@ -15,7 +15,7 @@ from backtest.service.auth import AuthManager
 from backtest.service.dependencies import get_settings, get_store
 from backtest.service.job_manager import JobManager
 from backtest.service.postgres_run_store import PostgresRunStore
-from backtest.service.realtime import listen_to_postgres, manager
+from backtest.service.realtime import listen_to_postgres
 from backtest.service.run_store import RunStore
 from backtest.service.settings import ServiceSettings
 from monitoring.ttl_cache import TtlCache
@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
         if reconciled:
             logger.warning("Reconciled %d incomplete runs on startup.", reconciled)
 
-        manager = JobManager(
+        job_manager = JobManager(
             store=store,
             output_base_dir=settings.output_base_dir,
             max_workers=settings.max_concurrent_runs,
@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
 
         app.state.settings = settings
         app.state.store = store
-        app.state.manager = manager
+        app.state.manager = job_manager
         app.state.auth = auth
         
         # Start Postgres listener for real-time updates
@@ -82,7 +82,7 @@ def create_app() -> FastAPI:
                     await app.state.listener_task
                 except asyncio.CancelledError:
                     pass
-            manager.shutdown()
+            job_manager.shutdown()
 
     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
     print(">>> BACKTEST SERVICE APPLICATION STARTING <<<")
@@ -107,7 +107,6 @@ def create_app() -> FastAPI:
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        response.headers.setdefault("Content-Security-Policy", content_security_policy)
 
         return response
 

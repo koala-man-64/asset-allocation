@@ -1,12 +1,16 @@
+from __future__ import annotations
 
-from core.config_shared import *
+import os
 
-# Local Specific Requirements
-AZURE_CONTAINER_TARGETS = require_env("AZURE_CONTAINER_TARGETS")
+from core import config as _cfg
 
-# Nasdaq API Key is only needed here
-NASDAQ_API_KEY = os.environ.get("NASDAQ_API_KEY") # Optional or Required? User script usually treats it as possibly optional if logic handles it, but let's check scraper usage if we can.
-# Checking usage previously implies it was environment-variable based.
-# To be safe and strict, let's look at the scraper logic if we were unsure, but for now we follow the pattern.
-# However, standardizing:
-NASDAQ_API_KEY = os.environ.get("NASDAQ_API_KEY") 
+AZURE_CONTAINER_TARGETS = _cfg.AZURE_CONTAINER_TARGETS
+NASDAQ_API_KEY = os.environ.get("NASDAQ_API_KEY")
+
+
+def __getattr__(name: str):
+    return getattr(_cfg, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | set(dir(_cfg)))

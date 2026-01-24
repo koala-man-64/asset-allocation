@@ -56,10 +56,13 @@ export BACKTEST_OIDC_JWKS_URL="https://login.microsoftonline.com/<tenant-id>/dis
 export BACKTEST_OIDC_REQUIRED_SCOPES="backtests.read,backtests.write"
 export BACKTEST_OIDC_REQUIRED_ROLES=""
 
-# Optional: override default Content-Security-Policy header:
-export BACKTEST_CSP=""
+# Required: Content-Security-Policy header (override as needed)
+export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
 
-uvicorn backtest.service.app:app --reload --port 8000
+# Required: system-health cache TTL (used by /system/* endpoints)
+export SYSTEM_HEALTH_TTL_SECONDS=30
+
+uvicorn backtest.service.app:create_app --factory --reload --port 8000
 ```
 
 ## API

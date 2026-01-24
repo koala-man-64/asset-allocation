@@ -18,7 +18,7 @@ import nasdaqdatalink
 # Local imports
 from .blob_storage import BlobStorageClient
 from azure.storage.blob import BlobLeaseClient
-from . import config_shared as cfg 
+from . import config as cfg
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 

@@ -1,37 +1,44 @@
+from __future__ import annotations
+
 import logging
-import sys
+import os
 from typing import Optional
 
-def setup_logging(
-    level: str = "INFO",
-    json_format: bool = False,
-    log_file: Optional[str] = None
-) -> None:
-    """
-    Configure global logging settings.
-    """
-    handlers = []
-    
-    # Console Handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    console_handler.setFormatter(formatter)
-    handlers.append(console_handler)
+from core.logging_config import JsonFormatter, configure_logging
 
-    # File Handler
-    if log_file:
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(formatter)
-        handlers.append(file_handler)
 
-    logging.basicConfig(
-        level=level,
-        handlers=handlers,
-        force=True
-    )
-    
-    # Quiet down noisy libraries
-    logging.getLogger("azure").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+def setup_logging(level: str = "INFO", json_format: bool = False, log_file: Optional[str] = None) -> None:
+    """
+    Backward-compatible wrapper around `core.logging_config.configure_logging()`.
+
+    `LOG_FORMAT`/`LOG_LEVEL` remain the source of truth; this helper only sets
+    defaults when they are not already provided by the environment.
+    """
+    os.environ.setdefault("LOG_LEVEL", level)
+    os.environ.setdefault("LOG_FORMAT", "JSON" if json_format else "TEXT")
+
+    logger = configure_logging()
+
+    if not log_file:
+        return
+
+    existing = {
+        getattr(handler, "baseFilename", None)
+        for handler in logger.handlers
+        if isinstance(handler, logging.FileHandler)
+    }
+    if log_file in existing:
+        return
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logger.level)
+    if (os.environ.get("LOG_FORMAT") or "").strip().upper() == "JSON":
+        file_handler.setFormatter(JsonFormatter())
+    else:
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(module)s: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+    logger.addHandler(file_handler)

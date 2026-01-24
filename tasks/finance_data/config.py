@@ -1,5 +1,13 @@
+from __future__ import annotations
 
-from core.config_shared import *
+from core import config as _cfg
 
-# Local Specific Requirements
-AZURE_CONTAINER_FINANCE = require_env("AZURE_CONTAINER_FINANCE")
+AZURE_CONTAINER_FINANCE = _cfg.AZURE_CONTAINER_FINANCE
+
+
+def __getattr__(name: str):
+    return getattr(_cfg, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | set(dir(_cfg)))
