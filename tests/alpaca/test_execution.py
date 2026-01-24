@@ -1,10 +1,10 @@
 import pytest
 from unittest.mock import MagicMock
-from alpaca.execution.rebalance_planner import RebalancePlanner, PlannedOrder
-from alpaca.execution.order_factory import OrderFactory
-from alpaca.execution.execution_service import ExecutionService
-from alpaca.models import AlpacaPosition, AlpacaOrder, BrokerageState
-from alpaca.config import ExecutionConfig
+from asset_allocation.alpaca.execution.rebalance_planner import RebalancePlanner, PlannedOrder
+from asset_allocation.alpaca.execution.order_factory import OrderFactory
+from asset_allocation.alpaca.execution.execution_service import ExecutionService
+from asset_allocation.alpaca.models import AlpacaPosition, AlpacaOrder, BrokerageState
+from asset_allocation.alpaca.config import ExecutionConfig
 
 @pytest.fixture
 def mock_exec_config():

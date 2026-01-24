@@ -316,7 +316,7 @@ class Reporter:
             # Optional artifact upload for CLI/local runs.
             from backtest.service.adls_uploader import upload_run_artifacts
             from backtest.service.security import parse_container_and_path
-            from scripts.common.blob_storage import BlobStorageClient
+            from asset_allocation.core.blob_storage import BlobStorageClient
 
             upload_run_artifacts(run_id=self.run_id, run_dir=self.output_dir, adls_dir=str(self.config.output.adls_dir))
 

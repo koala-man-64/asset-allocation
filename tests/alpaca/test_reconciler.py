@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import MagicMock
-from alpaca.reconciler import Reconciler
+from asset_allocation.alpaca.reconciler import Reconciler
 
 @pytest.mark.asyncio
 async def test_reconciler_bootstrap():

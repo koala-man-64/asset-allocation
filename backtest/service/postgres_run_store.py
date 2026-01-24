@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
-from scripts.common.postgres import PostgresError, connect
+from asset_allocation.core.postgres import PostgresError, connect
 
 from backtest.service.run_store import RunRecord, RunStatus
 

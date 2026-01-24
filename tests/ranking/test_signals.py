@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from scripts.ranking import signals
+from asset_allocation.tasks.ranking import signals
 
 
 def test_compute_ranking_signals_percentiles_and_year_month():

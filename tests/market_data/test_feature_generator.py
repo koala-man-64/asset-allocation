@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.market_data.gold_market_data import compute_features
+from asset_allocation.tasks.market_data.gold_market_data import compute_features
 
 
 def _make_market_df(rows: int = 300) -> pd.DataFrame:

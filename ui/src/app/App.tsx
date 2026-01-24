@@ -42,7 +42,8 @@ function AppContent() {
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto p-8 max-w-[1800px]">
             <Routes>
-              <Route path="/" element={<OverviewPage />} />
+              <Route path="/" element={<Navigate to="/system" replace />} />
+              <Route path="/overview" element={<OverviewPage />} />
               <Route path="/compare" element={<RunComparePage />} />
               <Route path="/deep-dive" element={<DeepDivePage />} />
               <Route path="/attribution" element={<AttributionPage />} />

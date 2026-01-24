@@ -34,6 +34,7 @@ local.settings.json
 # Data Directory
 data/
 !asset_allocation/ui2.0/src/data/
+!ui/src/data/
 # Backtest Artifacts
 backtest_results/
 

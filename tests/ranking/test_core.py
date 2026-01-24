@@ -8,7 +8,7 @@ from datetime import date
 import pandas as pd
 import json
 
-from scripts.ranking.core import RankingResult, save_rankings, get_rankings
+from asset_allocation.tasks.ranking.core import RankingResult, save_rankings, get_rankings
 
 class TestRankingResult(unittest.TestCase):
     def test_to_dict(self):
@@ -26,8 +26,8 @@ class TestRankingResult(unittest.TestCase):
         self.assertEqual(d['meta'], '{"foo": "bar"}')
 
 class TestCoreFunctions(unittest.TestCase):
-    @patch('scripts.ranking.core.store_delta')
-    @patch('scripts.ranking.core.cfg')
+    @patch('asset_allocation.tasks.ranking.core.store_delta')
+    @patch('asset_allocation.tasks.ranking.core.cfg')
     def test_save_rankings(self, mock_cfg, mock_store_delta):
         mock_cfg.AZURE_CONTAINER_RANKING = 'test-container'
         os.environ["AZURE_CONTAINER_RANKING"] = "test-container"
@@ -48,7 +48,7 @@ class TestCoreFunctions(unittest.TestCase):
         self.assertEqual(call_args[1]['container'], 'test-container')
         self.assertEqual(call_args[1]['partition_by'], ['strategy', 'date'])
 
-    @patch('scripts.ranking.core.load_delta')
+    @patch('asset_allocation.tasks.ranking.core.load_delta')
     def test_get_rankings(self, mock_load_delta):
         os.environ["AZURE_CONTAINER_RANKING"] = "test-container"
         # Mock dataframe return

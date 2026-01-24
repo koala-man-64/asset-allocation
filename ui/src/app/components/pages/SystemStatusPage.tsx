@@ -95,21 +95,21 @@ export function SystemStatusPage() {
     };
 
     const getStatusBadge = (status: string) => {
-        const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-            healthy: 'default',
-            success: 'default',
-            degraded: 'secondary',
-            stale: 'secondary',
-            warning: 'secondary',
-            critical: 'destructive',
-            error: 'destructive',
-            failed: 'destructive',
-            running: 'outline',
-            pending: 'outline'
+        const styles: Record<string, string> = {
+            healthy: 'bg-green-100 text-green-800 hover:bg-green-100 border-green-200',
+            success: 'bg-green-100 text-green-800 hover:bg-green-100 border-green-200',
+            degraded: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200',
+            stale: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200',
+            warning: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-200',
+            critical: 'bg-red-100 text-red-800 hover:bg-red-100 border-red-200',
+            error: 'bg-red-100 text-red-800 hover:bg-red-100 border-red-200',
+            failed: 'bg-red-100 text-red-800 hover:bg-red-100 border-red-200',
+            running: 'bg-blue-100 text-blue-800 hover:bg-blue-100 border-blue-200',
+            pending: 'bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200'
         };
 
         return (
-            <Badge variant={variants[status] || 'outline'} className="font-mono text-xs">
+            <Badge variant="outline" className={`font-mono text-xs border ${styles[status] || 'bg-gray-100 text-gray-800 border-gray-200'}`}>
                 {status.toUpperCase()}
             </Badge>
         );
@@ -209,48 +209,83 @@ export function SystemStatusPage() {
                 </p>
             </div>
 
-            {/* Overall Health Summary */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2">
-                            <Activity className="h-4 w-4" />
-                            Overall Status
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="flex items-center gap-2">
-                            {getStatusIcon(overall)}
-                            <span className="text-2xl font-semibold capitalize">{overall}</span>
+            {/* Unified System Overview */}
+            <Card>
+                <CardHeader className="pb-4">
+                    <CardTitle className="flex items-center gap-2">
+                        <Activity className="h-5 w-5" />
+                        System Health Overview
+                    </CardTitle>
+                    <CardDescription>
+                        Real-time status of data layers and pipeline jobs
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        {/* Overall Status Metrics */}
+                        <div className="flex flex-col justify-center gap-4">
+                            <div className="flex flex-col items-center justify-center p-4 bg-muted/20 rounded-lg border border-muted h-full">
+                                <div className="scale-150 mb-4">{getStatusIcon(overall)}</div>
+                                <div className="text-3xl font-bold capitalize mb-1">{overall}</div>
+                                <p className="text-sm text-muted-foreground">System Operational Status</p>
+                            </div>
                         </div>
-                    </CardContent>
-                </Card>
 
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2">
-                            <Database className="h-4 w-4" />
-                            Data Layers
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="flex items-center gap-6 text-sm">
-                            <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-16">Healthy:</span>
-                                <span className="font-semibold text-green-600">{healthyLayers}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-16">Stale:</span>
-                                <span className="font-semibold text-yellow-600">{staleLayers}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-16">Error:</span>
-                                <span className="font-semibold text-red-600">{errorLayers}</span>
-                            </div>
+                        {/* Detailed Layer Status */}
+                        <div className="lg:col-span-2 grid gap-4">
+                            {dataLayers.map((layer, idx) => (
+                                <div key={idx} className="flex flex-col p-2 border rounded-md hover:bg-muted/50 transition-colors gap-2">
+                                    {/* Layer Header */}
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            {getStatusIcon(layer.status)}
+                                            <div>
+                                                <div className="font-semibold text-sm">{layer.name}</div>
+                                                <div className="text-[10px] text-muted-foreground">
+                                                    Updated: {formatTimestamp(layer.lastUpdated)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {getStatusBadge(layer.status)}
+                                    </div>
+
+                                    {/* Domains List */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1 pl-7">
+                                        {(layer.domains || []).map((domain: any, dIdx: number) => {
+                                            const jName = domain.jobUrl?.split('/jobs/')[1]?.split('/')[0];
+                                            const job = jName ? recentJobs.find((j: any) => j.jobName === jName) : null;
+
+                                            return (
+                                                <div key={dIdx} className="flex items-center justify-between text-xs bg-muted/30 p-2 rounded">
+                                                    <div className="flex items-center gap-2">
+                                                        {getStatusIcon(domain.status)}
+                                                        <span className="font-medium">{domain.name}</span>
+                                                    </div>
+
+                                                    {job ? (
+                                                        <div className="flex items-center gap-1.5" title={`Job: ${job.jobName} (${job.status})`}>
+                                                            <div className={`h-1.5 w-1.5 rounded-full ${job.status === 'success' ? 'bg-green-500' :
+                                                                job.status === 'failed' ? 'bg-red-500' :
+                                                                    job.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
+                                                                }`} />
+                                                            <span className="text-[10px] text-muted-foreground capitalize">{job.status}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[10px] text-muted-foreground italic opacity-50">No job</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                        {(!layer.domains || layer.domains.length === 0) && (
+                                            <div className="text-[10px] text-muted-foreground italic col-span-full">No domains configured</div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    </CardContent>
-                </Card>
-            </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Split View: Recent Jobs & Alerts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

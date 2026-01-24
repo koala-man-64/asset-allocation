@@ -1,6 +1,6 @@
 import pandas as pd
 
-from scripts.market_data import materialize_silver_market_by_date as materialize
+from asset_allocation.tasks.market_data import materialize_silver_market_by_date as materialize
 
 
 def test_extract_tickers_from_market_data_blobs_filters_delta_logs():

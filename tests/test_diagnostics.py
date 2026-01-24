@@ -2,7 +2,7 @@
 import os
 import logging
 from unittest.mock import patch
-from scripts.common import core as mdc
+from asset_allocation.core import core as mdc
 
 def test_log_environment_diagnostics(caplog, capsys):
     """

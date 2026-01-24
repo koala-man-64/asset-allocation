@@ -1,8 +1,8 @@
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from api import dependencies as deps
-from api.main import app
+from asset_allocation.api import dependencies as deps
+from asset_allocation.api.main import app
 
 
 class _DummyDeltaTable:
