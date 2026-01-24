@@ -402,8 +402,6 @@ export const stressEvents: StressEvent[] = [
 // MISSING MOCKS (Appended by Implementation Agent)
 // =============================================================================
 
-import { JobRun, SystemHealth, TradingSignal } from '@/types/strategy';
-
 export const mockJobHistory: JobRun[] = [
   { jobName: 'import_market_data', jobType: 'data-ingest', status: 'success', startTime: new Date(Date.now() - 3600000).toISOString(), duration: 120, recordsProcessed: 15000, triggeredBy: 'schedule' },
   { jobName: 'calculate_risk_metrics', jobType: 'risk-calc', status: 'success', startTime: new Date(Date.now() - 1800000).toISOString(), duration: 45, triggeredBy: 'dependency' },

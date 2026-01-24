@@ -16,7 +16,8 @@ COPY alpaca/ alpaca/
 COPY api/ api/
 COPY backtest/ backtest/
 COPY monitoring/ monitoring/
-RUN pip install --no-cache-dir --no-deps .
+COPY scripts/ scripts/
+RUN pip install --no-cache-dir .
 
 # Default entrypoint (will be overridden by ACA Job command)
-CMD ["python", "-m", "tasks.market_data.bronze_market_data"]
+CMD ["python", "-m", "scripts.market_data.bronze_market_data"]

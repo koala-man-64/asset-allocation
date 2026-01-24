@@ -147,23 +147,20 @@ jobs:
         with:
           filters: |
             bronze_market:
-              - "core/**"
-              - "tasks/market_data/config.py"
-              - "tasks/market_data/bronze_market_data.py"
+              - "scripts/common/**"
+              - "scripts/market_data/bronze_market_data.py"
               - "deploy/job_bronze_market_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_market:
-              - "core/**"
-              - "tasks/market_data/config.py"
-              - "tasks/market_data/silver_market_data.py"
-              - "tasks/market_data/materialize_silver_market_by_date.py"
+              - "scripts/common/**"
+              - "scripts/market_data/silver_market_data.py"
+              - "scripts/market_data/materialize_silver_market_by_date.py"
               - "deploy/job_silver_market_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_market:
-              - "core/**"
-              - "tasks/market_data/config.py"
-              - "tasks/market_data/gold_market_data.py"
-              - "tasks/market_data/materialize_gold_market_by_date.py"
+              - "scripts/common/**"
+              - "scripts/market_data/gold_market_data.py"
+              - "scripts/market_data/materialize_gold_market_by_date.py"
               - "deploy/job_gold_market_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -173,23 +170,20 @@ jobs:
         with:
           filters: |
             bronze_finance:
-              - "core/**"
-              - "tasks/finance_data/config.py"
-              - "tasks/finance_data/bronze_finance_data.py"
+              - "scripts/common/**"
+              - "scripts/finance_data/bronze_finance_data.py"
               - "deploy/job_bronze_finance_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_finance:
-              - "core/**"
-              - "tasks/finance_data/config.py"
-              - "tasks/finance_data/silver_finance_data.py"
-              - "tasks/finance_data/materialize_silver_finance_by_date.py"
+              - "scripts/common/**"
+              - "scripts/finance_data/silver_finance_data.py"
+              - "scripts/finance_data/materialize_silver_finance_by_date.py"
               - "deploy/job_silver_finance_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_finance:
-              - "core/**"
-              - "tasks/finance_data/config.py"
-              - "tasks/finance_data/gold_finance_data.py"
-              - "tasks/finance_data/materialize_gold_finance_by_date.py"
+              - "scripts/common/**"
+              - "scripts/finance_data/gold_finance_data.py"
+              - "scripts/finance_data/materialize_gold_finance_by_date.py"
               - "deploy/job_gold_finance_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -199,23 +193,20 @@ jobs:
         with:
           filters: |
             bronze_earnings:
-              - "core/**"
-              - "tasks/earnings_data/config.py"
-              - "tasks/earnings_data/bronze_earnings_data.py"
+              - "scripts/common/**"
+              - "scripts/earnings_data/bronze_earnings_data.py"
               - "deploy/job_bronze_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_earnings:
-              - "core/**"
-              - "tasks/earnings_data/config.py"
-              - "tasks/earnings_data/silver_earnings_data.py"
-              - "tasks/earnings_data/materialize_silver_earnings_by_date.py"
+              - "scripts/common/**"
+              - "scripts/earnings_data/silver_earnings_data.py"
+              - "scripts/earnings_data/materialize_silver_earnings_by_date.py"
               - "deploy/job_silver_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_earnings:
-              - "core/**"
-              - "tasks/earnings_data/config.py"
-              - "tasks/earnings_data/gold_earnings_data.py"
-              - "tasks/earnings_data/materialize_gold_earnings_by_date.py"
+              - "scripts/common/**"
+              - "scripts/earnings_data/gold_earnings_data.py"
+              - "scripts/earnings_data/materialize_gold_earnings_by_date.py"
               - "deploy/job_gold_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -225,23 +216,20 @@ jobs:
         with:
           filters: |
             bronze_price_target:
-              - "core/**"
-              - "tasks/price_target_data/config.py"
-              - "tasks/price_target_data/bronze_price_target_data.py"
+              - "scripts/common/**"
+              - "scripts/price_target_data/bronze_price_target_data.py"
               - "deploy/job_bronze_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_price_target:
-              - "core/**"
-              - "tasks/price_target_data/config.py"
-              - "tasks/price_target_data/silver_price_target_data.py"
-              - "tasks/price_target_data/materialize_silver_price_target_by_date.py"
+              - "scripts/common/**"
+              - "scripts/price_target_data/silver_price_target_data.py"
+              - "scripts/price_target_data/materialize_silver_price_target_by_date.py"
               - "deploy/job_silver_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_price_target:
-              - "core/**"
-              - "tasks/price_target_data/config.py"
-              - "tasks/price_target_data/gold_price_target_data.py"
-              - "tasks/price_target_data/materialize_gold_price_target_by_date.py"
+              - "scripts/common/**"
+              - "scripts/price_target_data/gold_price_target_data.py"
+              - "scripts/price_target_data/materialize_gold_price_target_by_date.py"
               - "deploy/job_gold_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -251,8 +239,8 @@ jobs:
         with:
           filters: |
             PLATINUM_RANKING_JOB:
-              - "core/**"
-              - "tasks/ranking/**"
+              - "scripts/common/**"
+              - "scripts/ranking/**"
               - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -269,7 +257,6 @@ jobs:
               - "Dockerfile.backtest_api"
               - "requirements.txt"
               - "requirements.lock.txt"
-              - "pyproject.toml"
               - ".github/workflows/deploy.yml"
 
       - name: Detect UI Changes

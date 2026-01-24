@@ -131,6 +131,8 @@ export interface DataDomain {
   portalUrl?: string;
   jobUrl?: string;
   triggerUrl?: string;
+  frequency?: string;
+  cron?: string;
 }
 
 export interface DataLayer {

@@ -24,7 +24,8 @@ COPY alpaca/ alpaca/
 COPY api/ api/
 COPY backtest/ backtest/
 COPY monitoring/ monitoring/
-RUN pip install --no-cache-dir --no-deps .
+COPY scripts/ scripts/
+RUN pip install --no-cache-dir .
 
 ENV BACKTEST_OUTPUT_DIR=/app/backtest_results
 ENV BACKTEST_DB_PATH=/app/backtest_results/runs.sqlite3
