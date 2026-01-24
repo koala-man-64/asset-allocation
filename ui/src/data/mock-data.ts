@@ -1,6 +1,17 @@
 // Mock data generator for the Strategy & Backtest Evaluation Dashboard
 
-import { StrategyRun, TimeSeriesPoint, MonthlyReturn, Drawdown, StressEvent, Trade } from '@/types/strategy';
+import {
+  StrategyRun,
+  TimeSeriesPoint,
+  MonthlyReturn,
+  Drawdown,
+  StressEvent,
+  Trade,
+  RollingMetrics,
+  SystemHealth,
+  TradingSignal,
+  JobRun
+} from '@/types/strategy';
 
 // Helper to generate date series
 function generateDateSeries(startDate: Date, endDate: Date, intervalDays: number = 1): Date[] {
@@ -88,9 +99,9 @@ function generateMonthlyReturns(equityCurve: TimeSeriesPoint[]): MonthlyReturn[]
 }
 
 // Generate rolling metrics
-function generateRollingMetrics(equityCurve: TimeSeriesPoint[]): any {
+function generateRollingMetrics(equityCurve: TimeSeriesPoint[]): RollingMetrics {
   const window = 63; // ~3 months
-  const metrics = {
+  const metrics: RollingMetrics = {
     sharpe: [] as TimeSeriesPoint[],
     volatility: [] as TimeSeriesPoint[],
     beta: [] as TimeSeriesPoint[],
@@ -118,15 +129,11 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
   const symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'JPM', 'V', 'WMT', 'UNH', 'JNJ', 'PG', 'MA', 'HD'];
 
   // Calculate approximate number of trades based on turnover
-  // Higher turnover = more trades
-  const tradesPerYear = Math.floor((turnover / 100) * 50); // Approximate trades per year
+  const tradesPerYear = Math.floor((turnover / 100) * 50);
   const totalYears = equityCurve.length / 252;
   const totalTrades = Math.floor(tradesPerYear * totalYears);
 
-  // Generate trades at semi-random intervals
   const interval = Math.floor(equityCurve.length / totalTrades);
-
-  // Track position entry prices for P&L calculation
   const positionEntries: { [symbol: string]: number } = {};
 
   for (let i = 0; i < totalTrades; i++) {
@@ -134,13 +141,11 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
     const date = equityCurve[dateIndex].date;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
 
-    // Decide if this is a BUY or SELL
-    // If we have a position, 50% chance to sell it, otherwise buy
     const hasPosition = positionEntries[symbol] !== undefined;
     const side: 'BUY' | 'SELL' = hasPosition && Math.random() > 0.5 ? 'SELL' : 'BUY';
 
     const shares = Math.floor(Math.random() * 500 + 100);
-    const price = 50 + Math.random() * 300; // Random price between $50-$350
+    const price = 50 + Math.random() * 300;
     const notional = shares * price;
     const commission = notional * 0.0005; // 5 bps
     const slippage = notional * 0.0002; // 2 bps
@@ -148,7 +153,6 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
     let pnl: number | undefined = undefined;
     let pnlPercent: number | undefined = undefined;
 
-    // Calculate P&L for SELL trades
     if (side === 'SELL' && hasPosition) {
       const entryPrice = positionEntries[symbol];
       const exitPrice = price;
@@ -156,11 +160,8 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
       const costs = commission + slippage;
       pnl = grossPnL - costs;
       pnlPercent = ((exitPrice - entryPrice) / entryPrice) * 100;
-
-      // Clear position
       delete positionEntries[symbol];
     } else if (side === 'BUY') {
-      // Record entry price for future P&L calculation
       positionEntries[symbol] = price;
     }
 
@@ -177,9 +178,7 @@ function generateTrades(equityCurve: TimeSeriesPoint[], turnover: number): Trade
     });
   }
 
-  // Sort trades by date
   trades.sort((a, b) => a.date.localeCompare(b.date));
-
   return trades;
 }
 
@@ -415,38 +414,48 @@ export const mockJobHistory: JobRun[] = [
 export const mockSystemHealth: SystemHealth = {
   overall: 'healthy',
   dataLayers: [
-    { 
-      name: 'Bronze (Raw)', 
-      description: 'Raw ingestion layer', 
-      lastUpdated: new Date(Date.now() - 3600000).toISOString(), 
-      status: 'healthy', 
-      refreshFrequency: 'Daily', 
+    {
+      name: 'Bronze (Raw)',
+      description: 'Raw ingestion layer',
+      lastUpdated: new Date(Date.now() - 3600000).toISOString(),
+      status: 'healthy',
+      refreshFrequency: 'Daily',
       portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/bronze',
       jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-bronze-ingest/overview',
       triggerUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Logic/workflows/sync-bronze'
     },
-    { 
-      name: 'Silver (Cleaned)', 
-      description: 'Cleaned and normalized', 
-      lastUpdated: new Date(Date.now() - 3000000).toISOString(), 
-      status: 'healthy', 
-      refreshFrequency: 'Daily', 
+    {
+      name: 'Silver (Cleaned)',
+      description: 'Cleaned and normalized',
+      lastUpdated: new Date(Date.now() - 3000000).toISOString(),
+      status: 'healthy',
+      refreshFrequency: 'Daily',
       portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/silver',
-      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-silver-normalize/overview' 
+      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-silver-normalize/overview'
     },
-    { 
-      name: 'Gold (Feature)', 
-      description: 'Feature engineering', 
-      lastUpdated: new Date(Date.now() - 2000000).toISOString(), 
-      status: 'healthy', 
-      refreshFrequency: 'Daily', 
+    {
+      name: 'Gold (Feature)',
+      description: 'Feature engineering',
+      lastUpdated: new Date(Date.now() - 2000000).toISOString(),
+      status: 'healthy',
+      refreshFrequency: 'Daily',
       portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/gold',
-      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-gold-features/overview' 
+      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-gold-features/overview'
     },
+    {
+      name: 'Platinum (Ranking)',
+      description: 'Ranking and Signal Generation',
+      lastUpdated: new Date(Date.now() - 1000000).toISOString(),
+      status: 'healthy',
+      refreshFrequency: 'Daily',
+      portalUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.Storage/storageAccounts/st-name/blobServices/default/containers/platinum',
+      jobUrl: 'https://portal.azure.com/#@/resource/subscriptions/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-platinum-signals/overview'
+    }
   ],
   recentJobs: mockJobHistory,
   alerts: [
-    { severity: 'info', message: 'System maintenance scheduled for Sunday', timestamp: new Date().toISOString(), component: 'Scheduler', acknowledged: false }
+    { severity: 'info', message: 'System maintenance scheduled for Sunday', timestamp: new Date().toISOString(), component: 'Scheduler', acknowledged: false },
+    { id: 'warn-1', severity: 'warning', component: 'Ranking', timestamp: new Date(Date.now() - 43200000).toISOString(), message: 'Data update lagging for Platinum layer', acknowledged: false, title: 'Platinum Lagging' }
   ]
 };
 
@@ -455,12 +464,13 @@ export const mockSignals: TradingSignal[] = [
     id: 'sig_001',
     date: new Date().toISOString().split('T')[0],
     strategyId: 'run_001',
-
     strategyName: 'Momentum Alpha',
     symbol: 'NVDA',
     sector: 'Technology',
     signalType: 'BUY',
+    direction: 'LONG',
     strength: 85,
+    confidence: 0.85,
     generatedAt: new Date().toISOString(),
     expectedReturn: 12.5,
     targetPrice: 950,
@@ -476,12 +486,13 @@ export const mockSignals: TradingSignal[] = [
     id: 'sig_002',
     date: new Date(Date.now() - 7200000).toISOString().split('T')[0],
     strategyId: 'run_003',
-
     strategyName: 'Low Vol Defensive',
     symbol: 'JNJ',
     sector: 'Healthcare',
     signalType: 'SELL',
+    direction: 'FLAT',
     strength: 60,
+    confidence: 0.6,
     generatedAt: new Date(Date.now() - 7200000).toISOString(),
     expectedReturn: -2.0,
     timeHorizon: '1W',
@@ -491,4 +502,11 @@ export const mockSignals: TradingSignal[] = [
     currentPrice: 155,
     priceChange24h: -0.5
   }
+];
+
+
+// Additional stress test events
+export const additionalStressEvents: StressEvent[] = [
+  ...stressEvents,
+  { name: '2022 Rate Shock', date: '2022-06-13', strategyReturn: -3.1, benchmarkReturn: -3.9 }
 ];

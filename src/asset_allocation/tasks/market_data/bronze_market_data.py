@@ -123,6 +123,6 @@ async def main_async():
     mdc.write_line("Bronze Ingestion Complete.")
 
 if __name__ == "__main__":
-    job_name = 'bronze-market-job-bronze'
+    job_name = 'bronze-market-job'
     with mdc.JobLock(job_name):
         asyncio.run(main_async())

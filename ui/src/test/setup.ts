@@ -20,3 +20,17 @@ Object.defineProperty(window, 'matchMedia', {
         dispatchEvent: () => false,
     }),
 });
+
+if (typeof window.ResizeObserver === 'undefined') {
+    class ResizeObserver {
+        observe() { }
+        unobserve() { }
+        disconnect() { }
+    }
+
+    // Radix UI (and others) expect ResizeObserver in the test environment.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).ResizeObserver = ResizeObserver;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).ResizeObserver = ResizeObserver;
+}

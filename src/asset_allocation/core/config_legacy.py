@@ -10,7 +10,10 @@ init(autoreset=True)
 
 # Load environment variables from .env file for local development.
 # CI/tests can disable this via DISABLE_DOTENV=true.
-if os.environ.get("DISABLE_DOTENV", "").strip().lower() not in {"1", "true", "yes"}:
+_disable_dotenv_raw = os.environ.get("DISABLE_DOTENV")
+if _disable_dotenv_raw is None or not _disable_dotenv_raw.strip():
+    raise ValueError("DISABLE_DOTENV is required (set to true to disable local .env loading).")
+if _disable_dotenv_raw.strip().lower() not in {"1", "true", "yes"}:
     load_dotenv(override=False)
 
 # --- Constants & Configuration ---

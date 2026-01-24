@@ -70,7 +70,7 @@ def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
-    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "none")
     monkeypatch.delenv("BACKTEST_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("BACKTEST_OIDC_AUDIENCE", raising=False)
 
@@ -86,7 +86,7 @@ def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypa
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
-    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
     monkeypatch.delenv("BACKTEST_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("BACKTEST_OIDC_AUDIENCE", raising=False)
 

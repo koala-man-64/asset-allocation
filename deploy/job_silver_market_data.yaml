@@ -38,6 +38,12 @@ properties:
         value: "23"
       - name: LOG_FORMAT
         value: JSON
+      - name: LOG_LEVEL
+        value: INFO
+      - name: DISABLE_DOTENV
+        value: "true"
+      - name: HEADLESS_MODE
+        value: "true"
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
@@ -46,6 +52,8 @@ properties:
         value: ${AZURE_CONTAINER_BRONZE}
       - name: AZURE_CONTAINER_SILVER
         value: ${AZURE_CONTAINER_SILVER}
+      - name: AZURE_CONTAINER_GOLD
+        value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_MARKET
         value: ${AZURE_CONTAINER_MARKET}
       - name: AZURE_CONTAINER_COMMON

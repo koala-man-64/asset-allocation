@@ -20,7 +20,7 @@ silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 def process_blob(blob):
     blob_name = blob['name'] # price-target-data/{symbol}.parquet
     if not blob_name.endswith('.parquet'):
-        return
+        return True
         
     ticker = blob_name.replace('price-target-data/', '').replace('.parquet', '')
     
@@ -32,7 +32,7 @@ def process_blob(blob):
     silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
     
     if silver_lm and (silver_lm > bronze_lm):
-        return
+        return True
 
     mdc.write_line(f"Processing {ticker}...")
     
@@ -99,9 +99,10 @@ def process_blob(blob):
         # Write
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path)
         mdc.write_line(f"Updated Silver {ticker}")
-
+        return True
     except Exception as e:
         mdc.write_error(f"Failed to process {ticker}: {e}")
+        return False
 
 def main():
     mdc.log_environment_diagnostics()
@@ -111,14 +112,22 @@ def main():
     blob_list = list(blobs)
     mdc.write_line(f"Found {len(blob_list)} blobs. Processing...")
     
+    ok_or_skipped = 0
+    failed = 0
     for blob in blob_list:
-        process_blob(blob)
+        if process_blob(blob):
+            ok_or_skipped += 1
+        else:
+            failed += 1
+
+    mdc.write_line(f"Silver price target job complete: ok_or_skipped={ok_or_skipped} failed={failed}")
+    return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
     from asset_allocation.core.by_date_pipeline import run_partner_then_by_date
     from asset_allocation.tasks.price_target_data.materialize_silver_price_target_by_date import main as by_date_main
 
-    job_name = "bronze-price-target-job-silver"
+    job_name = "silver-price-target-job"
     raise SystemExit(
         run_partner_then_by_date(
             job_name=job_name,

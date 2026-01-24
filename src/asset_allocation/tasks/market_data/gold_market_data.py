@@ -286,7 +286,7 @@ if __name__ == "__main__":
     from asset_allocation.core.by_date_pipeline import run_partner_then_by_date
     from asset_allocation.tasks.market_data.materialize_gold_market_by_date import main as by_date_main
 
-    job_name = "feature-engineering-market"
+    job_name = "gold-market-job"
     raise SystemExit(
         run_partner_then_by_date(
             job_name=job_name,

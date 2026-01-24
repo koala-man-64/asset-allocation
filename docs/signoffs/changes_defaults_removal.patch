@@ -1,0 +1,2042 @@
+diff --git a/docs/signoffs/changes_defaults_removal.patch b/docs/signoffs/changes_defaults_removal.patch
+index 1e18913..e69de29 100644
+--- a/docs/signoffs/changes_defaults_removal.patch
++++ b/docs/signoffs/changes_defaults_removal.patch
+@@ -1,1961 +0,0 @@
+-diff --git a/.env.template b/.env.template
+-index 205a5d8..d48791b 100644
+---- a/.env.template
+-+++ b/.env.template
+-@@ -1,3 +1,6 @@
+-+DISABLE_DOTENV=
+-+LOG_FORMAT=
+-+LOG_LEVEL=
+- AZURE_STORAGE_ACCOUNT_NAME=
+- AZURE_STORAGE_CONNECTION_STRING=
+- YAHOO_USERNAME=
+-@@ -10,42 +13,69 @@ AZURE_CONTAINER_COMMON=
+- AZURE_CONTAINER_RANKING=
+- AZURE_CONTAINER_BRONZE=
+- AZURE_CONTAINER_SILVER=
+--HEADLESS_MODE=TRUE
+-+AZURE_CONTAINER_GOLD=
+-+AZURE_CONTAINER_PLATINUM=
+-+HEADLESS_MODE=
+- 
+- # System health monitoring (FastAPI: GET /system/health)
+--SYSTEM_HEALTH_TTL_SECONDS=30
+--SYSTEM_HEALTH_MAX_AGE_SECONDS=129600
+--SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS=259200
+-+SYSTEM_HEALTH_TTL_SECONDS=
+-+SYSTEM_HEALTH_MAX_AGE_SECONDS=
+-+SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS=
+- 
+- # Optional: Azure control-plane probes (ARM) for Container Apps + Jobs
+- SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID=
+- SYSTEM_HEALTH_ARM_RESOURCE_GROUP=
+- SYSTEM_HEALTH_ARM_CONTAINERAPPS= # comma-separated names
+- SYSTEM_HEALTH_ARM_JOBS= # comma-separated names
+--SYSTEM_HEALTH_ARM_API_VERSION=2023-05-01
+--SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=5.0
+--SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=3
+-+SYSTEM_HEALTH_ARM_API_VERSION=
+-+SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=
+-+SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=
+- 
+- # Optional: Azure Resource Health (runtime availability)
+--SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED=false
+--SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION=2022-10-01
+-+SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED=
+-+SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION=
+- 
+- # Optional: Azure Monitor Metrics (runtime telemetry)
+--SYSTEM_HEALTH_MONITOR_METRICS_ENABLED=false
+--SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION=2018-01-01
+--SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES=15
+--SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL=PT1M
+--SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION=Average
+-+SYSTEM_HEALTH_MONITOR_METRICS_ENABLED=
+-+SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION=
+-+SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES=
+-+SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL=
+-+SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION=
+- SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS= # comma-separated metric names
+- SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS= # comma-separated metric names
+- SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON= # JSON object: {"MetricName":{"warn_above":80,"error_above":95}}
+- 
+- # Optional: Azure Log Analytics (KQL aggregates only; no raw logs returned)
+--SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=false
+-+SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=
+- SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID=
+--SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=5.0
+--SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=15
+-+SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=
+-+SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=
+- SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON= # JSON array: [{"resourceType":"Microsoft.App/containerApps","name":"errors_15m","query":"... {resourceName} ...","warnAbove":1,"errorAbove":10,"unit":"count"}]
+- 
+- # Include Azure resource IDs in /system/health response (only when BACKTEST_AUTH_MODE != none)
+--SYSTEM_HEALTH_VERBOSE_IDS=false
+-+SYSTEM_HEALTH_VERBOSE_IDS=
+-+
+-+# Backtest service (Container App)
+-+BACKTEST_OUTPUT_DIR=
+-+BACKTEST_DB_PATH=
+-+BACKTEST_MAX_CONCURRENT=
+-+BACKTEST_API_KEY=
+-+BACKTEST_API_KEY_HEADER=
+-+BACKTEST_AUTH_MODE=
+-+BACKTEST_OIDC_ISSUER=
+-+BACKTEST_OIDC_AUDIENCE=
+-+BACKTEST_OIDC_JWKS_URL=
+-+BACKTEST_OIDC_REQUIRED_SCOPES=
+-+BACKTEST_OIDC_REQUIRED_ROLES=
+-+BACKTEST_POSTGRES_DSN=
+-+BACKTEST_ADLS_CONTAINER_ALLOWLIST=
+-+BACKTEST_RUN_STORE_MODE=
+-+BACKTEST_ADLS_RUNS_DIR=
+-+BACKTEST_ALLOW_LOCAL_DATA=
+-+BACKTEST_ALLOWED_DATA_DIRS=
+-+BACKTEST_CSP=
+-+BACKTEST_UI_AUTH_MODE=
+-+BACKTEST_UI_OIDC_CLIENT_ID=
+-+BACKTEST_UI_OIDC_AUTHORITY=
+-+BACKTEST_UI_OIDC_SCOPES=
+-+BACKTEST_UI_API_BASE_URL=
+-diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+-index 067687f..58a7bcc 100644
+---- a/.github/workflows/deploy.yml
+-+++ b/.github/workflows/deploy.yml
+-@@ -79,6 +79,7 @@ jobs:
+-           RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
+-           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+-           BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
+-+          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
+-         run: |
+-           set -euo pipefail
+- 
+-@@ -103,6 +104,7 @@ jobs:
+-           require_secret RANKING_POSTGRES_DSN
+-           require_secret BACKTEST_API_KEY
+-           require_secret BACKTEST_POSTGRES_DSN
+-+          require_secret BACKTEST_CSP
+- 
+-           python3 - <<'PY'
+-           import os
+-diff --git a/.github/workflows/run_tests.yml b/.github/workflows/run_tests.yml
+-index 7195a15..0e43884 100644
+---- a/.github/workflows/run_tests.yml
+-+++ b/.github/workflows/run_tests.yml
+-@@ -76,6 +76,8 @@ jobs:
+-         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+-         # Runtime settings for CI
+-         DISABLE_DOTENV: "true"
+-+        LOG_FORMAT: "JSON"
+-+        LOG_LEVEL: "INFO"
+-         HEADLESS_MODE: "True"
+-         DOWNLOADS_PATH: "/tmp/downloads"
+-         PLAYWRIGHT_USER_DATA_DIR: "/tmp/playwright_userdata"
+-@@ -88,5 +90,22 @@ jobs:
+-         AZURE_CONTAINER_RANKING: "ranking-data"
+-         AZURE_CONTAINER_BRONZE: "bronze"
+-         AZURE_CONTAINER_SILVER: "silver"
+-+        AZURE_CONTAINER_GOLD: "gold"
+-+
+-+        # Backtest service defaults for CI
+-+        BACKTEST_OUTPUT_DIR: "/tmp/backtest_results"
+-+        BACKTEST_DB_PATH: "/tmp/backtest_results/runs.sqlite3"
+-+        BACKTEST_MAX_CONCURRENT: "1"
+-+        BACKTEST_API_KEY_HEADER: "X-API-Key"
+-+        BACKTEST_AUTH_MODE: "none"
+-+        BACKTEST_ALLOW_LOCAL_DATA: "false"
+-+        BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,ranking-data,common"
+-+        BACKTEST_RUN_STORE_MODE: "sqlite"
+-+        BACKTEST_CSP: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+-+
+-+        # System health config (required by monitoring/system_health.py)
+-+        SYSTEM_HEALTH_TTL_SECONDS: "30"
+-+        SYSTEM_HEALTH_MAX_AGE_SECONDS: "129600"
+-+        SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS: "259200"
+-       run: |
+-         python -m pytest
+-diff --git a/api/main.py b/api/main.py
+-index 586cf88..db73890 100644
+---- a/api/main.py
+-+++ b/api/main.py
+-@@ -24,7 +24,7 @@ app.add_middleware(
+- 
+- @app.get("/health")
+- def health_check():
+--    return {"status": "ok", "env": os.environ.get("ASSET_ALLOCATION_ENV", "dev")}
+-+    return {"status": "ok", "env": os.environ.get("ASSET_ALLOCATION_ENV")}
+- 
+- # Include Routers
+- app.include_router(data.router, prefix="/data", tags=["Data"])
+-diff --git a/backtest/service/app.py b/backtest/service/app.py
+-index 850fce1..0dfadf5 100644
+---- a/backtest/service/app.py
+-+++ b/backtest/service/app.py
+-@@ -108,6 +108,12 @@ def _get_auth(app: FastAPI) -> AuthManager:
+- 
+- 
+- def create_app() -> FastAPI:
+-+    def _require_env(name: str) -> str:
+-+        raw = os.environ.get(name)
+-+        if raw is None or not raw.strip():
+-+            raise ValueError(f"{name} is required.")
+-+        return raw.strip()
+-+
+-     @asynccontextmanager
+-     async def lifespan(app: FastAPI):
+-         settings = ServiceSettings.from_env()
+-@@ -152,16 +158,17 @@ def create_app() -> FastAPI:
+-     app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
+- 
+-     def _system_health_ttl_seconds() -> float:
+--        raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "").strip()
+--        if not raw:
+--            return 30.0
+-+        raw = _require_env("SYSTEM_HEALTH_TTL_SECONDS")
+-         try:
+-             ttl = float(raw)
+--        except ValueError:
+--            return 30.0
+--        return ttl if ttl > 0 else 30.0
+-+        except ValueError as exc:
+-+            raise ValueError(f"Invalid float for SYSTEM_HEALTH_TTL_SECONDS={raw!r}") from exc
+-+        if ttl <= 0:
+-+            raise ValueError("SYSTEM_HEALTH_TTL_SECONDS must be > 0.")
+-+        return ttl
+- 
+-     app.state.system_health_cache = TtlCache(ttl_seconds=_system_health_ttl_seconds())
+-+    content_security_policy = _require_env("BACKTEST_CSP")
+- 
+-     def _prefer_adls_reads() -> bool:
+-         settings = _get_settings(app)
+-@@ -197,20 +204,7 @@ def create_app() -> FastAPI:
+-         response.headers.setdefault("X-Frame-Options", "DENY")
+-         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+- 
+--        csp = os.environ.get("BACKTEST_CSP", "").strip()
+--        if not csp:
+--            csp = (
+--                "default-src 'self'; "
+--                "base-uri 'none'; "
+--                "frame-ancestors 'none'; "
+--                "object-src 'none'; "
+--                "img-src 'self' data: https:; "
+--                "script-src 'self'; "
+--                "style-src 'self' 'unsafe-inline'; "
+--                "font-src 'self' data: https:; "
+--                "connect-src 'self' https:"
+--            )
+--        response.headers.setdefault("Content-Security-Policy", csp.strip())
+-+        response.headers.setdefault("Content-Security-Policy", content_security_policy)
+- 
+-         return response
+- 
+-@@ -253,7 +247,8 @@ def create_app() -> FastAPI:
+- 
+-         include_ids = False
+-         if settings.auth_mode != "none":
+--            raw = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS", "").strip().lower()
+-+            raw_env = os.environ.get("SYSTEM_HEALTH_VERBOSE_IDS")
+-+            raw = raw_env.strip().lower() if raw_env else ""
+-             include_ids = raw in {"1", "true", "t", "yes", "y", "on"}
+- 
+-         cache: TtlCache[Dict[str, Any]] = app.state.system_health_cache
+-@@ -783,16 +778,16 @@ def create_app() -> FastAPI:
+-     def ui_runtime_config() -> Response:
+-         settings = _get_settings(app)
+- 
+--        backtest_api_base_url = os.environ.get("BACKTEST_UI_API_BASE_URL", "").strip()
+--        ui_mode = _normalize_ui_auth_mode(os.environ.get("BACKTEST_UI_AUTH_MODE", ""), settings)
+-+        backtest_api_base_url = (os.environ.get("BACKTEST_UI_API_BASE_URL") or "").strip()
+-+        ui_mode = _normalize_ui_auth_mode(os.environ.get("BACKTEST_UI_AUTH_MODE") or "", settings)
+- 
+--        oidc_client_id = os.environ.get("BACKTEST_UI_OIDC_CLIENT_ID", "").strip()
+--        oidc_authority = os.environ.get("BACKTEST_UI_OIDC_AUTHORITY", "").strip()
+-+        oidc_client_id = (os.environ.get("BACKTEST_UI_OIDC_CLIENT_ID") or "").strip()
+-+        oidc_authority = (os.environ.get("BACKTEST_UI_OIDC_AUTHORITY") or "").strip()
+-         if not oidc_authority:
+-             issuer = (settings.oidc_issuer or "").strip()
+-             oidc_authority = issuer.removesuffix("/v2.0") if issuer else ""
+- 
+--        oidc_scopes = _parse_ui_scopes(os.environ.get("BACKTEST_UI_OIDC_SCOPES", ""))
+-+        oidc_scopes = _parse_ui_scopes(os.environ.get("BACKTEST_UI_OIDC_SCOPES") or "")
+- 
+-         if ui_mode == "oidc" and not (oidc_client_id and oidc_authority):
+-             ui_mode = "none"
+-@@ -818,7 +813,7 @@ def create_app() -> FastAPI:
+-         )
+- 
+-     def _find_ui_dist_dir() -> Optional[Path]:
+--        raw = os.environ.get("BACKTEST_UI_DIST_DIR", "").strip()
+-+        raw = (os.environ.get("BACKTEST_UI_DIST_DIR") or "").strip()
+-         candidates: list[Path] = []
+-         if raw:
+-             candidates.append(Path(raw).expanduser())
+-diff --git a/backtest/service/settings.py b/backtest/service/settings.py
+-index e556b49..42425b9 100644
+---- a/backtest/service/settings.py
+-+++ b/backtest/service/settings.py
+-@@ -20,18 +20,19 @@ def _parse_bool(value: str) -> bool:
+-         return False
+-     raise ValueError(f"Invalid boolean value: {value!r}")
+- 
+--
+--def _get_bool(name: str, default: bool) -> bool:
+-+def _require_env(name: str) -> str:
+-     raw = os.environ.get(name)
+-     if raw is None or not raw.strip():
+--        return default
+--    return _parse_bool(raw)
+-+        raise ValueError(f"{name} is required.")
+-+    return raw
+- 
+- 
+--def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 256) -> int:
+--    raw = os.environ.get(name)
+--    if raw is None or not raw.strip():
+--        return default
+-+def _require_bool(name: str) -> bool:
+-+    return _parse_bool(_require_env(name))
+-+
+-+
+-+def _require_int(name: str, *, min_value: int = 1, max_value: int = 256) -> int:
+-+    raw = _require_env(name)
+-     try:
+-         parsed = int(raw)
+-     except ValueError as exc:
+-@@ -41,18 +42,19 @@ def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 25
+-     return parsed
+- 
+- 
+--def _split_csv(value: str) -> List[str]:
+--    return [item.strip() for item in value.split(",") if item.strip()]
+-+def _split_csv(value: Optional[str]) -> List[str]:
+-+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+- 
+- 
+- def _get_optional_str(name: str) -> Optional[str]:
+--    raw = os.environ.get(name, "")
+--    value = raw.strip()
+-+    raw = os.environ.get(name)
+-+    value = raw.strip() if raw else ""
+-     return value or None
+- 
+- 
+- def _get_path_list(name: str) -> List[Path]:
+--    raw = os.environ.get(name, "").strip()
+-+    raw_env = os.environ.get(name)
+-+    raw = raw_env.strip() if raw_env else ""
+-     if not raw:
+-         return []
+-     paths = []
+-@@ -67,18 +69,8 @@ def _get_path_list(name: str) -> List[Path]:
+- 
+- 
+- def _get_container_allowlist() -> List[str]:
+--    explicit = os.environ.get("BACKTEST_ADLS_CONTAINER_ALLOWLIST", "").strip()
+--    if explicit:
+--        return _split_csv(explicit)
+--
+--    defaults = [
+--        "bronze",
+--        "silver",
+--        "gold",
+--        "platinum",
+--        "ranking-data",
+--        "common",
+--    ]
+-+    explicit = _require_env("BACKTEST_ADLS_CONTAINER_ALLOWLIST").strip()
+-+    allowlist = _split_csv(explicit)
+-     env_names = [
+-         "AZURE_CONTAINER_MARKET",
+-         "AZURE_CONTAINER_FINANCE",
+-@@ -91,13 +83,14 @@ def _get_container_allowlist() -> List[str]:
+-         "AZURE_CONTAINER_GOLD",
+-     ]
+-     for name in env_names:
+--        value = os.environ.get(name, "").strip()
+-+        value_raw = os.environ.get(name)
+-+        value = value_raw.strip() if value_raw else ""
+-         if value:
+--            defaults.append(value)
+-+            allowlist.append(value)
+- 
+-     seen = set()
+-     ordered = []
+--    for item in defaults:
+-+    for item in allowlist:
+-         if item and item not in seen:
+-             ordered.append(item)
+-             seen.add(item)
+-@@ -105,7 +98,7 @@ def _get_container_allowlist() -> List[str]:
+- 
+- 
+- def _get_run_store_mode() -> RunStoreMode:
+--    raw = os.environ.get("BACKTEST_RUN_STORE_MODE", "sqlite").strip().lower()
+-+    raw = _require_env("BACKTEST_RUN_STORE_MODE").strip().lower()
+-     if raw in {"sqlite", "local"}:
+-         return "sqlite"
+-     if raw in {"adls", "blob"}:
+-@@ -150,47 +143,33 @@ class ServiceSettings:
+- 
+-     @staticmethod
+-     def from_env() -> "ServiceSettings":
+--        output_base_dir = Path(os.environ.get("BACKTEST_OUTPUT_DIR", "./backtest_results")).expanduser()
+-+        output_base_dir = Path(_require_env("BACKTEST_OUTPUT_DIR")).expanduser()
+-         if not output_base_dir.is_absolute():
+-             output_base_dir = (Path.cwd() / output_base_dir).resolve(strict=False)
+-         else:
+-             output_base_dir = output_base_dir.resolve(strict=False)
+-         output_base_dir.mkdir(parents=True, exist_ok=True)
+- 
+--        db_path_raw = os.environ.get("BACKTEST_DB_PATH", "").strip()
+--        if db_path_raw:
+--            db_path = Path(db_path_raw).expanduser()
+--            if not db_path.is_absolute():
+--                db_path = (Path.cwd() / db_path).resolve(strict=False)
+--            else:
+--                db_path = db_path.resolve(strict=False)
+-+        db_path_raw = _require_env("BACKTEST_DB_PATH").strip()
+-+        db_path = Path(db_path_raw).expanduser()
+-+        if not db_path.is_absolute():
+-+            db_path = (Path.cwd() / db_path).resolve(strict=False)
+-         else:
+--            db_path = output_base_dir / "runs.sqlite3"
+-+            db_path = db_path.resolve(strict=False)
+- 
+--        max_concurrent_runs = _get_int("BACKTEST_MAX_CONCURRENT", 1, min_value=1, max_value=64)
+-+        max_concurrent_runs = _require_int("BACKTEST_MAX_CONCURRENT", min_value=1, max_value=64)
+-         api_key = os.environ.get("BACKTEST_API_KEY") or None
+--        api_key_header = os.environ.get("BACKTEST_API_KEY_HEADER", "X-API-Key").strip() or "X-API-Key"
+-+        api_key_header = _require_env("BACKTEST_API_KEY_HEADER").strip()
+-+        if not api_key_header:
+-+            raise ValueError("BACKTEST_API_KEY_HEADER must not be empty.")
+- 
+-         oidc_issuer = _get_optional_str("BACKTEST_OIDC_ISSUER")
+--        oidc_audience = _split_csv(_get_optional_str("BACKTEST_OIDC_AUDIENCE") or "")
+-+        oidc_audience = _split_csv(_get_optional_str("BACKTEST_OIDC_AUDIENCE"))
+-         oidc_jwks_url = _get_optional_str("BACKTEST_OIDC_JWKS_URL")
+--        oidc_required_scopes = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_SCOPES") or "")
+--        oidc_required_roles = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_ROLES") or "")
+-+        oidc_required_scopes = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_SCOPES"))
+-+        oidc_required_roles = _split_csv(_get_optional_str("BACKTEST_OIDC_REQUIRED_ROLES"))
+- 
+--        auth_mode_raw = _get_optional_str("BACKTEST_AUTH_MODE")
+--        if auth_mode_raw:
+--            auth_mode = _parse_auth_mode(auth_mode_raw)
+--        else:
+--            has_oidc = bool(oidc_issuer and oidc_audience)
+--            has_api_key = bool(api_key and str(api_key).strip())
+--            if has_oidc and has_api_key:
+--                auth_mode = "api_key_or_oidc"
+--            elif has_oidc:
+--                auth_mode = "oidc"
+--            elif has_api_key:
+--                auth_mode = "api_key"
+--            else:
+--                auth_mode = "none"
+-+        auth_mode = _parse_auth_mode(_require_env("BACKTEST_AUTH_MODE"))
+- 
+-         if auth_mode in {"api_key", "api_key_or_oidc"} and not (api_key and str(api_key).strip()):
+-             if auth_mode == "api_key":
+-@@ -203,7 +182,7 @@ class ServiceSettings:
+-             if not oidc_audience:
+-                 raise ValueError(f"BACKTEST_AUTH_MODE={auth_mode} requires BACKTEST_OIDC_AUDIENCE to be set (csv).")
+- 
+--        allow_local_data = _get_bool("BACKTEST_ALLOW_LOCAL_DATA", False)
+-+        allow_local_data = _require_bool("BACKTEST_ALLOW_LOCAL_DATA")
+-         allowed_local_data_dirs = _get_path_list("BACKTEST_ALLOWED_DATA_DIRS")
+-         if allow_local_data and not allowed_local_data_dirs:
+-             raise ValueError(
+-@@ -213,14 +192,14 @@ class ServiceSettings:
+-         adls_container_allowlist = _get_container_allowlist()
+- 
+-         run_store_mode = _get_run_store_mode()
+--        adls_runs_dir = os.environ.get("BACKTEST_ADLS_RUNS_DIR", "").strip() or None
+-+        adls_runs_dir = _get_optional_str("BACKTEST_ADLS_RUNS_DIR")
+-         if run_store_mode == "adls" and not adls_runs_dir:
+-             raise ValueError("BACKTEST_RUN_STORE_MODE=adls requires BACKTEST_ADLS_RUNS_DIR to be set.")
+-         if adls_runs_dir:
+-             container, _ = parse_container_and_path(adls_runs_dir)
+-             assert_allowed_container(container, adls_container_allowlist)
+- 
+--        postgres_dsn = os.environ.get("BACKTEST_POSTGRES_DSN", "").strip() or None
+-+        postgres_dsn = _get_optional_str("BACKTEST_POSTGRES_DSN")
+-         if run_store_mode == "postgres" and not postgres_dsn:
+-             raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires BACKTEST_POSTGRES_DSN to be set.")
+- 
+-diff --git a/deploy/app_backtest_api.yaml b/deploy/app_backtest_api.yaml
+-index acb7321..e655143 100644
+---- a/deploy/app_backtest_api.yaml
+-+++ b/deploy/app_backtest_api.yaml
+-@@ -32,8 +32,30 @@ properties:
+-       env:
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-+      - name: AZURE_CONTAINER_BRONZE
+-+        value: "${AZURE_CONTAINER_BRONZE}"
+-+      - name: AZURE_CONTAINER_SILVER
+-+        value: "${AZURE_CONTAINER_SILVER}"
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: "${AZURE_CONTAINER_GOLD}"
+-+      - name: AZURE_CONTAINER_PLATINUM
+-+        value: "${AZURE_CONTAINER_PLATINUM}"
+-+      - name: AZURE_CONTAINER_MARKET
+-+        value: "${AZURE_CONTAINER_MARKET}"
+-+      - name: AZURE_CONTAINER_FINANCE
+-+        value: "${AZURE_CONTAINER_FINANCE}"
+-+      - name: AZURE_CONTAINER_EARNINGS
+-+        value: "${AZURE_CONTAINER_EARNINGS}"
+-+      - name: AZURE_CONTAINER_TARGETS
+-+        value: "${AZURE_CONTAINER_TARGETS}"
+-+      - name: AZURE_CONTAINER_RANKING
+-+        value: "${AZURE_CONTAINER_RANKING}"
+-+      - name: AZURE_CONTAINER_COMMON
+-+        value: "${AZURE_CONTAINER_COMMON}"
+-       - name: BACKTEST_API_KEY
+-         secretRef: api-key
+-+      - name: BACKTEST_API_KEY_HEADER
+-+        value: "X-API-Key"
+-       - name: BACKTEST_POSTGRES_DSN
+-         secretRef: backtest-pg-dsn
+-       - name: BACKTEST_AUTH_MODE
+-@@ -50,6 +72,12 @@ properties:
+-         value: "${BACKTEST_OIDC_REQUIRED_ROLES}"
+-       - name: BACKTEST_CSP
+-         value: "${BACKTEST_CSP}"
+-+      - name: SYSTEM_HEALTH_TTL_SECONDS
+-+        value: "30"
+-+      - name: SYSTEM_HEALTH_MAX_AGE_SECONDS
+-+        value: "129600"
+-+      - name: SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS
+-+        value: "259200"
+-       - name: BACKTEST_UI_AUTH_MODE
+-         value: "${BACKTEST_UI_AUTH_MODE}"
+-       - name: BACKTEST_UI_OIDC_CLIENT_ID
+-diff --git a/deploy/job_bronze_earnings_data.yaml b/deploy/job_bronze_earnings_data.yaml
+-index a68c0ef..25d2ca7 100644
+---- a/deploy/job_bronze_earnings_data.yaml
+-+++ b/deploy/job_bronze_earnings_data.yaml
+-@@ -42,6 +42,12 @@ properties:
+-         value: ${AZURE_CONTAINER_SILVER}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_CONTAINER_NAME
+-diff --git a/deploy/job_bronze_finance_data.yaml b/deploy/job_bronze_finance_data.yaml
+-index 2d0c8b6..abad1b2 100644
+---- a/deploy/job_bronze_finance_data.yaml
+-+++ b/deploy/job_bronze_finance_data.yaml
+-@@ -44,6 +44,12 @@ properties:
+-         value: ${AZURE_CONTAINER_SILVER}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_bronze_market_data.yaml b/deploy/job_bronze_market_data.yaml
+-index 841b92c..93fd2b8 100644
+---- a/deploy/job_bronze_market_data.yaml
+-+++ b/deploy/job_bronze_market_data.yaml
+-@@ -42,6 +42,12 @@ properties:
+-         value: ${AZURE_CONTAINER_SILVER}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_bronze_price_target_data.yaml b/deploy/job_bronze_price_target_data.yaml
+-index 0decd20..9be74f1 100644
+---- a/deploy/job_bronze_price_target_data.yaml
+-+++ b/deploy/job_bronze_price_target_data.yaml
+-@@ -44,6 +44,12 @@ properties:
+-         value: ${AZURE_CONTAINER_SILVER}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_gold_earnings_data.yaml b/deploy/job_gold_earnings_data.yaml
+-index 993c6eb..84762c4 100644
+---- a/deploy/job_gold_earnings_data.yaml
+-+++ b/deploy/job_gold_earnings_data.yaml
+-@@ -44,6 +44,10 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_gold_finance_data.yaml b/deploy/job_gold_finance_data.yaml
+-index 0d4b18a..02bedb2 100644
+---- a/deploy/job_gold_finance_data.yaml
+-+++ b/deploy/job_gold_finance_data.yaml
+-@@ -44,6 +44,10 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_gold_market_data.yaml b/deploy/job_gold_market_data.yaml
+-index df0a4b6..f7a8a2d 100644
+---- a/deploy/job_gold_market_data.yaml
+-+++ b/deploy/job_gold_market_data.yaml
+-@@ -46,6 +46,10 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_gold_price_target_data.yaml b/deploy/job_gold_price_target_data.yaml
+-index 0d77015..09a5c54 100644
+---- a/deploy/job_gold_price_target_data.yaml
+-+++ b/deploy/job_gold_price_target_data.yaml
+-@@ -44,6 +44,10 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-diff --git a/deploy/job_platinum_ranking.yaml b/deploy/job_platinum_ranking.yaml
+-index 4ccb300..d172763 100644
+---- a/deploy/job_platinum_ranking.yaml
+-+++ b/deploy/job_platinum_ranking.yaml
+-@@ -36,8 +36,14 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: AZURE_CONTAINER_SILVER
+-         value: ${AZURE_CONTAINER_SILVER}
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-@@ -60,6 +66,8 @@ properties:
+-         secretRef: yahoo-password
+-       - name: POSTGRES_DSN
+-         secretRef: pg-dsn
+-+      - name: POSTGRES_SIGNALS_WRITE_REQUIRED
+-+        value: "true"
+-       - name: HEADLESS_MODE
+-         value: 'True'
+-       - name: DOWNLOADS_PATH
+-diff --git a/deploy/job_silver_earnings_data.yaml b/deploy/job_silver_earnings_data.yaml
+-index d0687e4..f0604c8 100644
+---- a/deploy/job_silver_earnings_data.yaml
+-+++ b/deploy/job_silver_earnings_data.yaml
+-@@ -36,6 +36,12 @@ properties:
+-         value: ${AZURE_CONTAINER_RANKING}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: HEADLESS_MODE
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-@@ -44,6 +50,8 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: AZURE_CONTAINER_SILVER
+-         value: ${AZURE_CONTAINER_SILVER}
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_CONTAINER_EARNINGS
+-         value: ${AZURE_CONTAINER_EARNINGS}
+-       - name: AZURE_CONTAINER_COMMON
+-diff --git a/deploy/job_silver_finance_data.yaml b/deploy/job_silver_finance_data.yaml
+-index c698bcd..6d9622d 100644
+---- a/deploy/job_silver_finance_data.yaml
+-+++ b/deploy/job_silver_finance_data.yaml
+-@@ -36,6 +36,12 @@ properties:
+-         value: ${AZURE_CONTAINER_RANKING}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: HEADLESS_MODE
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-@@ -44,6 +50,8 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: AZURE_CONTAINER_SILVER
+-         value: ${AZURE_CONTAINER_SILVER}
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_CONTAINER_FINANCE
+-         value: ${AZURE_CONTAINER_FINANCE}
+-       - name: AZURE_CONTAINER_COMMON
+-diff --git a/deploy/job_silver_market_data.yaml b/deploy/job_silver_market_data.yaml
+-index ac925e7..3f7903c 100644
+---- a/deploy/job_silver_market_data.yaml
+-+++ b/deploy/job_silver_market_data.yaml
+-@@ -38,6 +38,12 @@ properties:
+-         value: "23"
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: HEADLESS_MODE
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-@@ -46,6 +52,8 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: AZURE_CONTAINER_SILVER
+-         value: ${AZURE_CONTAINER_SILVER}
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_CONTAINER_MARKET
+-         value: ${AZURE_CONTAINER_MARKET}
+-       - name: AZURE_CONTAINER_COMMON
+-diff --git a/deploy/job_silver_price_target_data.yaml b/deploy/job_silver_price_target_data.yaml
+-index 875670c..4af9411 100644
+---- a/deploy/job_silver_price_target_data.yaml
+-+++ b/deploy/job_silver_price_target_data.yaml
+-@@ -36,6 +36,12 @@ properties:
+-         value: ${AZURE_CONTAINER_RANKING}
+-       - name: LOG_FORMAT
+-         value: JSON
+-+      - name: LOG_LEVEL
+-+        value: INFO
+-+      - name: DISABLE_DOTENV
+-+        value: "true"
+-+      - name: HEADLESS_MODE
+-+        value: "true"
+-       - name: AZURE_STORAGE_ACCOUNT_NAME
+-         value: assetallocstorage001
+-       - name: AZURE_STORAGE_CONNECTION_STRING
+-@@ -44,6 +50,8 @@ properties:
+-         value: ${AZURE_CONTAINER_BRONZE}
+-       - name: AZURE_CONTAINER_SILVER
+-         value: ${AZURE_CONTAINER_SILVER}
+-+      - name: AZURE_CONTAINER_GOLD
+-+        value: ${AZURE_CONTAINER_GOLD}
+-       - name: AZURE_CONTAINER_TARGETS
+-         value: price-targets
+-       - name: AZURE_CONTAINER_COMMON
+-diff --git a/monitoring/azure_blob_store.py b/monitoring/azure_blob_store.py
+-index 0383446..9b13da1 100644
+---- a/monitoring/azure_blob_store.py
+-+++ b/monitoring/azure_blob_store.py
+-@@ -19,8 +19,12 @@ class AzureBlobStoreConfig:
+- 
+-     @staticmethod
+-     def from_env() -> "AzureBlobStoreConfig":
+--        account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip() or None
+--        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip() or None
+-+        account_name_raw = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+-+        account_name = account_name_raw.strip() if account_name_raw and account_name_raw.strip() else None
+-+        connection_string_raw = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+-+        connection_string = (
+-+            connection_string_raw.strip() if connection_string_raw and connection_string_raw.strip() else None
+-+        )
+-         return AzureBlobStoreConfig(account_name=account_name, connection_string=connection_string)
+- 
+- 
+-diff --git a/monitoring/system_health.py b/monitoring/system_health.py
+-index 9560b65..e7da828 100644
+---- a/monitoring/system_health.py
+-+++ b/monitoring/system_health.py
+-@@ -33,23 +33,33 @@ def _iso(dt: Optional[datetime]) -> str:
+-     return dt.astimezone(timezone.utc).isoformat()
+- 
+- 
+--def _is_truthy(raw: str) -> bool:
+-+def _is_truthy(raw: Optional[str]) -> bool:
+-     value = (raw or "").strip().lower()
+-     return value in {"1", "true", "t", "yes", "y", "on"}
+- 
+- 
+--def _is_test_mode() -> bool:
+--    if _is_truthy(os.environ.get("SYSTEM_HEALTH_RUN_IN_TEST", "")):
+--        return False
+--    if "PYTEST_CURRENT_TEST" in os.environ:
+-+def _require_env(name: str) -> str:
+-+    raw = os.environ.get(name)
+-+    if raw is None or not raw.strip():
+-+        raise ValueError(f"Missing required environment variable: {name}")
+-+    return raw.strip()
+-+
+-+
+-+def _parse_bool(value: str) -> bool:
+-+    text = value.strip().lower()
+-+    if text in {"1", "true", "t", "yes", "y", "on"}:
+-         return True
+--    return _is_truthy(os.environ.get("TEST_MODE", ""))
+-+    if text in {"0", "false", "f", "no", "n", "off"}:
+-+        return False
+-+    raise ValueError(f"Invalid boolean value: {value!r}")
+-+
+- 
+-+def _require_bool(name: str) -> bool:
+-+    return _parse_bool(_require_env(name))
+- 
+--def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 365 * 24 * 3600) -> int:
+--    raw = os.environ.get(name, "").strip()
+--    if not raw:
+--        return default
+-+
+-+def _require_int(name: str, *, min_value: int = 1, max_value: int = 365 * 24 * 3600) -> int:
+-+    raw = _require_env(name)
+-     try:
+-         value = int(raw)
+-     except ValueError as exc:
+-@@ -59,18 +69,8 @@ def _get_int(name: str, default: int, *, min_value: int = 1, max_value: int = 36
+-     return value
+- 
+- 
+--def _env_or(name: str, default: str) -> str:
+--    return os.environ.get(name, "").strip() or default
+--
+--
+--def _split_csv(raw: str) -> List[str]:
+--    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+--
+--
+--def _get_float(name: str, default: float, *, min_value: float = 0.1, max_value: float = 120.0) -> float:
+--    raw = os.environ.get(name, "").strip()
+--    if not raw:
+--        return default
+-+def _require_float(name: str, *, min_value: float = 0.1, max_value: float = 120.0) -> float:
+-+    raw = _require_env(name)
+-     try:
+-         value = float(raw)
+-     except ValueError as exc:
+-@@ -80,6 +80,18 @@ def _get_float(name: str, default: float, *, min_value: float = 0.1, max_value:
+-     return value
+- 
+- 
+-+def _is_test_mode() -> bool:
+-+    if _is_truthy(os.environ.get("SYSTEM_HEALTH_RUN_IN_TEST")):
+-+        return False
+-+    if "PYTEST_CURRENT_TEST" in os.environ:
+-+        return True
+-+    return _is_truthy(os.environ.get("TEST_MODE"))
+-+
+-+
+-+def _split_csv(raw: Optional[str]) -> List[str]:
+-+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+-+
+-+
+- def _worse_resource_status(primary: str, secondary: str) -> str:
+-     ranking = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
+-     return secondary if ranking.get(secondary, 0) > ranking.get(primary, 0) else primary
+-@@ -112,13 +124,12 @@ class LayerProbeSpec:
+-     description: str
+-     refresh_frequency: str
+-     container_env: str
+--    container_default: str
+-     max_age_seconds: int
+-     marker_blobs: Sequence[str] = ()
+-     delta_tables: Sequence[str] = ()
+- 
+-     def container_name(self) -> str:
+--        return _env_or(self.container_env, self.container_default)
+-+        return _require_env(self.container_env)
+- 
+- 
+- def _compute_layer_status(now: datetime, last_updated: Optional[datetime], *, max_age_seconds: int, had_error: bool) -> str:
+-@@ -172,8 +183,8 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated:
+- 
+- 
+- def _default_layer_specs() -> List[LayerProbeSpec]:
+--    max_age_default = _get_int("SYSTEM_HEALTH_MAX_AGE_SECONDS", 36 * 3600)
+--    max_age_ranking = _get_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS", 72 * 3600)
+-+    max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
+-+    max_age_ranking = _require_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS")
+- 
+-     return [
+-         LayerProbeSpec(
+-@@ -181,7 +192,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
+-             description="Raw ingestion (blob snapshots + whitelists)",
+-             refresh_frequency="Daily",
+-             container_env="AZURE_CONTAINER_BRONZE",
+--            container_default="bronze",
+-             max_age_seconds=max_age_default,
+-             marker_blobs=(
+-                 "market-data/whitelist.csv",
+-@@ -195,7 +205,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
+-             description="Normalized Delta tables (by-date aggregates)",
+-             refresh_frequency="Daily",
+-             container_env="AZURE_CONTAINER_SILVER",
+--            container_default="silver",
+-             max_age_seconds=max_age_default,
+-             delta_tables=(
+-                 "market-data-by-date",
+-@@ -209,7 +218,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
+-             description="Feature store Delta tables (by-date aggregates)",
+-             refresh_frequency="Daily",
+-             container_env="AZURE_CONTAINER_GOLD",
+--            container_default="gold",
+-             max_age_seconds=max_age_default,
+-             delta_tables=(
+-                 "market_by_date",
+-@@ -223,7 +231,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
+-             description="Platinum rankings + derived signals",
+-             refresh_frequency="Daily",
+-             container_env="AZURE_CONTAINER_RANKING",
+--            container_default="ranking-data",
+-             max_age_seconds=max_age_ranking,
+-             delta_tables=(
+-                 "platinum/rankings",
+-@@ -296,33 +303,48 @@ def collect_system_health_snapshot(
+-         alerts.extend(_layer_alerts(now, layer_name=spec.name, status=status, last_updated=last_updated, error=err_text))
+- 
+-     # Optional Phase 2: Azure control-plane probes (Container Apps + Jobs + Executions).
+--    subscription_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
+--    resource_group = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
+--    app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS", ""))
+--    job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
+-+    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+-+    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+-+    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+-+    resource_group = resource_group_raw.strip() if resource_group_raw else ""
+-+    app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS"))
+-+    job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS"))
+- 
+-     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
+-     if arm_enabled:
+-         try:
+--            api_version = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION", "").strip() or "2023-05-01"
+--            timeout_seconds = _get_float("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", 5.0, min_value=0.5, max_value=30.0)
+--            resource_health_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED", ""))
+-+            api_version = _require_env("SYSTEM_HEALTH_ARM_API_VERSION")
+-+            timeout_seconds = _require_float(
+-+                "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0
+-+            )
+-+            resource_health_enabled = _require_bool("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED")
+-             resource_health_api_version = (
+--                os.environ.get("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION", "").strip()
+--                or DEFAULT_RESOURCE_HEALTH_API_VERSION
+-+                _require_env("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION")
+-+                if resource_health_enabled
+-+                else DEFAULT_RESOURCE_HEALTH_API_VERSION
+-             )
+- 
+--            monitor_metrics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED", ""))
+-+            monitor_metrics_enabled = _require_bool("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED")
+-             monitor_metrics_api_version = (
+--                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", "").strip()
+--                or DEFAULT_MONITOR_METRICS_API_VERSION
+-+                _require_env("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION")
+-+                if monitor_metrics_enabled
+-+                else DEFAULT_MONITOR_METRICS_API_VERSION
+-+            )
+-+            monitor_metrics_timespan_minutes = (
+-+                _require_int("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", min_value=1, max_value=24 * 60)
+-+                if monitor_metrics_enabled
+-+                else 0
+-+            )
+-+            monitor_metrics_interval = (
+-+                _require_env("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL") if monitor_metrics_enabled else ""
+-             )
+--            monitor_metrics_timespan_minutes = _get_int(
+--                "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", 15, min_value=1, max_value=24 * 60
+-+            monitor_metrics_aggregation = (
+-+                _require_env("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION") if monitor_metrics_enabled else ""
+-+            )
+-+            monitor_metrics_thresholds_raw = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON")
+-+            monitor_metrics_thresholds_raw = (
+-+                monitor_metrics_thresholds_raw.strip() if monitor_metrics_thresholds_raw else ""
+-             )
+--            monitor_metrics_interval = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", "").strip() or "PT1M"
+--            monitor_metrics_aggregation = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", "").strip() or "Average"
+--            monitor_metrics_thresholds_raw = os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON", "").strip()
+-             monitor_metrics_thresholds: Dict[str, Any] = {}
+-             if monitor_metrics_thresholds_raw:
+-                 try:
+-@@ -337,20 +359,29 @@ def collect_system_health_snapshot(
+-                             "timestamp": _iso(now),
+-                             "message": f"SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: {exc}",
+-                             "acknowledged": False,
+--                        }
+--                    )
+--            containerapp_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS", ""))
+--            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS", ""))
+-+                            }
+-+                        )
+-+            containerapp_metric_names = _split_csv(
+-+                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
+-+            )
+-+            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
+- 
+--            log_analytics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", ""))
+--            log_analytics_workspace_id = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "").strip()
+--            log_analytics_timeout_seconds = _get_float(
+--                "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", 5.0, min_value=0.5, max_value=30.0
+-+            log_analytics_enabled = _require_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED")
+-+            log_analytics_workspace_id = (
+-+                _require_env("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") if log_analytics_enabled else ""
+-             )
+--            log_analytics_timespan_minutes = _get_int(
+--                "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", 15, min_value=1, max_value=24 * 60
+-+            log_analytics_timeout_seconds = (
+-+                _require_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0)
+-+                if log_analytics_enabled
+-+                else 0.0
+-             )
+--            log_analytics_queries_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON", "").strip()
+-+            log_analytics_timespan_minutes = (
+-+                _require_int("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", min_value=1, max_value=24 * 60)
+-+                if log_analytics_enabled
+-+                else 0
+-+            )
+-+            log_analytics_queries_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON")
+-+            log_analytics_queries_raw = log_analytics_queries_raw.strip() if log_analytics_queries_raw else ""
+-             log_analytics_queries = []
+-             if log_analytics_queries_raw:
+-                 try:
+-@@ -380,7 +411,7 @@ def collect_system_health_snapshot(
+-                         "message": "Log Analytics enabled but workspace ID or queries are missing.",
+-                         "acknowledged": False,
+-                     }
+--                )
+-+                    )
+- 
+-             arm_cfg = ArmConfig(
+-                 subscription_id=subscription_id,
+-@@ -481,8 +512,8 @@ def collect_system_health_snapshot(
+-                             job_names=job_names,
+-                             last_checked_iso=checked_iso,
+-                             include_ids=include_resource_ids,
+--                            max_executions_per_job=_get_int(
+--                                "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", 3, min_value=1, max_value=25
+-+                            max_executions_per_job=_require_int(
+-+                                "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", min_value=1, max_value=25
+-                             ),
+-                             resource_health_enabled=resource_health_enabled,
+-                             resource_health_api_version=resource_health_api_version,
+-diff --git a/scripts/common/by_date_pipeline.py b/scripts/common/by_date_pipeline.py
+-index c2a8616..ea2654f 100644
+---- a/scripts/common/by_date_pipeline.py
+-+++ b/scripts/common/by_date_pipeline.py
+-@@ -23,9 +23,11 @@ def _get_materialize_year_month(now: Optional[datetime] = None) -> str:
+-       - Otherwise default to yesterday's year-month in UTC.
+-     """
+- 
+--    override = os.environ.get("MATERIALIZE_YEAR_MONTH", "").strip()
+--    if override:
+--        return override
+-+    override_raw = os.environ.get("MATERIALIZE_YEAR_MONTH")
+-+    if override_raw:
+-+        override = override_raw.strip()
+-+        if override:
+-+            return override
+- 
+-     now_utc = now or datetime.now(timezone.utc)
+-     return (now_utc - timedelta(days=1)).strftime("%Y-%m")
+-@@ -92,4 +94,3 @@ def run_partner_then_by_date(
+-         year_month = _get_materialize_year_month()
+-         mdc.write_line(f"Running by-date materialization for job={job_name} year_month={year_month}...")
+-         return by_date_main(["--year-month", year_month])
+--
+-diff --git a/scripts/common/config.py b/scripts/common/config.py
+-index f3ad7ab..4ecdf72 100644
+---- a/scripts/common/config.py
+-+++ b/scripts/common/config.py
+-@@ -10,7 +10,10 @@ init(autoreset=True)
+- 
+- # Load environment variables from .env file for local development.
+- # CI/tests can disable this via DISABLE_DOTENV=true.
+--if os.environ.get("DISABLE_DOTENV", "").strip().lower() not in {"1", "true", "yes"}:
+-+_disable_dotenv_raw = os.environ.get("DISABLE_DOTENV")
+-+if _disable_dotenv_raw is None or not _disable_dotenv_raw.strip():
+-+    raise ValueError("DISABLE_DOTENV is required (set to true to disable local .env loading).")
+-+if _disable_dotenv_raw.strip().lower() not in {"1", "true", "yes"}:
+-     load_dotenv(override=False)
+- 
+- # --- Constants & Configuration ---
+-diff --git a/scripts/common/config_shared.py b/scripts/common/config_shared.py
+-index e19a4fb..a12d9ef 100644
+---- a/scripts/common/config_shared.py
+-+++ b/scripts/common/config_shared.py
+-@@ -10,7 +10,10 @@ init(autoreset=True)
+- 
+- # Load environment variables from .env file for local development.
+- # CI/tests can disable this via DISABLE_DOTENV=true.
+--if os.environ.get("DISABLE_DOTENV", "").strip().lower() not in {"1", "true", "yes"}:
+-+_disable_dotenv_raw = os.environ.get("DISABLE_DOTENV")
+-+if _disable_dotenv_raw is None or not _disable_dotenv_raw.strip():
+-+    raise ValueError("DISABLE_DOTENV is required (set to true to disable local .env loading).")
+-+if _disable_dotenv_raw.strip().lower() not in {"1", "true", "yes"}:
+-     load_dotenv(override=False)
+- 
+- # --- Constants & Configuration ---
+-@@ -21,6 +24,15 @@ def require_env(name: str) -> str:
+-         raise ValueError(f"Environment variable '{name}' is strictly required but not set.")
+-     return value
+- 
+-+
+-+def require_env_bool(name: str) -> bool:
+-+    raw = require_env(name).strip().lower()
+-+    if raw in {"1", "true", "t", "yes", "y", "on"}:
+-+        return True
+-+    if raw in {"0", "false", "f", "no", "n", "off"}:
+-+        return False
+-+    raise ValueError(f"Invalid boolean value for {name}: {raw!r}")
+-+
+- def _require_env_path(name: str) -> Path:
+-     return Path(require_env(name))
+- 
+-@@ -46,9 +58,9 @@ AZURE_CONTAINER_COMMON = require_env("AZURE_CONTAINER_COMMON")
+- 
+- # Optional lake/medallion containers (may be unused depending on deployment contract).
+- # Kept optional to preserve backward compatibility for environments that still use per-domain containers.
+--AZURE_CONTAINER_BRONZE = os.environ.get("AZURE_CONTAINER_BRONZE")
+--AZURE_CONTAINER_SILVER = os.environ.get("AZURE_CONTAINER_SILVER")
+--AZURE_CONTAINER_GOLD = os.environ.get("AZURE_CONTAINER_GOLD")
+-+AZURE_CONTAINER_BRONZE = require_env("AZURE_CONTAINER_BRONZE")
+-+AZURE_CONTAINER_SILVER = require_env("AZURE_CONTAINER_SILVER")
+-+AZURE_CONTAINER_GOLD = require_env("AZURE_CONTAINER_GOLD")
+- 
+- # Yahoo Credentials
+- YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")
+-@@ -78,13 +90,7 @@ DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
+- 
+- # Playwright Configuration
+- # STRICT ENFORCEMENT: HEADLESS_MODE must be explicit (True/False)
+--_headless_str = os.environ.get("HEADLESS_MODE")
+--if _headless_str is not None:
+--    _headless_str = _headless_str.lower()
+--
+--if _headless_str not in ['true', 'false', '', None]:
+--    raise ValueError("HEADLESS_MODE: " + _headless_str)
+--HEADLESS_MODE = _headless_str == "true"
+-+HEADLESS_MODE = require_env_bool("HEADLESS_MODE")
+- 
+- USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+- 
+-diff --git a/scripts/common/core.py b/scripts/common/core.py
+-index 69904e4..efa7fbb 100644
+---- a/scripts/common/core.py
+-+++ b/scripts/common/core.py
+-@@ -5,6 +5,7 @@ import os
+- import sys
+- import re
+- import random
+-+import threading
+- import time
+- from datetime import datetime, timezone
+- from pathlib import Path
+-@@ -17,6 +18,7 @@ import nasdaqdatalink
+- # Local imports
+- from scripts.common.blob_storage import BlobStorageClient
+- from azure.storage.blob import BlobLeaseClient
+-+from azure.core.exceptions import HttpResponseError, ResourceExistsError
+- from scripts.common import config_shared as cfg 
+- # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
+- # Checking market_data.core imports: it imports config. 
+-@@ -543,6 +545,21 @@ class JobLock:
+-         self.lock_blob_name = f"locks/{job_name}.lock"
+-         self.lease_client = None
+-         self.blob_client = None
+-+        self._renew_stop = threading.Event()
+-+        self._renew_thread: Optional[threading.Thread] = None
+-+
+-+    def _renew_loop(self) -> None:
+-+        interval = max(1, int(self.lease_duration * 0.5))
+-+        while not self._renew_stop.wait(timeout=interval):
+-+            if not self.lease_client:
+-+                continue
+-+            try:
+-+                self.lease_client.renew()
+-+                write_line(f"Lock renewed for {self.job_name}. Lease ID: {self.lease_client.id}")
+-+            except Exception as exc:
+-+                write_error(f"Lock renewal failed for {self.job_name}: {exc}")
+-+                # Fail fast: if we can't renew, we may lose exclusivity and corrupt shared state.
+-+                os._exit(1)
+- 
+-     def __enter__(self):
+-         write_line(f"Acquiring lock for {self.job_name}...")
+-@@ -568,23 +585,40 @@ class JobLock:
+-         # We need to access the underlying ContainerClient to get a BlobClient.
+-         
+-         try:
+--             # Access internal container client
+--             container_client = common_storage_client.container_client
+--             self.blob_client = container_client.get_blob_client(self.lock_blob_name)
+--             self.lease_client = BlobLeaseClient(self.blob_client)
+--             
+--             # 3. Acquire Lease
+--             self.lease_client.acquire(lease_duration=self.lease_duration)
+--             write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
+--             return self
+--             
+-+            # Access internal container client
+-+            container_client = common_storage_client.container_client
+-+            self.blob_client = container_client.get_blob_client(self.lock_blob_name)
+-+            self.lease_client = BlobLeaseClient(self.blob_client)
+-+
+-+            # 3. Acquire Lease
+-+            self.lease_client.acquire(lease_duration=self.lease_duration)
+-+            write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
+-+
+-+            # 4. Keep lease alive for long-running jobs
+-+            self._renew_stop.clear()
+-+            self._renew_thread = threading.Thread(
+-+                target=self._renew_loop,
+-+                name=f"job-lock-renew:{self.job_name}",
+-+                daemon=True,
+-+            )
+-+            self._renew_thread.start()
+-+            return self
+-+
+-+        except (ResourceExistsError, HttpResponseError) as e:
+-+            status_code = getattr(e, "status_code", None)
+-+            if status_code == 409:
+-+                write_warning(f"Lock already held for {self.job_name}. Skipping execution.")
+-+                raise SystemExit(0)
+-+            write_error(f"Failed to acquire lock for {self.job_name}: {e}")
+-+            raise
+-         except Exception as e:
+--            # If acquire fails (Conflict/409), it means locked.
+-             write_error(f"Failed to acquire lock for {self.job_name}: {e}")
+--            write_line("Another instance is likely running. Exiting.")
+--            sys.exit(0) # Graceful exit
+-+            raise
+- 
+-     def __exit__(self, exc_type, exc_val, exc_tb):
+-+        self._renew_stop.set()
+-+        if self._renew_thread and self._renew_thread.is_alive():
+-+            self._renew_thread.join(timeout=2)
+-         if self.lease_client:
+-             try:
+-                 write_line(f"Releasing lock for {self.job_name}...")
+-diff --git a/scripts/common/logging_config.py b/scripts/common/logging_config.py
+-index be85f69..8930354 100644
+---- a/scripts/common/logging_config.py
+-+++ b/scripts/common/logging_config.py
+-@@ -38,11 +38,11 @@ class JsonFormatter(logging.Formatter):
+-             
+-         return json.dumps(log_record)
+- 
+--def configure_logging(name: str = "root") -> logging.Logger:
+-+def configure_logging() -> logging.Logger:
+-     """
+-     Configures the root logger based on environment variables.
+--    ENV: LOG_FORMAT (JSON | TEXT) - Defaults to TEXT if missing (Safe default)
+--    ENV: LOG_LEVEL (DEBUG | INFO | WARNING | ERROR) - Defaults to INFO
+-+    ENV: LOG_FORMAT (JSON | TEXT) - Required
+-+    ENV: LOG_LEVEL (DEBUG | INFO | WARNING | ERROR) - Required
+-     """
+-     logger = logging.getLogger()
+-     
+-@@ -50,10 +50,29 @@ def configure_logging(name: str = "root") -> logging.Logger:
+-     if logger.handlers:
+-         return logger
+-         
+--    log_format = os.environ.get("LOG_FORMAT", "TEXT").upper()
+--    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+--    
+--    level = getattr(logging, log_level_str, logging.INFO)
+-+    log_format_raw = os.environ.get("LOG_FORMAT")
+-+    if log_format_raw is None or not log_format_raw.strip():
+-+        raise ValueError("LOG_FORMAT is required (set to JSON or TEXT).")
+-+    log_format = log_format_raw.strip().upper()
+-+
+-+    log_level_raw = os.environ.get("LOG_LEVEL")
+-+    if log_level_raw is None or not log_level_raw.strip():
+-+        raise ValueError("LOG_LEVEL is required (DEBUG|INFO|WARNING|ERROR).")
+-+    log_level_str = log_level_raw.strip().upper()
+-+
+-+    if log_format not in {"JSON", "TEXT"}:
+-+        raise ValueError(f"Invalid LOG_FORMAT={log_format_raw!r} (expected JSON or TEXT).")
+-+
+-+    try:
+-+        level = getattr(logging, log_level_str)
+-+    except AttributeError as exc:
+-+        raise ValueError(
+-+            f"Invalid LOG_LEVEL={log_level_raw!r} (expected DEBUG|INFO|WARNING|ERROR|CRITICAL)."
+-+        ) from exc
+-+    if not isinstance(level, int):
+-+        raise ValueError(
+-+            f"Invalid LOG_LEVEL={log_level_raw!r} (expected DEBUG|INFO|WARNING|ERROR|CRITICAL)."
+-+        )
+-     logger.setLevel(level)
+-     
+-     handler = logging.StreamHandler(sys.stdout)
+-diff --git a/scripts/earnings_data/bronze_earnings_data.py b/scripts/earnings_data/bronze_earnings_data.py
+-index aa4b029..f00c3e8 100644
+---- a/scripts/earnings_data/bronze_earnings_data.py
+-+++ b/scripts/earnings_data/bronze_earnings_data.py
+-@@ -117,6 +117,6 @@ async def main_async():
+-     mdc.write_line("Bronze Ingestion Complete.")
+- 
+- if __name__ == "__main__":
+--    job_name = 'bronze-earnings-job-bronze'
+-+    job_name = 'bronze-earnings-job'
+-     with mdc.JobLock(job_name):
+-         asyncio.run(main_async())
+-diff --git a/scripts/earnings_data/gold_earnings_data.py b/scripts/earnings_data/gold_earnings_data.py
+-index 51528ae..6db5a14 100644
+---- a/scripts/earnings_data/gold_earnings_data.py
+-+++ b/scripts/earnings_data/gold_earnings_data.py
+-@@ -268,7 +268,7 @@ if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.earnings_data.materialize_gold_earnings_by_date import main as by_date_main
+- 
+--    job_name = "feature-engineering-earnings"
+-+    job_name = "gold-earnings-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/earnings_data/materialize_gold_earnings_by_date.py b/scripts/earnings_data/materialize_gold_earnings_by_date.py
+-index 0be5951..a2bf73a 100644
+---- a/scripts/earnings_data/materialize_gold_earnings_by_date.py
+-+++ b/scripts/earnings_data/materialize_gold_earnings_by_date.py
+-@@ -126,13 +126,14 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_GOLD", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
+-+    if container_raw is None or not str(container_raw).strip():
+-         # Fallback to EARNINGS if GOLD is not set, though GOLD is expected
+--        container = os.environ.get("AZURE_CONTAINER_EARNINGS", "").strip()
+-+        container_raw = os.environ.get("AZURE_CONTAINER_EARNINGS")
+- 
+--    if not container:
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/earnings_data/materialize_silver_earnings_by_date.py b/scripts/earnings_data/materialize_silver_earnings_by_date.py
+-index 55e5759..5597af8 100644
+---- a/scripts/earnings_data/materialize_silver_earnings_by_date.py
+-+++ b/scripts/earnings_data/materialize_silver_earnings_by_date.py
+-@@ -122,9 +122,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_EARNINGS", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_EARNINGS")
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing earnings container. Set AZURE_CONTAINER_EARNINGS or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/earnings_data/silver_earnings_data.py b/scripts/earnings_data/silver_earnings_data.py
+-index b62127f..0b16c8d 100644
+---- a/scripts/earnings_data/silver_earnings_data.py
+-+++ b/scripts/earnings_data/silver_earnings_data.py
+-@@ -30,7 +30,7 @@ def process_file(blob_name):
+-         df_new = pd.read_json(BytesIO(raw_bytes), orient='records')
+-     except Exception as e:
+-         mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
+--        return
+-+        return False
+- 
+-     # 2. Clean/Normalize
+-     df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors='ignore')
+-@@ -62,13 +62,18 @@ def process_file(blob_name):
+-     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
+-     
+-     # 5. Write to Silver
+--    delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+-+    try:
+-+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+-+    except Exception as e:
+-+        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
+-+        return False
+-+
+-     mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+-+    return True
+- 
+- def main():
+-     mdc.log_environment_diagnostics()
+-     
+--    mdc.write_line("Listing Bronze files...")
+-     mdc.write_line("Listing Bronze files...")
+-     blobs = bronze_client.list_files(name_starts_with="earnings-data/")
+-     blob_list = [b for b in blobs if b.endswith('.json')]
+-@@ -79,8 +84,16 @@ def main():
+- 
+-     mdc.write_line(f"Found {len(blob_list)} files to process.")
+-     
+-+    processed = 0
+-+    failed = 0
+-     for blob_name in blob_list:
+--        process_file(blob_name)
+-+        if process_file(blob_name):
+-+            processed += 1
+-+        else:
+-+            failed += 1
+-+
+-+    mdc.write_line(f"Silver earnings job complete: processed={processed} failed={failed}")
+-+    return 0 if failed == 0 else 1
+- 
+- if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-diff --git a/scripts/finance_data/bronze_finance_data.py b/scripts/finance_data/bronze_finance_data.py
+-index 8186e7c..02b81eb 100644
+---- a/scripts/finance_data/bronze_finance_data.py
+-+++ b/scripts/finance_data/bronze_finance_data.py
+-@@ -166,6 +166,6 @@ async def main_async():
+-     mdc.write_line("Bronze Finance Ingestion Complete.")
+- 
+- if __name__ == "__main__":
+--    job_name = 'branze-finance-job-bronze'
+-+    job_name = 'bronze-finance-job'
+-     with mdc.JobLock(job_name):
+-         asyncio.run(main_async())
+-diff --git a/scripts/finance_data/gold_finance_data.py b/scripts/finance_data/gold_finance_data.py
+-index 54bd50a..1bd47e9 100644
+---- a/scripts/finance_data/gold_finance_data.py
+-+++ b/scripts/finance_data/gold_finance_data.py
+-@@ -609,7 +609,7 @@ if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.finance_data.materialize_gold_finance_by_date import main as by_date_main
+- 
+--    job_name = "feature-engineering-finance"
+-+    job_name = "gold-finance-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/finance_data/materialize_gold_finance_by_date.py b/scripts/finance_data/materialize_gold_finance_by_date.py
+-index 28069ad..2b0850f 100644
+---- a/scripts/finance_data/materialize_gold_finance_by_date.py
+-+++ b/scripts/finance_data/materialize_gold_finance_by_date.py
+-@@ -126,13 +126,14 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_GOLD", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
+-+    if container_raw is None or not str(container_raw).strip():
+-         # Fallback to FINANCE if GOLD is not set, as per some configs
+--        container = os.environ.get("AZURE_CONTAINER_FINANCE", "").strip()
+--        
+--    if not container:
+-+        container_raw = os.environ.get("AZURE_CONTAINER_FINANCE")
+-+
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_CONTAINER_FINANCE or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/finance_data/materialize_silver_finance_by_date.py b/scripts/finance_data/materialize_silver_finance_by_date.py
+-index b816096..8719d14 100644
+---- a/scripts/finance_data/materialize_silver_finance_by_date.py
+-+++ b/scripts/finance_data/materialize_silver_finance_by_date.py
+-@@ -117,9 +117,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_SILVER", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_SILVER")
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing silver container. Set AZURE_CONTAINER_SILVER or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/finance_data/silver_finance_data.py b/scripts/finance_data/silver_finance_data.py
+-index 3ae7349..d2eaf9d 100644
+---- a/scripts/finance_data/silver_finance_data.py
+-+++ b/scripts/finance_data/silver_finance_data.py
+-@@ -63,13 +63,13 @@ def process_blob(blob):
+-     
+-     parts = blob_name.split('/')
+-     if len(parts) < 3:
+--        return
+-+        return True
+-         
+-     folder_name = parts[1]
+-     filename = parts[2]
+-     
+-     if not filename.endswith('.csv'):
+--        return
+-+        return True
+-         
+-     # extract ticker
+-     # filename: ticker_suffix.csv
+-@@ -91,7 +91,7 @@ def process_blob(blob):
+-             
+-     if not suffix:
+-         mdc.write_line(f"Skipping unknown file format: {filename}")
+--        return
+-+        return True
+-         
+-     ticker = filename.replace(f"_{suffix}.csv", "")
+-     
+-@@ -109,7 +109,7 @@ def process_blob(blob):
+-     if silver_lm and (silver_lm > bronze_lm):
+-         # Silver is newer than Bronze (already processed)
+-         # mdc.write_line(f"Skipping {ticker}/{folder_name} (Silver up to date)")
+--        return
+-+        return True
+- 
+-     mdc.write_line(f"Processing {ticker} {folder_name}...")
+-     
+-@@ -134,9 +134,10 @@ def process_blob(blob):
+-         
+-         delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
+-         mdc.write_line(f"Updated Silver {silver_path}")
+--        
+-+        return True
+-     except Exception as e:
+-         mdc.write_error(f"Failed to process {blob_name}: {e}")
+-+        return False
+- 
+- def main():
+-     mdc.log_environment_diagnostics()
+-@@ -145,18 +146,24 @@ def main():
+-     # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
+-     blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
+-     
+--    count = 0 
+-+    total = 0
+-+    ok_or_skipped = 0
+-+    failed = 0
+-     for blob in blobs:
+--        process_blob(blob)
+--        count += 1
+-+        total += 1
+-+        if process_blob(blob):
+-+            ok_or_skipped += 1
+-+        else:
+-+            failed += 1
+-         
+--    mdc.write_line(f"Processed {count} blobs.")
+-+    mdc.write_line(f"Processed {total} blobs (ok_or_skipped={ok_or_skipped}, failed={failed}).")
+-+    return 0 if failed == 0 else 1
+- 
+- if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.finance_data.materialize_silver_finance_by_date import main as by_date_main
+- 
+--    job_name = "branze-finance-job-silver"
+-+    job_name = "silver-finance-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/market_data/bronze_market_data.py b/scripts/market_data/bronze_market_data.py
+-index 3b5aa32..26b8539 100644
+---- a/scripts/market_data/bronze_market_data.py
+-+++ b/scripts/market_data/bronze_market_data.py
+-@@ -123,6 +123,6 @@ async def main_async():
+-     mdc.write_line("Bronze Ingestion Complete.")
+- 
+- if __name__ == "__main__":
+--    job_name = 'bronze-market-job-bronze'
+-+    job_name = 'bronze-market-job'
+-     with mdc.JobLock(job_name):
+-         asyncio.run(main_async())
+-diff --git a/scripts/market_data/gold_market_data.py b/scripts/market_data/gold_market_data.py
+-index c6d09f4..7e13a25 100644
+---- a/scripts/market_data/gold_market_data.py
+-+++ b/scripts/market_data/gold_market_data.py
+-@@ -286,7 +286,7 @@ if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.market_data.materialize_gold_market_by_date import main as by_date_main
+- 
+--    job_name = "feature-engineering-market"
+-+    job_name = "gold-market-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/market_data/materialize_gold_market_by_date.py b/scripts/market_data/materialize_gold_market_by_date.py
+-index 82ab8c7..70ce22a 100644
+---- a/scripts/market_data/materialize_gold_market_by_date.py
+-+++ b/scripts/market_data/materialize_gold_market_by_date.py
+-@@ -126,9 +126,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_MARKET", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_MARKET")
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing market container. Set AZURE_CONTAINER_MARKET or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/market_data/materialize_silver_market_by_date.py b/scripts/market_data/materialize_silver_market_by_date.py
+-index 4077572..5ecfa16 100644
+---- a/scripts/market_data/materialize_silver_market_by_date.py
+-+++ b/scripts/market_data/materialize_silver_market_by_date.py
+-@@ -122,9 +122,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_SILVER", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_SILVER")
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing silver container. Set AZURE_CONTAINER_SILVER or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/market_data/silver_market_data.py b/scripts/market_data/silver_market_data.py
+-index 3618dc3..18b42da 100644
+---- a/scripts/market_data/silver_market_data.py
+-+++ b/scripts/market_data/silver_market_data.py
+-@@ -28,7 +28,7 @@ def process_file(blob_name):
+-         df_new = pd.read_csv(BytesIO(raw_bytes))
+-     except Exception as e:
+-         mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
+--        return
+-+        return False
+- 
+-     # 2. Clean/Normalize
+-     if "Adj Close" in df_new.columns:
+-@@ -70,8 +70,14 @@ def process_file(blob_name):
+-     df_merged = df_merged.drop(columns=[c for c in cols_to_drop if c in df_merged.columns])
+- 
+-     # 7. Write to Silver
+--    delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
+-+    try:
+-+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
+-+    except Exception as e:
+-+        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
+-+        return False
+-+
+-     mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+-+    return True
+- 
+- def main():
+-     mdc.log_environment_diagnostics()
+-@@ -93,15 +99,23 @@ def main():
+-         blob_list = [b for b in blob_list if any(s in b for s in cfg.DEBUG_SYMBOLS)]
+- 
+-     mdc.write_line(f"Found {len(blob_list)} files to process.")
+--    
+-+
+-+    processed = 0
+-+    failed = 0
+-     for blob_name in blob_list:
+--        process_file(blob_name)
+-+        if process_file(blob_name):
+-+            processed += 1
+-+        else:
+-+            failed += 1
+-+
+-+    mdc.write_line(f"Silver market job complete: processed={processed} failed={failed}")
+-+    return 0 if failed == 0 else 1
+- 
+- if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.market_data.materialize_silver_market_by_date import main as by_date_main
+- 
+--    job_name = "bronze-market-job-silver"
+-+    job_name = "silver-market-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/price_target_data/bronze_price_target_data.py b/scripts/price_target_data/bronze_price_target_data.py
+-index 631a75f..eea4242 100644
+---- a/scripts/price_target_data/bronze_price_target_data.py
+-+++ b/scripts/price_target_data/bronze_price_target_data.py
+-@@ -118,6 +118,6 @@ async def main_async():
+-     mdc.write_line("Bronze Ingestion Complete.")
+- 
+- if __name__ == "__main__":
+--    job_name = 'bronze-price-target-job-bronze'
+-+    job_name = 'bronze-price-target-job'
+-     with mdc.JobLock(job_name):
+-         asyncio.run(main_async())
+-diff --git a/scripts/price_target_data/gold_price_target_data.py b/scripts/price_target_data/gold_price_target_data.py
+-index b7e4020..36e0750 100644
+---- a/scripts/price_target_data/gold_price_target_data.py
+-+++ b/scripts/price_target_data/gold_price_target_data.py
+-@@ -302,7 +302,7 @@ if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.price_target_data.materialize_gold_price_target_by_date import main as by_date_main
+- 
+--    job_name = "feature-engineering-targets"
+-+    job_name = "gold-price-target-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/price_target_data/materialize_gold_price_target_by_date.py b/scripts/price_target_data/materialize_gold_price_target_by_date.py
+-index c2710ec..d45dca9 100644
+---- a/scripts/price_target_data/materialize_gold_price_target_by_date.py
+-+++ b/scripts/price_target_data/materialize_gold_price_target_by_date.py
+-@@ -122,13 +122,14 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_GOLD", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
+-+    if container_raw is None or not str(container_raw).strip():
+-         # Fallback to TARGETS if GOLD is not set
+--        container = os.environ.get("AZURE_CONTAINER_TARGETS", "").strip()
+-+        container_raw = os.environ.get("AZURE_CONTAINER_TARGETS")
+- 
+--    if not container:
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/price_target_data/materialize_silver_price_target_by_date.py b/scripts/price_target_data/materialize_silver_price_target_by_date.py
+-index 6b4cefa..453c5e9 100644
+---- a/scripts/price_target_data/materialize_silver_price_target_by_date.py
+-+++ b/scripts/price_target_data/materialize_silver_price_target_by_date.py
+-@@ -122,9 +122,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+-     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+-     args = parser.parse_args(argv)
+- 
+--    container = (args.container or os.environ.get("AZURE_CONTAINER_TARGETS", "")).strip()
+--    if not container:
+-+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_TARGETS")
+-+    if container_raw is None or not str(container_raw).strip():
+-         raise ValueError("Missing targets container. Set AZURE_CONTAINER_TARGETS or pass --container.")
+-+    container = str(container_raw).strip()
+- 
+-     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
+-     if max_tickers is not None and max_tickers <= 0:
+-diff --git a/scripts/price_target_data/silver_price_target_data.py b/scripts/price_target_data/silver_price_target_data.py
+-index 400ff5a..ac2b907 100644
+---- a/scripts/price_target_data/silver_price_target_data.py
+-+++ b/scripts/price_target_data/silver_price_target_data.py
+-@@ -20,7 +20,7 @@ silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
+- def process_blob(blob):
+-     blob_name = blob['name'] # price-target-data/{symbol}.parquet
+-     if not blob_name.endswith('.parquet'):
+--        return
+-+        return True
+-         
+-     ticker = blob_name.replace('price-target-data/', '').replace('.parquet', '')
+-     
+-@@ -32,7 +32,7 @@ def process_blob(blob):
+-     silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
+-     
+-     if silver_lm and (silver_lm > bronze_lm):
+--        return
+-+        return True
+- 
+-     mdc.write_line(f"Processing {ticker}...")
+-     
+-@@ -99,9 +99,10 @@ def process_blob(blob):
+-         # Write
+-         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path)
+-         mdc.write_line(f"Updated Silver {ticker}")
+--
+-+        return True
+-     except Exception as e:
+-         mdc.write_error(f"Failed to process {ticker}: {e}")
+-+        return False
+- 
+- def main():
+-     mdc.log_environment_diagnostics()
+-@@ -111,14 +112,22 @@ def main():
+-     blob_list = list(blobs)
+-     mdc.write_line(f"Found {len(blob_list)} blobs. Processing...")
+-     
+-+    ok_or_skipped = 0
+-+    failed = 0
+-     for blob in blob_list:
+--        process_blob(blob)
+-+        if process_blob(blob):
+-+            ok_or_skipped += 1
+-+        else:
+-+            failed += 1
+-+
+-+    mdc.write_line(f"Silver price target job complete: ok_or_skipped={ok_or_skipped} failed={failed}")
+-+    return 0 if failed == 0 else 1
+- 
+- if __name__ == "__main__":
+-     from scripts.common.by_date_pipeline import run_partner_then_by_date
+-     from scripts.price_target_data.materialize_silver_price_target_by_date import main as by_date_main
+- 
+--    job_name = "bronze-price-target-job-silver"
+-+    job_name = "silver-price-target-job"
+-     raise SystemExit(
+-         run_partner_then_by_date(
+-             job_name=job_name,
+-diff --git a/scripts/ranking/runner.py b/scripts/ranking/runner.py
+-index b82b2fa..59e663d 100644
+---- a/scripts/ranking/runner.py
+-+++ b/scripts/ranking/runner.py
+-@@ -158,7 +158,8 @@ def _get_market_feature_tickers(
+- def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
+-     from scripts.common.pipeline import DataPaths
+- 
+--    by_date_path = os.environ.get("RANKING_MARKET_BY_DATE_DELTA_PATH", "").strip().lstrip("/")
+-+    by_date_path_raw = os.environ.get("RANKING_MARKET_BY_DATE_DELTA_PATH")
+-+    by_date_path = by_date_path_raw.strip().lstrip("/") if by_date_path_raw else None
+-     if by_date_path:
+-         by_date = load_delta(cfg.AZURE_CONTAINER_MARKET, by_date_path)
+-         if by_date is not None and not by_date.empty:
+-@@ -295,7 +296,8 @@ def _log_strategy_configuration(strategy: AbstractStrategy, ranking_container: s
+-     for source_name in strategy.sources_used:
+-         source = SOURCE_LOOKUP.get(source_name, {})
+-         container = source.get("container")
+--        base_path = os.environ.get(source.get("path_env", ""))
+-+        path_env = source.get("path_env")
+-+        base_path = os.environ.get(path_env) if path_env else None
+-         suffix = "/<symbol>" if source.get("per_symbol") else ""
+-         source_specs.append(f"{source_name}={_format_value(container)}/{_format_value(base_path)}{suffix}")
+- 
+-diff --git a/scripts/ranking/signals.py b/scripts/ranking/signals.py
+-index bba8907..23c9a68 100644
+---- a/scripts/ranking/signals.py
+-+++ b/scripts/ranking/signals.py
+-@@ -269,9 +269,12 @@ def materialize_signals_for_year_month(
+-         predicate=predicate,
+-     )
+- 
+--    postgres_dsn = os.environ.get("POSTGRES_DSN", "").strip()
+-+    postgres_dsn_raw = os.environ.get("POSTGRES_DSN")
+-+    postgres_dsn = postgres_dsn_raw.strip() if postgres_dsn_raw else ""
+-     if postgres_dsn:
+--        required_raw = os.environ.get("POSTGRES_SIGNALS_WRITE_REQUIRED", "true")
+-+        required_raw = os.environ.get("POSTGRES_SIGNALS_WRITE_REQUIRED")
+-+        if required_raw is None or not str(required_raw).strip():
+-+            raise ValueError("POSTGRES_SIGNALS_WRITE_REQUIRED is required when POSTGRES_DSN is set.")
+-         required = str(required_raw).strip().lower() not in {"0", "false", "no", "off"}
+-         try:
+-             from scripts.ranking.postgres_signals import write_signals_for_year_month
+-diff --git a/tests/backtest/test_phase3_service_api.py b/tests/backtest/test_phase3_service_api.py
+-index 41602b3..a7d24ab 100644
+---- a/tests/backtest/test_phase3_service_api.py
+-+++ b/tests/backtest/test_phase3_service_api.py
+-@@ -83,7 +83,7 @@ def test_service_rejects_local_data_when_disabled(tmp_path: Path, monkeypatch: p
+-     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+-     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+-     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
+--    monkeypatch.delenv("BACKTEST_ALLOW_LOCAL_DATA", raising=False)
+-+    monkeypatch.setenv("BACKTEST_ALLOW_LOCAL_DATA", "false")
+-     monkeypatch.delenv("BACKTEST_ALLOWED_DATA_DIRS", raising=False)
+- 
+-     app = create_app()
+-@@ -180,7 +180,7 @@ def test_service_serves_ui_when_dist_dir_present(tmp_path: Path, monkeypatch: py
+- def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+-     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+-     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+--    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+-+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
+-     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
+- 
+-     app = create_app()
+-@@ -194,7 +194,7 @@ def test_service_requires_api_key_when_configured(tmp_path: Path, monkeypatch: p
+- def test_service_honors_custom_api_key_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+-     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+-     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+--    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+-+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
+-     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
+-     monkeypatch.setenv("BACKTEST_API_KEY_HEADER", "X-Backtest-Key")
+- 
+-diff --git a/tests/conftest.py b/tests/conftest.py
+-index 81cb285..33f2aa3 100644
+---- a/tests/conftest.py
+-+++ b/tests/conftest.py
+-@@ -3,6 +3,8 @@ import os
+- from unittest.mock import patch, MagicMock
+- 
+- os.environ.setdefault("DISABLE_DOTENV", "true")
+-+os.environ.setdefault("LOG_FORMAT", "JSON")
+-+os.environ.setdefault("LOG_LEVEL", "INFO")
+- 
+- # Mock Environment Variables for Testing (Set fallbacks if missing)
+- # Note: NASDAQ_API_KEY should be in .env for actual data fetching.
+-@@ -12,6 +14,35 @@ os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "test_account")
+- os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net")
+- os.environ.setdefault("HEADLESS_MODE", "True")
+- os.environ.setdefault("TEST_MODE", "True")
+-+os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "30")
+-+os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")
+-+os.environ.setdefault("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS", "259200")
+-+os.environ.setdefault("SYSTEM_HEALTH_ARM_API_VERSION", "2023-05-01")
+-+os.environ.setdefault("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5.0")
+-+os.environ.setdefault("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED", "false")
+-+os.environ.setdefault("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION", "2022-10-01")
+-+os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED", "false")
+-+os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", "2018-01-01")
+-+os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", "15")
+-+os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", "PT1M")
+-+os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", "Average")
+-+os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "false")
+-+os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", "5.0")
+-+os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", "15")
+-+os.environ.setdefault("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "3")
+-+
+-+os.environ.setdefault("BACKTEST_OUTPUT_DIR", "/tmp/backtest_results")
+-+os.environ.setdefault("BACKTEST_DB_PATH", "/tmp/backtest_results/runs.sqlite3")
+-+os.environ.setdefault("BACKTEST_MAX_CONCURRENT", "1")
+-+os.environ.setdefault("BACKTEST_API_KEY_HEADER", "X-API-Key")
+-+os.environ.setdefault("BACKTEST_AUTH_MODE", "none")
+-+os.environ.setdefault("BACKTEST_ALLOW_LOCAL_DATA", "false")
+-+os.environ.setdefault(
+-+    "BACKTEST_ADLS_CONTAINER_ALLOWLIST",
+-+    "bronze,silver,gold,platinum,ranking-data,common,test-container",
+-+)
+-+os.environ.setdefault("BACKTEST_RUN_STORE_MODE", "sqlite")
+-+os.environ.setdefault("BACKTEST_CSP", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+- 
+- # Container Mocks
+- containers = [
+-diff --git a/tests/monitoring/test_system_health.py b/tests/monitoring/test_system_health.py
+-index 0416e45..39bb015 100644
+---- a/tests/monitoring/test_system_health.py
+-+++ b/tests/monitoring/test_system_health.py
+-@@ -70,7 +70,7 @@ def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.M
+-     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+-     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+-     monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
+--    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+-+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "none")
+-     monkeypatch.delenv("BACKTEST_OIDC_ISSUER", raising=False)
+-     monkeypatch.delenv("BACKTEST_OIDC_AUDIENCE", raising=False)
+- 
+-@@ -86,7 +86,7 @@ def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypa
+-     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
+-     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
+-     monkeypatch.setenv("BACKTEST_API_KEY", "secret")
+--    monkeypatch.delenv("BACKTEST_AUTH_MODE", raising=False)
+-+    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
+-     monkeypatch.delenv("BACKTEST_OIDC_ISSUER", raising=False)
+-     monkeypatch.delenv("BACKTEST_OIDC_AUDIENCE", raising=False)
+- 
+diff --git a/docs/signoffs/implementation_report_remove_defaults.md b/docs/signoffs/implementation_report_remove_defaults.md
+index 7373b89..d91a10d 100644
+--- a/docs/signoffs/implementation_report_remove_defaults.md
++++ b/docs/signoffs/implementation_report_remove_defaults.md
+@@ -4,6 +4,7 @@
+ - Removed configuration/environment fallback defaults (notably `os.environ.get(..., default)` patterns) to enforce explicit runtime configuration.
+ - Hardened Azure Container Apps Jobs reliability: lease renewal for distributed locks, standardized job identity strings, and non-zero exit codes on failed Silver processing.
+ - Updated deploy manifests + CI to set newly-required env vars; added deploy-time validation for `BACKTEST_CSP`.
++- Updated lockfiles to include Postgres realtime dependency (`asyncpg`) so CI and Docker builds don’t fail during import.
+ 
+ **Out of scope**
+ - Removing all defaults repo-wide (function parameter defaults and algorithmic constants) beyond config/env defaults.
+@@ -40,6 +41,7 @@
+ - Container Apps Jobs scripts + shared runtime: `scripts/common/*`, `scripts/*/*_*.py`, `scripts/ranking/*`
+ - Backtest service + monitoring: `backtest/service/*`, `monitoring/*`
+ - Deploy/CI/config templates: `deploy/job_*.yaml`, `deploy/app_backtest_api.yaml`, `.github/workflows/*`, `.env.template`
++- Dependency lockfiles: `requirements.lock.txt`, `requirements-dev.lock.txt`
+ - Tests: `tests/conftest.py`, `tests/backtest/test_phase3_service_api.py`, `tests/monitoring/test_system_health.py`
+ 
+ **Key Interfaces**
+diff --git a/docs/signoffs/qa_verification_report_remove_defaults.md b/docs/signoffs/qa_verification_report_remove_defaults.md
+index e7ce90a..8da72cd 100644
+--- a/docs/signoffs/qa_verification_report_remove_defaults.md
++++ b/docs/signoffs/qa_verification_report_remove_defaults.md
+@@ -4,6 +4,7 @@
+ - **Overall confidence level:** High
+ - **Scope verified:** removal of env/config fallback defaults + Container Apps Jobs reliability hardening + deploy/CI alignment for required env vars.
+ - **Top remaining risks:** no live Azure Job log validation in this run; ambiguity remains on whether “remove defaults” includes all function parameter defaults and algorithm constants.
++- **CI note:** addressed `ModuleNotFoundError: asyncpg` in GitHub Actions by adding `asyncpg` to `requirements.lock.txt` / `requirements-dev.lock.txt` (Dockerfiles also use `requirements.lock.txt`).
+ 
+ ## 2. Test Matrix (Functionality Coverage)
+ | Feature/Flow | Risk | Test Type (Unit/Int/E2E/Manual) | Local | Dev | Prod | Status | Notes |
+@@ -56,6 +57,7 @@
+ ## 6. CI/CD Verification (If applicable)
+ - Reviewed and updated `.github/workflows/run_tests.yml` to set newly-required env vars (`LOG_LEVEL`, `LOG_FORMAT`, `AZURE_CONTAINER_GOLD`, backtest/system health env).
+ - Reviewed and updated `.github/workflows/deploy.yml` to validate `BACKTEST_CSP` secret before deploy.
++- Updated `requirements.lock.txt` / `requirements-dev.lock.txt` to include `asyncpg` so CI/imports succeed when collecting backtest/monitoring tests.
+ 
+ ## 7. Release Readiness Gate
+ - **Decision:** Pass
+diff --git a/requirements-dev.lock.txt b/requirements-dev.lock.txt
+index 703212f..6f4e202 100644
+--- a/requirements-dev.lock.txt
++++ b/requirements-dev.lock.txt
+@@ -1,6 +1,7 @@
+ annotated-types==0.7.0
+ anyio==4.12.1
+ arro3-core==0.6.5
++asyncpg==0.30.0
+ azure-core==1.38.0
+ azure-identity==1.15.0
+ azure-storage-blob==12.24.0
+@@ -60,4 +61,5 @@ typing_extensions==4.15.0
+ tzdata==2025.3
+ urllib3==2.6.3
+ uvicorn==0.34.0
++websockets==14.2
+ wrapt==2.0.1
+diff --git a/requirements.lock.txt b/requirements.lock.txt
+index 71b5fd6..a04e13f 100644
+--- a/requirements.lock.txt
++++ b/requirements.lock.txt
+@@ -1,6 +1,7 @@
+ annotated-types==0.7.0
+ anyio==4.12.1
+ arro3-core==0.6.5
++asyncpg==0.30.0
+ azure-core==1.38.0
+ azure-identity==1.15.0
+ azure-storage-blob==12.24.0
+@@ -54,4 +55,5 @@ typing_extensions==4.15.0
+ tzdata==2025.3
+ urllib3==2.6.3
+ uvicorn==0.34.0
++websockets==14.2
+ wrapt==2.0.1

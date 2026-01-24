@@ -30,7 +30,7 @@ def process_file(blob_name):
         df_new = pd.read_json(BytesIO(raw_bytes), orient='records')
     except Exception as e:
         mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
-        return
+        return False
 
     # 2. Clean/Normalize
     df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors='ignore')
@@ -62,13 +62,18 @@ def process_file(blob_name):
     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
     
     # 5. Write to Silver
-    delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+    try:
+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+    except Exception as e:
+        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
+        return False
+
     mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+    return True
 
 def main():
     mdc.log_environment_diagnostics()
     
-    mdc.write_line("Listing Bronze files...")
     mdc.write_line("Listing Bronze files...")
     blobs = bronze_client.list_files(name_starts_with="earnings-data/")
     blob_list = [b for b in blobs if b.endswith('.json')]
@@ -79,8 +84,16 @@ def main():
 
     mdc.write_line(f"Found {len(blob_list)} files to process.")
     
+    processed = 0
+    failed = 0
     for blob_name in blob_list:
-        process_file(blob_name)
+        if process_file(blob_name):
+            processed += 1
+        else:
+            failed += 1
+
+    mdc.write_line(f"Silver earnings job complete: processed={processed} failed={failed}")
+    return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
     from asset_allocation.core.by_date_pipeline import run_partner_then_by_date

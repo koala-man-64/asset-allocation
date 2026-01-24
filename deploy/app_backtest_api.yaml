@@ -32,8 +32,30 @@ properties:
       env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
+      - name: AZURE_CONTAINER_BRONZE
+        value: "${AZURE_CONTAINER_BRONZE}"
+      - name: AZURE_CONTAINER_SILVER
+        value: "${AZURE_CONTAINER_SILVER}"
+      - name: AZURE_CONTAINER_GOLD
+        value: "${AZURE_CONTAINER_GOLD}"
+      - name: AZURE_CONTAINER_PLATINUM
+        value: "${AZURE_CONTAINER_PLATINUM}"
+      - name: AZURE_CONTAINER_MARKET
+        value: "${AZURE_CONTAINER_MARKET}"
+      - name: AZURE_CONTAINER_FINANCE
+        value: "${AZURE_CONTAINER_FINANCE}"
+      - name: AZURE_CONTAINER_EARNINGS
+        value: "${AZURE_CONTAINER_EARNINGS}"
+      - name: AZURE_CONTAINER_TARGETS
+        value: "${AZURE_CONTAINER_TARGETS}"
+      - name: AZURE_CONTAINER_RANKING
+        value: "${AZURE_CONTAINER_RANKING}"
+      - name: AZURE_CONTAINER_COMMON
+        value: "${AZURE_CONTAINER_COMMON}"
       - name: BACKTEST_API_KEY
         secretRef: api-key
+      - name: BACKTEST_API_KEY_HEADER
+        value: "X-API-Key"
       - name: BACKTEST_POSTGRES_DSN
         secretRef: backtest-pg-dsn
       - name: BACKTEST_AUTH_MODE
@@ -50,6 +72,12 @@ properties:
         value: "${BACKTEST_OIDC_REQUIRED_ROLES}"
       - name: BACKTEST_CSP
         value: "${BACKTEST_CSP}"
+      - name: SYSTEM_HEALTH_TTL_SECONDS
+        value: "30"
+      - name: SYSTEM_HEALTH_MAX_AGE_SECONDS
+        value: "129600"
+      - name: SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS
+        value: "259200"
       - name: BACKTEST_UI_AUTH_MODE
         value: "${BACKTEST_UI_AUTH_MODE}"
       - name: BACKTEST_UI_OIDC_CLIENT_ID

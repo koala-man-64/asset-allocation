@@ -193,7 +193,6 @@ def main() -> int:
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
     mdc.write_line(f"Silver finance ingest complete: processed={processed}, skipped={skipped}, failed={failed}")
-
     return 0 if failed == 0 else 1
 
 if __name__ == "__main__":

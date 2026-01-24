@@ -122,13 +122,14 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
     args = parser.parse_args(argv)
 
-    container = (args.container or os.environ.get("AZURE_CONTAINER_GOLD", "")).strip()
-    if not container:
+    container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
+    if container_raw is None or not str(container_raw).strip():
         # Fallback to TARGETS if GOLD is not set
-        container = os.environ.get("AZURE_CONTAINER_TARGETS", "").strip()
+        container_raw = os.environ.get("AZURE_CONTAINER_TARGETS")
 
-    if not container:
+    if container_raw is None or not str(container_raw).strip():
         raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or pass --container.")
+    container = str(container_raw).strip()
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
     if max_tickers is not None and max_tickers <= 0:

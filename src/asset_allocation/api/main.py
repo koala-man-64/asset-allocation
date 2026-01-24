@@ -24,7 +24,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "env": os.environ.get("ASSET_ALLOCATION_ENV", "dev")}
+    return {"status": "ok", "env": os.environ.get("ASSET_ALLOCATION_ENV")}
 
 # Include Routers
 app.include_router(data.router, prefix="/data", tags=["Data"])

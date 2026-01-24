@@ -10,7 +10,10 @@ init(autoreset=True)
 
 # Load environment variables from .env file for local development.
 # CI/tests can disable this via DISABLE_DOTENV=true.
-if os.environ.get("DISABLE_DOTENV", "").strip().lower() not in {"1", "true", "yes"}:
+_disable_dotenv_raw = os.environ.get("DISABLE_DOTENV")
+if _disable_dotenv_raw is None or not _disable_dotenv_raw.strip():
+    raise ValueError("DISABLE_DOTENV is required (set to true to disable local .env loading).")
+if _disable_dotenv_raw.strip().lower() not in {"1", "true", "yes"}:
     load_dotenv(override=False)
 
 # --- Constants & Configuration ---
@@ -20,6 +23,15 @@ def require_env(name: str) -> str:
     if not value:
         raise ValueError(f"Environment variable '{name}' is strictly required but not set.")
     return value
+
+
+def require_env_bool(name: str) -> bool:
+    raw = require_env(name).strip().lower()
+    if raw in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean value for {name}: {raw!r}")
 
 def _require_env_path(name: str) -> Path:
     return Path(require_env(name))
@@ -46,9 +58,9 @@ AZURE_CONTAINER_COMMON = require_env("AZURE_CONTAINER_COMMON")
 
 # Optional lake/medallion containers (may be unused depending on deployment contract).
 # Kept optional to preserve backward compatibility for environments that still use per-domain containers.
-AZURE_CONTAINER_BRONZE = os.environ.get("AZURE_CONTAINER_BRONZE")
-AZURE_CONTAINER_SILVER = os.environ.get("AZURE_CONTAINER_SILVER")
-AZURE_CONTAINER_GOLD = os.environ.get("AZURE_CONTAINER_GOLD")
+AZURE_CONTAINER_BRONZE = require_env("AZURE_CONTAINER_BRONZE")
+AZURE_CONTAINER_SILVER = require_env("AZURE_CONTAINER_SILVER")
+AZURE_CONTAINER_GOLD = require_env("AZURE_CONTAINER_GOLD")
 
 # Yahoo Credentials
 YAHOO_USERNAME = os.environ.get("YAHOO_USERNAME")
@@ -78,13 +90,7 @@ DEBUG_SYMBOLS = ['AAPL', 'MSFT', 'F', 'BAC']
 
 # Playwright Configuration
 # STRICT ENFORCEMENT: HEADLESS_MODE must be explicit (True/False)
-_headless_str = os.environ.get("HEADLESS_MODE")
-if _headless_str is not None:
-    _headless_str = _headless_str.lower()
-
-if _headless_str not in ['true', 'false', '', None]:
-    raise ValueError("HEADLESS_MODE: " + _headless_str)
-HEADLESS_MODE = _headless_str == "true"
+HEADLESS_MODE = require_env_bool("HEADLESS_MODE")
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
