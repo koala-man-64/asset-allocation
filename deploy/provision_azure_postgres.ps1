@@ -32,17 +32,31 @@ param(
   # - "None" keeps public access but does not create any default firewall rule.
   # - Add firewall rules explicitly via -AllowAzureServices / -AllowIpRangeStart/-End.
   [ValidateSet("Disabled", "Enabled", "All", "None")]
-  [string]$PublicAccess = "None",
+  [string]$PublicAccess = "Enabled",
 
-  [switch]$AllowAzureServices,
+  [bool]$AllowAzureServices = $true,
   [string]$AllowIpRangeStart = "",
   [string]$AllowIpRangeEnd = "",
+  [bool]$AllowCurrentClientIp = $true,
 
   [switch]$EmitSecrets
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+function Get-PublicIp {
+  try {
+    $ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content.Trim()
+    Write-Host "Detected public IP: $ip"
+    return $ip
+  }
+  catch {
+    Write-Warning "Failed to detect public IP: $_"
+    return $null
+  }
+}
+
 
 function Assert-CommandExists {
   param([Parameter(Mandatory = $true)][string]$Name)
@@ -69,9 +83,9 @@ function Invoke-AzCapture {
   )
   $output = & az @Args 2>&1
   return [pscustomobject]@{
-    Label = $Label
+    Label   = $Label
     Success = [bool]$?
-    Output = ($output | Out-String)
+    Output  = ($output | Out-String)
   }
 }
 
@@ -202,9 +216,9 @@ if (-not $serverExists) {
 
   $candidateLocations = @($Location) + $LocationFallback
   $candidateLocations = $candidateLocations |
-    ForEach-Object { if ($null -eq $_) { "" } else { $_.Trim() } } |
-    Where-Object { $_ } |
-    Select-Object -Unique
+  ForEach-Object { if ($null -eq $_) { "" } else { $_.Trim() } } |
+  Where-Object { $_ } |
+  Select-Object -Unique
 
   $created = $false
   foreach ($loc in $candidateLocations) {
@@ -245,7 +259,8 @@ if (-not $serverExists) {
   if (-not $created) {
     throw "Failed to create Postgres Flexible Server '$ServerName' in any candidate region: $($candidateLocations -join ', ')"
   }
-} else {
+}
+else {
   Write-Host "Server already exists; skipping create."
 }
 
@@ -268,7 +283,8 @@ $dbShow = Invoke-AzCapture -Label "postgres flexible-server db show" -Args @(
 )
 if ($dbShow.Success) {
   Write-Host "Database already exists; skipping create."
-} else {
+}
+else {
   $dbCreate = Invoke-AzCapture -Label "postgres flexible-server db create" -Args @(
     "postgres", "flexible-server", "db", "create",
     "--resource-group", $ResourceGroup,
@@ -280,7 +296,8 @@ if ($dbShow.Success) {
   if (-not $dbCreate.Success) {
     if (Test-AzAlreadyExistsError -Text $dbCreate.Output) {
       Write-Host "Database already exists; skipping create."
-    } else {
+    }
+    else {
       throw ("Azure CLI command failed: $($dbCreate.Label)`n$($dbCreate.Output)")
     }
   }
@@ -288,16 +305,7 @@ if ($dbShow.Success) {
 
 if ($AllowAzureServices) {
   Write-Host "Ensuring firewall rule allows Azure services (0.0.0.0)..."
-  $fwShow = Invoke-AzCapture -Label "postgres flexible-server firewall-rule show allow-azure-services" -Args @(
-    "postgres", "flexible-server", "firewall-rule", "show",
-    "--resource-group", $ResourceGroup,
-    "--name", $ServerName,
-    "--rule-name", "allow-azure-services",
-    "--only-show-errors",
-    "-o", "none"
-  )
-  if (-not $fwShow.Success) {
-    Invoke-Az -Label "postgres flexible-server firewall-rule create allow-azure-services" -Args @(
+  Invoke-Az -Label "postgres flexible-server firewall-rule create allow-azure-services" -Args @(
       "postgres", "flexible-server", "firewall-rule", "create",
       "--resource-group", $ResourceGroup,
       "--name", $ServerName,
@@ -307,9 +315,6 @@ if ($AllowAzureServices) {
       "--only-show-errors",
       "-o", "none"
     )
-  } else {
-    Write-Host "Firewall rule already exists; skipping."
-  }
 }
 
 if ($AllowIpRangeStart) {
@@ -334,8 +339,26 @@ if ($AllowIpRangeStart) {
       "--only-show-errors",
       "-o", "none"
     )
-  } else {
+  }
+  else {
     Write-Host "Firewall rule already exists; skipping."
+  }
+}
+
+if ($AllowCurrentClientIp) {
+  $myIp = Get-PublicIp
+  if ($myIp) {
+    Write-Host "Ensuring firewall rule allows current client IP ($myIp)..."
+    Invoke-Az -Label "postgres flexible-server firewall-rule create allow-current-client-ip" -Args @(
+      "postgres", "flexible-server", "firewall-rule", "create",
+      "--resource-group", $ResourceGroup,
+      "--name", $ServerName,
+      "--rule-name", "allow-current-client-ip",
+      "--start-ip-address", $myIp,
+      "--end-ip-address", $myIp,
+      "--only-show-errors",
+      "-o", "none"
+    )
   }
 }
 
@@ -380,14 +403,34 @@ ALTER ROLE $BacktestServiceUser WITH PASSWORD '$BacktestServicePassword';
 
 GRANT CONNECT ON DATABASE $DatabaseName TO $RankingWriterUser, $BacktestServiceUser;
 
+  CREATE SCHEMA IF NOT EXISTS gold;
+  CREATE SCHEMA IF NOT EXISTS platinum;
+
 GRANT USAGE, CREATE ON SCHEMA ranking TO $RankingWriterUser;
+GRANT USAGE, CREATE ON SCHEMA gold TO $RankingWriterUser;
+GRANT USAGE, CREATE ON SCHEMA platinum TO $RankingWriterUser;
+
 GRANT USAGE, CREATE ON SCHEMA backtest TO $BacktestServiceUser;
+GRANT USAGE ON SCHEMA gold TO $BacktestServiceUser;
+GRANT USAGE ON SCHEMA platinum TO $BacktestServiceUser;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
 
+ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA backtest GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $BacktestServiceUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA backtest GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $BacktestServiceUser;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT ON TABLES TO $BacktestServiceUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $BacktestServiceUser;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT ON TABLES TO $BacktestServiceUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $BacktestServiceUser;
 "@
 
   Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", $sql)
@@ -401,31 +444,33 @@ if ($CreateAppUsers) {
 }
 
 $outputs = [ordered]@{
-  subscriptionId = $SubscriptionId
-  location = $selectedLocation
-  resourceGroup = $ResourceGroup
-  serverName = $ServerName
-  serverFqdn = $fqdn
-  databaseName = $DatabaseName
-  adminUser = $AdminUser
-  adminPassword = if ($EmitSecrets) { $AdminPassword } else { "<redacted>" }
-  appUsers = if ($CreateAppUsers) {
+  subscriptionId    = $SubscriptionId
+  location          = $selectedLocation
+  resourceGroup     = $ResourceGroup
+  serverName        = $ServerName
+  serverFqdn        = $fqdn
+  databaseName      = $DatabaseName
+  adminUser         = $AdminUser
+  adminPassword     = if ($EmitSecrets) { $AdminPassword } else { "<redacted>" }
+  appUsers          = if ($CreateAppUsers) {
     [ordered]@{
-      rankingWriterUser = $RankingWriterUser
-      rankingWriterPassword = if ($EmitSecrets) { $RankingWriterPassword } else { "<redacted>" }
-      backtestServiceUser = $BacktestServiceUser
+      rankingWriterUser       = $RankingWriterUser
+      rankingWriterPassword   = if ($EmitSecrets) { $RankingWriterPassword } else { "<redacted>" }
+      backtestServiceUser     = $BacktestServiceUser
       backtestServicePassword = if ($EmitSecrets) { $BacktestServicePassword } else { "<redacted>" }
     }
-  } else {
+  }
+  else {
     "<not_created>"
   }
   connectionStrings = if ($EmitSecrets) {
     [ordered]@{
-      adminDsn = if ($adminDsn) { $adminDsn } else { "<unavailable>" }
-      rankingWriterDsn = if ($rankingWriterDsn) { $rankingWriterDsn } else { "<not_created>" }
+      adminDsn           = if ($adminDsn) { $adminDsn } else { "<unavailable>" }
+      rankingWriterDsn   = if ($rankingWriterDsn) { $rankingWriterDsn } else { "<not_created>" }
       backtestServiceDsn = if ($backtestServiceDsn) { $backtestServiceDsn } else { "<not_created>" }
     }
-  } else {
+  }
+  else {
     "<redacted>"
   }
 }
