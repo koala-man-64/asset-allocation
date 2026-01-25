@@ -24,6 +24,8 @@ properties:
       value: "${BACKTEST_API_KEY}"
     - name: backtest-pg-dsn
       value: "${BACKTEST_POSTGRES_DSN}"
+    - name: system-health-link-token-secret
+      value: "${SYSTEM_HEALTH_LINK_TOKEN_SECRET}"
   template:
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}
@@ -78,6 +80,14 @@ properties:
         value: "129600"
       - name: SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS
         value: "259200"
+      - name: SYSTEM_HEALTH_LINK_TOKEN_SECRET
+        secretRef: system-health-link-token-secret
+      - name: SYSTEM_HEALTH_LINK_TOKEN_TTL_SECONDS
+        value: "900"
+      - name: SYSTEM_HEALTH_LINK_ALLOWLIST
+        value: "portal.azure.com"
+      - name: SYSTEM_HEALTH_LINK_REQUIRE_AUTH
+        value: "true"
       - name: BACKTEST_UI_AUTH_MODE
         value: "${BACKTEST_UI_AUTH_MODE}"
       - name: BACKTEST_UI_OIDC_CLIENT_ID

@@ -1,8 +1,5 @@
 import React from 'react';
-import {
-    Activity, CheckSquare, AlertOctagon, AlertTriangle,
-    Zap, Play, Power, ExternalLink, Info, XCircle, Database, CheckCircle2, Clock, Loader2
-} from 'lucide-react';
+import { CheckSquare, AlertOctagon, AlertTriangle, Power, Info, XCircle, Database, Clock, Loader2 } from 'lucide-react';
 import { StatusColors } from './StatusTokens';
 import { Badge } from '@/app/components/ui/badge';
 
@@ -128,9 +125,4 @@ export const formatDuration = (seconds?: number | null) => {
 export const formatRecordCount = (count?: number | null) => {
     if (count === null || count === undefined || !Number.isFinite(count)) return '-';
     return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(count);
-};
-
-export const getAzurePortalUrl = (azureId?: string | null) => {
-    if (!azureId) return '';
-    return `https://portal.azure.com/#resource${azureId}`;
 };
