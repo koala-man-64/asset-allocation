@@ -1,0 +1,31 @@
+name: "Test_Strategy_DB"
+type: configured
+rebalance:
+  freq: daily
+universe:
+  source: signals
+  filters: []
+  require_columns: ["symbol", "close"]
+signals:
+  provider: platinum_signals_daily
+  columns: ["composite_percentile"]
+scoring:
+  type: column
+  column: composite_percentile
+  fillna: drop
+selection:
+  type: topn
+  topn:
+    n: 1
+    side: long
+    min_score: null
+    higher_is_better: true
+holding_policy:
+  type: replace_all
+  replace_all:
+    exit_if_not_selected: true
+exits:
+  precedence: exit_over_scale
+  rules: []
+postprocess:
+  steps: []
