@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import hashlib
-import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
@@ -163,39 +161,6 @@ def _overall_from_layers(statuses: Sequence[str]) -> str:
     return "healthy"
 
 
-def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: Optional[datetime], error: Optional[str]) -> List[Dict[str, Any]]:
-    if status == "healthy":
-        return []
-
-    timestamp = _iso(now)
-    if status == "error":
-        return [
-            {
-                "id": _alert_id(severity="error", title="Layer probe error", component=layer_name),
-                "severity": "error",
-                "title": "Layer probe error",
-                "component": layer_name,
-                "timestamp": timestamp,
-                "message": error or "Layer probe failed.",
-                "acknowledged": False,
-            }
-        ]
-
-    # stale
-    last_text = _iso(last_updated) if last_updated else "unknown"
-    return [
-        {
-            "id": _alert_id(severity="warning", title="Layer stale", component=layer_name),
-            "severity": "warning",
-            "title": "Layer stale",
-            "component": layer_name,
-            "timestamp": timestamp,
-            "message": f"{layer_name} appears stale (lastUpdated={last_text}).",
-            "acknowledged": False,
-        }
-    ]
-
-
 def _default_layer_specs() -> List[LayerProbeSpec]:
     max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
     max_age_ranking = _require_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS")
@@ -266,17 +231,6 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             ),
         ),
     ]
-
-
-def _slug(text: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
-    return cleaned[:80] if cleaned else "alert"
-
-
-def _alert_id(*, severity: str, title: str, component: str) -> str:
-    raw = f"{severity}|{title}|{component}".encode("utf-8")
-    digest = hashlib.sha1(raw).hexdigest()[:10]
-    return f"{_slug(component)}--{_slug(title)}--{digest}"
 
 
 def _make_container_portal_url(sub_id: str, rg: str, account: str, container: str) -> Optional[str]:
@@ -363,6 +317,20 @@ def _derive_job_name(layer_name: str, domain_clean: str) -> str:
     return f"{l_name}-{d_name}-job"
 
 
+def _base_folder_from_by_date(path: str) -> Optional[str]:
+    text = str(path or "").strip().strip("/")
+    if not text:
+        return None
+    if text.endswith("-by-date"):
+        base = text[: -len("-by-date")]
+    elif text.endswith("_by_date"):
+        base = text[: -len("_by_date")]
+    else:
+        return None
+    base = base.rstrip("/")
+    return base or None
+
+
 def _make_job_portal_url(sub_id: str, rg: str, job_name: str) -> Optional[str]:
     if not all([sub_id, rg, job_name]):
         return None
@@ -397,21 +365,29 @@ def collect_system_health_snapshot(
 
     Phase 1 scope:
     - ADLS/Blob data-layer freshness probes (no ARM/resource health yet)
-    - Alerts include stable IDs for persisted lifecycle actions (ack/snooze/resolve via API)
     - recentJobs left empty (Container App Job executions are Phase 2)
     """
     now = now or _utc_now()
     if _is_test_mode():
         logger.info("System health running in test mode (returning empty payload).")
-        return {"overall": "healthy", "dataLayers": [], "recentJobs": [], "alerts": []}
+        return {"overall": "healthy", "dataLayers": [], "recentJobs": []}
 
     logger.info("Collecting system health: include_resource_ids=%s", include_resource_ids)
 
     cfg = AzureBlobStoreConfig.from_env()
+    # Emit a terse config snapshot so "missing links / missing jobs" reports are debuggable from logs.
+    # Avoid printing secrets (connection strings, tokens, etc).
+    logger.info(
+        "System health config: test_mode=%s storage_account=%s conn_string=%s arm_sub=%s arm_rg=%s",
+        _is_test_mode(),
+        bool(cfg.account_name),
+        bool(cfg.connection_string),
+        bool(os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()),
+        bool(os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()),
+    )
     store = AzureBlobStore(cfg)
 
     layers: List[Dict[str, Any]] = []
-    alerts: List[Dict[str, Any]] = []
     resources: List[Dict[str, Any]] = []
     job_runs: List[Dict[str, Any]] = []
     statuses: List[str] = []
@@ -420,11 +396,32 @@ def collect_system_health_snapshot(
     sub_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
     rg = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
     storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip()
+    if not (sub_id and rg and storage_account):
+        missing = []
+        if not sub_id:
+            missing.append("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+        if not rg:
+            missing.append("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+        if not storage_account:
+            missing.append("AZURE_STORAGE_ACCOUNT_NAME")
+        logger.warning(
+            "Portal link URL generation disabled (missing %s). "
+            "Storage container/folder and job portal links will be omitted.",
+            ",".join(missing),
+        )
 
     for spec in _default_layer_specs():
         layer_last_updated: Optional[datetime] = None
         had_layer_error = False
         container = spec.container_name()
+        logger.info(
+            "Layer probe config: layer=%s container_env=%s container=%s markers=%s delta_tables=%s",
+            spec.name,
+            spec.container_env,
+            container,
+            len(spec.marker_blobs),
+            len(spec.delta_tables),
+        )
         domain_items: List[Dict[str, Any]] = []
 
         # Collect markers (CSV/Blobs)
@@ -497,11 +494,21 @@ def collect_system_health_snapshot(
             job_name = _derive_job_name(spec.name, name_clean)
             job_url = _make_job_portal_url(sub_id, rg, job_name)
             folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
+            base_path = _base_folder_from_by_date(table_path)
+            base_folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, base_path) if base_path else None
+            base_last_updated: Optional[datetime] = None
+            base_status: Optional[str] = None
+            if base_path:
+                base_prefix = f"{base_path.rstrip('/')}/"
+                base_last_updated = store.get_container_last_modified(container=container, prefix=base_prefix)
+                base_status = _compute_layer_status(
+                    now, base_last_updated, max_age_seconds=spec.max_age_seconds, had_error=False
+                )
 
             try:
                 ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
                 status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
-                domain_items.append({
+                item: Dict[str, Any] = {
                     "name": name_clean,
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "delta",
@@ -513,9 +520,14 @@ def collect_system_health_snapshot(
                     "status": status,
                     "version": ver if ver is not None else None,
                     "portalUrl": folder_url,
+                    "basePortalUrl": base_folder_url,
                     "jobUrl": job_url,
                     "jobName": job_name,
-                })
+                }
+                if base_path:
+                    item["baseLastUpdated"] = _iso(base_last_updated) if base_last_updated else None
+                    item["baseStatus"] = base_status
+                domain_items.append(item)
             except Exception:
                 logger.warning(
                     "Layer delta probe failed: layer=%s domain=%s container=%s path=%s",
@@ -526,7 +538,7 @@ def collect_system_health_snapshot(
                     exc_info=True,
                 )
                 had_layer_error = True
-                domain_items.append({
+                item = {
                     "name": name_clean,  # Use raw name on error if cleaning is ambiguous
                     "description": "",
                     "type": "delta",
@@ -538,9 +550,14 @@ def collect_system_health_snapshot(
                     "status": "error",
                     "version": None,
                     "portalUrl": folder_url,
+                    "basePortalUrl": base_folder_url,
                     "jobUrl": job_url,
                     "jobName": job_name,
-                })
+                }
+                if base_path:
+                    item["baseLastUpdated"] = _iso(base_last_updated) if base_last_updated else None
+                    item["baseStatus"] = base_status
+                domain_items.append(item)
 
         # Aggregate layer status
         valid_times = [
@@ -583,7 +600,7 @@ def collect_system_health_snapshot(
                 "domains": domain_items,
             }
         )
-        alerts.extend(_layer_alerts(now, layer_name=spec.name, status=layer_status, last_updated=layer_last_updated, error=None))
+        # No alert payloads; layer status is represented directly in the matrix.
 
     # Optional Phase 2: Azure control-plane probes (Container Apps + Jobs + Executions).
     subscription_id = sub_id
@@ -592,6 +609,19 @@ def collect_system_health_snapshot(
     job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
 
     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
+    logger.info(
+        "Azure ARM probes: enabled=%s sub=%s rg=%s containerapps=%s jobs=%s",
+        arm_enabled,
+        bool(subscription_id),
+        bool(resource_group),
+        len(app_names),
+        len(job_names),
+    )
+    if not arm_enabled and (subscription_id or resource_group):
+        logger.info(
+            "Azure ARM probes disabled: set SYSTEM_HEALTH_ARM_CONTAINERAPPS and/or SYSTEM_HEALTH_ARM_JOBS to enable "
+            "resource and recent job execution monitoring."
+        )
     if arm_enabled:
         try:
             api_version = _require_env("SYSTEM_HEALTH_ARM_API_VERSION")
@@ -632,21 +662,11 @@ def collect_system_health_snapshot(
                     monitor_metrics_thresholds = parse_metric_thresholds_json(monitor_metrics_thresholds_raw)
                 except Exception as exc:
                     monitor_metrics_thresholds = {}
-                    alerts.append(
-                        {
-                            "id": _alert_id(
-                                severity="warning",
-                                title="Monitor metrics thresholds invalid",
-                                component="AzureMonitorMetrics",
-                            ),
-                            "severity": "warning",
-                            "title": "Monitor metrics thresholds invalid",
-                            "component": "AzureMonitorMetrics",
-                            "timestamp": _iso(now),
-                            "message": f"SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: {exc}",
-                            "acknowledged": False,
-                            }
-                        )
+                    logger.warning(
+                        "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: %s",
+                        exc,
+                        exc_info=True,
+                    )
             containerapp_metric_names = _split_csv(
                 os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
             )
@@ -675,39 +695,17 @@ def collect_system_health_snapshot(
                 except Exception as exc:
                     log_analytics_queries = []
                     log_analytics_enabled = False
-                    alerts.append(
-                        {
-                            "id": _alert_id(
-                                severity="warning",
-                                title="Log Analytics queries invalid",
-                                component="AzureLogAnalytics",
-                            ),
-                            "severity": "warning",
-                            "title": "Log Analytics queries invalid",
-                            "component": "AzureLogAnalytics",
-                            "timestamp": _iso(now),
-                            "message": f"SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON parse error: {exc}",
-                            "acknowledged": False,
-                        }
+                    logger.warning(
+                        "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON parse error: %s",
+                        exc,
+                        exc_info=True,
                     )
 
             if log_analytics_enabled and (not log_analytics_workspace_id or not log_analytics_queries):
                 log_analytics_enabled = False
-                alerts.append(
-                    {
-                        "id": _alert_id(
-                            severity="warning",
-                            title="Log Analytics monitoring disabled",
-                            component="AzureLogAnalytics",
-                        ),
-                        "severity": "warning",
-                        "title": "Log Analytics monitoring disabled",
-                        "component": "AzureLogAnalytics",
-                        "timestamp": _iso(now),
-                        "message": "Log Analytics enabled but workspace ID or queries are missing.",
-                        "acknowledged": False,
-                    }
-                    )
+                logger.info(
+                    "Log Analytics monitoring disabled: enabled=true but workspace ID or queries are missing.",
+                )
 
             arm_cfg = ArmConfig(
                 subscription_id=subscription_id,
@@ -777,21 +775,6 @@ def collect_system_health_snapshot(
                     resources.append(item.to_dict(include_ids=include_resource_ids))
                     if item.status in {"warning", "error"}:
                         statuses.append("stale" if item.status == "warning" else "error")
-                        alerts.append(
-                            {
-                                "id": _alert_id(
-                                    severity="warning" if item.status == "warning" else "error",
-                                    title=title,
-                                    component=item.name,
-                                ),
-                                "severity": "warning" if item.status == "warning" else "error",
-                                "title": title,
-                                "component": item.name,
-                                "timestamp": checked_iso,
-                                "message": f"{item.resource_type}: {item.details}",
-                                "acknowledged": False,
-                            }
-                        )
 
                 try:
                     if app_names:
@@ -829,52 +812,20 @@ def collect_system_health_snapshot(
                         for run in runs:
                             if run.get("status") == "failed":
                                 statuses.append("error")
-                                alerts.append(
-                                    {
-                                        "id": _alert_id(
-                                            severity="error",
-                                            title="Job execution failed",
-                                            component=str(run.get("jobName") or "job"),
-                                        ),
-                                        "severity": "error",
-                                        "title": "Job execution failed",
-                                        "component": str(run.get("jobName") or "job"),
-                                        "timestamp": checked_iso,
-                                        "message": "Latest execution reported failed.",
-                                        "acknowledged": False,
-                                    }
-                                )
                 finally:
                     if log_client is not None:
                         log_client.close()
         except Exception as exc:
             logger.exception("Azure control-plane probes failed.")
-            checked_iso = _iso(now)
-            alerts.append(
-                {
-                    "id": _alert_id(
-                        severity="warning",
-                        title="Azure monitoring disabled",
-                        component="AzureControlPlane",
-                    ),
-                    "severity": "warning",
-                    "title": "Azure monitoring disabled",
-                    "component": "AzureControlPlane",
-                    "timestamp": checked_iso,
-                    "message": f"Control-plane probe error: {exc}",
-                    "acknowledged": False,
-                }
-            )
 
     overall = _overall_from_layers(statuses)
-    payload: Dict[str, Any] = {"overall": overall, "dataLayers": layers, "recentJobs": job_runs, "alerts": alerts}
+    payload: Dict[str, Any] = {"overall": overall, "dataLayers": layers, "recentJobs": job_runs}
     if resources:
         payload["resources"] = resources
     logger.info(
-        "System health summary: overall=%s layers=%s alerts=%s resources=%s jobs=%s",
+        "System health summary: overall=%s layers=%s resources=%s jobs=%s",
         overall,
         len(layers),
-        len(alerts),
         len(resources),
         len(job_runs),
     )

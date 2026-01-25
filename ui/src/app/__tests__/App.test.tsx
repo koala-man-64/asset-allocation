@@ -44,7 +44,6 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
                 overall: 'healthy',
                 dataLayers: [],
                 recentJobs: [],
-                alerts: [],
             },
             isLoading: false,
             error: null,

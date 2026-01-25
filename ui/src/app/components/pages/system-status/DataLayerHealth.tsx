@@ -64,7 +64,7 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                     Data Layer Freshness
                 </CardTitle>
                 <CardDescription>
-                    Monitor freshness across layers. Domains are listed under each layer; use Path/Job links to jump to Azure details.
+                    Monitor the last update time and status of all data layers
                 </CardDescription>
             </CardHeader>
             <CardContent>

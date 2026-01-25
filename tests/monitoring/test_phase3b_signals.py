@@ -87,7 +87,6 @@ def test_system_health_degraded_on_monitor_metrics_warning(monkeypatch: pytest.M
     payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
     assert payload["overall"] == "degraded"
     assert payload["resources"][0]["status"] == "warning"
-    assert any(alert["title"] == "Azure resource health" and alert["severity"] == "warning" for alert in payload["alerts"])
 
 
 def test_system_health_critical_on_log_analytics_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,5 +123,4 @@ def test_system_health_critical_on_log_analytics_error(monkeypatch: pytest.Monke
     payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
     assert payload["overall"] == "critical"
     assert payload["resources"][0]["status"] == "error"
-    assert any(alert["title"] == "Azure resource health" and alert["severity"] == "error" for alert in payload["alerts"])
 

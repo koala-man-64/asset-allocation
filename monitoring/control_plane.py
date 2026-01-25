@@ -8,6 +8,15 @@ from monitoring.arm_client import AzureArmClient
 from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION, get_current_availability
 
 
+def _azure_portal_url(azure_id: Optional[str]) -> Optional[str]:
+    text = str(azure_id or "").strip()
+    if not text:
+        return None
+    if not text.startswith("/"):
+        text = f"/{text}"
+    return f"https://portal.azure.com/#resource{text}"
+
+
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -210,6 +219,8 @@ def collect_jobs_and_executions(
             for item in values[:max_executions_per_job]:
                 if not isinstance(item, dict):
                     continue
+                execution_id = str(item.get("id") or "") or None
+                execution_name = str(item.get("name") or "") or None
                 props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
                 raw_status = str(props.get("status") or "")
                 start_time = str(props.get("startTime") or "")
@@ -219,14 +230,26 @@ def collect_jobs_and_executions(
                 end_dt = _parse_dt(end_time)
                 duration = _duration_seconds(start_dt, end_dt)
 
+                status_details: Optional[str] = None
+                for key in ("statusDetails", "details", "message"):
+                    value = props.get(key)
+                    if isinstance(value, str) and value.strip():
+                        status_details = value.strip()
+                        break
+
                 runs.append(
                     {
                         "jobName": name,
                         "jobType": _job_type_from_name(name),
                         "status": _map_job_execution_status(raw_status),
                         "startTime": start_dt.isoformat() if start_dt else start_time or last_checked_iso,
+                        "endTime": end_dt.isoformat() if end_dt else end_time or None,
                         "duration": duration,
                         "triggeredBy": "azure",
+                        "executionName": execution_name,
+                        "details": status_details,
+                        # Tokenized server-side; omitted from response when tokenization disabled.
+                        "logUrl": _azure_portal_url(execution_id),
                     }
                 )
         except Exception:

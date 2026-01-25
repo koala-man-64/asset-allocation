@@ -1,20 +1,22 @@
+import copy
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from api.service.dependencies import (
-    get_alert_state_store,
     get_auth_manager,
     get_settings,
     get_system_health_cache,
     validate_auth,
 )
+from api.service.secure_links import LinkTokenError, build_link_token, resolve_link_token
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.system_health import collect_system_health_snapshot
@@ -48,6 +50,152 @@ def _get_actor(request: Request) -> Optional[str]:
     return None
 
 
+def _azure_portal_url(azure_id: str) -> Optional[str]:
+    text = str(azure_id or "").strip()
+    if not text:
+        return None
+    if not text.startswith("/"):
+        text = f"/{text}"
+    return f"https://portal.azure.com/#resource{text}"
+
+
+def _apply_link_tokens(payload: Dict[str, Any]) -> None:
+    link_tokens_disabled = False
+    stats: Dict[str, Dict[str, int]] = {
+        "layer": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "domain_folder": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "domain_base": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "domain_job": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "job_execution": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "resource": {"seen": 0, "has_url": 0, "tokenized": 0},
+    }
+    token_errors = 0
+
+    def _maybe_tokenize(url: Optional[str], *, context: str, kind: str) -> Optional[str]:
+        nonlocal link_tokens_disabled
+        nonlocal token_errors
+        stats[kind]["seen"] += 1
+        if not url:
+            return None
+        stats[kind]["has_url"] += 1
+        try:
+            token = build_link_token(url)
+        except LinkTokenError as exc:
+            token_errors += 1
+            logger.warning("Link token error: context=%s error=%s", context, exc)
+            return None
+        if token is None:
+            if not link_tokens_disabled:
+                logger.warning("Link tokens disabled: SYSTEM_HEALTH_LINK_TOKEN_SECRET not set.")
+                link_tokens_disabled = True
+            return None
+        stats[kind]["tokenized"] += 1
+        return token
+
+    layers = payload.get("dataLayers")
+    if isinstance(layers, list):
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            layer_token = _maybe_tokenize(
+                layer.pop("portalUrl", None),
+                context=f"layer:{layer.get('name')}",
+                kind="layer",
+            )
+            if layer_token:
+                layer["portalLinkToken"] = layer_token
+            domains = layer.get("domains")
+            if isinstance(domains, list):
+                for domain in domains:
+                    if not isinstance(domain, dict):
+                        continue
+                    folder_token = _maybe_tokenize(
+                        domain.pop("portalUrl", None),
+                        context=f"domain:{domain.get('name')}",
+                        kind="domain_folder",
+                    )
+                    if folder_token:
+                        domain["portalLinkToken"] = folder_token
+                    base_token = _maybe_tokenize(
+                        domain.pop("basePortalUrl", None),
+                        context=f"domain_base:{domain.get('name')}",
+                        kind="domain_base",
+                    )
+                    if base_token:
+                        domain["basePortalLinkToken"] = base_token
+                    job_token = _maybe_tokenize(
+                        domain.pop("jobUrl", None),
+                        context=f"job:{domain.get('jobName')}",
+                        kind="domain_job",
+                    )
+                    if job_token:
+                        domain["jobLinkToken"] = job_token
+
+    resources = payload.get("resources")
+    if isinstance(resources, list):
+        for resource in resources:
+            if not isinstance(resource, dict):
+                continue
+            azure_id = resource.get("azureId")
+            portal_url = _azure_portal_url(azure_id) if azure_id else None
+            portal_token = _maybe_tokenize(
+                portal_url,
+                context=f"resource:{resource.get('name')}",
+                kind="resource",
+            )
+            if portal_token:
+                resource["portalLinkToken"] = portal_token
+
+    jobs = payload.get("recentJobs")
+    if isinstance(jobs, list):
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            execution_token = _maybe_tokenize(
+                job.pop("logUrl", None),
+                context=f"execution:{job.get('jobName')}:{job.get('startTime')}",
+                kind="job_execution",
+            )
+            if execution_token:
+                job["logLinkToken"] = execution_token
+
+    # Emit a compact summary so missing portal/job icons can be diagnosed from logs.
+    totals = {k: dict(v) for k, v in stats.items()}
+    tokenized_total = sum(item["tokenized"] for item in stats.values())
+    has_url_total = sum(item["has_url"] for item in stats.values())
+    if tokenized_total == 0 and has_url_total == 0:
+        logger.info(
+            "System health links: no URLs present to tokenize "
+            "(check SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID/SYSTEM_HEALTH_ARM_RESOURCE_GROUP/AZURE_STORAGE_ACCOUNT_NAME)."
+        )
+    elif tokenized_total == 0 and has_url_total > 0:
+        logger.warning(
+            "System health links: URLs present but none tokenized (check SYSTEM_HEALTH_LINK_TOKEN_SECRET/allowlist/ttl)."
+        )
+
+    logger.info(
+        "System health link tokenization: layer=%s/%s domain_folder=%s/%s domain_base=%s/%s domain_job=%s/%s job_execution=%s/%s resource=%s/%s errors=%s",
+        totals["layer"]["tokenized"],
+        totals["layer"]["has_url"],
+        totals["domain_folder"]["tokenized"],
+        totals["domain_folder"]["has_url"],
+        totals["domain_base"]["tokenized"],
+        totals["domain_base"]["has_url"],
+        totals["domain_job"]["tokenized"],
+        totals["domain_job"]["has_url"],
+        totals["job_execution"]["tokenized"],
+        totals["job_execution"]["has_url"],
+        totals["resource"]["tokenized"],
+        totals["resource"]["has_url"],
+        token_errors,
+    )
+
+
+def _link_requires_auth() -> bool:
+    raw = os.environ.get("SYSTEM_HEALTH_LINK_REQUIRE_AUTH", "").strip().lower()
+    return raw in {"1", "true", "t", "yes", "y", "on"}
+
+
 @router.get("/health")
 def system_health(request: Request, refresh: bool = Query(False)) -> JSONResponse:
     logger.info(
@@ -77,47 +225,14 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         logger.exception("System health cache refresh failed.")
         raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
 
-    payload: Dict[str, Any] = dict(result.value or {})
-    raw_alerts = payload.get("alerts")
-    if isinstance(raw_alerts, list):
-        payload["alerts"] = [dict(item) if isinstance(item, dict) else item for item in raw_alerts]
-
-    alert_store = get_alert_state_store(request)
-    if alert_store and isinstance(payload.get("alerts"), list):
-        alert_ids: list[str] = []
-        for alert in payload["alerts"]:
-            if not isinstance(alert, dict):
-                continue
-            alert_id = str(alert.get("id") or "").strip()
-            if alert_id:
-                alert_ids.append(alert_id)
-        states = alert_store.get_states(alert_ids)
-
-        for alert in payload["alerts"]:
-            if not isinstance(alert, dict):
-                continue
-            alert_id = str(alert.get("id") or "").strip()
-            if not alert_id:
-                continue
-            state = states.get(alert_id)
-            if not state:
-                continue
-
-            alert["acknowledged"] = bool(state.acknowledged_at)
-            alert["acknowledgedAt"] = _iso(state.acknowledged_at)
-            alert["acknowledgedBy"] = state.acknowledged_by
-            alert["snoozedUntil"] = _iso(state.snoozed_until)
-            alert["resolvedAt"] = _iso(state.resolved_at)
-            alert["resolvedBy"] = state.resolved_by
-    elif alert_store is None:
-        logger.info("System health alert store not configured (alerts will be unacknowledgeable).")
+    payload: Dict[str, Any] = copy.deepcopy(result.value or {})
+    _apply_link_tokens(payload)
 
     logger.info(
-        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s",
+        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s resources=%s",
         result.cache_hit,
         bool(result.refresh_error),
         len(payload.get("dataLayers") or []),
-        len(payload.get("alerts") or []),
         len(payload.get("resources") or []),
     )
 
@@ -130,95 +245,43 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     return JSONResponse(payload, headers=headers)
 
 
-class SnoozeRequest(BaseModel):
-    minutes: Optional[int] = Field(default=None, ge=1, le=7 * 24 * 60)
-    until: Optional[datetime] = None
-
-
-def _require_alert_store(request: Request):
-    store = get_alert_state_store(request)
-    if store is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Alert lifecycle persistence is not configured (BACKTEST_POSTGRES_DSN).",
-        )
-    return store
-
-
-@router.post("/alerts/{alert_id}/ack")
-def acknowledge_alert(alert_id: str, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-    logger.info("Acknowledge alert: id=%s actor=%s", alert_id, actor or "-")
+@router.get("/links/{token}")
+def resolve_link(token: str, request: Request) -> RedirectResponse:
+    actor = None
+    if _link_requires_auth():
+        validate_auth(request)
+        actor = _get_actor(request)
     try:
-        state = store.acknowledge(alert_id, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to acknowledge alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to acknowledge alert: {exc}") from exc
-    return JSONResponse(
-        {
-            "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
-    )
+        url = resolve_link_token(token)
+    except LinkTokenError as exc:
+        logger.warning("Link token resolve failed: actor=%s error=%s", actor or "-", exc)
+        raise HTTPException(status_code=404, detail="Link not available.") from exc
+
+    host = urlparse(url).hostname or "-"
+    logger.info("Link token resolved: actor=%s host=%s", actor or "-", host)
+    return RedirectResponse(url=url, status_code=307, headers={"Cache-Control": "no-store"})
 
 
-@router.post("/alerts/{alert_id}/snooze")
-def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
+class LinkResolveRequest(BaseModel):
+    token: str
 
-    until = payload.until
-    if until is None:
-        minutes = payload.minutes or 30
-        until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
 
-    logger.info("Snooze alert: id=%s actor=%s minutes=%s until=%s", alert_id, actor or "-", payload.minutes, payload.until)
+@router.post("/links/resolve")
+def resolve_link_url(payload: LinkResolveRequest, request: Request) -> JSONResponse:
+    actor = None
+    if _link_requires_auth():
+        validate_auth(request)
+        actor = _get_actor(request)
+
     try:
-        state = store.snooze(alert_id, until=until, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to snooze alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to snooze alert: {exc}") from exc
+        url = resolve_link_token(payload.token)
+    except LinkTokenError as exc:
+        logger.warning("Link token resolve failed (json): actor=%s error=%s", actor or "-", exc)
+        raise HTTPException(status_code=404, detail="Link not available.") from exc
 
-    return JSONResponse(
-        {
-            "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
-    )
-
-
-@router.post("/alerts/{alert_id}/resolve")
-def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-    logger.info("Resolve alert: id=%s actor=%s", alert_id, actor or "-")
-    try:
-        state = store.resolve(alert_id, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to resolve alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {exc}") from exc
-    return JSONResponse(
-        {
-            "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
-    )
+    host = urlparse(url).hostname or "-"
+    logger.info("Link token resolved (json): actor=%s host=%s", actor or "-", host)
+    return JSONResponse({"url": url}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/lineage")

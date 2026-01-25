@@ -23,7 +23,6 @@ import {
   Activity,
   Zap,
   TrendingUp,
-  Bell,
   Layers,
   Pin,
   PinOff,
@@ -81,7 +80,6 @@ const navSections: NavSection[] = [
     items: [
       { path: '/signals', label: 'Signal Monitor', icon: Zap },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
-      { path: '/alerts', label: 'Alerts', icon: Bell },
     ]
   }
 ];
