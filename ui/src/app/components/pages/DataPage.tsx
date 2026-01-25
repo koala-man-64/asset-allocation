@@ -89,7 +89,7 @@ export function DataPage({ onNavigate }: DataPageProps) {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Data & Lineage</CardTitle>
+          <CardTitle>Data Lineage</CardTitle>
             <Select value={selectedStrategyId} onValueChange={setSelectedStrategyId}>
               <SelectTrigger className="w-64">
                 <SelectValue />

@@ -28,7 +28,21 @@ export const queryKeys = {
 export function useSystemHealthQuery() {
     return useQuery({
         queryKey: queryKeys.systemHealth(),
-        queryFn: () => DataService.getSystemHealth(),
+        queryFn: async () => {
+            console.info('[useSystemHealthQuery] fetch start');
+            try {
+                const data = await DataService.getSystemHealth();
+                console.info('[useSystemHealthQuery] fetch success', {
+                    overall: data?.overall,
+                    layers: data?.dataLayers?.length ?? 0,
+                    alerts: data?.alerts?.length ?? 0,
+                });
+                return data;
+            } catch (error) {
+                console.error('[useSystemHealthQuery] fetch error', error);
+                throw error;
+            }
+        },
         refetchInterval: 10000,
     });
 }

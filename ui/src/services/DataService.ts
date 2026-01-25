@@ -26,8 +26,20 @@ export const DataService = {
     return backtestApi.getStrategies();
   },
 
-  getSystemHealth(): Promise<SystemHealth> {
-    return backtestApi.getSystemHealth();
+  async getSystemHealth(): Promise<SystemHealth> {
+    console.info('[DataService] getSystemHealth');
+    try {
+      const data = await backtestApi.getSystemHealth();
+      console.info('[DataService] getSystemHealth success', {
+        overall: data?.overall,
+        layers: data?.dataLayers?.length ?? 0,
+        alerts: data?.alerts?.length ?? 0,
+      });
+      return data;
+    } catch (error) {
+      console.error('[DataService] getSystemHealth error', error);
+      throw error;
+    }
   },
 
   getLineage(): Promise<unknown> {

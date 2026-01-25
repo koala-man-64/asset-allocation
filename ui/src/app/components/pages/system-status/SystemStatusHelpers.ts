@@ -1,46 +1,66 @@
 import React from 'react';
 import {
-    Activity,
-    AlertCircle,
-    AlertTriangle,
-    CheckCircle2,
-    Clock,
-    Database,
-    Loader2,
-    PlayCircle,
-    TrendingUp,
-    XCircle,
-    Info
+    Activity, CheckSquare, AlertOctagon, AlertTriangle,
+    Zap, Play, Power, ExternalLink, Info, XCircle, Database, CheckCircle2, Clock, Loader2
 } from 'lucide-react';
+import { StatusColors } from './StatusTokens';
 import { Badge } from '@/app/components/ui/badge';
 
+interface StatusConfig {
+    bg: string;
+    text: string;
+    border: string;
+    icon: React.ElementType;
+    animation?: 'spin' | 'pulse';
+}
+
 /**
- * Returns a React node (Icon) for a given status string.
+ * Returns a configuration object (color, icon) for a given status.
+ * Uses "Industrial Utility" tokens.
  */
-export const getStatusIcon = (status: string) => {
-    switch (status) {
+export const getStatusConfig = (status: string): StatusConfig => {
+    switch (status?.toLowerCase()) {
         case 'healthy':
         case 'success':
-            return React.createElement(CheckCircle2, { className: "h-4 w-4 text-green-600" });
+            return { ...StatusColors.HEALTHY, icon: CheckSquare };
         case 'degraded':
-        case 'stale':
         case 'warning':
-            return React.createElement(AlertTriangle, { className: "h-4 w-4 text-yellow-600" });
+        case 'stale':
+            return { ...StatusColors.WARNING, icon: AlertTriangle };
+        // Broaden critical/error matching
         case 'critical':
         case 'error':
         case 'failed':
-            return React.createElement(XCircle, { className: "h-4 w-4 text-red-600" });
+            return { ...StatusColors.CRITICAL, icon: AlertOctagon };
         case 'running':
-            return React.createElement(Loader2, { className: "h-4 w-4 text-blue-600 animate-spin" });
+            // Use Loader2 + Spin for active running states
+            return { ...StatusColors.NEUTRAL, icon: Loader2, animation: 'spin' };
         case 'pending':
-            return React.createElement(Clock, { className: "h-4 w-4 text-gray-400" });
+            return { ...StatusColors.NEUTRAL, icon: Clock };
         default:
-            return React.createElement(AlertCircle, { className: "h-4 w-4 text-gray-400" });
+            return { ...StatusColors.NEUTRAL, icon: Power };
     }
 };
 
 /**
- * Returns a styled Badge component for a given status.
+ * Legacy support for direct icon rendering if needed elsewhere, 
+ * but primarily we use getStatusConfig now.
+ */
+export const getStatusIcon = (status: string) => {
+    const config = getStatusConfig(status);
+    // Map animation string to tailwind class
+    const animClass = config.animation === 'spin' ? 'animate-spin' : '';
+
+    return React.createElement(config.icon, {
+        className: `h-4 w-4 ${animClass}`,
+        style: { color: config.text }
+    });
+};
+
+/**
+ * Updated to use legacy Badge component but with new colors if possible,
+ * or mapped to standard styles. Retaining basic Badge for backward compat 
+ * if used outside new Overview.
  */
 export const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
@@ -63,78 +83,33 @@ export const getStatusBadge = (status: string) => {
     );
 };
 
-/**
- * Returns a severity icon for Alerts.
- */
+export const formatTimeAgo = (timestamp?: string | null) => {
+    if (!timestamp) return '--:--';
+    const diff = Date.now() - new Date(timestamp).getTime();
+    if (diff < 0) return '0s'; // Future clock skew protection
+    if (diff < 60000) return `${Math.floor(diff / 1000)}s`;
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+    return `${Math.floor(diff / 86400000)}d`;
+};
+
+// Re-export specific icons if needed by consumers
 export const getSeverityIcon = (severity: string) => {
     switch (severity) {
-        case 'critical':
-            return React.createElement(XCircle, { className: "h-4 w-4 text-red-600" });
-        case 'error':
-            return React.createElement(AlertCircle, { className: "h-4 w-4 text-red-500" });
-        case 'warning':
-            return React.createElement(AlertTriangle, { className: "h-4 w-4 text-yellow-600" });
-        case 'info':
-            return React.createElement(Info, { className: "h-4 w-4 text-blue-600" });
-        default:
-            return React.createElement(Info, { className: "h-4 w-4 text-gray-400" });
+        case 'critical': return React.createElement(XCircle, { className: "h-4 w-4 text-red-600" });
+        case 'error': return React.createElement(Info, { className: "h-4 w-4 text-red-500" });
+        case 'warning': return React.createElement(AlertTriangle, { className: "h-4 w-4 text-yellow-600" });
+        case 'info': return React.createElement(Info, { className: "h-4 w-4 text-blue-600" });
+        default: return React.createElement(Info, { className: "h-4 w-4 text-gray-400" });
     }
 };
 
-/**
- * Returns an icon for a specific Job Type.
- */
 export const getJobTypeIcon = (jobType: string) => {
-    switch (jobType) {
-        case 'backtest':
-            return React.createElement(TrendingUp, { className: "h-4 w-4" });
-        case 'data-ingest':
-            return React.createElement(Database, { className: "h-4 w-4" });
-        case 'attribution':
-            return React.createElement(Activity, { className: "h-4 w-4" });
-        case 'risk-calc':
-            return React.createElement(AlertTriangle, { className: "h-4 w-4" });
-        case 'portfolio-build':
-            return React.createElement(PlayCircle, { className: "h-4 w-4" });
-        default:
-            return React.createElement(Activity, { className: "h-4 w-4" });
-    }
+    return React.createElement(Database, { className: "h-4 w-4" });
 };
 
-/**
- * Formats a duration in seconds to mins/secs.
- */
-export const formatDuration = (seconds?: number) => {
-    if (!seconds) return '-';
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
-};
-
-/**
- * Formats a timestamp into a relative "ago" string or date.
- */
 export const formatTimestamp = (timestamp?: string | null) => {
     if (!timestamp) return '-';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-};
-
-/**
- * Formats a raw number count to K/M suffixes.
- */
-export const formatRecordCount = (count?: number) => {
-    if (!count) return '-';
-    if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-    if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-    return count.toString();
+    // Use the new compact format by default now for consistency
+    return formatTimeAgo(timestamp);
 };

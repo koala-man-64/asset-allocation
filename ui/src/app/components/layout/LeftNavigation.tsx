@@ -44,34 +44,34 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    title: 'SYSTEM',
+    title: 'DATA PIPELINE',
     items: [
-      { path: '/system-status', label: 'System Status', icon: Activity },
-      { path: '/data', label: 'Data & Lineage', icon: Database },
+      { path: '/system-status', label: 'Pipeline Health', icon: Activity },
+      { path: '/data', label: 'Data Lineage', icon: Database },
       { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
     ]
   },
   {
-    title: 'ANALYSIS',
+    title: 'STRATEGY RESEARCH',
     items: [
-      { path: '/overview', label: 'Overview', icon: LayoutDashboard },
-      { path: '/compare', label: 'Run Compare', icon: GitCompare },
-      { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
-      { path: '/attribution', label: 'Attribution', icon: PieChart },
-    ]
-  },
-  {
-    title: 'RISK & PERFORMANCE',
-    items: [
-      { path: '/risk', label: 'Risk & Exposures', icon: Shield },
-      { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
+      { path: '/overview', label: 'Strategy Universe', icon: LayoutDashboard },
+      { path: '/compare', label: 'Backtest Compare', icon: GitCompare },
+      { path: '/deep-dive', label: 'Tear Sheet', icon: FileText },
+      { path: '/attribution', label: 'Return Attribution', icon: PieChart },
       { path: '/robustness', label: 'Robustness', icon: Target },
     ]
   },
   {
-    title: 'PORTFOLIO',
+    title: 'PORTFOLIO CONSTRUCTION',
     items: [
-      { path: '/portfolio', label: 'Portfolio Builder', icon: Folder },
+      { path: '/portfolio', label: 'Allocation Builder', icon: Folder },
+    ]
+  },
+  {
+    title: 'RISK & EXECUTION',
+    items: [
+      { path: '/risk', label: 'Risk & Exposures', icon: Shield },
+      { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
     ]
   },
   {
@@ -79,7 +79,7 @@ const navSections: NavSection[] = [
     items: [
       { path: '/signals', label: 'Signal Monitor', icon: Zap },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
-      { path: '/alerts', label: 'Alert Management', icon: Bell },
+      { path: '/alerts', label: 'Alerts', icon: Bell },
     ]
   }
 ];
@@ -201,7 +201,7 @@ export function LeftNavigation() {
       )}
     >
       <div className="flex h-14 items-center border-b px-3 justify-between">
-        {!collapsed && <span className="font-semibold px-2">AssetAllocation</span>}
+        {!collapsed && <span className="font-semibold px-2">Asset Allocation</span>}
         <Button
           variant="ghost"
           size="icon"
@@ -218,7 +218,7 @@ export function LeftNavigation() {
           <div className="px-3">
             {!collapsed && (
               <h4 className="mb-2 px-2 text-xs font-semibold text-muted-foreground/50 tracking-wider flex items-center gap-2">
-                <Pin className="h-3 w-3" /> HOTLIST
+                <Pin className="h-3 w-3" /> PINNED
               </h4>
             )}
             <div className="space-y-1">

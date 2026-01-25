@@ -31,14 +31,14 @@ export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
       <SheetContent side="right" className="w-[400px] sm:w-[540px]">
         <SheetHeader>
           <SheetTitle>Selected Runs for Comparison</SheetTitle>
-          <SheetDescription>Select strategies from the Overview table to compare</SheetDescription>
+          <SheetDescription>Select strategies from the Strategy Universe table to compare</SheetDescription>
         </SheetHeader>
         
         <div className="mt-6 space-y-4">
           {selectedRuns.size === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <p>No runs selected</p>
-              <p className="text-sm mt-2">Select strategies from the Overview table to compare</p>
+              <p className="text-sm mt-2">Select strategies from the Strategy Universe table to compare</p>
             </div>
           ) : (
             <>

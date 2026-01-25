@@ -67,11 +67,22 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
 });
 
 describe('SystemStatusPage', () => {
-  it('renders domain folder + job details in Data Layer Freshness', () => {
+  it('renders Industrial Dashboard elements', () => {
     renderWithProviders(<SystemStatusPage />);
 
-    expect(screen.getByRole('link', { name: 'bronze/market' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'aca-job-market' })).toBeInTheDocument();
+    // Check for Hero Header
+    expect(screen.getByText('SYSTEM STATUS')).toBeInTheDocument();
+
+    // Check for Uptime Clock Header
+    expect(screen.getByText('UPTIME CLOCK')).toBeInTheDocument();
+
+    // Check for Layer Name in Matrix
+    expect(screen.getByText('Bronze')).toBeInTheDocument();
+
+    // Check for Domain Name in Matrix
+    expect(screen.getByText('market')).toBeInTheDocument();
+
+    // Check for Status Badge (Uppercase)
+    expect(screen.getByText('HEALTHY')).toHaveClass('font-mono');
   });
 });
-

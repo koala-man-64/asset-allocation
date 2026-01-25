@@ -1,8 +1,8 @@
 import React from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Activity, Database, PlayCircle, Zap } from 'lucide-react';
-import { getStatusIcon, getStatusBadge, formatTimestamp } from './SystemStatusHelpers';
-import type { DataLayer, JobRun } from '@/types/strategy';
+import { DataLayer, JobRun } from '@/types/strategy';
+import { getStatusConfig, formatTimeAgo } from './SystemStatusHelpers';
+import { StatusTypos, StatusColors } from './StatusTokens';
+import { Zap, ExternalLink } from 'lucide-react';
 
 interface StatusOverviewProps {
     overall: string;
@@ -11,117 +11,96 @@ interface StatusOverviewProps {
 }
 
 export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {
+    const sysConfig = getStatusConfig(overall);
+    const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' :
+        sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
+
     return (
-        <Card>
-            <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                    <Activity className="h-4 w-4" />
-                    System Health Overview
-                </CardTitle>
-                <CardDescription className="text-xs">
-                    Real-time status of data layers and pipeline jobs
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
-                    {/* Overall Status Metrics */}
-                    <div className="flex flex-col justify-center gap-2">
-                        <div className="flex flex-col items-center justify-center p-3 bg-muted/20 rounded-lg border border-muted h-full">
-                            <div className="scale-110 mb-2">{getStatusIcon(overall)}</div>
-                            <div className="text-3xl font-extrabold capitalize mb-0.5">{overall}</div>
-                            <p className="text-xs text-muted-foreground text-center">System Operational Status</p>
+        <div className="grid gap-4 font-sans">
+            {/* System Header - Manual inline styles for specific 'Industrial' theming overrides */}
+            <div className="flex items-center justify-between p-4 border rounded-none border-l-4"
+                style={{
+                    backgroundColor: StatusColors.PANEL_BG,
+                    borderColor: sysConfig.border,
+                    borderLeftColor: sysConfig.text
+                }}>
+                <div className="flex items-center gap-4">
+                    <sysConfig.icon className={`h-8 w-8 ${apiAnim}`}
+                        style={{ color: sysConfig.text }} />
+                    <div>
+                        <div className={StatusTypos.HEADER}>SYSTEM STATUS</div>
+                        <div className="text-2xl font-black tracking-tighter uppercase"
+                            style={{ color: sysConfig.text }}>
+                            {overall}
                         </div>
                     </div>
-
-                    {/* Detailed Layer Status */}
-                    <div className="lg:col-span-2 grid gap-2">
-                        {dataLayers.map((layer, idx) => (
-                            <div key={idx} className="flex flex-col p-1.5 border rounded-md hover:bg-muted/50 transition-colors gap-1.5">
-                                {/* Layer Header */}
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <div className="scale-75">{getStatusIcon(layer.status)}</div>
-                                        <div>
-                                            <div className="font-bold text-sm flex items-center gap-1.5">
-                                                {layer.name}
-                                                <div className="flex items-center gap-1 border-l pl-2 ml-1 opacity-70">
-                                                    {(layer.domains || []).map((domain, dIdx: number) => (
-                                                        <div key={dIdx} title={`${domain.name}: ${domain.status}`} className="scale-75">
-                                                            {getStatusIcon(domain.status)}
-                                                        </div>
-                                                    ))}
-                                                </div>
-
-                                                <div className="flex items-center gap-1 ml-1.5">
-                                                    {layer.portalUrl && (
-                                                        <a href={layer.portalUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="View Azure Container">
-                                                            <Database className="h-3 w-3" />
-                                                        </a>
-                                                    )}
-                                                    {layer.jobUrl && (
-                                                        <a href={layer.jobUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="View Pipeline Job">
-                                                            <PlayCircle className="h-3 w-3" />
-                                                        </a>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="text-[10px] text-muted-foreground">
-                                                Updated: {formatTimestamp(layer.lastUpdated)}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {getStatusBadge(layer.status)}
-                                </div>
-
-                                {/* Domains List */}
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pl-6">
-                                    {(layer.domains || []).map((domain, dIdx: number) => {
-                                        const jName = domain.jobUrl?.split('/jobs/')[1]?.split('/')[0];
-                                        const job = jName ? recentJobs.find((j) => j.jobName === jName) : null;
-
-                                        return (
-                                            <div key={dIdx} className="flex flex-col gap-0.5 border-l border-muted pl-1.5 py-0.5">
-                                                <div className="flex items-center justify-between group">
-                                                    <span className="text-[11px] font-medium truncate max-w-[80px]" title={domain.name}>
-                                                        {domain.name}
-                                                    </span>
-                                                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        {domain.jobUrl && (
-                                                            <a href={domain.jobUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="View Domain Job">
-                                                                <PlayCircle className="h-2.5 w-2.5" />
-                                                            </a>
-                                                        )}
-                                                        {domain.triggerUrl && (
-                                                            <a href={domain.triggerUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-500 transition-colors" title="Trigger Domain Logic">
-                                                                <Zap className="h-2.5 w-2.5" />
-                                                            </a>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {job ? (
-                                                    <div className="flex items-center gap-1" title={`Job: ${job.jobName} (${job.status})`}>
-                                                        <div className={`h-1.5 w-1.5 rounded-full ${job.status === 'success' ? 'bg-green-500' :
-                                                            job.status === 'failed' ? 'bg-red-500' :
-                                                                job.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
-                                                            }`} />
-                                                        <span className="text-[10px] text-muted-foreground capitalize">{job.status}</span>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-[10px] text-muted-foreground italic opacity-50">No job</span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                    {(!layer.domains || layer.domains.length === 0) && (
-                                        <div className="text-[10px] text-muted-foreground italic col-span-full">No domains configured</div>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
+                </div>
+                <div className="text-right">
+                    <div className={StatusTypos.HEADER}>UPTIME CLOCK</div>
+                    <div className={`${StatusTypos.MONO} text-xl text-zinc-400`}>
+                        {new Date().toISOString().split('T')[1].split('.')[0]} UTC
                     </div>
                 </div>
-            </CardContent>
-        </Card>
+            </div>
+
+            {/* Dense Matrix Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-0 border border-zinc-800 bg-zinc-950">
+                {dataLayers.map((layer) => (
+                    <div key={layer.name} className="p-4 border-b border-r border-zinc-800 hover:bg-zinc-900/50 transition-colors">
+                        {/* Layer Header */}
+                        <div className="flex justify-between items-start mb-4">
+                            <div>
+                                <div className={StatusTypos.HEADER}>LAYER</div>
+                                <div className="font-bold text-lg text-zinc-100">{layer.name}</div>
+                            </div>
+                            <div className={`${StatusTypos.MONO} text-xs px-2 py-1 rounded-sm font-bold opacity-80`}
+                                style={{ backgroundColor: getStatusConfig(layer.status).bg, color: getStatusConfig(layer.status).text }}>
+                                {layer.status.toUpperCase()}
+                            </div>
+                        </div>
+
+                        {/* Domain Rows */}
+                        <div className="space-y-1">
+                            {(layer.domains || []).map((domain) => {
+                                const dStatus = getStatusConfig(domain.status);
+                                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                                const hasJob = domain.jobUrl;
+
+                                return (
+                                    <div key={domain.name} className="flex items-center justify-between p-2 hover:bg-zinc-800/50 border border-transparent hover:border-zinc-700 transition-all rounded-sm group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-2 h-2 rounded-full shadow-[0_0_4px_0_rgba(0,0,0,0.5)]"
+                                                style={{ backgroundColor: dStatus.text, boxShadow: `0 0 8px ${dStatus.text}40` }} />
+                                            <span className="text-sm font-medium text-zinc-300">{domain.name}</span>
+                                        </div>
+
+                                        <div className="flex items-center opacity-40 group-hover:opacity-100 transition-opacity gap-1">
+                                            {domain.triggerUrl && (
+                                                <button className="p-1.5 hover:bg-zinc-700 text-zinc-500 hover:text-cyan-400 disabled:opacity-30 rounded"
+                                                    title="Trigger Pipeline" type="button">
+                                                    <Zap className="h-3.5 w-3.5" />
+                                                </button>
+                                            )}
+                                            {domain.jobUrl && (
+                                                <a href={domain.jobUrl} target="_blank" rel="noreferrer"
+                                                    className="p-1.5 hover:bg-zinc-700 text-zinc-500 hover:text-blue-400 rounded">
+                                                    <ExternalLink className="h-3.5 w-3.5" />
+                                                </a>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-zinc-900 flex justify-between items-center">
+                            <div className={StatusTypos.HEADER}>LAST UPDATE</div>
+                            <div className={`${StatusTypos.MONO} text-xs text-zinc-500`}>
+                                {formatTimeAgo(layer.lastUpdated)} AGO
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 }

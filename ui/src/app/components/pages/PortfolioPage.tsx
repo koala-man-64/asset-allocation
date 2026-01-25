@@ -1,4 +1,4 @@
-// Portfolio Builder Page
+// Allocation Builder Page
 
 import { useApp } from '@/contexts/AppContext';
 import { DataService } from '@/services/DataService';
@@ -180,7 +180,7 @@ export function PortfolioPage() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Portfolio Builder</CardTitle>
+          <CardTitle>Allocation Builder</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
@@ -192,7 +192,7 @@ export function PortfolioPage() {
       {selectedStrategies.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground">No strategies selected. Add strategies from the Overview page.</p>
+        <p className="text-muted-foreground">No strategies selected. Add strategies from the Strategy Universe page.</p>
           </CardContent>
         </Card>
       ) : (

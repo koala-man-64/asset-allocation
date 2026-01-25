@@ -186,6 +186,14 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const baseUrl = getBaseUrl();
   const url = baseUrl ? `${baseUrl}${path}` : path;
+  const method = (init.method ?? 'GET').toUpperCase();
+
+  console.info('[backtestApi] request start', {
+    method,
+    baseUrl,
+    path,
+    url,
+  });
 
   const headers = new Headers(init.headers);
   if (!headers.has('Accept')) {
@@ -205,8 +213,19 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   }
 
   const resp = await fetch(url, { ...init, headers });
+  console.info('[backtestApi] response', {
+    method,
+    url: resp.url,
+    status: resp.status,
+  });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
+    console.error('[backtestApi] response error', {
+      method,
+      url: resp.url,
+      status: resp.status,
+      detail,
+    });
     throw new ApiError(resp.status, detail || resp.statusText);
   }
   return resp;
@@ -268,6 +287,7 @@ export const backtestApi = {
   },
 
   async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
+    console.info('[backtestApi] getSystemHealth', { baseUrl: getBaseUrl() });
     return requestJson<SystemHealth>('/system/health', { signal });
   },
 

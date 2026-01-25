@@ -66,7 +66,7 @@ export function RunComparePage() {
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
           <p className="text-lg text-muted-foreground">No strategies selected for comparison</p>
-          <p className="text-sm text-muted-foreground mt-2">Add strategies from the Overview page</p>
+          <p className="text-sm text-muted-foreground mt-2">Add strategies from the Strategy Universe page</p>
         </div>
       </div>
     );
