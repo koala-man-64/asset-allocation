@@ -76,6 +76,9 @@ describe('SystemStatusPage', () => {
     // Check for Uptime Clock Header
     expect(screen.getByText('UPTIME CLOCK')).toBeInTheDocument();
 
+    // Check for Matrix Legend
+    expect(screen.getByText('LEGEND')).toBeInTheDocument();
+
     // Check for Layer Name in Matrix
     expect(screen.getByText('Bronze')).toBeInTheDocument();
 

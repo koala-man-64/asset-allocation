@@ -56,6 +56,33 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                 </div>
             </div>
 
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 border border-slate-200 bg-slate-50 text-[11px] text-slate-600">
+                <span className={StatusTypos.HEADER}>LEGEND</span>
+                <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" aria-hidden="true" />
+                    Domain status
+                </span>
+                <span className="flex items-center gap-1">
+                    <Database className="h-3 w-3" aria-hidden="true" />
+                    Container
+                </span>
+                <span className="flex items-center gap-1">
+                    <FolderOpen className="h-3 w-3" aria-hidden="true" />
+                    Path
+                </span>
+                <span className="flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    Job
+                </span>
+                <span className="flex items-center gap-1">
+                    <Play className="h-3 w-3" aria-hidden="true" />
+                    Run
+                </span>
+                <span className={`${StatusTypos.MONO} ml-auto text-slate-500`}>
+                    Layer badge summarizes domains • Times show “ago” (UTC)
+                </span>
+            </div>
+
             {/* Dense Matrix Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-0 border border-slate-200 bg-white">
                 {dataLayers.map((layer) => {
@@ -138,7 +165,10 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                     <div
                                                         className="w-2 h-2 rounded-full shadow-[0_0_4px_0_rgba(0,0,0,0.5)]"
                                                         style={{ backgroundColor: dStatus.text, boxShadow: `0 0 8px ${dStatus.text}40` }}
+                                                        title={`Status: ${domain.status}`}
+                                                        aria-hidden="true"
                                                     />
+                                                    <span className="sr-only">Status: {domain.status}</span>
                                                     <span className="text-sm font-semibold text-slate-900">{domain.name}</span>
                                                     {domain.type && (
                                                         <span className="text-[10px] uppercase tracking-widest text-slate-500 font-mono">
