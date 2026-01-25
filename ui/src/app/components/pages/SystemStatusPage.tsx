@@ -2,9 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSystemHealthQuery } from '@/hooks/useDataQueries';
 import { StatusOverview } from './system-status/StatusOverview';
 import { AzureResources } from './system-status/AzureResources';
-// JobMonitor and DataLayerHealth are redundant with the new dense StatusOverview or can be re-added below if needed.
-// For "High Density" view, we prioritize the Matrix (StatusOverview).
-import { JobMonitor } from './system-status/JobMonitor';
 import { ScheduledJobsPanel } from './system-status/ScheduledJobsPanel';
 
 export function SystemStatusPage() {
@@ -148,9 +145,8 @@ export function SystemStatusPage() {
             <StatusOverview overall={overall} dataLayers={dataLayers} recentJobs={recentJobs} />
 
             {/* Secondary Details Grid */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6">
                 <ScheduledJobsPanel dataLayers={dataLayers} recentJobs={recentJobs} />
-                <JobMonitor recentJobs={recentJobs} jobLinkTokens={jobLinkTokens} />
             </div>
 
             {/* Connectors / Resources */}

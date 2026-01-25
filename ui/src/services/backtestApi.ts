@@ -166,6 +166,10 @@ export interface JobTriggerResponse {
   executionName?: string | null;
 }
 
+export interface SystemLinkResolveResponse {
+  url: string;
+}
+
 export interface TradeResponse {
   execution_date: string;
   symbol: string;
@@ -366,6 +370,15 @@ export const backtestApi = {
 
   async getLineage(signal?: AbortSignal): Promise<unknown> {
     return requestJson<unknown>('/system/lineage', { signal });
+  },
+
+  async resolveSystemLink(token: string, signal?: AbortSignal): Promise<SystemLinkResolveResponse> {
+    return requestJson<SystemLinkResolveResponse>('/system/links/resolve', {
+      method: 'POST',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
   },
 
   async getSignals(

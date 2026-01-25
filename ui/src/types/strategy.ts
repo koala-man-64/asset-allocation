@@ -161,12 +161,15 @@ export interface JobRun {
   jobType: 'backtest' | 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
   status: 'success' | 'failed' | 'running' | 'pending';
   startTime: string;
+  endTime?: string | null;
   duration?: number; // seconds
   recordsProcessed?: number;
   gitSha?: string;
   triggeredBy: string;
   errors?: string[];
   warnings?: string[];
+  executionName?: string | null;
+  details?: string | null;
   logLinkToken?: string;
 }
 
