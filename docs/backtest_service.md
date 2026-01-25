@@ -13,6 +13,19 @@ and served from the same FastAPI process:
 
 You can override the UI dist directory with `BACKTEST_UI_DIST_DIR` (must contain `index.html` and `assets/`).
 
+## UI Hosting (Two-Container: UI + API)
+
+When deploying the UI and API as separate containers, the simplest way to avoid browser CORS is to
+put a reverse proxy in front of the UI that forwards:
+
+- `/api/*` → the API service (preserve the `/api` prefix)
+- `/config.js` → the API service (dynamic runtime config for auth + base URL)
+
+This repo's `ui/Dockerfile` configures Nginx to do this using an envsubst template at runtime.
+
+- `BACKTEST_API_UPSTREAM` (UI container env): upstream origin for the API (example: `http://backtest-api`)
+  - Important: **do not** add a trailing slash, or Nginx will strip the `/api` prefix.
+
 ## Run Locally
 
 ```bash

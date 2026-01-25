@@ -2,29 +2,28 @@ import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 
 // Key Factory for consistent query keys
+// Key Factory for consistent query keys
 export const queryKeys = {
-    strategies: () => ['strategies'] as const,
+    // System & Data Health
     systemHealth: () => ['systemHealth'] as const,
     lineage: () => ['lineage'] as const,
+
+    // High-level Strategy & Signals
+    strategies: () => ['strategies'] as const,
     signals: () => ['signals'] as const,
-    stressEvents: () => ['stressEvents'] as const,
+
+    // Strategy Specific Details
     positions: (strategyId?: string) => ['positions', strategyId] as const,
     orders: (strategyId?: string) => ['orders', strategyId] as const,
     alerts: () => ['alerts'] as const,
     riskMetrics: (strategyId: string) => ['riskMetrics', strategyId] as const,
     executionMetrics: (strategyId: string) => ['executionMetrics', strategyId] as const,
+    stressEvents: () => ['stressEvents'] as const,
 };
 
 /**
- * Standard Query Hooks
+ * System & Health Queries
  */
-
-export function useStrategiesQuery() {
-    return useQuery({
-        queryKey: queryKeys.strategies(),
-        queryFn: () => DataService.getStrategies(),
-    });
-}
 
 export function useSystemHealthQuery() {
     return useQuery({
@@ -43,6 +42,17 @@ export function useLineageQuery() {
     });
 }
 
+/**
+ * Strategy & Signal Queries
+ */
+
+export function useStrategiesQuery() {
+    return useQuery({
+        queryKey: queryKeys.strategies(),
+        queryFn: () => DataService.getStrategies(),
+    });
+}
+
 export function useSignalsQuery() {
     return useQuery({
         queryKey: queryKeys.signals(),
@@ -50,6 +60,10 @@ export function useSignalsQuery() {
         refetchInterval: 10000,
     });
 }
+
+/**
+ * Strategy Detail Queries
+ */
 
 export function usePositionsQuery(strategyId?: string) {
     return useQuery({

@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from api.endpoints import aliases, backtests, data, ranking, system
+from api.endpoints import backtests, data, ranking, system
 from api.service.adls_run_store import AdlsRunStore
 from api.service.auth import AuthManager
 from api.service.dependencies import get_settings, get_store
@@ -114,7 +114,12 @@ def create_app() -> FastAPI:
     # CORS Configuration
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "*",  # Fallback for dev
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -123,7 +128,6 @@ def create_app() -> FastAPI:
     # Include API Routers with /api prefix
     app.include_router(data.router, prefix="/api/data", tags=["Data"])
     app.include_router(ranking.router, prefix="/api/ranking", tags=["Ranking"])
-    app.include_router(aliases.router, prefix="/api", tags=["Aliases"])
     app.include_router(system.router, prefix="/api/system", tags=["System"])
     app.include_router(backtests.router, prefix="/api/backtests", tags=["Backtests"])
 
@@ -183,13 +187,14 @@ def create_app() -> FastAPI:
 
     @app.websocket("/api/ws/updates")
     async def websocket_endpoint(websocket: WebSocket):
-        mgr: JobManager = websocket.app.state.manager
-        await mgr.connect(websocket)
+        await manager.connect(websocket)
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            mgr.disconnect(websocket)
+            pass
+        finally:
+            manager.disconnect(websocket)
             
     return app
 

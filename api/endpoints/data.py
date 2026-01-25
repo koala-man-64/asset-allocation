@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import Optional, List, Dict, Any
+
+from api.service.dependencies import validate_auth
 from ..data_service import DataService
 
 router = APIRouter()
@@ -8,12 +10,14 @@ router = APIRouter()
 def get_data_generic(
     layer: str,
     domain: str,
+    request: Request,
     ticker: Optional[str] = None,
 ):
     """
     Generic endpoint for retrieving data from Silver/Gold layers.
     Delegates to DataService for logic.
     """
+    validate_auth(request)
     if layer not in ["silver", "gold"]:
         raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'. Use /ranking for platinum.")
     
@@ -30,11 +34,13 @@ def get_data_generic(
 def get_finance_data(
     layer: str,
     sub_domain: str,
+    request: Request,
     ticker: str = Query(..., description="Ticker is required for finance reports"),
 ):
     """
     Specialized endpoint for Finance data.
     """
+    validate_auth(request)
     if layer not in ["silver", "gold"]:
          raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'")
 

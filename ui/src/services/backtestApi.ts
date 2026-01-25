@@ -1,6 +1,7 @@
 /* global RequestInit */
 import type { FinanceData, MarketData } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
+import { config } from '@/config';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
@@ -8,14 +9,6 @@ export type DataSource = 'auto' | 'local' | 'adls';
 type AccessTokenProvider = () => Promise<string | null>;
 
 let accessTokenProvider: AccessTokenProvider | null = null;
-
-type RuntimeConfig = {
-  backtestApiBaseUrl?: string;
-};
-
-function getRuntimeConfig(): RuntimeConfig {
-  return (window.__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
-}
 
 export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
   accessTokenProvider = provider;
@@ -296,7 +289,7 @@ export const backtestApi = {
       date: params.date,
       limit: params.limit ?? 500,
     });
-    return requestJson<TradingSignal[]>(`/signals${query}`, { signal });
+    return requestJson<TradingSignal[]>(`/ranking/signals${query}`, { signal });
   },
 
   async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
@@ -324,12 +317,12 @@ export const backtestApi = {
   },
 
   async getStrategies(signal?: AbortSignal): Promise<StrategyRun[]> {
-    return requestJson<StrategyRun[]>('/strategies', { signal });
+    return requestJson<StrategyRun[]>('/ranking/strategies', { signal });
   },
 
   async getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver', signal?: AbortSignal): Promise<MarketData[]> {
-    const encoded = encodeURIComponent(ticker);
-    return requestJson<MarketData[]>(`/market/${layer}/${encoded}`, { signal });
+    const query = buildQuery({ ticker });
+    return requestJson<MarketData[]>(`/data/${layer}/market${query}`, { signal });
   },
 
   async getFinanceData(
@@ -338,9 +331,9 @@ export const backtestApi = {
     layer: 'silver' | 'gold' = 'silver',
     signal?: AbortSignal,
   ): Promise<FinanceData[]> {
-    const encodedTicker = encodeURIComponent(ticker);
     const encodedSub = encodeURIComponent(subDomain);
-    return requestJson<FinanceData[]>(`/finance/${layer}/${encodedSub}/${encodedTicker}`, { signal });
+    const query = buildQuery({ ticker });
+    return requestJson<FinanceData[]>(`/data/${layer}/finance/${encodedSub}${query}`, { signal });
   },
 
   async getStressEvents(_signal?: AbortSignal): Promise<StressEvent[]> {
