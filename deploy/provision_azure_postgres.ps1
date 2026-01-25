@@ -13,7 +13,7 @@ param(
 
   [switch]$ApplyMigrations,
   [switch]$UseDockerPsql,
-  [switch]$CreateAppUsers=$True,
+  [switch]$CreateAppUsers,
   [string]$RankingWriterUser = "ranking_writer",
   [string]$RankingWriterPassword = $AdminPassword,
   [string]$BacktestServiceUser = "backtest_service",
