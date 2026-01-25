@@ -26,16 +26,54 @@ export const DataService = {
     return backtestApi.getStrategies();
   },
 
-  getSystemHealth(): Promise<SystemHealth> {
-    return backtestApi.getSystemHealth();
+  async getSystemHealth(): Promise<SystemHealth> {
+    console.info('[DataService] Fetching system health');
+    try {
+      const data = await backtestApi.getSystemHealth();
+      console.info('[DataService] System health loaded', {
+        overall: data.overall,
+        dataLayers: data.dataLayers?.length ?? 0,
+        alerts: data.alerts?.length ?? 0,
+        resources: data.resources?.length ?? 0,
+      });
+      return data;
+    } catch (err) {
+      console.error('[DataService] System health failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   },
 
-  getLineage(): Promise<unknown> {
-    return backtestApi.getLineage();
+  async getLineage(): Promise<unknown> {
+    console.info('[DataService] Fetching lineage');
+    try {
+      const data = await backtestApi.getLineage();
+      const impacts = (data as { impactsByDomain?: unknown })?.impactsByDomain;
+      console.info('[DataService] Lineage loaded', {
+        domains: impacts && typeof impacts === 'object' ? Object.keys(impacts as object).length : 0,
+      });
+      return data;
+    } catch (err) {
+      console.error('[DataService] Lineage failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   },
 
-  getSignals(params: { date?: string; limit?: number } = {}): Promise<TradingSignal[]> {
-    return backtestApi.getSignals(params);
+  async getSignals(params: { date?: string; limit?: number } = {}): Promise<TradingSignal[]> {
+    console.info('[DataService] Fetching signals', { params });
+    try {
+      const data = await backtestApi.getSignals(params);
+      console.info('[DataService] Signals loaded', { count: data.length });
+      return data;
+    } catch (err) {
+      console.error('[DataService] Signals failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   },
 
   getStressEvents(): Promise<StressEvent[]> {

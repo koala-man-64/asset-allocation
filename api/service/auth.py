@@ -179,12 +179,15 @@ class AuthManager:
         if mode in {"api_key", "api_key_or_oidc"} and self._settings.api_key:
             provided = (normalized.get(str(self._settings.api_key_header).lower()) or "").strip()
             if provided and provided == self._settings.api_key:
+                logger.info("Auth success via api_key")
                 return AuthContext(mode=mode, subject=None, claims={})
 
         if mode in {"oidc", "api_key_or_oidc"}:
             authorization = (normalized.get("authorization") or "").strip()
             if authorization and _is_bearer_auth(authorization):
                 token = _extract_bearer_token(authorization)
-                return self._verify_bearer_token(token)
+                ctx = self._verify_bearer_token(token)
+                logger.info("Auth success via oidc: subject=%s", ctx.subject or "-")
+                return ctx
 
         raise AuthError(status_code=401, detail="Unauthorized.", www_authenticate="Bearer")

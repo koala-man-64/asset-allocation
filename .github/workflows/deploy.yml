@@ -25,8 +25,8 @@ env:
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
-  BACKTEST_API_IMAGE_NAME: asset-allocation-backtest-api
-  BACKTEST_API_APP: backtest-api
+  BACKTEST_API_IMAGE_NAME: asset-allocation-api
+  BACKTEST_API_APP: asset-allocation-api
   UI_IMAGE_NAME: asset-allocation-ui
   UI_APP: asset-allocation-ui
   BRONZE_MARKET_JOB: bronze-market-job
@@ -257,7 +257,7 @@ jobs:
               - "core/**"
               - "monitoring/**"
               - "ui/**"
-              - "Dockerfile.backtest_api"
+              - "Dockerfile.asset_allocation_api"
               - "deploy/app_backtest_api.yaml"
               - "pyproject.toml"
               - "requirements.txt"
@@ -311,8 +311,8 @@ jobs:
       - name: Build and Push Backtest API Image
         if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
         run: |
-          docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
-          docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
 
@@ -426,15 +426,6 @@ jobs:
           ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
           export ACR_PASSWORD
           export IMAGE_TAG="${{ github.sha }}"
-
-          api_fqdn="$(az containerapp show --name "${{ env.BACKTEST_API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)"
-          api_fqdn="$(echo "$api_fqdn" | xargs || true)"
-          if [ -n "$api_fqdn" ]; then
-            export BACKTEST_API_ORIGIN="https://${api_fqdn}"
-          else
-            echo "WARNING: Unable to resolve ${BACKTEST_API_APP} FQDN; falling back to http://${BACKTEST_API_APP}:8000"
-            export BACKTEST_API_ORIGIN="http://${BACKTEST_API_APP}:8000"
-          fi
 
           echo "Deploying UI App from YAML..."
           envsubst < deploy/app_ui.yaml > deploy/app_ui.tmp.yaml

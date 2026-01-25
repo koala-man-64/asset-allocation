@@ -28,17 +28,45 @@ export const queryKeys = {
 export function useSystemHealthQuery() {
     return useQuery({
         queryKey: queryKeys.systemHealth(),
-        queryFn: () => DataService.getSystemHealth(),
+        queryFn: async () => {
+            console.info('[Query] systemHealth fetch');
+            return DataService.getSystemHealth();
+        },
         refetchInterval: 10000,
+        onSuccess: (data) => {
+            console.info('[Query] systemHealth success', {
+                overall: data.overall,
+                alerts: data.alerts?.length ?? 0,
+            });
+        },
+        onError: (err) => {
+            console.error('[Query] systemHealth error', {
+                error: err instanceof Error ? err.message : String(err),
+            });
+        },
     });
 }
 
 export function useLineageQuery() {
     return useQuery({
         queryKey: queryKeys.lineage(),
-        queryFn: () => DataService.getLineage(),
+        queryFn: async () => {
+            console.info('[Query] lineage fetch');
+            return DataService.getLineage();
+        },
         staleTime: 5 * 60 * 1000,
         refetchInterval: 60 * 1000,
+        onSuccess: (data) => {
+            const impacts = (data as { impactsByDomain?: unknown })?.impactsByDomain;
+            console.info('[Query] lineage success', {
+                domains: impacts && typeof impacts === 'object' ? Object.keys(impacts as object).length : 0,
+            });
+        },
+        onError: (err) => {
+            console.error('[Query] lineage error', {
+                error: err instanceof Error ? err.message : String(err),
+            });
+        },
     });
 }
 
@@ -56,8 +84,19 @@ export function useStrategiesQuery() {
 export function useSignalsQuery() {
     return useQuery({
         queryKey: queryKeys.signals(),
-        queryFn: () => DataService.getSignals(),
+        queryFn: async () => {
+            console.info('[Query] signals fetch');
+            return DataService.getSignals();
+        },
         refetchInterval: 10000,
+        onSuccess: (data) => {
+            console.info('[Query] signals success', { count: data.length });
+        },
+        onError: (err) => {
+            console.error('[Query] signals error', {
+                error: err instanceof Error ? err.message : String(err),
+            });
+        },
     });
 }
 

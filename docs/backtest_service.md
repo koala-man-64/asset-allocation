@@ -21,10 +21,12 @@ put a reverse proxy in front of the UI that forwards:
 - `/api/*` → the API service (preserve the `/api` prefix)
 - `/config.js` → the API service (dynamic runtime config for auth + base URL)
 
-This repo's `ui/Dockerfile` configures Nginx to do this using an envsubst template at runtime.
+This repo's `ui/Dockerfile` uses `ui/nginx.conf` to serve the SPA and proxy:
 
-- `BACKTEST_API_UPSTREAM` (UI container env): upstream origin for the API (example: `http://backtest-api`)
-  - Important: **do not** add a trailing slash, or Nginx will strip the `/api` prefix.
+- `/config.js` → `http://backtest-api:8000/config.js`
+- `/api/*` → `http://backtest-api:8000` (**no trailing slash** on `proxy_pass` for the `/api/` location)
+
+If your API service hostname differs, update `ui/nginx.conf` and rebuild the UI image.
 
 ## Run Locally
 

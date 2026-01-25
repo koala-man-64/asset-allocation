@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { config } from '@/config';
 import { backtestKeys } from '@/services/backtestHooks';
-import { toWebSocketBaseUrl } from '@/utils/apiBaseUrl';
 
 export function useRealtime() {
     const queryClient = useQueryClient();

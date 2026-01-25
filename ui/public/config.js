@@ -4,6 +4,7 @@
 // - In local UI dev, this file is served by Vite and can be overridden by Vite env vars.
 //
 // This file must not contain secrets.
+/* global window */
 window.__BACKTEST_UI_CONFIG__ = window.__BACKTEST_UI_CONFIG__ || {};
 
 // Local-dev defaults:

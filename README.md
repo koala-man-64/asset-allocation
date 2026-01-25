@@ -56,19 +56,15 @@ See `docs/backtest_service.md`. Locally:
 uvicorn api.service.app:app --reload
 ```
 
-## Backend API (UI data)
+## Backend API (UI)
 
-The UI (ag-ui-wiring contract) calls these endpoints:
+The UI calls the FastAPI service under `/api/*` (see `api/API_ENDPOINTS.md`). Common endpoints:
 
-- `GET /market/{layer}/{ticker}` (layer: `silver|gold`)
-- `GET /finance/{layer}/{sub_domain}/{ticker}` (layer: `silver|gold`)
-- `GET /strategies`
-
-These are implemented as **aliases** over the existing canonical routes:
-
-- `GET /data/{layer}/market?ticker={ticker}`
-- `GET /data/{layer}/finance/{sub_domain}?ticker={ticker}`
-- `GET /ranking/strategies`
+- `GET /api/data/{layer}/market?ticker={ticker}` (layer: `silver|gold`)
+- `GET /api/data/{layer}/finance/{sub_domain}?ticker={ticker}` (layer: `silver|gold`)
+- `GET /api/ranking/strategies`
+- `GET /api/system/health`
+- `WS /api/ws/updates`
 
 ## Deployment
 

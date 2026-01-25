@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Set
 
@@ -8,6 +9,8 @@ from tasks.ranking.strategies import (
     MomentumStrategy,
     ValueStrategy,
 )
+
+logger = logging.getLogger("backtest.lineage")
 
 
 def _utc_now_iso() -> str:
@@ -34,6 +37,7 @@ def _strategy_inputs(strategy_name: str, sources_used: List[str]) -> List[str]:
 
 
 def get_lineage_snapshot() -> Dict[str, Any]:
+    logger.info("Generating lineage snapshot.")
     strategies = [
         MomentumStrategy(),
         ValueStrategy(),
@@ -62,6 +66,11 @@ def get_lineage_snapshot() -> Dict[str, Any]:
     for domain in list(impacts_by_domain.keys()):
         impacts_by_domain[domain] = sorted(set(impacts_by_domain[domain]))
 
+    logger.info(
+        "Lineage snapshot ready: strategies=%s domains=%s",
+        len(strategies_out),
+        len(impacts_by_domain.keys()),
+    )
     return {
         "generatedAt": _utc_now_iso(),
         "layers": [

@@ -53,23 +53,3 @@ include = [
 
 [tool.setuptools]
 include-package-data = true
-packages = [
-    "alpaca",
-    "alpaca.execution",
-    "api",
-    "api.endpoints",
-    "api.service",
-    "backtest",
-    "backtest.configured_strategy",
-    "backtest.data_access",
-    "core",
-    "monitoring",
-    "tasks",
-    "tasks.common",
-    "tasks.earnings_data",
-    "tasks.finance_data",
-    "tasks.market_data",
-    "tasks.monitoring",
-    "tasks.price_target_data",
-    "tasks.ranking",
-]

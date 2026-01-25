@@ -10,6 +10,79 @@ type AccessTokenProvider = () => Promise<string | null>;
 
 let accessTokenProvider: AccessTokenProvider | null = null;
 
+const runtimeConfig = (window as any).__BACKTEST_UI_CONFIG__ || {};
+const debugApi = (() => {
+  const isTruthy = (value: unknown): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const text = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(text);
+  };
+
+  let localStorageFlag: string | null = null;
+  try {
+    localStorageFlag = window.localStorage.getItem('debugApi');
+  } catch {
+    localStorageFlag = null;
+  }
+
+  const queryFlag = new URLSearchParams(window.location.search).get('debugApi');
+  const candidates = [
+    runtimeConfig.debugApi,
+    import.meta.env.VITE_DEBUG_API,
+    queryFlag,
+    localStorageFlag,
+  ];
+  const explicitFlag = candidates.find((value) => {
+    if (value === undefined || value === null) return false;
+    return String(value).trim() !== '';
+  });
+  if (explicitFlag === undefined) return true;
+  return isTruthy(explicitFlag);
+})();
+
+const apiLogPrefix = '[Backtest API]';
+let requestCounter = 0;
+
+function logApi(message: string, meta: Record<string, unknown> = {}): void {
+  if (!debugApi) return;
+  if (Object.keys(meta).length) {
+    console.info(apiLogPrefix, message, meta);
+    return;
+  }
+  console.info(apiLogPrefix, message);
+}
+
+function safeHeaderSnapshot(headers: Headers): Record<string, string> {
+  const allowlist = new Set(['accept', 'content-type', 'x-request-id', 'x-correlation-id']);
+  const redact = new Set(['authorization', 'x-api-key', 'cookie']);
+  const snapshot: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    const normalized = key.toLowerCase();
+    if (allowlist.has(normalized)) {
+      snapshot[normalized] = value;
+    } else if (redact.has(normalized)) {
+      snapshot[normalized] = '<redacted>';
+    }
+  });
+  if (headers.has('Authorization')) {
+    snapshot.authorization = '<redacted>';
+  }
+  if (headers.has('X-API-Key')) {
+    snapshot['x-api-key'] = '<redacted>';
+  }
+  return snapshot;
+}
+
+if (debugApi) {
+  logApi('Runtime config', {
+    apiBaseUrl: config.apiBaseUrl,
+    runtimeBaseUrl: runtimeConfig.backtestApiBaseUrl,
+    envBaseUrl: import.meta.env.VITE_BACKTEST_API_BASE_URL || import.meta.env.VITE_API_BASE_URL,
+    origin: window.location.origin,
+  });
+}
+
 export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
   accessTokenProvider = provider;
 }
@@ -153,13 +226,7 @@ export interface GetTradesParams {
 
 
 function getBaseUrl(): string {
-  const runtime = getRuntimeConfig();
-  const raw = String(
-    runtime.backtestApiBaseUrl ||
-    import.meta.env.VITE_BACKTEST_API_BASE_URL ||
-    '/api'
-  ).trim();
-  return raw.replace(/\/+$/, '');
+  return config.apiBaseUrl;
 }
 
 function getApiKey(): string {
@@ -192,6 +259,9 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const baseUrl = getBaseUrl();
   const url = baseUrl ? `${baseUrl}${path}` : path;
+  const requestId = ++requestCounter;
+  const method = String(init.method || 'GET').toUpperCase();
+  const startedAt = Date.now();
 
   const headers = new Headers(init.headers);
   if (!headers.has('Accept')) {
@@ -210,9 +280,51 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     headers.set('X-API-Key', apiKey);
   }
 
-  const resp = await fetch(url, { ...init, headers });
+  logApi('Request start', {
+    id: requestId,
+    method,
+    path,
+    baseUrl,
+    url,
+    headers: safeHeaderSnapshot(headers),
+  });
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, { ...init, headers });
+  } catch (err) {
+    const elapsedMs = Date.now() - startedAt;
+    logApi('Request failed', {
+      id: requestId,
+      method,
+      url,
+      elapsedMs,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  logApi('Response', {
+    id: requestId,
+    method,
+    url,
+    status: resp.status,
+    ok: resp.ok,
+    elapsedMs,
+    contentType: resp.headers.get('content-type'),
+    cache: resp.headers.get('x-system-health-cache'),
+    stale: resp.headers.get('x-system-health-stale'),
+  });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
+    logApi('Response error detail', {
+      id: requestId,
+      method,
+      url,
+      status: resp.status,
+      detail: detail.slice(0, 500),
+    });
     throw new ApiError(resp.status, detail || resp.statusText);
   }
   return resp;

@@ -5,6 +5,7 @@ import { DataLayerHealth } from './system-status/DataLayerHealth';
 import { JobMonitor } from './system-status/JobMonitor';
 import { AlertHistory } from './system-status/AlertHistory';
 import { AzureResources } from './system-status/AzureResources';
+import { config } from '@/config';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching, dataUpdatedAt } = useSystemHealthQuery();
@@ -13,9 +14,31 @@ export function SystemStatusPage() {
     const [now, setNow] = useState(() => Date.now());
 
     useEffect(() => {
+        console.info('[SystemStatusPage] Mounted', {
+            apiBaseUrl: config.apiBaseUrl,
+            origin: window.location.origin,
+        });
         const handle = window.setInterval(() => setNow(Date.now()), 1000);
         return () => window.clearInterval(handle);
     }, []);
+
+    useEffect(() => {
+        if (!data) return;
+        console.info('[SystemStatusPage] Data updated', {
+            overall: data.overall,
+            dataLayers: data.dataLayers?.length ?? 0,
+            alerts: data.alerts?.length ?? 0,
+            resources: data.resources?.length ?? 0,
+            updatedAt: dataUpdatedAt,
+        });
+    }, [data, dataUpdatedAt]);
+
+    useEffect(() => {
+        if (!error) return;
+        console.error('[SystemStatusPage] Data error', {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }, [error]);
 
     const secondsSinceRefresh = useMemo(() => {
         if (!dataUpdatedAt) return null;
