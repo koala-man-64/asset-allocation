@@ -101,7 +101,13 @@ async def main_async():
     # Load Lists
     list_manager.load()
     
-    symbols = [row['Symbol'] for _, row in df_symbols.iterrows() if '.' not in row['Symbol']]
+    # Filter out NaNs/floats and ensure strings
+    df_symbols = df_symbols.dropna(subset=['Symbol'])
+    symbols = [
+        str(row['Symbol']) 
+        for _, row in df_symbols.iterrows() 
+        if isinstance(row['Symbol'], str) and '.' not in row['Symbol']
+    ]
     
     mdc.write_line(f"Starting Bronze Ingestion for {len(symbols)} symbols...")
     

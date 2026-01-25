@@ -130,9 +130,12 @@ async def main_async():
     df_symbols = mdc.get_symbols()
     
     # Filter
+    # Filter NaNs and ensure string
+    df_symbols = df_symbols.dropna(subset=['Symbol'])
     symbols = [
-        row['Symbol'] for _, row in df_symbols.iterrows() 
-        if '.' not in str(row['Symbol']) and not list_manager.is_blacklisted(row['Symbol'])
+        str(row['Symbol']) 
+        for _, row in df_symbols.iterrows() 
+        if isinstance(row['Symbol'], str) and '.' not in row['Symbol'] and not list_manager.is_blacklisted(row['Symbol'])
     ]
     
     if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:

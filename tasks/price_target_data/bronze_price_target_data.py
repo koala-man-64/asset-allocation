@@ -99,10 +99,12 @@ async def main_async():
     list_manager.load()
     
     df_symbols = mdc.get_symbols()
+    # Filter NaNs and ensure string
+    df_symbols = df_symbols.dropna(subset=['Symbol'])
     symbols = [
-        row['Symbol']
-        for _, row in df_symbols.iterrows()
-        if not list_manager.is_blacklisted(row['Symbol'])
+        str(row['Symbol']) 
+        for _, row in df_symbols.iterrows() 
+        if isinstance(row['Symbol'], str) and '.' not in row['Symbol'] and not list_manager.is_blacklisted(row['Symbol'])
     ]
 
     if cfg.DEBUG_SYMBOLS:
