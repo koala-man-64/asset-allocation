@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import hashlib
 import re
@@ -22,6 +23,8 @@ from monitoring.monitor_metrics import (
     parse_metric_thresholds_json,
 )
 from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
+
+logger = logging.getLogger("backtest.system_health")
 
 
 def _utc_now() -> datetime:
@@ -364,7 +367,7 @@ def _make_job_portal_url(sub_id: str, rg: str, job_name: str) -> Optional[str]:
     if not all([sub_id, rg, job_name]):
         return None
     return (
-        f"https://portal.azure.com/#@/resource/subscriptions/{sub_id}"
+        f"https://portal.azure.com/#resource/subscriptions/{sub_id}"
         f"/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job_name}/overview"
     )
 
@@ -399,7 +402,10 @@ def collect_system_health_snapshot(
     """
     now = now or _utc_now()
     if _is_test_mode():
+        logger.info("System health running in test mode (returning empty payload).")
         return {"overall": "healthy", "dataLayers": [], "recentJobs": [], "alerts": []}
+
+    logger.info("Collecting system health: include_resource_ids=%s", include_resource_ids)
 
     cfg = AzureBlobStoreConfig.from_env()
     store = AzureBlobStore(cfg)
@@ -455,6 +461,13 @@ def collect_system_health_snapshot(
                     "jobName": job_name,
                 })
             except Exception:
+                logger.warning(
+                    "Layer marker probe failed: layer=%s domain=%s container=%s",
+                    spec.name,
+                    name_clean,
+                    container,
+                    exc_info=True,
+                )
                 had_layer_error = True
                 domain_items.append({
                     "name": name_clean,
@@ -504,6 +517,14 @@ def collect_system_health_snapshot(
                     "jobName": job_name,
                 })
             except Exception:
+                logger.warning(
+                    "Layer delta probe failed: layer=%s domain=%s container=%s path=%s",
+                    spec.name,
+                    name_clean,
+                    container,
+                    table_path,
+                    exc_info=True,
+                )
                 had_layer_error = True
                 domain_items.append({
                     "name": name_clean,  # Use raw name on error if cleaning is ambiguous
@@ -544,6 +565,12 @@ def collect_system_health_snapshot(
         unique_frequencies = sorted({str(item.get("frequency") or "").strip() for item in domain_items if item.get("frequency")})
         refresh_frequency = unique_frequencies[0] if len(unique_frequencies) == 1 else "Multiple schedules"
 
+        logger.info(
+            "Layer probe complete: layer=%s status=%s domains=%s",
+            spec.name,
+            layer_status,
+            len(domain_items),
+        )
         layers.append(
             {
                 "name": spec.name,
@@ -768,6 +795,7 @@ def collect_system_health_snapshot(
 
                 try:
                     if app_names:
+                        logger.info("Collecting Azure container app health: count=%s", len(app_names))
                         app_resources = collect_container_apps(
                             arm,
                             app_names=app_names,
@@ -781,6 +809,7 @@ def collect_system_health_snapshot(
                             _record_resource(enriched, title="Azure resource health")
 
                     if job_names:
+                        logger.info("Collecting Azure job health: count=%s", len(job_names))
                         job_resources, runs = collect_jobs_and_executions(
                             arm,
                             job_names=job_names,
@@ -819,6 +848,7 @@ def collect_system_health_snapshot(
                     if log_client is not None:
                         log_client.close()
         except Exception as exc:
+            logger.exception("Azure control-plane probes failed.")
             checked_iso = _iso(now)
             alerts.append(
                 {
@@ -840,4 +870,12 @@ def collect_system_health_snapshot(
     payload: Dict[str, Any] = {"overall": overall, "dataLayers": layers, "recentJobs": job_runs, "alerts": alerts}
     if resources:
         payload["resources"] = resources
+    logger.info(
+        "System health summary: overall=%s layers=%s alerts=%s resources=%s jobs=%s",
+        overall,
+        len(layers),
+        len(alerts),
+        len(resources),
+        len(job_runs),
+    )
     return payload

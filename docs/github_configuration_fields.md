@@ -9,13 +9,13 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
 - **CI/CD workflows:** `.github/workflows/deploy.yml`, `.github/workflows/run_tests.yml`, `.github/workflows/trigger_all_jobs.yml`
 - **Deploy mechanism:** `envsubst`-rendered ACA YAML templates (e.g., `deploy/app_backtest_api.yaml`, `deploy/job_*.yaml`) applied via `az containerapp ... --yaml ...`
 - **Runtime config path:** GitHub Secrets → workflow `env:` → `envsubst` → Azure Container Apps env vars/secrets
-- **Job triggering feature:** Backtest API endpoint reads ARM/job env vars (see `backtest/service/app.py` `POST /system/jobs/{job_name}/run`)
+- **Job triggering feature:** Backtest API endpoint reads ARM/job env vars (see `api/endpoints/system.py` `POST /api/system/jobs/{job_name}/run`)
 
 ## 3. Findings (Triaged)
 
 ### 3.1 Critical (Must Fix)
 - **Deploy can break if `BACKTEST_AUTH_MODE` is unset**
-  - **Evidence:** `backtest/service/settings.py` requires `BACKTEST_AUTH_MODE`; `deploy/app_backtest_api.yaml` templates `${BACKTEST_AUTH_MODE}`; `.github/workflows/deploy.yml` sources it from `secrets.BACKTEST_AUTH_MODE`, but the deploy “Validate required secrets” preflight does not enforce it.
+  - **Evidence:** `api/service/settings.py` requires `BACKTEST_AUTH_MODE`; `deploy/app_backtest_api.yaml` templates `${BACKTEST_AUTH_MODE}`; `.github/workflows/deploy.yml` sources it from `secrets.BACKTEST_AUTH_MODE`, but the deploy “Validate required secrets” preflight does not enforce it.
   - **Why it matters:** A missing/empty secret can produce a container that fails to start after redeploy.
   - **Recommendation:** Treat `BACKTEST_AUTH_MODE` as required and validate it in deploy preflight.
   - **Acceptance Criteria:** Deploy workflow fails fast if missing; Backtest API starts after redeploy.
@@ -26,7 +26,7 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
   - **Evidence:** Job trigger reads `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID`, `SYSTEM_HEALTH_ARM_RESOURCE_GROUP`, `SYSTEM_HEALTH_ARM_JOBS`; these are not present in `deploy/app_backtest_api.yaml`.
   - **Why it matters:** Manually set Azure env vars can be overwritten by future redeploys.
   - **Recommendation:** Add these fields to GitHub-managed config and wire them into the deploy template.
-  - **Acceptance Criteria:** After redeploy, `/system/jobs/{job}/run` still works and job executions still show up in `/system/health`.
+  - **Acceptance Criteria:** After redeploy, `/api/system/jobs/{job}/run` still works and job executions still show up in `/api/system/health`.
   - **Owner Suggestion:** DevOps Agent / Delivery Engineer Agent
 
 - **Secret inventory is fragmented across workflows**
@@ -87,7 +87,7 @@ These are required/used by the Backtest API and/or system health collection logi
   - `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID`
   - `SYSTEM_HEALTH_ARM_RESOURCE_GROUP`
   - `SYSTEM_HEALTH_ARM_JOBS` (comma-separated job names allowed to start)
-- **Optional (but required if you want `/system/health` ARM probe behavior configured explicitly):**
+- **Optional (but required if you want `/api/system/health` ARM probe behavior configured explicitly):**
   - `SYSTEM_HEALTH_ARM_CONTAINERAPPS` (comma-separated names)
   - `SYSTEM_HEALTH_ARM_API_VERSION`
   - `SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS`
@@ -95,7 +95,7 @@ These are required/used by the Backtest API and/or system health collection logi
 
 ## 5. Operational Readiness & Observability
 - Prefer **GitHub Variables** for non-sensitive config (e.g., subscription/resource group, job allowlists) and **GitHub Secrets** for secrets (connection strings, API keys, passwords).
-- Ensure the `backtest-api` managed identity has RBAC to start Container Apps Jobs (`Microsoft.App/jobs/start/action`); otherwise `/system/jobs/{job}/run` will return errors even if configuration is present.
+- Ensure the `backtest-api` managed identity has RBAC to start Container Apps Jobs (`Microsoft.App/jobs/start/action`); otherwise `/api/system/jobs/{job}/run` will return errors even if configuration is present.
 
 ## 6. Refactoring Examples (Targeted)
 - Add missing deploy preflight validation for `BACKTEST_AUTH_MODE` in `.github/workflows/deploy.yml` alongside existing secret checks.
@@ -108,8 +108,8 @@ These are required/used by the Backtest API and/or system health collection logi
   - `.github/workflows/trigger_all_jobs.yml`
   - `deploy/app_backtest_api.yaml`
   - `deploy/job_*.yaml`
-  - `backtest/service/app.py`
-  - `backtest/service/settings.py`
+  - `services/backtest_api/app.py`
+  - `api/service/settings.py`
   - `monitoring/system_health.py`
   - `.env.template`
 

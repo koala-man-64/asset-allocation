@@ -9,7 +9,7 @@ and served from the same FastAPI process:
 
 - UI: `GET /`
 - Static assets: `GET /assets/*`
-- API: `GET /backtests/*`
+- API: `GET /api/backtests/*`
 
 You can override the UI dist directory with `BACKTEST_UI_DIST_DIR` (must contain `index.html` and `assets/`).
 
@@ -21,10 +21,12 @@ put a reverse proxy in front of the UI that forwards:
 - `/api/*` → the API service (preserve the `/api` prefix)
 - `/config.js` → the API service (dynamic runtime config for auth + base URL)
 
-This repo's `ui/Dockerfile` configures Nginx to do this using an envsubst template at runtime.
+This repo's `ui/Dockerfile` uses `ui/nginx.conf` to serve the SPA and proxy:
 
-- `BACKTEST_API_UPSTREAM` (UI container env): upstream origin for the API (example: `http://backtest-api`)
-  - Important: **do not** add a trailing slash, or Nginx will strip the `/api` prefix.
+- `/config.js` → `http://backtest-api:8000/config.js`
+- `/api/*` → `http://backtest-api:8000` (**no trailing slash** on `proxy_pass` for the `/api/` location)
+
+If your API service hostname differs, update `ui/nginx.conf` and rebuild the UI image.
 
 ## Run Locally
 
@@ -69,28 +71,31 @@ export BACKTEST_OIDC_JWKS_URL="https://login.microsoftonline.com/<tenant-id>/dis
 export BACKTEST_OIDC_REQUIRED_SCOPES="backtests.read,backtests.write"
 export BACKTEST_OIDC_REQUIRED_ROLES=""
 
-# Optional: override default Content-Security-Policy header:
-export BACKTEST_CSP=""
+# Required: Content-Security-Policy header (override as needed)
+export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+# Required: system-health cache TTL (used by /api/system/* endpoints)
+export SYSTEM_HEALTH_TTL_SECONDS=30
 
 uvicorn api.service.app:app --reload --port 8000
 ```
 
 ## API
 
-- `POST /backtests` - submit a run (YAML or JSON config)
-- `GET /backtests` - list runs (filters: `status`, `q`, `limit`, `offset`)
-- `GET /backtests/{run_id}/status`
-- `GET /backtests/{run_id}/summary` (query: `source=auto|local|adls`)
-- `GET /backtests/{run_id}/artifacts` (query: `remote=true`)
-- `GET /backtests/{run_id}/artifacts/{name}` (query: `source=auto|local|adls`)
-- `GET /backtests/{run_id}/metrics/timeseries` (query: `source=auto|local|adls`, `max_points=...`)
-- `GET /backtests/{run_id}/metrics/rolling` (query: `window_days=...`, `source=auto|local|adls`, `max_points=...`)
-- `GET /backtests/{run_id}/trades` (query: `source=auto|local|adls`, `limit=...`, `offset=...`)
+- `POST /api/backtests` - submit a run (YAML or JSON config)
+- `GET /api/backtests` - list runs (filters: `status`, `q`, `limit`, `offset`)
+- `GET /api/backtests/{run_id}/status`
+- `GET /api/backtests/{run_id}/summary` (query: `source=auto|local|adls`)
+- `GET /api/backtests/{run_id}/artifacts` (query: `remote=true`)
+- `GET /api/backtests/{run_id}/artifacts/{name}` (query: `source=auto|local|adls`)
+- `GET /api/backtests/{run_id}/metrics/timeseries` (query: `source=auto|local|adls`, `max_points=...`)
+- `GET /api/backtests/{run_id}/metrics/rolling` (query: `window_days=...`, `source=auto|local|adls`, `max_points=...`)
+- `GET /api/backtests/{run_id}/trades` (query: `source=auto|local|adls`, `limit=...`, `offset=...`)
 
 ### Example: Submit (JSON)
 
 ```bash
-curl -X POST "http://localhost:8000/backtests" \
+curl -X POST "http://localhost:8000/api/backtests" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: change-me" \
   -d @backtest.json
@@ -99,7 +104,7 @@ curl -X POST "http://localhost:8000/backtests" \
 ### Example: Submit (YAML)
 
 ```bash
-curl -X POST "http://localhost:8000/backtests" \
+curl -X POST "http://localhost:8000/api/backtests" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: change-me" \
   -d '{"config_yaml": "'"$(cat backtest.yaml | sed 's/"/\\"/g')"'"}'
@@ -142,7 +147,7 @@ Backtest API env vars (recommended for Option A):
 - `BACKTEST_UI_OIDC_CLIENT_ID=...` (SPA app registration client id)
 - `BACKTEST_UI_OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>` (optional; defaults from `BACKTEST_OIDC_ISSUER`)
 - `BACKTEST_UI_OIDC_SCOPES=api://<api-client-id>/backtests.read api://<api-client-id>/backtests.write`
-- `BACKTEST_UI_API_BASE_URL=` (optional; default empty means “same origin”)
+- `BACKTEST_UI_API_BASE_URL=` (optional; defaults to `/api` for this repo’s routing)
 
 ### UI env vars (Vite, local dev)
 
@@ -151,6 +156,8 @@ These are used when running the UI via Vite (`pnpm dev`) and as a fallback if `/
 - `VITE_OIDC_CLIENT_ID=...`
 - `VITE_OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>`
 - `VITE_OIDC_SCOPES=api://<api-client-id>/backtests.read api://<api-client-id>/backtests.write`
+- `VITE_API_BASE_URL=/api` (optional; UI expects API routes under `/api/*`)
+- `VITE_BACKTEST_API_BASE_URL=/api` (optional; same as `VITE_API_BASE_URL`)
 
 Dev-only API key support:
 - `VITE_BACKTEST_API_KEY=...` (only sent automatically in dev unless `VITE_ALLOW_BROWSER_API_KEY=true`)

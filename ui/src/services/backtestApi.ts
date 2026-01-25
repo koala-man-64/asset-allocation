@@ -10,6 +10,79 @@ type AccessTokenProvider = () => Promise<string | null>;
 
 let accessTokenProvider: AccessTokenProvider | null = null;
 
+const runtimeConfig = (window as any).__BACKTEST_UI_CONFIG__ || {};
+const debugApi = (() => {
+  const isTruthy = (value: unknown): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const text = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(text);
+  };
+
+  let localStorageFlag: string | null = null;
+  try {
+    localStorageFlag = window.localStorage.getItem('debugApi');
+  } catch {
+    localStorageFlag = null;
+  }
+
+  const queryFlag = new URLSearchParams(window.location.search).get('debugApi');
+  const candidates = [
+    runtimeConfig.debugApi,
+    import.meta.env.VITE_DEBUG_API,
+    queryFlag,
+    localStorageFlag,
+  ];
+  const explicitFlag = candidates.find((value) => {
+    if (value === undefined || value === null) return false;
+    return String(value).trim() !== '';
+  });
+  if (explicitFlag === undefined) return true;
+  return isTruthy(explicitFlag);
+})();
+
+const apiLogPrefix = '[Backtest API]';
+let requestCounter = 0;
+
+function logApi(message: string, meta: Record<string, unknown> = {}): void {
+  if (!debugApi) return;
+  if (Object.keys(meta).length) {
+    console.info(apiLogPrefix, message, meta);
+    return;
+  }
+  console.info(apiLogPrefix, message);
+}
+
+function safeHeaderSnapshot(headers: Headers): Record<string, string> {
+  const allowlist = new Set(['accept', 'content-type', 'x-request-id', 'x-correlation-id']);
+  const redact = new Set(['authorization', 'x-api-key', 'cookie']);
+  const snapshot: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    const normalized = key.toLowerCase();
+    if (allowlist.has(normalized)) {
+      snapshot[normalized] = value;
+    } else if (redact.has(normalized)) {
+      snapshot[normalized] = '<redacted>';
+    }
+  });
+  if (headers.has('Authorization')) {
+    snapshot.authorization = '<redacted>';
+  }
+  if (headers.has('X-API-Key')) {
+    snapshot['x-api-key'] = '<redacted>';
+  }
+  return snapshot;
+}
+
+if (debugApi) {
+  logApi('Runtime config', {
+    apiBaseUrl: config.apiBaseUrl,
+    runtimeBaseUrl: runtimeConfig.backtestApiBaseUrl,
+    envBaseUrl: import.meta.env.VITE_BACKTEST_API_BASE_URL || import.meta.env.VITE_API_BASE_URL,
+    origin: window.location.origin,
+  });
+}
+
 export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
   accessTokenProvider = provider;
 }

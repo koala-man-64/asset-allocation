@@ -1,0 +1,32 @@
+services:
+  asset-allocation-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.asset_allocation_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      BACKTEST_UI_AUTH_MODE: ${BACKTEST_UI_AUTH_MODE:-none}
+      BACKTEST_UI_API_BASE_URL: ${BACKTEST_UI_API_BASE_URL:-/api}
+      TEST_MODE: ${TEST_MODE:-true}
+      LOG_FORMAT: ${LOG_FORMAT:-TEXT}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - backtest_results:/app/backtest_results
+
+  asset-allocation-ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_BACKTEST_API_BASE_URL: /api
+    ports:
+      - "8080:80"
+    depends_on:
+      - asset-allocation-api
+
+volumes:
+  backtest_results: {}

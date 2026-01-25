@@ -1,3 +1,4 @@
+# Stage 1: build the UI bundle (used for single-container hosting).
 FROM node:20-bookworm-slim AS ui-builder
 
 WORKDIR /ui
@@ -7,29 +8,41 @@ COPY ui/index.html ui/postcss.config.mjs ui/tsconfig.json ui/vite.config.ts ./
 COPY ui/public ./public
 COPY ui/src ./src
 
+# Build the static UI assets.
 RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
 
 
+# Stage 2: API runtime (FastAPI).
 FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 WORKDIR /app
 
 COPY requirements.lock.txt .
+# Install Python dependencies first for better layer caching.
 RUN pip install --no-cache-dir -r requirements.lock.txt
 
+# Copy application code (shared across API + jobs).
 COPY pyproject.toml README.md ./
+COPY core/ core/
+COPY tasks/ tasks/
+COPY services/ services/
 COPY alpaca/ alpaca/
 COPY api/ api/
 COPY backtest/ backtest/
 COPY monitoring/ monitoring/
 RUN pip install --no-cache-dir .
 
+# Default API runtime config for local/container use.
 ENV BACKTEST_OUTPUT_DIR=/app/backtest_results
 ENV BACKTEST_DB_PATH=/app/backtest_results/runs.sqlite3
+# When set, FastAPI serves the built UI from this directory.
 ENV BACKTEST_UI_DIST_DIR=/app/ui-dist
 
+# Copy the built UI assets into the API image (single-container hosting).
 COPY --from=ui-builder /ui/dist /app/ui-dist
 
+# FastAPI listens on 8000 inside the container.
 EXPOSE 8000
 
+# Start the API server.
 CMD ["uvicorn", "api.service.app:app", "--host", "0.0.0.0", "--port", "8000"]

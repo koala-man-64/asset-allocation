@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict
 from fastapi import Request
 from monitoring.ttl_cache import TtlCache
@@ -7,6 +8,7 @@ from api.service.job_manager import JobManager
 from api.service.run_store import RunStore
 from api.service.settings import ServiceSettings
 
+logger = logging.getLogger("backtest.api.auth")
 
 def get_settings(request: Request) -> ServiceSettings:
     return request.app.state.settings
@@ -41,13 +43,30 @@ def validate_auth(request: Request) -> None:
     auth = get_auth_manager(request)
     
     if settings.auth_mode == "none":
+        logger.info(
+            "Auth skipped (mode=none): path=%s host=%s",
+            request.url.path,
+            request.headers.get("host", ""),
+        )
         return
         
     try:
-        auth.authenticate_headers(dict(request.headers))
+        ctx = auth.authenticate_headers(dict(request.headers))
+        logger.info(
+            "Auth ok: mode=%s subject=%s path=%s",
+            ctx.mode,
+            ctx.subject or "-",
+            request.url.path,
+        )
     except AuthError as exc:
         headers: Dict[str, str] = {}
         if exc.www_authenticate:
             headers["WWW-Authenticate"] = exc.www_authenticate
+        logger.warning(
+            "Auth failed: status=%s detail=%s path=%s",
+            exc.status_code,
+            exc.detail,
+            request.url.path,
+        )
         raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers=headers) from exc
 

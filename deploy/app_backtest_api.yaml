@@ -1,5 +1,5 @@
 location: East US
-name: backtest-api
+name: asset-allocation-api
 type: Microsoft.App/containerApps
 identity:
   type: SystemAssigned
@@ -26,9 +26,9 @@ properties:
       value: "${BACKTEST_POSTGRES_DSN}"
   template:
     containers:
-    - image: assetallocationacr.azurecr.io/asset-allocation-backtest-api:${IMAGE_TAG}
+    - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}
       imageType: ContainerImage
-      name: backtest-api
+      name: asset-allocation-api
       env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
@@ -109,7 +109,7 @@ properties:
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
         value: "${RESOURCE_GROUP}"
       - name: SYSTEM_HEALTH_ARM_CONTAINERAPPS
-        value: "backtest-api,asset-allocation-ui"
+        value: "asset-allocation-api,asset-allocation-ui"
       - name: SYSTEM_HEALTH_ARM_JOBS
         value: "bronze-market-job,bronze-finance-job,bronze-price-target-job,bronze-earnings-job,silver-market-job,silver-finance-job,silver-price-target-job,silver-earnings-job,gold-market-job,gold-finance-job,gold-price-target-job,gold-earnings-job,platinum-ranking-job"
       - name: SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB

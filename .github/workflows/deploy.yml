@@ -25,8 +25,8 @@ env:
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
-  BACKTEST_API_IMAGE_NAME: asset-allocation-backtest-api
-  BACKTEST_API_APP: backtest-api
+  BACKTEST_API_IMAGE_NAME: asset-allocation-api
+  BACKTEST_API_APP: asset-allocation-api
   UI_IMAGE_NAME: asset-allocation-ui
   UI_APP: asset-allocation-ui
   BRONZE_MARKET_JOB: bronze-market-job
@@ -252,8 +252,14 @@ jobs:
             backtest_api:
               - "api/**"
               - "backtest/**"
+              - "services/**"
+              - "api/**"
+              - "core/**"
+              - "monitoring/**"
               - "ui/**"
-              - "Dockerfile.backtest_api"
+              - "Dockerfile.asset_allocation_api"
+              - "deploy/app_backtest_api.yaml"
+              - "pyproject.toml"
               - "requirements.txt"
               - "requirements.lock.txt"
               - ".github/workflows/deploy.yml"
@@ -305,8 +311,8 @@ jobs:
       - name: Build and Push Backtest API Image
         if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
         run: |
-          docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
-          docker build . -f Dockerfile.backtest_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
 

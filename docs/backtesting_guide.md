@@ -66,7 +66,7 @@ output:
 You can also define strategies using a single configurable pipeline:
 
 - Example configs: `backtests/example_configured_topn.yaml`, `backtests/example_configured_vcp_breakout_long.yaml`
-- Programmatic wrappers (for tests/tools): `asset_allocation/backtest/configured_strategy/legacy_migrations.py`
+- Programmatic wrappers (for tests/tools): `backtest/configured_strategy/legacy_migrations.py`
 
 ```yaml
 strategy:

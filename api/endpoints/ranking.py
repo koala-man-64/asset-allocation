@@ -1,3 +1,4 @@
+import logging
 from datetime import date
 from typing import Any, List, Optional
 
@@ -8,12 +9,14 @@ from api.service.dependencies import get_settings, validate_auth
 from core.postgres import PostgresError, connect
 
 router = APIRouter()
+logger = logging.getLogger("backtest.api.ranking")
 
 @router.get("/strategies")
 def get_strategies(request: Request):
     """
     Retrieves strategy performance data (Platinum Layer).
     """
+    logger.info("Strategies request: path=%s host=%s", request.url.path, request.headers.get("host", ""))
     validate_auth(request)
     container = deps.resolve_container("platinum")
     # Path logic for strategies? 
@@ -25,9 +28,12 @@ def get_strategies(request: Request):
     try:
         dt = deps.get_delta_table(container, path)
         df = dt.to_pandas()
-        return df.to_dict(orient="records")
+        rows = df.to_dict(orient="records")
+        logger.info("Strategies loaded: count=%s", len(rows))
+        return rows
     except Exception as e:
         # Fallback for now if table doesn't exist
+        logger.exception("Strategies lookup failed.")
         return {"error": "Strategies table not found", "details": str(e)}
 
 
@@ -42,6 +48,13 @@ def get_signals(
 
     Backed by `ranking.ranking_signal` populated by the ranking job.
     """
+    logger.info(
+        "Signals request: date=%s limit=%s path=%s host=%s",
+        signal_date,
+        limit,
+        request.url.path,
+        request.headers.get("host", ""),
+    )
     validate_auth(request)
     settings = get_settings(request)
     dsn = (settings.postgres_dsn or "").strip()
@@ -62,6 +75,7 @@ def get_signals(
                     cur.execute("SELECT MAX(date) FROM ranking.ranking_signal")
                     row = cur.fetchone()
                     if row is None or row[0] is None:
+                        logger.info("Signals empty: no rows for latest date.")
                         return []
                     resolved_date = row[0]
 
@@ -77,8 +91,10 @@ def get_signals(
                 )
                 rows = cur.fetchall()
     except PostgresError as exc:
+        logger.exception("Signals query failed (postgres).")
         raise HTTPException(status_code=503, detail=f"Signals unavailable: {exc}") from exc
     except Exception as exc:
+        logger.exception("Signals query failed (unexpected).")
         raise HTTPException(status_code=500, detail=f"Signals query failed: {exc}") from exc
 
     signals: List[dict[str, Any]] = []
@@ -112,5 +128,6 @@ def get_signals(
 
 @router.get("/{strategy_id}")
 def get_strategy_details(strategy_id: str, request: Request):
+    logger.info("Strategy detail request: strategy_id=%s", strategy_id)
     validate_auth(request)
     return {"message": f"Details for {strategy_id} not implemented yet"}

@@ -50,7 +50,13 @@ def _get_actor(request: Request) -> Optional[str]:
 
 @router.get("/health")
 def system_health(request: Request, refresh: bool = Query(False)) -> JSONResponse:
-    logger.info(f"Accessing /system/health endpoint (refresh={refresh})")
+    logger.info(
+        "System health request: refresh=%s path=%s host=%s fwd=%s",
+        refresh,
+        request.url.path,
+        request.headers.get("host", ""),
+        request.headers.get("x-forwarded-for", ""),
+    )
     validate_auth(request)
     settings = get_settings(request)
 
@@ -68,6 +74,7 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     try:
         result = cache.get(_refresh, force_refresh=bool(refresh))
     except Exception as exc:
+        logger.exception("System health cache refresh failed.")
         raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
 
     payload: Dict[str, Any] = dict(result.value or {})
@@ -102,6 +109,17 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
             alert["snoozedUntil"] = _iso(state.snoozed_until)
             alert["resolvedAt"] = _iso(state.resolved_at)
             alert["resolvedBy"] = state.resolved_by
+    elif alert_store is None:
+        logger.info("System health alert store not configured (alerts will be unacknowledgeable).")
+
+    logger.info(
+        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s",
+        result.cache_hit,
+        bool(result.refresh_error),
+        len(payload.get("dataLayers") or []),
+        len(payload.get("alerts") or []),
+        len(payload.get("resources") or []),
+    )
 
     headers: Dict[str, str] = {
         "Cache-Control": "no-store",
@@ -132,9 +150,11 @@ def acknowledge_alert(alert_id: str, request: Request) -> JSONResponse:
     validate_auth(request)
     store = _require_alert_store(request)
     actor = _get_actor(request)
+    logger.info("Acknowledge alert: id=%s actor=%s", alert_id, actor or "-")
     try:
         state = store.acknowledge(alert_id, actor=actor)
     except Exception as exc:
+        logger.exception("Failed to acknowledge alert: id=%s", alert_id)
         raise HTTPException(status_code=500, detail=f"Failed to acknowledge alert: {exc}") from exc
     return JSONResponse(
         {
@@ -159,9 +179,11 @@ def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSO
         minutes = payload.minutes or 30
         until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
 
+    logger.info("Snooze alert: id=%s actor=%s minutes=%s until=%s", alert_id, actor or "-", payload.minutes, payload.until)
     try:
         state = store.snooze(alert_id, until=until, actor=actor)
     except Exception as exc:
+        logger.exception("Failed to snooze alert: id=%s", alert_id)
         raise HTTPException(status_code=500, detail=f"Failed to snooze alert: {exc}") from exc
 
     return JSONResponse(
@@ -181,9 +203,11 @@ def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
     validate_auth(request)
     store = _require_alert_store(request)
     actor = _get_actor(request)
+    logger.info("Resolve alert: id=%s actor=%s", alert_id, actor or "-")
     try:
         state = store.resolve(alert_id, actor=actor)
     except Exception as exc:
+        logger.exception("Failed to resolve alert: id=%s", alert_id)
         raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {exc}") from exc
     return JSONResponse(
         {
@@ -200,12 +224,20 @@ def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
 @router.get("/lineage")
 def system_lineage(request: Request) -> JSONResponse:
     validate_auth(request)
-    return JSONResponse(get_lineage_snapshot(), headers={"Cache-Control": "no-store"})
+    payload = get_lineage_snapshot()
+    logger.info(
+        "System lineage generated: layers=%s strategies=%s domains=%s",
+        len(payload.get("layers") or []),
+        len(payload.get("strategies") or []),
+        len((payload.get("impactsByDomain") or {}).keys()),
+    )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/jobs/{job_name}/run")
 def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
     validate_auth(request)
+    logger.info("Trigger job run requested: job=%s", job_name)
 
     subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
     subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""

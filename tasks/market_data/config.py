@@ -1,7 +1,15 @@
+from __future__ import annotations
 
-from core.config_shared import *
+from core import config as _cfg
 
-# Local Specific Requirements
-AZURE_CONTAINER_MARKET = require_env("AZURE_CONTAINER_MARKET")
+AZURE_CONTAINER_MARKET = _cfg.AZURE_CONTAINER_MARKET
+
+
+def __getattr__(name: str):
+    return getattr(_cfg, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | set(dir(_cfg)))
 
 

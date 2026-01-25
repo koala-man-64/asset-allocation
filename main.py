@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
-import sys
 import os
 from pathlib import Path
+
 import uvicorn
+
 from core.logging import setup_logging
 from core.config import settings
+
 
 def main():
     parser = argparse.ArgumentParser(description="Asset Allocation Command Line Interface")
@@ -48,7 +50,7 @@ def main():
             "api.service.app:app",
             host=args.host,
             port=args.port,
-            reload=args.reload
+            reload=args.reload,
         )
     elif args.command == "task":
         print(f"Executing task: {args.name}")
