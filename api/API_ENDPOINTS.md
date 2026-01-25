@@ -25,8 +25,6 @@ API Root
     # System & Health (Matches ui/src/hooks/useDataQueries.ts)
     ├── /system
     │   ├── /health [GET] (system.system_health) - Returns overall system status, layer freshness, and active alerts :: api/endpoints/system.py <== ui/src/services/DataService.ts
-    │   ├── /links/{token} [GET] (system.resolve_link) - Resolves secure portal links for UI icons :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/*
-    │   ├── /links/resolve [POST] (system.resolve_link_url) - Resolves secure portal links for UI icon clicks (JSON) :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/*
     │   ├── /lineage [GET] (system.system_lineage) - Returns data lineage graph and dependencies :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /alerts
     │   │   └── /{alert_id}

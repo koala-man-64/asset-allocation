@@ -96,11 +96,19 @@ async def main_async():
     mdc.write_line("Fetching symbols...")
     df_symbols = mdc.get_symbols()
     
-    symbols = [
-        row['Symbol'] 
-        for _, row in df_symbols.iterrows() 
-        if '.' not in str(row['Symbol']) and not list_manager.is_blacklisted(row['Symbol'])
-    ]
+    # Filter NaNs and ensure string
+    df_symbols = df_symbols.dropna(subset=['Symbol'])
+    # Filter out tickers containing '.' or non-string values
+    symbols = []
+    for _, row in df_symbols.iterrows():
+        sym = row['Symbol']
+        if pd.isna(sym) or not isinstance(sym, str):
+            continue
+        if '.' in sym:
+            continue
+        if list_manager.is_blacklisted(sym):
+            continue
+        symbols.append(sym)
     
     if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")

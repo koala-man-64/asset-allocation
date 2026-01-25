@@ -151,7 +151,8 @@ export interface DataLayer {
   maxAgeSeconds?: number;
   nextExpectedUpdate?: string;
   domains?: DataDomain[];
-  portalLinkToken?: string;
+  portalUrl?: string;
+  jobUrl?: string;
   triggerUrl?: string;
 }
 
@@ -191,7 +192,6 @@ export interface ResourceHealth {
   lastChecked: string;
   details?: string;
   azureId?: string;
-  portalLinkToken?: string;
   signals?: ResourceSignal[];
 }
 

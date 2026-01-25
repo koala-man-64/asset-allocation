@@ -22,7 +22,7 @@ from api.service.settings import ServiceSettings
 from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
 
-logger = logging.getLogger("backtest.api")
+logger = logging.getLogger("asset-allocation.api")
 
 def _request_context(request: Request) -> dict[str, str]:
     return {

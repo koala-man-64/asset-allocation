@@ -6,7 +6,6 @@ import { CalendarDays, Database, FolderOpen, Loader2, Play, ScrollText } from 'l
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
-import { openSystemLink } from '@/utils/openSystemLink';
 
 interface StatusOverviewProps {
     overall: string;

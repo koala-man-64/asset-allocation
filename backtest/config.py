@@ -234,6 +234,23 @@ def _parse_strategy_config(data: Dict[str, Any]) -> ComponentConfig:
       ComponentConfig(class_name="ConfiguredStrategy", parameters=<pipeline config dict>)
     """
     raw = data.get("strategy") or {}
+    
+    # DB Lookup Logic
+    if isinstance(raw, str):
+        from core.strategy_repository import StrategyRepository
+        repo = StrategyRepository()
+        db_config = repo.get_strategy_config(raw)
+        if not db_config:
+            raise ValueError(f"Strategy '{raw}' not found in database.")
+        raw = db_config
+    elif isinstance(raw, dict) and "name" in raw and "type" not in raw and len(raw) == 1:
+        from core.strategy_repository import StrategyRepository
+        repo = StrategyRepository()
+        db_config = repo.get_strategy_config(raw["name"])
+        if not db_config:
+             raise ValueError(f"Strategy '{raw['name']}' not found in database.")
+        raw = db_config
+
     if not isinstance(raw, dict):
         raise ValueError("strategy must be an object.")
 

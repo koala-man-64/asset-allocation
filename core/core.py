@@ -20,7 +20,7 @@ from .blob_storage import BlobStorageClient
 from azure.storage.blob import BlobLeaseClient
 from . import config as cfg
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
-from core.postgres import connect, PostgresError
+from core.postgres import connect, PostgresError, copy_rows
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.
@@ -579,6 +579,70 @@ def get_symbols_from_db():
         logger.error(f"Error reading symbols from DB: {e}")
         return None
 
+
+def sync_symbols_to_db(df_symbols: pd.DataFrame):
+    """
+    Writes symbols ensuring they are in the Postgres database.
+    Filters out existing symbols before inserting.
+    """
+    if df_symbols is None or df_symbols.empty:
+        return
+
+    dsn = os.environ.get("POSTGRES_DSN")
+    if not dsn:
+        write_warning("POSTGRES_DSN not set. Cannot sync symbols to DB.")
+        return
+
+    # Map DF columns (TitleCase) to DB columns (lowercase)
+    col_map = {
+        'Symbol': 'symbol',
+        'Name': 'name',
+        'Description': 'description',
+        'Sector': 'sector',
+        'Industry': 'industry',
+        'Industry_2': 'industry_2',
+        'Optionable': 'optionable',
+        'Country': 'country'
+    }
+    
+    # Filter only relevant columns
+    df_to_upload = df_symbols.copy()
+    existing_cols = [c for c in col_map.keys() if c in df_to_upload.columns]
+    df_to_upload = df_to_upload[existing_cols]
+    df_to_upload.rename(columns=col_map, inplace=True)
+    
+    db_cols = list(df_to_upload.columns)
+    
+    try:
+        with connect(dsn) as conn:
+            with conn.cursor() as cur:
+                # 1. Fetch existing symbols to avoid duplicates
+                cur.execute("SELECT symbol FROM symbols")
+                existing_symbols = set(row[0] for row in cur.fetchall())
+                
+                # 2. Filter out existing
+                df_new = df_to_upload[~df_to_upload['symbol'].isin(existing_symbols)]
+                
+                # drop duplicates in new set too
+                df_new = df_new.drop_duplicates(subset=['symbol'])
+
+                if df_new.empty:
+                    write_line("All symbols already exist in DB. No new inserts.")
+                    return
+
+                write_line(f"Syncing {len(df_new)} new symbols to Postgres...")
+                
+                # 3. Insert using copy_rows
+                copy_rows(
+                    cur,
+                    table="symbols",
+                    columns=db_cols,
+                    rows=df_new.itertuples(index=False, name=None)
+                )
+                
+    except Exception as e:
+        write_error(f"Error syncing symbols to DB: {e}")
+
 def get_symbols():
     df_symbols = get_symbols_from_db()
 
@@ -608,9 +672,10 @@ def get_symbols():
             
     df_symbols.drop_duplicates(subset=['Symbol'], inplace=True)
     
-    # Specific artifact creation (legacy support)
-    store_common_csv(pd.DataFrame(tickers_to_add), 'market_analysis_tickers.csv')
-    store_common_csv(df_symbols, 'stock_tickers.csv')
+    df_symbols.drop_duplicates(subset=['Symbol'], inplace=True)
+    
+    # Sync new symbols to DB (instead of CSV)
+    sync_symbols_to_db(df_symbols)
     
     return df_symbols
 

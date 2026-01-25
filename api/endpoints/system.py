@@ -1,13 +1,11 @@
-import copy
 import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from api.service.dependencies import (
@@ -17,13 +15,12 @@ from api.service.dependencies import (
     get_system_health_cache,
     validate_auth,
 )
-from api.service.secure_links import LinkTokenError, build_link_token, resolve_link_token
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 
-logger = logging.getLogger("backtest.api.system")
+logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()
 
@@ -226,7 +223,7 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         logger.exception("System health cache refresh failed.")
         raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
 
-    payload: Dict[str, Any] = copy.deepcopy(result.value or {})
+    payload: Dict[str, Any] = dict(result.value or {})
     raw_alerts = payload.get("alerts")
     if isinstance(raw_alerts, list):
         payload["alerts"] = [dict(item) if isinstance(item, dict) else item for item in raw_alerts]
@@ -261,8 +258,6 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     elif alert_store is None:
         logger.info("System health alert store not configured (alerts will be unacknowledgeable).")
 
-    _apply_link_tokens(payload)
-
     logger.info(
         "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s",
         result.cache_hit,
@@ -284,10 +279,6 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
 class SnoozeRequest(BaseModel):
     minutes: Optional[int] = Field(default=None, ge=1, le=7 * 24 * 60)
     until: Optional[datetime] = None
-
-
-class LinkResolveRequest(BaseModel):
-    token: str = Field(min_length=1)
 
 
 def _require_alert_store(request: Request):
@@ -374,41 +365,6 @@ def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
             "resolvedBy": state.resolved_by,
         }
     )
-
-
-@router.get("/links/{token}")
-def resolve_link(token: str, request: Request) -> RedirectResponse:
-    actor = None
-    if _link_requires_auth():
-        validate_auth(request)
-        actor = _get_actor(request)
-    try:
-        url = resolve_link_token(token)
-    except LinkTokenError as exc:
-        logger.warning("Link token resolve failed: actor=%s error=%s", actor or "-", exc)
-        raise HTTPException(status_code=404, detail="Link not available.") from exc
-
-    host = urlparse(url).hostname or "-"
-    logger.info("Link token resolved: actor=%s host=%s", actor or "-", host)
-    return RedirectResponse(url=url, status_code=307, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/links/resolve")
-def resolve_link_url(payload: LinkResolveRequest, request: Request) -> JSONResponse:
-    actor = None
-    if _link_requires_auth():
-        validate_auth(request)
-        actor = _get_actor(request)
-
-    try:
-        url = resolve_link_token(payload.token)
-    except LinkTokenError as exc:
-        logger.warning("Link token resolve failed (json): actor=%s error=%s", actor or "-", exc)
-        raise HTTPException(status_code=404, detail="Link not available.") from exc
-
-    host = urlparse(url).hostname or "-"
-    logger.info("Link token resolved (json): actor=%s host=%s", actor or "-", host)
-    return JSONResponse({"url": url}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/lineage")

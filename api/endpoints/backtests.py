@@ -43,7 +43,7 @@ from api.service.security import (
 )
 from api.service.settings import ServiceSettings
 
-logger = logging.getLogger("backtest.api.backtests")
+logger = logging.getLogger("asset-allocation.api.backtests")
 
 router = APIRouter()
 

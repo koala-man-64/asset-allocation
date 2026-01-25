@@ -77,12 +77,6 @@ export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'
 # Required: system-health cache TTL (used by /api/system/* endpoints)
 export SYSTEM_HEALTH_TTL_SECONDS=30
 
-# Optional: secure link tokens for portal links in /api/system/health
-export SYSTEM_HEALTH_LINK_TOKEN_SECRET="change-me"
-export SYSTEM_HEALTH_LINK_TOKEN_TTL_SECONDS=900
-export SYSTEM_HEALTH_LINK_ALLOWLIST="portal.azure.com"
-export SYSTEM_HEALTH_LINK_REQUIRE_AUTH=true
-
 uvicorn api.service.app:app --reload --port 8000
 ```
 

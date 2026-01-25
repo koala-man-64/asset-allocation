@@ -6,12 +6,13 @@ import { AzureResources } from './system-status/AzureResources';
 // JobMonitor and DataLayerHealth are redundant with the new dense StatusOverview or can be re-added below if needed.
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
 import { JobMonitor } from './system-status/JobMonitor';
+import { getAzurePortalUrl } from './system-status/SystemStatusHelpers';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
-    const jobLinkTokens = useMemo(() => {
+    const jobLinks = useMemo(() => {
         if (!data) {
             return {};
         }
@@ -19,14 +20,14 @@ export function SystemStatusPage() {
         const links: Record<string, string> = {};
         for (const layer of data.dataLayers || []) {
             for (const domain of layer.domains || []) {
-                if (domain.jobName && domain.jobLinkToken) {
-                    links[domain.jobName] = domain.jobLinkToken;
+                if (domain.jobName && domain.jobUrl) {
+                    links[domain.jobName] = domain.jobUrl;
                 }
             }
         }
         for (const resource of data.resources || []) {
-            if (resource.resourceType === 'Microsoft.App/jobs' && resource.portalLinkToken) {
-                links[resource.name] = resource.portalLinkToken;
+            if (resource.resourceType === 'Microsoft.App/jobs' && resource.azureId) {
+                links[resource.name] = getAzurePortalUrl(resource.azureId);
             }
         }
         return links;
@@ -155,7 +156,7 @@ export function SystemStatusPage() {
             {/* Secondary Details Grid */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <AlertHistory alerts={alerts} />
-                <JobMonitor recentJobs={recentJobs} jobLinkTokens={jobLinkTokens} />
+                <JobMonitor recentJobs={recentJobs} jobLinks={jobLinks} />
             </div>
 
             {/* Connectors / Resources */}

@@ -4,13 +4,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { BarChart3, Calendar, Clock, Database, DollarSign, ExternalLink, Folder, PlayCircle, Target, TrendingUp, Zap } from 'lucide-react';
 import { getStatusIcon, getStatusBadge, formatTimestamp } from './SystemStatusHelpers';
 import { DataDomain, DataLayer, JobRun, TradingSignal } from '@/types/strategy';
-import { openSystemLink } from '@/utils/openSystemLink';
 
 interface DataLayerHealthProps {
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
     impactsByDomain?: Record<string, string[]>;
     signals?: TradingSignal[];
+}
+
+function extractAzureJobName(jobUrl?: string | null): string | null {
+    if (!jobUrl) return null;
+    const match = jobUrl.match(/\/jobs\/([^/?#]+)/);
+    if (!match) return null;
+    try {
+        return decodeURIComponent(match[1]);
+    } catch {
+        return match[1];
+    }
 }
 
 function getDomainIcon(domain: DataDomain) {
@@ -76,15 +86,16 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                             <div>
                                                 <div className="font-medium flex items-center gap-2 text-base">
                                                     {layer.name}
-                                                    {layer.portalLinkToken && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void openSystemLink(layer.portalLinkToken!)}
+                                                    {layer.portalUrl && (
+                                                        <a
+                                                            href={layer.portalUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
                                                             className="text-muted-foreground hover:text-primary transition-colors"
                                                             title="View Container in Azure Portal"
                                                         >
                                                             <ExternalLink className="h-4.5 w-4.5" />
-                                                        </button>
+                                                        </a>
                                                     )}
                                                 </div>
                                                 <div className="text-sm text-muted-foreground">{layer.description}</div>
@@ -104,7 +115,7 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                         </TableCell>
                                     </TableRow>
                                     {(layer.domains || []).map((domain: DataDomain, dIdx: number) => {
-                                        const jobName = domain.jobName;
+                                        const jobName = domain.jobName || extractAzureJobName(domain.jobUrl);
                                         const latestJob = jobName ? recentJobs.find(j => j.jobName === jobName) : null;
                                         const { behindSeconds } = computeFreshness(domain);
                                         const DomainIcon = getDomainIcon(domain);
@@ -134,17 +145,18 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                                             <div className="flex flex-col gap-1 text-xs text-muted-foreground/80">
                                                                 <div className="flex items-center gap-1.5 min-w-0">
                                                                     <Folder className="h-3.5 w-3.5 flex-shrink-0" />
-                                                                    {domain.portalLinkToken ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => void openSystemLink(domain.portalLinkToken!)}
+                                                                    {domain.portalUrl ? (
+                                                                        <a
+                                                                            href={domain.portalUrl}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
                                                                             className="hover:text-primary transition-colors min-w-0"
                                                                             title="View folder in Azure Storage"
                                                                         >
                                                                             <span className="font-mono truncate block" title={domain.path}>
                                                                                 {domain.path || '-'}
                                                                             </span>
-                                                                        </button>
+                                                                        </a>
                                                                     ) : (
                                                                         <span className="font-mono truncate block" title={domain.path}>
                                                                             {domain.path || '-'}
@@ -153,17 +165,18 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5 min-w-0">
                                                                     <PlayCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                                                                    {domain.jobLinkToken ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => void openSystemLink(domain.jobLinkToken!)}
+                                                                    {domain.jobUrl ? (
+                                                                        <a
+                                                                            href={domain.jobUrl}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
                                                                             className="hover:text-primary transition-colors min-w-0"
                                                                             title="View domain job in Azure Portal"
                                                                         >
-                                                                            <span className="font-mono truncate block" title={jobName || undefined}>
+                                                                            <span className="font-mono truncate block" title={jobName || domain.jobUrl}>
                                                                                 {jobName || 'job'}
                                                                             </span>
-                                                                        </button>
+                                                                        </a>
                                                                     ) : (
                                                                         <span className="font-mono truncate block" title={jobName || undefined}>
                                                                             {jobName || '-'}
