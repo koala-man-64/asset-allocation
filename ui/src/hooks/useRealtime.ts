@@ -11,7 +11,10 @@ export function useRealtime() {
     useEffect(() => {
         // Construct WebSocket URL
         // Replace http/https with ws/wss
-        const baseUrl = toWebSocketBaseUrl(config.apiBaseUrl);
+        const apiBaseUrl = config.apiBaseUrl;
+        const baseUrl = /^https?:\/\//i.test(apiBaseUrl)
+            ? toWebSocketBaseUrl(apiBaseUrl)
+            : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${apiBaseUrl}`;
         const wsUrl = `${baseUrl}/ws/updates`;
 
         function connect() {

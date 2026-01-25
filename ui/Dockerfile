@@ -28,16 +28,8 @@ RUN rm -rf ./*
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist .
 
-# Copy custom nginx config if we had one (using default for now, but enabling SPA fallback is good practice)
-# For now, we'll use a simple command to overwrite the default config to support SPA routing
-RUN echo 'server { \
-    listen 80; \
-    location / { \
-        root /usr/share/nginx/html; \
-        index index.html index.htm; \
-        try_files $uri $uri/ /index.html; \
-    } \
-}' > /etc/nginx/conf.d/default.conf
+# Use the custom nginx config that proxies /api and /config.js to the API.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
