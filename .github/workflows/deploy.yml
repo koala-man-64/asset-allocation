@@ -3,7 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - main
+      - '**'
   workflow_dispatch:
     inputs:
       force_redeploy:
@@ -301,29 +301,82 @@ jobs:
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
 
+      - name: Generate Branch Tag
+        id: branch_tag
+        run: |
+          # Sanitize branch name: replace non-alphanumeric chars with dashes
+          # usage: feature/my-branch -> feature-my-branch
+          RAW="${{ github.ref_name }}"
+          SANITIZED=$(echo "$RAW" | sed 's/[^a-zA-Z0-9]/-/g')
+          # Remove leading/trailing dashes if any created
+          SANITIZED=$(echo "$SANITIZED" | sed 's/^-*//;s/-*$//')
+          echo "tag=$SANITIZED" >> "$GITHUB_OUTPUT"
+
       - name: Build and Push Docker Image
         run: |
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
+          
+          # 1. Build immutable SHA tag
           docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          
+          # 2. Build branch tag
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 3. Push SHA tag and Branch tag
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 4. Handle 'latest' tag (Only on main branch)
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Pushing latest tag..."
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          fi
 
       - name: Build and Push Backtest API Image
         if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
         run: |
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
+          
+          # 1. Build immutable SHA tag
           docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          
+          # 2. Build branch tag
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 3. Push SHA tag and Branch tag
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 4. Handle 'latest' tag (Only on main branch)
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Pushing latest tag..."
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          fi
 
       - name: Build and Push UI Image
         if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true'
         run: |
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
           cd ui
+          
+          # 1. Build immutable SHA tag
           docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+          
+          # 2. Build branch tag
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 3. Push SHA tag and Branch tag
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 4. Handle 'latest' tag (Only on main branch)
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Pushing latest tag..."
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+          fi
           cd ..
 
       - name: Ensure Storage Containers Exist

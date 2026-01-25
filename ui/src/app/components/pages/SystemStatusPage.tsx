@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSystemHealthQuery } from '@/hooks/useDataQueries';
 import { StatusOverview } from './system-status/StatusOverview';
-import { AlertHistory } from './system-status/AlertHistory';
+
 import { AzureResources } from './system-status/AzureResources';
 // JobMonitor and DataLayerHealth are redundant with the new dense StatusOverview or can be re-added below if needed.
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
@@ -77,23 +77,23 @@ export function SystemStatusPage() {
             <StatusOverview overall={overall} dataLayers={dataLayers} recentJobs={recentJobs} />
 
             {/* Secondary Details Grid */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <AlertHistory alerts={alerts} />
-                <JobMonitor recentJobs={recentJobs} jobLinks={jobLinks} />
-            </div>
-
-            {/* Connectors / Resources */}
-            {resources && resources.length > 0 && (
-                <AzureResources resources={resources} />
-            )}
-
-            {/* Footer Status Line */}
-            <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
-                <div className="flex items-center gap-2 font-mono text-[10px]">
-                    <span className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`} />
-                    {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
-                </div>
-            </div>
+            <JobMonitor recentJobs={recentJobs} jobLinks={jobLinks} />
         </div>
+
+            {/* Connectors / Resources */ }
+    {
+        resources && resources.length > 0 && (
+            <AzureResources resources={resources} />
+        )
+    }
+
+    {/* Footer Status Line */ }
+    <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
+        <div className="flex items-center gap-2 font-mono text-[10px]">
+            <span className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`} />
+            {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
+        </div>
+    </div>
+        </div >
     );
 }
