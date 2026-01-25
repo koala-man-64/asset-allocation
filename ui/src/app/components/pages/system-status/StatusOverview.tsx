@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { DataLayer, JobRun } from '@/types/strategy';
 import { formatDuration, formatTimeAgo, getStatusConfig } from './SystemStatusHelpers';
 import { StatusTypos, StatusColors } from './StatusTokens';
-import { Database, ExternalLink, FolderOpen, Loader2, Play } from 'lucide-react';
+import { Clock, Database, ExternalLink, FolderOpen, Loader2, Play, Power } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { openSystemLink } from '@/utils/openSystemLink';
@@ -125,6 +125,14 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                     const dStatus = getStatusConfig(domain.status);
                                     const jobName = domain.jobName || '';
                                     const jobRun = jobName ? jobIndex.get(jobName) : null;
+                                    const jobStatus = jobRun ? getStatusConfig(jobRun.status) : null;
+                                    const JobStatusIcon = jobStatus?.icon;
+                                    const jobAnim =
+                                        jobStatus?.animation === 'spin'
+                                            ? 'animate-spin'
+                                            : jobStatus?.animation === 'pulse'
+                                                ? 'animate-pulse'
+                                                : '';
                                     const schedule = domain.frequency || domain.cron || '-';
                                     const isTriggering = Boolean(jobName) && triggeringJob === jobName;
 
@@ -219,16 +227,31 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                         {jobRun && (
                                                             <>
                                                                 <span className="flex items-center gap-1 text-slate-700">
-                                                                    <span
-                                                                        className="w-1.5 h-1.5 rounded-full"
-                                                                        style={{ backgroundColor: getStatusConfig(jobRun.status).text }}
-                                                                    />
-                                                                    {jobRun.status}
+                                                                    {JobStatusIcon ? (
+                                                                        <JobStatusIcon
+                                                                            className={`h-3 w-3 ${jobAnim}`}
+                                                                            style={{ color: jobStatus?.text }}
+                                                                            aria-label={`Last run status: ${jobRun.status}`}
+                                                                        />
+                                                                    ) : (
+                                                                        <Power className="h-3 w-3 text-slate-400" aria-label="Last run status unknown" />
+                                                                    )}
+                                                                    <span className="uppercase">{jobRun.status}</span>
                                                                 </span>
-                                                                <span className="text-slate-700">
+                                                                <span className="inline-flex items-center gap-1 text-slate-700" title={jobRun.startTime}>
+                                                                    <Clock className="h-3 w-3 text-slate-400" aria-hidden="true" />
                                                                     {formatTimeAgo(jobRun.startTime)} ago
                                                                 </span>
                                                             </>
+                                                        )}
+                                                        {!jobRun && (
+                                                            <span
+                                                                className="inline-flex items-center gap-1 text-slate-400"
+                                                                title="No recent execution data for this job. Enable ARM probes to populate recentJobs."
+                                                            >
+                                                                <Power className="h-3 w-3" aria-hidden="true" />
+                                                                <span className="uppercase">no runs</span>
+                                                            </span>
                                                         )}
                                                     </div>
                                                 )}
