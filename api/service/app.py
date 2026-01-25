@@ -19,6 +19,7 @@ from api.service.postgres_run_store import PostgresRunStore
 from api.service.realtime import listen_to_postgres, manager
 from api.service.run_store import RunStore
 from api.service.settings import ServiceSettings
+from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
 
 logger = logging.getLogger("asset-allocation.api")
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
             app.state.listener_task = asyncio.create_task(
                 listen_to_postgres(settings)
             )
+            app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
 
         def _system_health_ttl_seconds() -> float:
             raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "300")
@@ -163,6 +165,8 @@ def create_app() -> FastAPI:
         allow_origins=[
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
             "http://localhost:3000",
             "*",  # Fallback for dev
         ],

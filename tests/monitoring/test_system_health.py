@@ -87,7 +87,7 @@ def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.M
         resp = client.get("/api/system/health")
         assert resp.status_code == 200
         payload = resp.json()
-        assert set(payload.keys()) >= {"overall", "dataLayers", "recentJobs"}
+        assert set(payload.keys()) >= {"overall", "dataLayers", "recentJobs", "alerts"}
 
 
 def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,6 +177,7 @@ def test_system_health_control_plane_redacts_resource_ids(monkeypatch: pytest.Mo
     assert len(payload["recentJobs"]) == 1
     assert payload["recentJobs"][0]["status"] == "success"
     assert payload["recentJobs"][0]["triggeredBy"] == "azure"
+    assert payload["alerts"] == []
 
     verbose = system_health.collect_system_health_snapshot(now=now, include_resource_ids=True)
     assert all("azureId" in item for item in verbose["resources"])
@@ -230,6 +231,7 @@ def test_system_health_degraded_on_warning_resource(monkeypatch: pytest.MonkeyPa
     payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
     assert payload["overall"] == "degraded"
     assert payload["resources"][0]["status"] == "warning"
+    assert any(alert["title"] == "Azure resource health" and alert["severity"] == "warning" for alert in payload["alerts"])
 
 
 def test_system_health_critical_on_failed_job_execution(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -288,6 +290,7 @@ def test_system_health_critical_on_failed_job_execution(monkeypatch: pytest.Monk
 
     payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
     assert payload["overall"] == "critical"
+    assert any(alert["title"] == "Job execution failed" and alert["severity"] == "error" for alert in payload["alerts"])
 
 
 def test_system_health_critical_on_resource_health_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -345,3 +348,4 @@ def test_system_health_critical_on_resource_health_unavailable(monkeypatch: pyte
     payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
     assert payload["overall"] == "critical"
     assert payload["resources"][0]["status"] == "error"
+    assert any(alert["title"] == "Azure resource health" and alert["severity"] == "error" for alert in payload["alerts"])

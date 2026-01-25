@@ -128,11 +128,8 @@ export interface DataDomain {
   status: 'healthy' | 'stale' | 'error';
   version?: number | null;
   description?: string;
-  portalLinkToken?: string;
-  basePortalLinkToken?: string;
-  baseLastUpdated?: string | null;
-  baseStatus?: 'healthy' | 'stale' | 'error';
-  jobLinkToken?: string;
+  portalUrl?: string;
+  jobUrl?: string;
   jobName?: string;
   triggerUrl?: string;
   frequency?: string;
@@ -161,16 +158,27 @@ export interface JobRun {
   jobType: 'backtest' | 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
   status: 'success' | 'failed' | 'running' | 'pending';
   startTime: string;
-  endTime?: string | null;
   duration?: number; // seconds
   recordsProcessed?: number;
   gitSha?: string;
   triggeredBy: string;
   errors?: string[];
   warnings?: string[];
-  executionName?: string | null;
-  details?: string | null;
-  logLinkToken?: string;
+}
+
+export interface SystemAlert {
+  id?: string;
+  severity: 'critical' | 'error' | 'warning' | 'info';
+  title?: string;
+  component: string;
+  timestamp: string;
+  message: string;
+  acknowledged: boolean;
+  acknowledgedAt?: string | null;
+  acknowledgedBy?: string | null;
+  snoozedUntil?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
 }
 
 export interface ResourceHealth {
@@ -180,7 +188,6 @@ export interface ResourceHealth {
   lastChecked: string;
   details?: string;
   azureId?: string;
-  portalLinkToken?: string;
   signals?: ResourceSignal[];
 }
 
@@ -197,6 +204,7 @@ export interface SystemHealth {
   overall: 'healthy' | 'degraded' | 'critical';
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
+  alerts: SystemAlert[];
   resources?: ResourceHealth[];
 }
 

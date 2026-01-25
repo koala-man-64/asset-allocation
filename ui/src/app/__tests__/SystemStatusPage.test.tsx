@@ -28,14 +28,14 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
                 path: 'bronze/market',
                 lastUpdated: now,
                 status: 'healthy',
-                portalLinkToken: 'token-domain-portal',
-                jobLinkToken: 'token-domain-job',
+                portalUrl: 'https://example.com/storage/bronze/market',
+                jobUrl: 'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
                 jobName: 'aca-job-market',
                 frequency: 'Daily',
                 cron: '0 0 * * *',
               },
             ],
-            portalLinkToken: 'token-layer-portal',
+            portalUrl: 'https://example.com/storage/bronze',
           },
         ],
         recentJobs: [
@@ -47,6 +47,7 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
             triggeredBy: 'azure',
           },
         ],
+        alerts: [],
         resources: [],
       },
       isLoading: false,
@@ -75,14 +76,14 @@ describe('SystemStatusPage', () => {
     // Check for Uptime Clock Header
     expect(screen.getByText('UPTIME CLOCK')).toBeInTheDocument();
 
-    // Check for Scheduled Jobs panel
-    expect(screen.getByText('Scheduled Jobs')).toBeInTheDocument();
+    // Check for Matrix Legend
+    expect(screen.getByText('LEGEND')).toBeInTheDocument();
 
-    // Check for Layer Name in Matrix / Panels
-    expect(screen.getAllByText('Bronze').length).toBeGreaterThan(0);
+    // Check for Layer Name in Matrix
+    expect(screen.getByText('Bronze')).toBeInTheDocument();
 
     // Check for Domain Name in Matrix
-    expect(screen.getAllByText('market').length).toBeGreaterThan(0);
+    expect(screen.getByText('market')).toBeInTheDocument();
 
     // Check for Status Badge (Uppercase)
     expect(screen.getByText('HEALTHY')).toHaveClass('font-mono');

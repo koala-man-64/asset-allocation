@@ -24,10 +24,13 @@ API Root
     
     # System & Health (Matches ui/src/hooks/useDataQueries.ts)
     ├── /system
-    │   ├── /health [GET] (system.system_health) - Returns overall system status, layer freshness, jobs, and resources :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /health [GET] (system.system_health) - Returns overall system status, layer freshness, and active alerts :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /lineage [GET] (system.system_lineage) - Returns data lineage graph and dependencies :: api/endpoints/system.py <== ui/src/services/DataService.ts
-    │   ├── /links/{token} [GET] (system.resolve_link) - Redirects secure link tokens :: api/endpoints/system.py <== ui/src/utils/openSystemLink.ts
-    │   ├── /links/resolve [POST] (system.resolve_link_url) - Resolves secure link tokens to URL JSON :: api/endpoints/system.py <== ui/src/utils/openSystemLink.ts
+    │   ├── /alerts
+    │   │   └── /{alert_id}
+    │   │       ├── /ack [POST] (system.acknowledge_alert) - Acknowledges a system alert :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
+    │   │       ├── /snooze [POST] (system.snooze_alert) - Snoozes an alert for a specified duration :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
+    │   │       └── /resolve [POST] (system.resolve_alert) - Marks an alert as resolved :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
     │   └── /jobs
     │       └── /{job_name}/run [POST] (system.trigger_job_run) - Manually triggers an Azure Container App Job :: api/endpoints/system.py <== ui/src/hooks/useJobTrigger.ts
 

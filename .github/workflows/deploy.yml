@@ -58,156 +58,7 @@ env:
   AZURE_CONTAINER_COMMON: common
 
 jobs:
-  build-images:
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-
-      - name: Validate build secrets
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: |
-          set -euo pipefail
-
-          require_secret() {
-            local name="$1"
-            local value="${!name:-}"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-            if [ -z "$value" ]; then
-              echo "::error::Missing required GitHub Actions secret: $name"
-              exit 1
-            fi
-          }
-
-          require_secret AZURE_CLIENT_ID
-          require_secret AZURE_TENANT_ID
-          require_secret AZURE_SUBSCRIPTION_ID
-
-      - name: Compute branch tag
-        id: branch_tag
-        run: |
-          set -euo pipefail
-
-          ref="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          ref="${ref:-unknown}"
-
-          tag="$(
-            echo "$ref" \
-              | tr '[:upper:]' '[:lower:]' \
-              | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+|-+$//g; s/-+/-/g' \
-              | cut -c1-120
-          )"
-
-          if [ -z "$tag" ]; then
-            tag="unknown"
-          fi
-
-          echo "BRANCH_TAG=$tag" >> "$GITHUB_ENV"
-          echo "branch_tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "branch_tag=$tag"
-
-      - name: Detect Backtest API Changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: backtest_api_changes
-        with:
-          filters: |
-            backtest_api:
-              - "api/**"
-              - "backtest/**"
-              - "services/**"
-              - "api/**"
-              - "core/**"
-              - "monitoring/**"
-              - "ui/**"
-              - "Dockerfile.asset_allocation_api"
-              - "deploy/app_backtest_api.yaml"
-              - "pyproject.toml"
-              - "requirements.txt"
-              - "requirements.lock.txt"
-              - ".github/workflows/deploy.yml"
-
-      - name: Detect UI Changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: ui_changes
-        with:
-          filters: |
-            ui:
-              - "ui/**"
-              - "deploy/app_ui.yaml"
-              - ".github/workflows/deploy.yml"
-
-      - name: Azure Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Log in to Azure Container Registry
-        run: az acr login --name ${{ env.ACR_NAME }}
-
-      - name: Build and Push Docker Image
-        run: |
-          set -euo pipefail
-
-          image="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}"
-          sha="${GITHUB_SHA}"
-
-          docker build . -t "${image}:${sha}" -t "${image}:${BRANCH_TAG}"
-          docker push "${image}:${sha}"
-          docker push "${image}:${BRANCH_TAG}"
-
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            docker tag "${image}:${sha}" "${image}:latest"
-            docker push "${image}:latest"
-          fi
-
-      - name: Build and Push Backtest API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
-        run: |
-          set -euo pipefail
-
-          image="${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}"
-          sha="${GITHUB_SHA}"
-
-          docker build . -f Dockerfile.asset_allocation_api -t "${image}:${sha}" -t "${image}:${BRANCH_TAG}"
-          docker push "${image}:${sha}"
-          docker push "${image}:${BRANCH_TAG}"
-
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            docker tag "${image}:${sha}" "${image}:latest"
-            docker push "${image}:latest"
-          fi
-
-      - name: Build and Push UI Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true'
-        run: |
-          set -euo pipefail
-
-          image="${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}"
-          sha="${GITHUB_SHA}"
-
-          pushd ui >/dev/null
-          docker build . -t "${image}:${sha}" -t "${image}:${BRANCH_TAG}"
-          docker push "${image}:${sha}"
-          docker push "${image}:${BRANCH_TAG}"
-
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            docker tag "${image}:${sha}" "${image}:latest"
-            docker push "${image}:latest"
-          fi
-          popd >/dev/null
-
-  deploy:
-    needs: build-images
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+  build-and-deploy:
     runs-on: ubuntu-22.04
 
     steps:
@@ -446,6 +297,87 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Generate Branch Tag
+        id: branch_tag
+        run: |
+          # Sanitize branch name: replace non-alphanumeric chars with dashes
+          # usage: feature/my-branch -> feature-my-branch
+          RAW="${{ github.ref_name }}"
+          SANITIZED=$(echo "$RAW" | sed 's/[^a-zA-Z0-9]/-/g')
+          # Remove leading/trailing dashes if any created
+          SANITIZED=$(echo "$SANITIZED" | sed 's/^-*//;s/-*$//')
+          echo "tag=$SANITIZED" >> "$GITHUB_OUTPUT"
+
+      - name: Build and Push Docker Image
+        run: |
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
+          
+          # 1. Build immutable SHA tag
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          
+          # 2. Build branch tag
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 3. Push SHA tag and Branch tag
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 4. Handle 'latest' tag (Only on main branch)
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Pushing latest tag..."
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          fi
+
+      - name: Build and Push Backtest API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
+        run: |
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
+          
+          # 1. Build immutable SHA tag
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          
+          # 2. Build branch tag
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 3. Push SHA tag and Branch tag
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 4. Handle 'latest' tag (Only on main branch)
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Pushing latest tag..."
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+          fi
+
+      - name: Build and Push UI Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true'
+        run: |
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
+          cd ui
+          
+          # 1. Build immutable SHA tag
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
+          
+          # 2. Build branch tag
+          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 3. Push SHA tag and Branch tag
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
+          
+          # 4. Handle 'latest' tag (Only on main branch)
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "Pushing latest tag..."
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
+          fi
+          cd ..
 
       - name: Ensure Storage Containers Exist
         run: |
