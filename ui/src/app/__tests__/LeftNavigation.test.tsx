@@ -18,7 +18,7 @@ vi.mock('lucide-react', () => ({
   Folder: () => <div data-testid="icon-folder" />,
   Zap: () => <div data-testid="icon-zap" />,
   TrendingUp: () => <div data-testid="icon-trending" />,
-  Bell: () => <div data-testid="icon-bell" />,
+  Globe: () => <div data-testid="icon-globe" />,
   ChevronLeft: () => <span>icon-left</span>,
   ChevronRight: () => <span>icon-right</span>,
   Pin: () => <div data-testid="icon-pin" />,

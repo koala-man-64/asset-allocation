@@ -1,20 +1,22 @@
+import copy
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from api.service.dependencies import (
-    get_alert_state_store,
     get_auth_manager,
     get_settings,
     get_system_health_cache,
     validate_auth,
 )
+from api.service.secure_links import LinkTokenError, build_link_token, resolve_link_token
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.system_health import collect_system_health_snapshot
@@ -223,47 +225,14 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         logger.exception("System health cache refresh failed.")
         raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
 
-    payload: Dict[str, Any] = dict(result.value or {})
-    raw_alerts = payload.get("alerts")
-    if isinstance(raw_alerts, list):
-        payload["alerts"] = [dict(item) if isinstance(item, dict) else item for item in raw_alerts]
-
-    alert_store = get_alert_state_store(request)
-    if alert_store and isinstance(payload.get("alerts"), list):
-        alert_ids: list[str] = []
-        for alert in payload["alerts"]:
-            if not isinstance(alert, dict):
-                continue
-            alert_id = str(alert.get("id") or "").strip()
-            if alert_id:
-                alert_ids.append(alert_id)
-        states = alert_store.get_states(alert_ids)
-
-        for alert in payload["alerts"]:
-            if not isinstance(alert, dict):
-                continue
-            alert_id = str(alert.get("id") or "").strip()
-            if not alert_id:
-                continue
-            state = states.get(alert_id)
-            if not state:
-                continue
-
-            alert["acknowledged"] = bool(state.acknowledged_at)
-            alert["acknowledgedAt"] = _iso(state.acknowledged_at)
-            alert["acknowledgedBy"] = state.acknowledged_by
-            alert["snoozedUntil"] = _iso(state.snoozed_until)
-            alert["resolvedAt"] = _iso(state.resolved_at)
-            alert["resolvedBy"] = state.resolved_by
-    elif alert_store is None:
-        logger.info("System health alert store not configured (alerts will be unacknowledgeable).")
+    payload: Dict[str, Any] = copy.deepcopy(result.value or {})
+    _apply_link_tokens(payload)
 
     logger.info(
-        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s",
+        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s resources=%s",
         result.cache_hit,
         bool(result.refresh_error),
         len(payload.get("dataLayers") or []),
-        len(payload.get("alerts") or []),
         len(payload.get("resources") or []),
     )
 
@@ -276,95 +245,43 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     return JSONResponse(payload, headers=headers)
 
 
-class SnoozeRequest(BaseModel):
-    minutes: Optional[int] = Field(default=None, ge=1, le=7 * 24 * 60)
-    until: Optional[datetime] = None
-
-
-def _require_alert_store(request: Request):
-    store = get_alert_state_store(request)
-    if store is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Alert lifecycle persistence is not configured (BACKTEST_POSTGRES_DSN).",
-        )
-    return store
-
-
-@router.post("/alerts/{alert_id}/ack")
-def acknowledge_alert(alert_id: str, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-    logger.info("Acknowledge alert: id=%s actor=%s", alert_id, actor or "-")
+@router.get("/links/{token}")
+def resolve_link(token: str, request: Request) -> RedirectResponse:
+    actor = None
+    if _link_requires_auth():
+        validate_auth(request)
+        actor = _get_actor(request)
     try:
-        state = store.acknowledge(alert_id, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to acknowledge alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to acknowledge alert: {exc}") from exc
-    return JSONResponse(
-        {
-            "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
-    )
+        url = resolve_link_token(token)
+    except LinkTokenError as exc:
+        logger.warning("Link token resolve failed: actor=%s error=%s", actor or "-", exc)
+        raise HTTPException(status_code=404, detail="Link not available.") from exc
+
+    host = urlparse(url).hostname or "-"
+    logger.info("Link token resolved: actor=%s host=%s", actor or "-", host)
+    return RedirectResponse(url=url, status_code=307, headers={"Cache-Control": "no-store"})
 
 
-@router.post("/alerts/{alert_id}/snooze")
-def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
+class LinkResolveRequest(BaseModel):
+    token: str
 
-    until = payload.until
-    if until is None:
-        minutes = payload.minutes or 30
-        until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
 
-    logger.info("Snooze alert: id=%s actor=%s minutes=%s until=%s", alert_id, actor or "-", payload.minutes, payload.until)
+@router.post("/links/resolve")
+def resolve_link_url(payload: LinkResolveRequest, request: Request) -> JSONResponse:
+    actor = None
+    if _link_requires_auth():
+        validate_auth(request)
+        actor = _get_actor(request)
+
     try:
-        state = store.snooze(alert_id, until=until, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to snooze alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to snooze alert: {exc}") from exc
+        url = resolve_link_token(payload.token)
+    except LinkTokenError as exc:
+        logger.warning("Link token resolve failed (json): actor=%s error=%s", actor or "-", exc)
+        raise HTTPException(status_code=404, detail="Link not available.") from exc
 
-    return JSONResponse(
-        {
-            "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
-    )
-
-
-@router.post("/alerts/{alert_id}/resolve")
-def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-    logger.info("Resolve alert: id=%s actor=%s", alert_id, actor or "-")
-    try:
-        state = store.resolve(alert_id, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to resolve alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {exc}") from exc
-    return JSONResponse(
-        {
-            "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
-    )
+    host = urlparse(url).hostname or "-"
+    logger.info("Link token resolved (json): actor=%s host=%s", actor or "-", host)
+    return JSONResponse({"url": url}, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/lineage")

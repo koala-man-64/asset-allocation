@@ -91,7 +91,7 @@ const Candle = (props: any) => {
     return <path />;
 };
 
-export function CandlestickChart({ data, height = 300 }: CandlestickChartProps) {
+function CandlestickChartLegacy({ data, height = 300 }: CandlestickChartProps) {
     // Determine domain
     const minValue = Math.min(...data.map(d => d.low));
     const maxValue = Math.max(...data.map(d => d.high));

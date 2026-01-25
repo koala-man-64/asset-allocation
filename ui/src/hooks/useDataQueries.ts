@@ -15,7 +15,6 @@ export const queryKeys = {
     // Strategy Specific Details
     positions: (strategyId?: string) => ['positions', strategyId] as const,
     orders: (strategyId?: string) => ['orders', strategyId] as const,
-    alerts: () => ['alerts'] as const,
     riskMetrics: (strategyId: string) => ['riskMetrics', strategyId] as const,
     executionMetrics: (strategyId: string) => ['executionMetrics', strategyId] as const,
     stressEvents: () => ['stressEvents'] as const,
@@ -35,7 +34,6 @@ export function useSystemHealthQuery() {
                 console.info('[useSystemHealthQuery] fetch success', {
                     overall: data?.overall,
                     layers: data?.dataLayers?.length ?? 0,
-                    alerts: data?.alerts?.length ?? 0,
                 });
                 return data;
             } catch (error) {
@@ -47,7 +45,6 @@ export function useSystemHealthQuery() {
         onSuccess: (data) => {
             console.info('[Query] systemHealth success', {
                 overall: data.overall,
-                alerts: data.alerts?.length ?? 0,
             });
         },
         onError: (err) => {

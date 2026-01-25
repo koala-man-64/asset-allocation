@@ -170,21 +170,6 @@ export interface JobRun {
   logLinkToken?: string;
 }
 
-export interface SystemAlert {
-  id?: string;
-  severity: 'critical' | 'error' | 'warning' | 'info';
-  title?: string;
-  component: string;
-  timestamp: string;
-  message: string;
-  acknowledged: boolean;
-  acknowledgedAt?: string | null;
-  acknowledgedBy?: string | null;
-  snoozedUntil?: string | null;
-  resolvedAt?: string | null;
-  resolvedBy?: string | null;
-}
-
 export interface ResourceHealth {
   name: string;
   resourceType: string;
@@ -192,6 +177,7 @@ export interface ResourceHealth {
   lastChecked: string;
   details?: string;
   azureId?: string;
+  portalLinkToken?: string;
   signals?: ResourceSignal[];
 }
 
@@ -208,7 +194,6 @@ export interface SystemHealth {
   overall: 'healthy' | 'degraded' | 'critical';
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
-  alerts: SystemAlert[];
   resources?: ResourceHealth[];
 }
 

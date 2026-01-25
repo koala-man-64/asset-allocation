@@ -379,30 +379,6 @@ export const backtestApi = {
     return requestJson<TradingSignal[]>(`/ranking/signals${query}`, { signal });
   },
 
-  async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
-    const encoded = encodeURIComponent(alertId);
-    return requestJson<unknown>(`/system/alerts/${encoded}/ack`, { method: 'POST', signal });
-  },
-
-  async snoozeAlert(
-    alertId: string,
-    payload: { minutes?: number; until?: string } = {},
-    signal?: AbortSignal,
-  ): Promise<unknown> {
-    const encoded = encodeURIComponent(alertId);
-    return requestJson<unknown>(`/system/alerts/${encoded}/snooze`, {
-      method: 'POST',
-      signal,
-      body: JSON.stringify(payload),
-      headers: { 'Content-Type': 'application/json' },
-    });
-  },
-
-  async resolveAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
-    const encoded = encodeURIComponent(alertId);
-    return requestJson<unknown>(`/system/alerts/${encoded}/resolve`, { method: 'POST', signal });
-  },
-
   async getStrategies(signal?: AbortSignal): Promise<StrategyRun[]> {
     return requestJson<StrategyRun[]>('/ranking/strategies', { signal });
   },
