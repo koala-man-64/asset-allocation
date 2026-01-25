@@ -48,6 +48,8 @@ def test_system_health_degraded_on_monitor_metrics_warning(monkeypatch: pytest.M
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "myapp")
+    # Prevent jobs from polluting the test (since FakeAzureArmClient doesn't mock them)
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_JOBS", raising=False)
 
     monkeypatch.setenv("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS", "CpuUsage")
