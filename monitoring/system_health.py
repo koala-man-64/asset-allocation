@@ -363,20 +363,6 @@ def _derive_job_name(layer_name: str, domain_clean: str) -> str:
     return f"{l_name}-{d_name}-job"
 
 
-def _base_folder_from_by_date(path: str) -> Optional[str]:
-    text = str(path or "").strip().strip("/")
-    if not text:
-        return None
-    if text.endswith("-by-date"):
-        base = text[: -len("-by-date")]
-    elif text.endswith("_by_date"):
-        base = text[: -len("_by_date")]
-    else:
-        return None
-    base = base.rstrip("/")
-    return base or None
-
-
 def _make_job_portal_url(sub_id: str, rg: str, job_name: str) -> Optional[str]:
     if not all([sub_id, rg, job_name]):
         return None
@@ -422,16 +408,6 @@ def collect_system_health_snapshot(
     logger.info("Collecting system health: include_resource_ids=%s", include_resource_ids)
 
     cfg = AzureBlobStoreConfig.from_env()
-    # Emit a terse config snapshot so "missing links / missing jobs" reports are debuggable from logs.
-    # Avoid printing secrets (connection strings, tokens, etc).
-    logger.info(
-        "System health config: test_mode=%s storage_account=%s conn_string=%s arm_sub=%s arm_rg=%s",
-        _is_test_mode(),
-        bool(cfg.account_name),
-        bool(cfg.connection_string),
-        bool(os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()),
-        bool(os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()),
-    )
     store = AzureBlobStore(cfg)
 
     layers: List[Dict[str, Any]] = []
@@ -444,32 +420,11 @@ def collect_system_health_snapshot(
     sub_id = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "").strip()
     rg = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
     storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip()
-    if not (sub_id and rg and storage_account):
-        missing = []
-        if not sub_id:
-            missing.append("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
-        if not rg:
-            missing.append("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
-        if not storage_account:
-            missing.append("AZURE_STORAGE_ACCOUNT_NAME")
-        logger.warning(
-            "Portal link URL generation disabled (missing %s). "
-            "Storage container/folder and job portal links will be omitted.",
-            ",".join(missing),
-        )
 
     for spec in _default_layer_specs():
         layer_last_updated: Optional[datetime] = None
         had_layer_error = False
         container = spec.container_name()
-        logger.info(
-            "Layer probe config: layer=%s container_env=%s container=%s markers=%s delta_tables=%s",
-            spec.name,
-            spec.container_env,
-            container,
-            len(spec.marker_blobs),
-            len(spec.delta_tables),
-        )
         domain_items: List[Dict[str, Any]] = []
 
         # Collect markers (CSV/Blobs)
@@ -542,21 +497,11 @@ def collect_system_health_snapshot(
             job_name = _derive_job_name(spec.name, name_clean)
             job_url = _make_job_portal_url(sub_id, rg, job_name)
             folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
-            base_path = _base_folder_from_by_date(table_path)
-            base_folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, base_path) if base_path else None
-            base_last_updated: Optional[datetime] = None
-            base_status: Optional[str] = None
-            if base_path:
-                base_prefix = f"{base_path.rstrip('/')}/"
-                base_last_updated = store.get_container_last_modified(container=container, prefix=base_prefix)
-                base_status = _compute_layer_status(
-                    now, base_last_updated, max_age_seconds=spec.max_age_seconds, had_error=False
-                )
 
             try:
                 ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
                 status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
-                item: Dict[str, Any] = {
+                domain_items.append({
                     "name": name_clean,
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "delta",
@@ -568,14 +513,9 @@ def collect_system_health_snapshot(
                     "status": status,
                     "version": ver if ver is not None else None,
                     "portalUrl": folder_url,
-                    "basePortalUrl": base_folder_url,
                     "jobUrl": job_url,
                     "jobName": job_name,
-                }
-                if base_path:
-                    item["baseLastUpdated"] = _iso(base_last_updated) if base_last_updated else None
-                    item["baseStatus"] = base_status
-                domain_items.append(item)
+                })
             except Exception:
                 logger.warning(
                     "Layer delta probe failed: layer=%s domain=%s container=%s path=%s",
@@ -586,7 +526,7 @@ def collect_system_health_snapshot(
                     exc_info=True,
                 )
                 had_layer_error = True
-                item = {
+                domain_items.append({
                     "name": name_clean,  # Use raw name on error if cleaning is ambiguous
                     "description": "",
                     "type": "delta",
@@ -598,14 +538,9 @@ def collect_system_health_snapshot(
                     "status": "error",
                     "version": None,
                     "portalUrl": folder_url,
-                    "basePortalUrl": base_folder_url,
                     "jobUrl": job_url,
                     "jobName": job_name,
-                }
-                if base_path:
-                    item["baseLastUpdated"] = _iso(base_last_updated) if base_last_updated else None
-                    item["baseStatus"] = base_status
-                domain_items.append(item)
+                })
 
         # Aggregate layer status
         valid_times = [
@@ -657,19 +592,6 @@ def collect_system_health_snapshot(
     job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
 
     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
-    logger.info(
-        "Azure ARM probes: enabled=%s sub=%s rg=%s containerapps=%s jobs=%s",
-        arm_enabled,
-        bool(subscription_id),
-        bool(resource_group),
-        len(app_names),
-        len(job_names),
-    )
-    if not arm_enabled and (subscription_id or resource_group):
-        logger.info(
-            "Azure ARM probes disabled: set SYSTEM_HEALTH_ARM_CONTAINERAPPS and/or SYSTEM_HEALTH_ARM_JOBS to enable "
-            "resource and recent job execution monitoring."
-        )
     if arm_enabled:
         try:
             api_version = _require_env("SYSTEM_HEALTH_ARM_API_VERSION")
