@@ -41,7 +41,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                     <sysConfig.icon className={`h-8 w-8 ${apiAnim}`}
                         style={{ color: sysConfig.text }} />
                     <div>
-                        <div className={StatusTypos.HEADER}>SYSTEM STATUS</div>
+                        <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
                         <div className="text-2xl font-black tracking-tighter uppercase"
                             style={{ color: sysConfig.text }}>
                             {overall}
