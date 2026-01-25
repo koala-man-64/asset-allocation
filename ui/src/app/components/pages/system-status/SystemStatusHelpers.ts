@@ -113,3 +113,24 @@ export const formatTimestamp = (timestamp?: string | null) => {
     // Use the new compact format by default now for consistency
     return formatTimeAgo(timestamp);
 };
+
+export const formatDuration = (seconds?: number | null) => {
+    if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '-';
+    const total = Math.max(0, Math.floor(seconds));
+    if (total < 60) return `${total}s`;
+    const minutes = Math.floor(total / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`;
+};
+
+export const formatRecordCount = (count?: number | null) => {
+    if (count === null || count === undefined || !Number.isFinite(count)) return '-';
+    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(count);
+};
+
+export const getAzurePortalUrl = (azureId?: string | null) => {
+    if (!azureId) return '';
+    return `https://portal.azure.com/#resource${azureId}`;
+};

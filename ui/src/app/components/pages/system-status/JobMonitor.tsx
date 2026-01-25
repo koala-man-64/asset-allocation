@@ -1,21 +1,20 @@
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Button } from '@/app/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
-import { PlayCircle } from 'lucide-react';
-import { getStatusBadge, formatTimestamp } from './SystemStatusHelpers';
-
-interface Job {
-    jobName: string;
-    jobType: string;
-    status: string;
-    startTime: string;
-}
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { ExternalLink, Loader2, Play, PlayCircle } from 'lucide-react';
+import { formatDuration, formatRecordCount, formatTimestamp, getStatusBadge } from './SystemStatusHelpers';
+import { useJobTrigger } from '@/hooks/useJobTrigger';
+import { JobRun } from '@/types/strategy';
 
 interface JobMonitorProps {
-    recentJobs: Job[];
+    recentJobs: JobRun[];
+    jobLinks?: Record<string, string>;
 }
 
-export function JobMonitor({ recentJobs }: JobMonitorProps) {
+export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
+    const { triggeringJob, triggerJob } = useJobTrigger();
     const successJobs = recentJobs.filter(j => j.status === 'success').length;
     const runningJobs = recentJobs.filter(j => j.status === 'running').length;
     const failedJobs = recentJobs.filter(j => j.status === 'failed').length;
@@ -55,28 +54,75 @@ export function JobMonitor({ recentJobs }: JobMonitorProps) {
                                 <TableHead>Job</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Time</TableHead>
+                                <TableHead className="text-right">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {recentJobs.slice(0, 5).map((job, idx) => (
                                 <TableRow key={idx}>
                                     <TableCell className="py-2">
-                                        <div className="flex flex-col">
-                                            <span className="font-medium text-sm">{job.jobName}</span>
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium text-sm">{job.jobName}</span>
+                                                {jobLinks[job.jobName] && (
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <a
+                                                                href={jobLinks[job.jobName]}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-muted-foreground hover:text-primary transition-colors"
+                                                                aria-label={`Open ${job.jobName} in Azure`}
+                                                            >
+                                                                <ExternalLink className="h-3.5 w-3.5" />
+                                                            </a>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent side="right">Open job</TooltipContent>
+                                                    </Tooltip>
+                                                )}
+                                            </div>
                                             <span className="text-xs text-muted-foreground">{job.jobType}</span>
+                                            <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                                <span>Trigger: {job.triggeredBy || 'schedule'}</span>
+                                                <span>Duration: {formatDuration(job.duration)}</span>
+                                                {job.recordsProcessed !== undefined && (
+                                                    <span>Records: {formatRecordCount(job.recordsProcessed)}</span>
+                                                )}
+                                            </div>
                                         </div>
                                     </TableCell>
                                     <TableCell className="py-2">
                                         {getStatusBadge(job.status)}
                                     </TableCell>
                                     <TableCell className="py-2 font-mono text-sm">
-                                        {formatTimestamp(job.startTime)}
+                                        <div>{formatTimestamp(job.startTime)}</div>
+                                    </TableCell>
+                                    <TableCell className="py-2 text-right">
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-7 w-7"
+                                                    disabled={Boolean(triggeringJob)}
+                                                    onClick={() => void triggerJob(job.jobName)}
+                                                    aria-label={`Run ${job.jobName}`}
+                                                >
+                                                    {triggeringJob === job.jobName ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <Play className="h-4 w-4" />
+                                                    )}
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="left">Trigger job</TooltipContent>
+                                        </Tooltip>
                                     </TableCell>
                                 </TableRow>
                             ))}
                             {recentJobs.length === 0 && (
                                 <TableRow>
-                                    <TableCell colSpan={3} className="text-center text-muted-foreground text-sm py-4">
+                                    <TableCell colSpan={4} className="text-center text-muted-foreground text-sm py-4">
                                         No recent jobs found
                                     </TableCell>
                                 </TableRow>

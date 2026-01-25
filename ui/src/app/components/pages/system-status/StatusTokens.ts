@@ -5,15 +5,15 @@
 
 export const StatusColors = {
     // Semantic States
-    HEALTHY: { bg: '#0F2E1B', text: '#4ADE80', border: '#14532D' }, // Neon Green on Dark
-    WARNING: { bg: '#2E1C0F', text: '#FBBF24', border: '#78350F' }, // Amber on Dark
-    CRITICAL: { bg: '#2E0F0F', text: '#F87171', border: '#7F1D1D' }, // Red on Dark
-    NEUTRAL: { bg: '#09090B', text: '#9CA3AF', border: '#27272A' }, // Zinc
+    HEALTHY: { bg: '#EAF7F0', text: '#187A3E', border: '#BFE6CD' }, // Soft green on light
+    WARNING: { bg: '#FFF7DF', text: '#9A6B00', border: '#F0D490' }, // Warm amber on light
+    CRITICAL: { bg: '#FDECEC', text: '#B3261E', border: '#F5B5B0' }, // Soft red on light
+    NEUTRAL: { bg: '#F5F5F7', text: '#52525B', border: '#E4E4E7' }, // Neutral
 
     // UI Elements
-    PANEL_BG: '#09090B',
-    PANEL_BORDER: '#27272A',
-    HEADER_BG: '#18181B',
+    PANEL_BG: '#F8FAFC',
+    PANEL_BORDER: '#E2E8F0',
+    HEADER_BG: '#F1F5F9',
 } as const;
 
 export const StatusTypos = {

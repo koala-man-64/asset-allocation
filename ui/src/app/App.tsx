@@ -4,7 +4,6 @@ import { AppProvider } from '@/contexts/AppContext';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { useRealtime } from '@/hooks/useRealtime';
 
-import { AppHeader } from '@/app/components/layout/AppHeader';
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
 import { RunCart } from '@/app/components/layout/RunCart';
 import { OverviewPage } from '@/app/components/pages/OverviewPage';
@@ -31,8 +30,6 @@ function AppContent() {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      <AppHeader />
-
       <div className="flex-1 flex overflow-hidden">
         <LeftNavigation />
 
