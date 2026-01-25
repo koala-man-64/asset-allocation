@@ -4,10 +4,9 @@ import { Button } from '@/app/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { Activity, Clock, ExternalLink, Loader2, Play } from 'lucide-react';
-import { formatTimestamp, getStatusBadge, getStatusIcon } from './SystemStatusHelpers';
+import { formatTimestamp, getAzurePortalUrl, getStatusBadge, getStatusIcon } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { ResourceHealth, ResourceSignal } from '@/types/strategy';
-import { openSystemLink } from '@/utils/openSystemLink';
 
 interface AzureResourcesProps {
     resources: ResourceHealth[];
@@ -65,17 +64,18 @@ export function AzureResources({ resources }: AzureResourcesProps) {
                                             <TableCell className="font-medium">
                                                 <div className="flex items-center gap-2">
                                                     <span>{job.name}</span>
-                                                    {job.portalLinkToken && (
+                                                    {job.azureId && (
                                                         <Tooltip>
                                                             <TooltipTrigger asChild>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void openSystemLink(job.portalLinkToken!)}
+                                                                <a
+                                                                    href={getAzurePortalUrl(job.azureId)}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
                                                                     className="text-muted-foreground hover:text-primary transition-colors"
                                                                     aria-label={`Open ${job.name} in Azure`}
                                                                 >
                                                                     <ExternalLink className="h-3.5 w-3.5" />
-                                                                </button>
+                                                                </a>
                                                             </TooltipTrigger>
                                                             <TooltipContent side="right">Open job</TooltipContent>
                                                         </Tooltip>
@@ -160,17 +160,18 @@ export function AzureResources({ resources }: AzureResourcesProps) {
                                             <TableCell className="font-medium">
                                                 <div className="flex items-center gap-2">
                                                     <span>{resource.name}</span>
-                                                    {resource.portalLinkToken && (
+                                                    {resource.azureId && (
                                                         <Tooltip>
                                                             <TooltipTrigger asChild>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void openSystemLink(resource.portalLinkToken!)}
+                                                                <a
+                                                                    href={getAzurePortalUrl(resource.azureId)}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
                                                                     className="text-muted-foreground hover:text-primary transition-colors"
                                                                     aria-label={`Open ${resource.name} in Azure`}
                                                                 >
                                                                     <ExternalLink className="h-3.5 w-3.5" />
-                                                                </button>
+                                                                </a>
                                                             </TooltipTrigger>
                                                             <TooltipContent side="right">Open resource</TooltipContent>
                                                         </Tooltip>
@@ -198,17 +199,16 @@ export function AzureResources({ resources }: AzureResourcesProps) {
                                                 )}
                                             </TableCell>
                                             <TableCell className="font-mono text-xs text-muted-foreground max-w-[240px] truncate">
-                                                {resource.azureId && resource.portalLinkToken ? (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void openSystemLink(resource.portalLinkToken!)}
+                                                {resource.azureId ? (
+                                                    <a
+                                                        href={getAzurePortalUrl(resource.azureId)}
+                                                        target="_blank"
+                                                        rel="noreferrer"
                                                         className="hover:text-primary transition-colors"
                                                         title={resource.azureId}
                                                     >
                                                         {resource.azureId}
-                                                    </button>
-                                                ) : resource.azureId ? (
-                                                    resource.azureId
+                                                    </a>
                                                 ) : (
                                                     '-'
                                                 )}

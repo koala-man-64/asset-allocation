@@ -128,8 +128,8 @@ export interface DataDomain {
   status: 'healthy' | 'stale' | 'error';
   version?: number | null;
   description?: string;
-  portalLinkToken?: string;
-  jobLinkToken?: string;
+  portalUrl?: string;
+  jobUrl?: string;
   jobName?: string;
   triggerUrl?: string;
   frequency?: string;
@@ -148,7 +148,8 @@ export interface DataLayer {
   maxAgeSeconds?: number;
   nextExpectedUpdate?: string;
   domains?: DataDomain[];
-  portalLinkToken?: string;
+  portalUrl?: string;
+  jobUrl?: string;
   triggerUrl?: string;
 }
 
@@ -187,7 +188,6 @@ export interface ResourceHealth {
   lastChecked: string;
   details?: string;
   azureId?: string;
-  portalLinkToken?: string;
   signals?: ResourceSignal[];
 }
 

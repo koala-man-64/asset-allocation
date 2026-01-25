@@ -5,7 +5,6 @@ import { StatusTypos, StatusColors } from './StatusTokens';
 import { Database, ExternalLink, FolderOpen, Loader2, Play } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
-import { openSystemLink } from '@/utils/openSystemLink';
 
 interface StatusOverviewProps {
     overall: string;
@@ -42,7 +41,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                     <sysConfig.icon className={`h-8 w-8 ${apiAnim}`}
                         style={{ color: sysConfig.text }} />
                     <div>
-                        <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
+                        <div className={StatusTypos.HEADER}>SYSTEM STATUS</div>
                         <div className="text-2xl font-black tracking-tighter uppercase"
                             style={{ color: sysConfig.text }}>
                             {overall}
@@ -73,15 +72,16 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                         <div className="font-bold text-lg text-slate-900">{layer.name}</div>
                                         <Tooltip>
                                             <TooltipTrigger asChild>
-                                                {layer.portalLinkToken ? (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void openSystemLink(layer.portalLinkToken)}
+                                                {layer.portalUrl ? (
+                                                    <a
+                                                        href={layer.portalUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
                                                         className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
                                                         aria-label={`Open ${layer.name} container`}
                                                     >
                                                         <Database className="h-3.5 w-3.5" />
-                                                    </button>
+                                                    </a>
                                                 ) : (
                                                     <span
                                                         className="p-1.5 text-slate-300 rounded cursor-not-allowed"
@@ -92,7 +92,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                 )}
                                             </TooltipTrigger>
                                             <TooltipContent side="left">
-                                                {layer.portalLinkToken ? 'Open container' : 'Container link not configured'}
+                                                {layer.portalUrl ? 'Open container' : 'Container link not configured'}
                                             </TooltipContent>
                                         </Tooltip>
                                     </div>
@@ -153,16 +153,17 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                     <span className="uppercase text-slate-600">Path</span>
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
-                                                            {domain.portalLinkToken ? (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void openSystemLink(domain.portalLinkToken)}
+                                                            {domain.portalUrl ? (
+                                                                <a
+                                                                    href={domain.portalUrl}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
                                                                     className="inline-flex items-center gap-1 text-slate-700 hover:text-sky-600 truncate max-w-[220px]"
                                                                     title={domain.path || ''}
                                                                 >
                                                                     <FolderOpen className="h-3 w-3" />
                                                                     {domain.path || '-'}
-                                                                </button>
+                                                                </a>
                                                             ) : (
                                                                 <span
                                                                     className="inline-flex items-center gap-1 text-slate-400 truncate max-w-[220px] cursor-not-allowed"
@@ -174,7 +175,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                             )}
                                                         </TooltipTrigger>
                                                         <TooltipContent side="left">
-                                                            {domain.portalLinkToken ? 'Open data folder' : 'Folder link not configured'}
+                                                            {domain.portalUrl ? 'Open data folder' : 'Folder link not configured'}
                                                         </TooltipContent>
                                                     </Tooltip>
                                                     <span className="uppercase text-slate-600">Schedule</span>
@@ -194,15 +195,16 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                         <span className="text-slate-700">{jobName}</span>
                                                         <Tooltip>
                                                             <TooltipTrigger asChild>
-                                                                {domain.jobLinkToken ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => void openSystemLink(domain.jobLinkToken)}
+                                                                {domain.jobUrl ? (
+                                                                    <a
+                                                                        href={domain.jobUrl}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
                                                                         className="inline-flex items-center text-slate-500 hover:text-sky-600"
                                                                         aria-label={`Open ${jobName} job`}
                                                                     >
                                                                         <ExternalLink className="h-3 w-3" />
-                                                                    </button>
+                                                                    </a>
                                                                 ) : (
                                                                     <span
                                                                         className="inline-flex items-center text-slate-300 cursor-not-allowed"
@@ -213,7 +215,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                                 )}
                                                             </TooltipTrigger>
                                                             <TooltipContent side="left">
-                                                                {domain.jobLinkToken ? 'Open job details' : 'Job link not configured'}
+                                                                {domain.jobUrl ? 'Open job details' : 'Job link not configured'}
                                                             </TooltipContent>
                                                         </Tooltip>
                                                         {jobRun && (

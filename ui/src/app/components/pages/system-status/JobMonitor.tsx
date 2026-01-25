@@ -7,14 +7,13 @@ import { ExternalLink, Loader2, Play, PlayCircle } from 'lucide-react';
 import { formatDuration, formatRecordCount, formatTimestamp, getStatusBadge } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { JobRun } from '@/types/strategy';
-import { openSystemLink } from '@/utils/openSystemLink';
 
 interface JobMonitorProps {
     recentJobs: JobRun[];
-    jobLinkTokens?: Record<string, string>;
+    jobLinks?: Record<string, string>;
 }
 
-export function JobMonitor({ recentJobs, jobLinkTokens = {} }: JobMonitorProps) {
+export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
     const { triggeringJob, triggerJob } = useJobTrigger();
     const successJobs = recentJobs.filter(j => j.status === 'success').length;
     const runningJobs = recentJobs.filter(j => j.status === 'running').length;
@@ -65,17 +64,18 @@ export function JobMonitor({ recentJobs, jobLinkTokens = {} }: JobMonitorProps) 
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center gap-2">
                                                 <span className="font-medium text-sm">{job.jobName}</span>
-                                                {jobLinkTokens[job.jobName] && (
+                                                {jobLinks[job.jobName] && (
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void openSystemLink(jobLinkTokens[job.jobName])}
+                                                            <a
+                                                                href={jobLinks[job.jobName]}
+                                                                target="_blank"
+                                                                rel="noreferrer"
                                                                 className="text-muted-foreground hover:text-primary transition-colors"
                                                                 aria-label={`Open ${job.jobName} in Azure`}
                                                             >
                                                                 <ExternalLink className="h-3.5 w-3.5" />
-                                                            </button>
+                                                            </a>
                                                         </TooltipTrigger>
                                                         <TooltipContent side="right">Open job</TooltipContent>
                                                     </Tooltip>

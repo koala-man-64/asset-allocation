@@ -80,7 +80,6 @@ jobs:
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
           BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
-          SYSTEM_HEALTH_LINK_TOKEN_SECRET: ${{ secrets.SYSTEM_HEALTH_LINK_TOKEN_SECRET }}
         run: |
           set -euo pipefail
 
@@ -106,7 +105,6 @@ jobs:
           require_secret BACKTEST_API_KEY
           require_secret BACKTEST_POSTGRES_DSN
           require_secret BACKTEST_CSP
-          require_secret SYSTEM_HEALTH_LINK_TOKEN_SECRET
 
           python3 - <<'PY'
           import os
@@ -364,7 +362,6 @@ jobs:
           BACKTEST_UI_OIDC_AUTHORITY: ${{ secrets.BACKTEST_UI_OIDC_AUTHORITY }}
           BACKTEST_UI_OIDC_SCOPES: ${{ secrets.BACKTEST_UI_OIDC_SCOPES }}
           BACKTEST_UI_API_BASE_URL: ${{ secrets.BACKTEST_UI_API_BASE_URL }}
-          SYSTEM_HEALTH_LINK_TOKEN_SECRET: ${{ secrets.SYSTEM_HEALTH_LINK_TOKEN_SECRET }}
         run: |
           set -euo pipefail
           ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)

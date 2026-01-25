@@ -166,10 +166,6 @@ export interface JobTriggerResponse {
   executionName?: string | null;
 }
 
-export interface ResolveLinkResponse {
-  url: string;
-}
-
 export interface TradeResponse {
   execution_date: string;
   symbol: string;
@@ -386,16 +382,6 @@ export const backtestApi = {
   async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
     const encoded = encodeURIComponent(alertId);
     return requestJson<unknown>(`/system/alerts/${encoded}/ack`, { method: 'POST', signal });
-  },
-
-  async resolveSystemLink(token: string, signal?: AbortSignal): Promise<ResolveLinkResponse> {
-    const trimmed = String(token ?? '').trim();
-    return requestJson<ResolveLinkResponse>('/system/links/resolve', {
-      method: 'POST',
-      signal,
-      body: JSON.stringify({ token: trimmed }),
-      headers: { 'Content-Type': 'application/json' },
-    });
   },
 
   async snoozeAlert(
