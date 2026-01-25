@@ -37,12 +37,26 @@ param(
   [switch]$AllowAzureServices,
   [string]$AllowIpRangeStart = "",
   [string]$AllowIpRangeEnd = "",
+  [switch]$AllowCurrentClientIp,
 
   [switch]$EmitSecrets
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+function Get-PublicIp {
+  try {
+    $ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content.Trim()
+    Write-Host "Detected public IP: $ip"
+    return $ip
+  }
+  catch {
+    Write-Warning "Failed to detect public IP: $_"
+    return $null
+  }
+}
+
 
 function Assert-CommandExists {
   param([Parameter(Mandatory = $true)][string]$Name)
@@ -342,6 +356,23 @@ if ($AllowIpRangeStart) {
   else {
     Write-Host "Firewall rule already exists; skipping."
   }
+}
+
+if ($AllowCurrentClientIp) {
+    $myIp = Get-PublicIp
+    if ($myIp) {
+      Write-Host "Ensuring firewall rule allows current client IP ($myIp)..."
+      Invoke-Az -Label "postgres flexible-server firewall-rule create allow-current-client-ip" -Args @(
+            "postgres", "flexible-server", "firewall-rule", "create",
+            "--resource-group", $ResourceGroup,
+            "--name", $ServerName,
+            "--rule-name", "allow-current-client-ip",
+            "--start-ip-address", $myIp,
+            "--end-ip-address", $myIp,
+            "--only-show-errors",
+            "-o", "none"
+      )
+    }
 }
 
 $fqdn = & az postgres flexible-server show --name $ServerName --resource-group $ResourceGroup --only-show-errors --query fullyQualifiedDomainName -o tsv 2>$null
