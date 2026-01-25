@@ -8,7 +8,7 @@ from api.service.job_manager import JobManager
 from api.service.run_store import RunStore
 from api.service.settings import ServiceSettings
 
-logger = logging.getLogger("backtest.api.auth")
+logger = logging.getLogger("asset-allocation.api.auth")
 
 def get_settings(request: Request) -> ServiceSettings:
     return request.app.state.settings

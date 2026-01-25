@@ -9,7 +9,7 @@ from api.service.dependencies import get_settings, validate_auth
 from core.postgres import PostgresError, connect
 
 router = APIRouter()
-logger = logging.getLogger("backtest.api.ranking")
+logger = logging.getLogger("asset-allocation.api.ranking")
 
 @router.get("/strategies")
 def get_strategies(request: Request):

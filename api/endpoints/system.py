@@ -20,7 +20,7 @@ from monitoring.lineage import get_lineage_snapshot
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 
-logger = logging.getLogger("backtest.api.system")
+logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()
 
