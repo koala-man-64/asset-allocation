@@ -1,4 +1,6 @@
 import type {
+  Alert,
+  AlertConfig,
   ExecutionMetrics,
   FinanceData,
   MarketData,
@@ -31,6 +33,7 @@ export const DataService = {
       console.info('[DataService] getSystemHealth success', {
         overall: data?.overall,
         layers: data?.dataLayers?.length ?? 0,
+        alerts: data?.alerts?.length ?? 0,
       });
       return data;
     } catch (error) {
@@ -56,6 +59,14 @@ export const DataService = {
   },
 
   async getOrders(_strategyId?: string): Promise<Order[]> {
+    return [];
+  },
+
+  async getAlerts(): Promise<Alert[]> {
+    return [];
+  },
+
+  async getAlertConfigs(): Promise<AlertConfig[]> {
     return [];
   },
 

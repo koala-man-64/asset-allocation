@@ -1,10 +1,9 @@
 import React, { useMemo } from 'react';
-import { DataDomain, DataLayer, JobRun } from '@/types/strategy';
-import { formatTimeAgo, getStatusConfig } from './SystemStatusHelpers';
+import { DataLayer, JobRun } from '@/types/strategy';
+import { formatDuration, formatTimeAgo, getStatusConfig } from './SystemStatusHelpers';
 import { StatusTypos, StatusColors } from './StatusTokens';
-import { CalendarDays, Database, FolderOpen, Loader2, Play, ScrollText } from 'lucide-react';
+import { Database, ExternalLink, FolderOpen, Loader2, Play } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 
 interface StatusOverviewProps {
@@ -18,65 +17,33 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
     const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' :
         sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
     const { triggeringJob, triggerJob } = useJobTrigger();
-
-    const domainNames = useMemo(() => {
-        const seen = new Set<string>();
-        const names: string[] = [];
-
-        for (const layer of dataLayers) {
-            for (const domain of layer.domains || []) {
-                if (!domain?.name) continue;
-                if (seen.has(domain.name)) continue;
-                seen.add(domain.name);
-                names.push(domain.name);
-            }
-        }
-
-        return names;
-    }, [dataLayers]);
-
     const jobIndex = useMemo(() => {
         const index = new Map<string, JobRun>();
         for (const job of recentJobs) {
-            if (!job?.jobName) continue;
-            const existing = index.get(job.jobName);
-            if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
+            if (!job.jobName) continue;
+            if (!index.has(job.jobName)) {
                 index.set(job.jobName, job);
             }
         }
         return index;
     }, [recentJobs]);
 
-    const domainsByLayer = useMemo(() => {
-        const index = new Map<string, Map<string, DataDomain>>();
-
-        for (const layer of dataLayers) {
-            const domainIndex = new Map<string, DataDomain>();
-            for (const domain of layer.domains || []) {
-                if (domain?.name) domainIndex.set(domain.name, domain);
-            }
-            index.set(layer.name, domainIndex);
-        }
-
-        return index;
-    }, [dataLayers]);
-
     return (
         <div className="grid gap-4 font-sans">
             {/* System Header - Manual inline styles for specific 'Industrial' theming overrides */}
-            <div
-                className="flex items-center justify-between p-4 border rounded-none border-l-4"
+            <div className="flex items-center justify-between p-4 border rounded-none border-l-4"
                 style={{
                     backgroundColor: StatusColors.PANEL_BG,
                     borderColor: StatusColors.PANEL_BORDER,
-                    borderLeftColor: sysConfig.text,
-                }}
-            >
+                    borderLeftColor: sysConfig.text
+                }}>
                 <div className="flex items-center gap-4">
-                    <sysConfig.icon className={`h-8 w-8 ${apiAnim}`} style={{ color: sysConfig.text }} />
+                    <sysConfig.icon className={`h-8 w-8 ${apiAnim}`}
+                        style={{ color: sysConfig.text }} />
                     <div>
                         <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
-                        <div className="text-2xl font-black tracking-tighter uppercase" style={{ color: sysConfig.text }}>
+                        <div className="text-2xl font-black tracking-tighter uppercase"
+                            style={{ color: sysConfig.text }}>
                             {overall}
                         </div>
                     </div>
@@ -89,345 +56,251 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                 </div>
             </div>
 
-            {/* Domain x Layer Matrix */}
-            <div className="rounded-none border border-slate-200 bg-white">
-                <Table className="text-[11px] table-fixed">
-                    <TableHeader>
-                        <TableRow className="bg-white hover:bg-white border-slate-200">
-                            <TableHead
-                                rowSpan={dataLayers.length ? 2 : 1}
-                                className={`${StatusTypos.HEADER} bg-white text-slate-500 w-[220px]`}
-                            >
-                                DOMAIN
-                            </TableHead>
-                            {dataLayers.map((layer, layerIdx) => {
-                                const layerStatus = getStatusConfig(layer.status);
-                                const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 border border-slate-200 bg-slate-50 text-[11px] text-slate-600">
+                <span className={StatusTypos.HEADER}>LEGEND</span>
+                <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" aria-hidden="true" />
+                    Domain status
+                </span>
+                <span className="flex items-center gap-1">
+                    <Database className="h-3 w-3" aria-hidden="true" />
+                    Container
+                </span>
+                <span className="flex items-center gap-1">
+                    <FolderOpen className="h-3 w-3" aria-hidden="true" />
+                    Path
+                </span>
+                <span className="flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    Job
+                </span>
+                <span className="flex items-center gap-1">
+                    <Play className="h-3 w-3" aria-hidden="true" />
+                    Run
+                </span>
+                <span className={`${StatusTypos.MONO} ml-auto text-slate-500`}>
+                    Layer badge summarizes domains • Times show “ago” (UTC)
+                </span>
+            </div>
 
-                                return (
-                                    <TableHead key={layer.name} colSpan={2} className={`bg-white ${groupBorder}`}>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <div className="flex items-center gap-2 min-w-0">
-                                                <span className="font-bold text-slate-900 truncate">{layer.name}</span>
-                                                <span
-                                                    className={`${StatusTypos.MONO} text-[10px] px-2 py-1 rounded-sm font-bold border opacity-80`}
-                                                    style={{
-                                                        backgroundColor: layerStatus.bg,
-                                                        color: layerStatus.text,
-                                                        borderColor: layerStatus.border,
-                                                    }}
-                                                >
-                                                    {layer.status.toUpperCase()}
-                                                </span>
-                                            </div>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    {layer.portalLinkToken ? (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void openSystemLink(layer.portalLinkToken)}
-                                                            className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
-                                                            aria-label={`Open ${layer.name} container`}
-                                                        >
-                                                            <Database className="h-3.5 w-3.5" />
-                                                        </button>
-                                                    ) : (
-                                                        <span
-                                                            className="p-1.5 text-slate-300 rounded cursor-not-allowed"
-                                                            aria-label={`No container link for ${layer.name}`}
-                                                        >
-                                                            <Database className="h-3.5 w-3.5" />
+            {/* Dense Matrix Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-0 border border-slate-200 bg-white">
+                {dataLayers.map((layer) => {
+                    const layerStatus = getStatusConfig(layer.status);
+                    const maxAgeLabel = formatDuration(layer.maxAgeSeconds);
+
+                    return (
+                        <div key={layer.name} className="p-4 border-b border-r border-slate-200 hover:bg-slate-50 transition-colors">
+                            {/* Layer Header */}
+                            <div className="flex justify-between items-start mb-4">
+                                <div className="min-w-0">
+                                    <div className={StatusTypos.HEADER}>LAYER</div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="font-bold text-lg text-slate-900">{layer.name}</div>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                {layer.portalUrl ? (
+                                                    <a
+                                                        href={layer.portalUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
+                                                        aria-label={`Open ${layer.name} container`}
+                                                    >
+                                                        <Database className="h-3.5 w-3.5" />
+                                                    </a>
+                                                ) : (
+                                                    <span
+                                                        className="p-1.5 text-slate-300 rounded cursor-not-allowed"
+                                                        aria-label={`No container link for ${layer.name}`}
+                                                    >
+                                                        <Database className="h-3.5 w-3.5" />
+                                                    </span>
+                                                )}
+                                            </TooltipTrigger>
+                                            <TooltipContent side="left">
+                                                {layer.portalUrl ? 'Open container' : 'Container link not configured'}
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </div>
+                                    {layer.description && (
+                                        <div className="text-xs text-slate-500 mt-1">{layer.description}</div>
+                                    )}
+                                </div>
+                                <div
+                                    className={`${StatusTypos.MONO} text-xs px-2 py-1 rounded-sm font-bold opacity-80`}
+                                    style={{ backgroundColor: layerStatus.bg, color: layerStatus.text }}
+                                >
+                                    {layer.status.toUpperCase()}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 mb-4">
+                                <div className="border border-slate-200 px-2 py-1 flex items-center justify-between text-[10px] uppercase tracking-widest text-slate-500">
+                                    <span>Refresh</span>
+                                    <span className="font-mono text-slate-700">{layer.refreshFrequency || '-'}</span>
+                                </div>
+                                <div className="border border-slate-200 px-2 py-1 flex items-center justify-between text-[10px] uppercase tracking-widest text-slate-500">
+                                    <span>Max Age</span>
+                                    <span className="font-mono text-slate-700">{maxAgeLabel || '-'}</span>
+                                </div>
+                            </div>
+
+                            {/* Domain Rows */}
+                            <div className="space-y-2">
+                                {(layer.domains || []).map((domain) => {
+                                    const dStatus = getStatusConfig(domain.status);
+                                    const jobName = domain.jobName || '';
+                                    const jobRun = jobName ? jobIndex.get(jobName) : null;
+                                    const schedule = domain.frequency || domain.cron || '-';
+                                    const isTriggering = Boolean(jobName) && triggeringJob === jobName;
+
+                                    return (
+                                        <div
+                                            key={domain.name}
+                                            className="flex items-start justify-between gap-3 p-2 border border-transparent hover:border-slate-200 hover:bg-slate-50 transition-all rounded-sm group"
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <div
+                                                        className="w-2 h-2 rounded-full shadow-[0_0_4px_0_rgba(0,0,0,0.5)]"
+                                                        style={{ backgroundColor: dStatus.text, boxShadow: `0 0 8px ${dStatus.text}40` }}
+                                                        title={`Status: ${domain.status}`}
+                                                        aria-hidden="true"
+                                                    />
+                                                    <span className="sr-only">Status: {domain.status}</span>
+                                                    <span className="text-sm font-semibold text-slate-900">{domain.name}</span>
+                                                    {domain.type && (
+                                                        <span className="text-[10px] uppercase tracking-widest text-slate-500 font-mono">
+                                                            {domain.type}
                                                         </span>
                                                     )}
-                                                </TooltipTrigger>
-                                                <TooltipContent side="bottom">
-                                                    {layer.portalLinkToken ? 'Open container' : 'Container link not configured'}
-                                                </TooltipContent>
-                                            </Tooltip>
+                                                </div>
+                                                {domain.description && (
+                                                    <div className="text-xs text-slate-500 mt-0.5">{domain.description}</div>
+                                                )}
+                                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-slate-500">
+                                                    <span className="uppercase text-slate-600">Path</span>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            {domain.portalUrl ? (
+                                                                <a
+                                                                    href={domain.portalUrl}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="inline-flex items-center gap-1 text-slate-700 hover:text-sky-600 truncate max-w-[220px]"
+                                                                    title={domain.path || ''}
+                                                                >
+                                                                    <FolderOpen className="h-3 w-3" />
+                                                                    {domain.path || '-'}
+                                                                </a>
+                                                            ) : (
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 text-slate-400 truncate max-w-[220px] cursor-not-allowed"
+                                                                    title={domain.path || ''}
+                                                                >
+                                                                    <FolderOpen className="h-3 w-3" />
+                                                                    {domain.path || '-'}
+                                                                </span>
+                                                            )}
+                                                        </TooltipTrigger>
+                                                        <TooltipContent side="left">
+                                                            {domain.portalUrl ? 'Open data folder' : 'Folder link not configured'}
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                    <span className="uppercase text-slate-600">Schedule</span>
+                                                    <span className="text-slate-700">{schedule}</span>
+                                                    <span className="uppercase text-slate-600">Last</span>
+                                                    <span className="text-slate-700">{formatTimeAgo(domain.lastUpdated)} ago</span>
+                                                    {typeof domain.version === 'number' && (
+                                                        <>
+                                                            <span className="uppercase text-slate-600">Ver</span>
+                                                            <span className="text-slate-700">v{domain.version}</span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                                {jobName && (
+                                                    <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10px] font-mono text-slate-500">
+                                                        <span className="uppercase text-slate-600">Job</span>
+                                                        <span className="text-slate-700">{jobName}</span>
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                {domain.jobUrl ? (
+                                                                    <a
+                                                                        href={domain.jobUrl}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="inline-flex items-center text-slate-500 hover:text-sky-600"
+                                                                        aria-label={`Open ${jobName} job`}
+                                                                    >
+                                                                        <ExternalLink className="h-3 w-3" />
+                                                                    </a>
+                                                                ) : (
+                                                                    <span
+                                                                        className="inline-flex items-center text-slate-300 cursor-not-allowed"
+                                                                        aria-label={`No job link for ${jobName}`}
+                                                                    >
+                                                                        <ExternalLink className="h-3 w-3" />
+                                                                    </span>
+                                                                )}
+                                                            </TooltipTrigger>
+                                                            <TooltipContent side="left">
+                                                                {domain.jobUrl ? 'Open job details' : 'Job link not configured'}
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                        {jobRun && (
+                                                            <>
+                                                                <span className="flex items-center gap-1 text-slate-700">
+                                                                    <span
+                                                                        className="w-1.5 h-1.5 rounded-full"
+                                                                        style={{ backgroundColor: getStatusConfig(jobRun.status).text }}
+                                                                    />
+                                                                    {jobRun.status}
+                                                                </span>
+                                                                <span className="text-slate-700">
+                                                                    {formatTimeAgo(jobRun.startTime)} ago
+                                                                </span>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="flex items-center gap-1">
+                                                {jobName && (
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <button
+                                                                className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-emerald-600 disabled:opacity-30 rounded"
+                                                                type="button"
+                                                                aria-label={`Run ${jobName}`}
+                                                                disabled={Boolean(triggeringJob)}
+                                                                onClick={() => void triggerJob(jobName)}
+                                                            >
+                                                                {isTriggering ? (
+                                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                                ) : (
+                                                                    <Play className="h-3.5 w-3.5" />
+                                                                )}
+                                                            </button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent side="left">Trigger job</TooltipContent>
+                                                    </Tooltip>
+                                                )}
+                                            </div>
                                         </div>
-                                    </TableHead>
-                                );
-                            })}
-                        </TableRow>
-
-                        {dataLayers.length > 0 && (
-                            <TableRow className="bg-slate-50 hover:bg-slate-50 border-slate-200">
-                                {dataLayers.map((layer, layerIdx) => {
-                                    const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
-
-                                    return (
-                                        <React.Fragment key={layer.name}>
-                                            <TableHead
-                                                className={`${StatusTypos.HEADER} h-8 text-slate-500 text-center w-[96px] ${groupBorder}`}
-                                            >
-                                                STATUS
-                                            </TableHead>
-                                            <TableHead className={`${StatusTypos.HEADER} h-8 text-slate-500 text-center w-[96px]`}>
-                                                LINKS
-                                            </TableHead>
-                                        </React.Fragment>
                                     );
                                 })}
-                            </TableRow>
-                        )}
-                    </TableHeader>
-
-                    <TableBody>
-                        {domainNames.map((domainName) => (
-                            <TableRow
-                                key={domainName}
-                                className="group border-slate-200 even:bg-slate-50/30 hover:bg-slate-50"
-                            >
-                                <TableCell className="text-sm font-semibold text-slate-900">
-                                    {domainName}
-                                </TableCell>
-
-                                {dataLayers.map((layer, layerIdx) => {
-                                    const domain = domainsByLayer.get(layer.name)?.get(domainName);
-                                    const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
-
-                                    return (
-                                        <React.Fragment key={layer.name}>
-                                            <TableCell className={`text-center ${groupBorder}`}>
-                                                {domain ? (
-                                                    <div className="inline-flex items-center justify-center gap-1 whitespace-nowrap">
-                                                        {(() => {
-                                                            const iconButtonClass =
-                                                                'inline-flex h-6 w-6 items-center justify-center rounded hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/30';
-                                                            const iconDisabledClass =
-                                                                'inline-flex h-6 w-6 items-center justify-center rounded opacity-40 cursor-not-allowed';
-                                                            const iconClass = 'h-3.5 w-3.5';
-                                                            const pathText = String(domain.path || '').toLowerCase();
-                                                            const isByDate =
-                                                                pathText.includes('by-date') || pathText.includes('_by_date');
-                                                            const baseFolderToken = isByDate
-                                                                ? domain.basePortalLinkToken
-                                                                : domain.portalLinkToken;
-                                                            const byDateFolderToken = isByDate ? domain.portalLinkToken : undefined;
-                                                            const jobLinkToken = domain.jobLinkToken;
-
-                                                            const baseDataStatus = isByDate ? domain.baseStatus : domain.status;
-                                                            const baseDataUpdated = isByDate ? domain.baseLastUpdated : domain.lastUpdated;
-                                                            const baseDataConfig = getStatusConfig(baseDataStatus || 'pending');
-
-                                                            const byDateDataConfig = isByDate ? getStatusConfig(domain.status) : null;
-
-                                                            const jobName = String(domain.jobName || '').trim();
-                                                            const run = jobName ? jobIndex.get(jobName) : null;
-                                                            const jobConfig = jobName
-                                                                ? getStatusConfig(run?.status || 'pending')
-                                                                : getStatusConfig('unknown');
-                                                            const JobIcon = jobConfig.icon;
-                                                            const jobAnim =
-                                                                jobConfig.animation === 'spin'
-                                                                    ? 'animate-spin'
-                                                                    : jobConfig.animation === 'pulse'
-                                                                        ? 'animate-pulse'
-                                                                        : '';
-
-                                                            return (
-                                                                <>
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            {baseFolderToken ? (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => void openSystemLink(baseFolderToken)}
-                                                                                    className={iconButtonClass}
-                                                                                    aria-label={`Open base folder (${String(baseDataStatus || 'unknown')})`}
-                                                                                >
-                                                                                    <FolderOpen
-                                                                                        className={iconClass}
-                                                                                        style={{ color: baseDataConfig.text }}
-                                                                                    />
-                                                                                </button>
-                                                                            ) : (
-                                                                                <span
-                                                                                    tabIndex={0}
-                                                                                    className={iconDisabledClass}
-                                                                                    aria-label={`Base data ${String(baseDataStatus || 'unknown')}`}
-                                                                                >
-                                                                                    <FolderOpen
-                                                                                        className={iconClass}
-                                                                                        style={{ color: baseDataConfig.text }}
-                                                                                    />
-                                                                                </span>
-                                                                            )}
-                                                                        </TooltipTrigger>
-                                                                        <TooltipContent side="bottom">
-                                                                            Base • {(baseDataStatus || 'unknown').toUpperCase()} • {formatTimeAgo(baseDataUpdated)} ago
-                                                                        </TooltipContent>
-                                                                    </Tooltip>
-
-                                                                    {isByDate && (
-                                                                        <Tooltip>
-                                                                            <TooltipTrigger asChild>
-                                                                                {byDateFolderToken ? (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() => void openSystemLink(byDateFolderToken)}
-                                                                                        className={iconButtonClass}
-                                                                                        aria-label={`Open by-date folder (${domain.status})`}
-                                                                                    >
-                                                                                        <CalendarDays
-                                                                                            className={iconClass}
-                                                                                            style={{ color: byDateDataConfig?.text }}
-                                                                                        />
-                                                                                    </button>
-                                                                                ) : (
-                                                                                    <span
-                                                                                        tabIndex={0}
-                                                                                        className={iconDisabledClass}
-                                                                                        aria-label={`By-date data ${domain.status}`}
-                                                                                    >
-                                                                                        <CalendarDays
-                                                                                            className={iconClass}
-                                                                                            style={{ color: byDateDataConfig?.text }}
-                                                                                        />
-                                                                                    </span>
-                                                                                )}
-                                                                            </TooltipTrigger>
-                                                                            <TooltipContent side="bottom">
-                                                                                By-date • {domain.status.toUpperCase()} • {formatTimeAgo(domain.lastUpdated)} ago
-                                                                            </TooltipContent>
-                                                                        </Tooltip>
-                                                                    )}
-
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            {jobLinkToken ? (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => void openSystemLink(jobLinkToken)}
-                                                                                    className={iconButtonClass}
-                                                                                    aria-label={`Open job (${run?.status || 'unknown'})`}
-                                                                                >
-                                                                                    <JobIcon
-                                                                                        className={`${iconClass} ${jobAnim}`}
-                                                                                        style={{ color: jobConfig.text }}
-                                                                                    />
-                                                                                </button>
-                                                                            ) : (
-                                                                                <span
-                                                                                    tabIndex={0}
-                                                                                    className={iconDisabledClass}
-                                                                                    aria-label={`Job ${run?.status || 'unknown'}`}
-                                                                                >
-                                                                                    <JobIcon
-                                                                                        className={`${iconClass} ${jobAnim}`}
-                                                                                        style={{ color: jobConfig.text }}
-                                                                                    />
-                                                                                </span>
-                                                                            )}
-                                                                        </TooltipTrigger>
-                                                                        <TooltipContent side="bottom">
-                                                                            {jobName
-                                                                                ? run
-                                                                                    ? `Job • ${run.status.toUpperCase()} • ${formatTimeAgo(run.startTime)} ago`
-                                                                                    : 'Job • NO RECENT RUN'
-                                                                                : 'Job not configured'}
-                                                                        </TooltipContent>
-                                                                    </Tooltip>
-                                                                </>
-                                                            );
-                                                        })()}
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-slate-300">—</span>
-                                                )}
-                                            </TableCell>
-
-                                            <TableCell className="text-center">
-                                                {domain ? (
-                                                    <div className="inline-flex items-center justify-center gap-0.5">
-                                                        {(() => {
-                                                            const jobName = String(domain.jobName || '').trim();
-                                                            const run = jobName ? jobIndex.get(jobName) : null;
-                                                            const isTriggering = Boolean(jobName) && triggeringJob === jobName;
-
-                                                            return (
-                                                                <>
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            {run?.logLinkToken ? (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => void openSystemLink(run.logLinkToken!)}
-                                                                                    className="p-1 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
-                                                                                    aria-label={`Open ${domainName} last run logs`}
-                                                                                >
-                                                                                    <ScrollText className="h-3.5 w-3.5" />
-                                                                                </button>
-                                                                            ) : (
-                                                                                <span
-                                                                                    className="p-1 text-slate-300 rounded cursor-not-allowed"
-                                                                                    aria-label={`No last run log link for ${domainName}`}
-                                                                                >
-                                                                                    <ScrollText className="h-3.5 w-3.5" />
-                                                                                </span>
-                                                                            )}
-                                                                        </TooltipTrigger>
-                                                                        <TooltipContent side="bottom">
-                                                                            {run?.logLinkToken
-                                                                                ? `Open last run logs (${run.status.toUpperCase()}, ${formatTimeAgo(run.startTime)} ago)`
-                                                                                : 'Last run log link not available'}
-                                                                        </TooltipContent>
-                                                                    </Tooltip>
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            {jobName ? (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => void triggerJob(jobName)}
-                                                                                    disabled={Boolean(triggeringJob)}
-                                                                                    className="p-1 hover:bg-slate-100 text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
-                                                                                    aria-label={`Trigger ${domainName} job`}
-                                                                                >
-                                                                                    {isTriggering ? (
-                                                                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                                                    ) : (
-                                                                                        <Play className="h-3.5 w-3.5" />
-                                                                                    )}
-                                                                                </button>
-                                                                            ) : (
-                                                                                <span
-                                                                                    className="p-1 text-slate-300 rounded cursor-not-allowed"
-                                                                                    aria-label={`No job name for ${domainName}`}
-                                                                                >
-                                                                                    <Play className="h-3.5 w-3.5" />
-                                                                                </span>
-                                                                            )}
-                                                                        </TooltipTrigger>
-                                                                        <TooltipContent side="bottom">
-                                                                            {jobName ? (isTriggering ? 'Triggering job…' : 'Trigger job') : 'Job triggering not configured'}
-                                                                        </TooltipContent>
-                                                                    </Tooltip>
-                                                                </>
-                                                            );
-                                                        })()}
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-slate-300">—</span>
-                                                )}
-                                            </TableCell>
-                                        </React.Fragment>
-                                    );
-                                })}
-                            </TableRow>
-                        ))}
-
-                        {domainNames.length === 0 && (
-                            <TableRow className="hover:bg-transparent">
-                                <TableCell
-                                    colSpan={1 + dataLayers.length * 2}
-                                    className="py-10 text-center text-xs text-slate-500 font-mono"
-                                >
-                                    No domains found
-                                </TableCell>
-                            </TableRow>
-                        )}
-                    </TableBody>
-                </Table>
+                            </div>
+                            <div className="mt-4 pt-3 border-t border-slate-200 flex justify-between items-center">
+                                <div className={StatusTypos.HEADER}>LAST UPDATE</div>
+                                <div className={`${StatusTypos.MONO} text-xs text-slate-500`}>
+                                    {formatTimeAgo(layer.lastUpdated)} AGO
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

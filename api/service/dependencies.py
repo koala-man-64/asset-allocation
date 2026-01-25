@@ -30,6 +30,10 @@ def get_system_health_cache(request: Request) -> TtlCache[Dict[str, Any]]:
     return request.app.state.system_health_cache
 
 
+def get_alert_state_store(request: Request):
+    return getattr(request.app.state, "alert_state_store", None)
+
+
 from fastapi import HTTPException
 from api.service.auth import AuthError
 
