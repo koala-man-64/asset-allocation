@@ -8,6 +8,15 @@ from monitoring.arm_client import AzureArmClient
 from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION, get_current_availability
 
 
+def _azure_portal_url(azure_id: Optional[str]) -> Optional[str]:
+    text = str(azure_id or "").strip()
+    if not text:
+        return None
+    if not text.startswith("/"):
+        text = f"/{text}"
+    return f"https://portal.azure.com/#resource{text}"
+
+
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -210,6 +219,7 @@ def collect_jobs_and_executions(
             for item in values[:max_executions_per_job]:
                 if not isinstance(item, dict):
                     continue
+                execution_id = str(item.get("id") or "") or None
                 props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
                 raw_status = str(props.get("status") or "")
                 start_time = str(props.get("startTime") or "")
@@ -227,6 +237,8 @@ def collect_jobs_and_executions(
                         "startTime": start_dt.isoformat() if start_dt else start_time or last_checked_iso,
                         "duration": duration,
                         "triggeredBy": "azure",
+                        # Tokenized server-side; omitted from response when tokenization disabled.
+                        "logUrl": _azure_portal_url(execution_id),
                     }
                 )
         except Exception:

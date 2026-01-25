@@ -65,7 +65,9 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
     stats: Dict[str, Dict[str, int]] = {
         "layer": {"seen": 0, "has_url": 0, "tokenized": 0},
         "domain_folder": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "domain_base": {"seen": 0, "has_url": 0, "tokenized": 0},
         "domain_job": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "job_execution": {"seen": 0, "has_url": 0, "tokenized": 0},
         "resource": {"seen": 0, "has_url": 0, "tokenized": 0},
     }
     token_errors = 0
@@ -115,6 +117,13 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
                     )
                     if folder_token:
                         domain["portalLinkToken"] = folder_token
+                    base_token = _maybe_tokenize(
+                        domain.pop("basePortalUrl", None),
+                        context=f"domain_base:{domain.get('name')}",
+                        kind="domain_base",
+                    )
+                    if base_token:
+                        domain["basePortalLinkToken"] = base_token
                     job_token = _maybe_tokenize(
                         domain.pop("jobUrl", None),
                         context=f"job:{domain.get('jobName')}",
@@ -138,6 +147,19 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
             if portal_token:
                 resource["portalLinkToken"] = portal_token
 
+    jobs = payload.get("recentJobs")
+    if isinstance(jobs, list):
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            execution_token = _maybe_tokenize(
+                job.pop("logUrl", None),
+                context=f"execution:{job.get('jobName')}:{job.get('startTime')}",
+                kind="job_execution",
+            )
+            if execution_token:
+                job["logLinkToken"] = execution_token
+
     # Emit a compact summary so missing portal/job icons can be diagnosed from logs.
     totals = {k: dict(v) for k, v in stats.items()}
     tokenized_total = sum(item["tokenized"] for item in stats.values())
@@ -153,13 +175,17 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
         )
 
     logger.info(
-        "System health link tokenization: layer=%s/%s domain_folder=%s/%s domain_job=%s/%s resource=%s/%s errors=%s",
+        "System health link tokenization: layer=%s/%s domain_folder=%s/%s domain_base=%s/%s domain_job=%s/%s job_execution=%s/%s resource=%s/%s errors=%s",
         totals["layer"]["tokenized"],
         totals["layer"]["has_url"],
         totals["domain_folder"]["tokenized"],
         totals["domain_folder"]["has_url"],
+        totals["domain_base"]["tokenized"],
+        totals["domain_base"]["has_url"],
         totals["domain_job"]["tokenized"],
         totals["domain_job"]["has_url"],
+        totals["job_execution"]["tokenized"],
+        totals["job_execution"]["has_url"],
         totals["resource"]["tokenized"],
         totals["resource"]["has_url"],
         token_errors,

@@ -129,6 +129,9 @@ export interface DataDomain {
   version?: number | null;
   description?: string;
   portalLinkToken?: string;
+  basePortalLinkToken?: string;
+  baseLastUpdated?: string | null;
+  baseStatus?: 'healthy' | 'stale' | 'error';
   jobLinkToken?: string;
   jobName?: string;
   triggerUrl?: string;
@@ -163,6 +166,7 @@ export interface JobRun {
   triggeredBy: string;
   errors?: string[];
   warnings?: string[];
+  logLinkToken?: string;
 }
 
 export interface SystemAlert {

@@ -8,7 +8,16 @@ export async function openSystemLink(token: string): Promise<void> {
   }
 
   // Open a placeholder tab synchronously (avoids popup blockers) then navigate after resolving.
-  const placeholder = window.open('about:blank', '_blank', 'noopener,noreferrer');
+  // Avoid `noopener` here so Safari returns a usable window handle (otherwise it can open a blank tab and return null).
+  const placeholder = window.open('about:blank', '_blank');
+  if (placeholder) {
+    // Mitigate reverse-tabnabbing risk before navigating cross-origin.
+    try {
+      placeholder.opener = null;
+    } catch {
+      // Ignore if browser prevents it.
+    }
+  }
   console.info('[SystemLink] resolve start', {
     tokenLength: trimmed.length,
     placeholderOpened: Boolean(placeholder),
@@ -18,10 +27,13 @@ export async function openSystemLink(token: string): Promise<void> {
     const { url } = await backtestApi.resolveSystemLink(trimmed);
     console.info('[SystemLink] resolve success', { urlHost: (() => { try { return new URL(url).host; } catch { return null; } })() });
     if (placeholder) {
-      placeholder.location.href = url;
+      placeholder.location.replace(url);
       return;
     }
-    window.open(url, '_blank', 'noopener,noreferrer');
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      window.location.assign(url);
+    }
   } catch (error) {
     if (placeholder) {
       placeholder.close();
