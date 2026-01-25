@@ -62,14 +62,25 @@ def _azure_portal_url(azure_id: str) -> Optional[str]:
 
 def _apply_link_tokens(payload: Dict[str, Any]) -> None:
     link_tokens_disabled = False
+    stats: Dict[str, Dict[str, int]] = {
+        "layer": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "domain_folder": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "domain_job": {"seen": 0, "has_url": 0, "tokenized": 0},
+        "resource": {"seen": 0, "has_url": 0, "tokenized": 0},
+    }
+    token_errors = 0
 
-    def _maybe_tokenize(url: Optional[str], *, context: str) -> Optional[str]:
+    def _maybe_tokenize(url: Optional[str], *, context: str, kind: str) -> Optional[str]:
         nonlocal link_tokens_disabled
+        nonlocal token_errors
+        stats[kind]["seen"] += 1
         if not url:
             return None
+        stats[kind]["has_url"] += 1
         try:
             token = build_link_token(url)
         except LinkTokenError as exc:
+            token_errors += 1
             logger.warning("Link token error: context=%s error=%s", context, exc)
             return None
         if token is None:
@@ -77,6 +88,7 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
                 logger.warning("Link tokens disabled: SYSTEM_HEALTH_LINK_TOKEN_SECRET not set.")
                 link_tokens_disabled = True
             return None
+        stats[kind]["tokenized"] += 1
         return token
 
     layers = payload.get("dataLayers")
@@ -84,7 +96,11 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
         for layer in layers:
             if not isinstance(layer, dict):
                 continue
-            layer_token = _maybe_tokenize(layer.pop("portalUrl", None), context=f"layer:{layer.get('name')}")
+            layer_token = _maybe_tokenize(
+                layer.pop("portalUrl", None),
+                context=f"layer:{layer.get('name')}",
+                kind="layer",
+            )
             if layer_token:
                 layer["portalLinkToken"] = layer_token
             domains = layer.get("domains")
@@ -95,12 +111,14 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
                     folder_token = _maybe_tokenize(
                         domain.pop("portalUrl", None),
                         context=f"domain:{domain.get('name')}",
+                        kind="domain_folder",
                     )
                     if folder_token:
                         domain["portalLinkToken"] = folder_token
                     job_token = _maybe_tokenize(
                         domain.pop("jobUrl", None),
                         context=f"job:{domain.get('jobName')}",
+                        kind="domain_job",
                     )
                     if job_token:
                         domain["jobLinkToken"] = job_token
@@ -115,9 +133,37 @@ def _apply_link_tokens(payload: Dict[str, Any]) -> None:
             portal_token = _maybe_tokenize(
                 portal_url,
                 context=f"resource:{resource.get('name')}",
+                kind="resource",
             )
             if portal_token:
                 resource["portalLinkToken"] = portal_token
+
+    # Emit a compact summary so missing portal/job icons can be diagnosed from logs.
+    totals = {k: dict(v) for k, v in stats.items()}
+    tokenized_total = sum(item["tokenized"] for item in stats.values())
+    has_url_total = sum(item["has_url"] for item in stats.values())
+    if tokenized_total == 0 and has_url_total == 0:
+        logger.info(
+            "System health links: no URLs present to tokenize "
+            "(check SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID/SYSTEM_HEALTH_ARM_RESOURCE_GROUP/AZURE_STORAGE_ACCOUNT_NAME)."
+        )
+    elif tokenized_total == 0 and has_url_total > 0:
+        logger.warning(
+            "System health links: URLs present but none tokenized (check SYSTEM_HEALTH_LINK_TOKEN_SECRET/allowlist/ttl)."
+        )
+
+    logger.info(
+        "System health link tokenization: layer=%s/%s domain_folder=%s/%s domain_job=%s/%s resource=%s/%s errors=%s",
+        totals["layer"]["tokenized"],
+        totals["layer"]["has_url"],
+        totals["domain_folder"]["tokenized"],
+        totals["domain_folder"]["has_url"],
+        totals["domain_job"]["tokenized"],
+        totals["domain_job"]["has_url"],
+        totals["resource"]["tokenized"],
+        totals["resource"]["has_url"],
+        token_errors,
+    )
 
 
 def _link_requires_auth() -> bool:
