@@ -20,6 +20,7 @@ from .blob_storage import BlobStorageClient
 from azure.storage.blob import BlobLeaseClient
 from . import config as cfg
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
+from core.postgres import connect, PostgresError
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.
@@ -540,19 +541,56 @@ def get_active_tickers():
         write_error(f"Failed to get active tickers: {e}")
         return pd.DataFrame(columns=['Symbol'])
 
+def get_symbols_from_db():
+    try:
+        dsn = os.environ.get("POSTGRES_DSN")
+        if not dsn:
+            logger.warning("POSTGRES_DSN not set. Skipping DB fetch.")
+            return None
+            
+        with connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM symbols")
+                if cur.description is None:
+                     return pd.DataFrame()
+                columns = [desc[0] for desc in cur.description]
+                data = cur.fetchall()
+                
+            if not data:
+                return pd.DataFrame(columns=columns)
+                
+            df = pd.DataFrame(data, columns=columns)
+            
+            # Rename lowercase DB columns to TitleCase for app compatibility
+            rename_map = {
+                'symbol': 'Symbol',
+                'name': 'Name',
+                'description': 'Description',
+                'sector': 'Sector',
+                'industry': 'Industry', 
+                'industry_2': 'Industry_2',
+                'optionable': 'Optionable',
+                'country': 'Country'
+            }
+            df.rename(columns=rename_map, inplace=True)
+            return df
+            
+    except Exception as e:
+        logger.error(f"Error reading symbols from DB: {e}")
+        return None
+
 def get_symbols():
-    df_symbols = pd.DataFrame()
-    file_path = "df_symbols.csv" 
-    
-    # Try to load from Azure Cache (Use Common Container)
-    df_symbols = load_common_csv(file_path)
-    
+    df_symbols = get_symbols_from_db()
+
+    # Fallback/Supplemental Logic
     if df_symbols is None or df_symbols.empty:
-        write_line("Local symbol cache missing or empty. Fetching from NASDAQ API...")
+        write_line("DB symbols missing or empty. Fetching from NASDAQ API...")
         df_symbols = get_active_tickers() 
-        store_common_csv(df_symbols, file_path)
+        # Note: We no longer store to CSV cache as primary source of truth is DB.
+        # But we could optionally cache it if we wanted to sync back to DB? 
+        # For now, let's keep the API fetch as a live fallback.
     else:
-        write_line(f"Loaded {len(df_symbols)} symbols from Azure cache (Common).")
+        write_line(f"Loaded {len(df_symbols)} symbols from Postgres.")
         
     if 'Symbol' not in df_symbols.columns:
         df_symbols['Symbol'] = pd.Series(dtype='object')
@@ -568,10 +606,9 @@ def get_symbols():
         if not ticker_to_add['Symbol'] in df_symbols['Symbol'].to_list():
             df_symbols = pd.concat([df_symbols, pd.DataFrame.from_dict([ticker_to_add])], ignore_index=True)
             
-    df_symbols.drop_duplicates()
-    store_common_csv(df_symbols, file_path)
+    df_symbols.drop_duplicates(subset=['Symbol'], inplace=True)
     
-    # Specific artifact creation
+    # Specific artifact creation (legacy support)
     store_common_csv(pd.DataFrame(tickers_to_add), 'market_analysis_tickers.csv')
     store_common_csv(df_symbols, 'stock_tickers.csv')
     

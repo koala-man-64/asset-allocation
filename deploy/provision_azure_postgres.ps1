@@ -32,12 +32,12 @@ param(
   # - "None" keeps public access but does not create any default firewall rule.
   # - Add firewall rules explicitly via -AllowAzureServices / -AllowIpRangeStart/-End.
   [ValidateSet("Disabled", "Enabled", "All", "None")]
-  [string]$PublicAccess = "None",
+  [string]$PublicAccess = "Enabled",
 
-  [switch]$AllowAzureServices,
+  [bool]$AllowAzureServices = $true,
   [string]$AllowIpRangeStart = "",
   [string]$AllowIpRangeEnd = "",
-  [switch]$AllowCurrentClientIp,
+  [bool]$AllowCurrentClientIp = $true,
 
   [switch]$EmitSecrets
 )
@@ -305,16 +305,7 @@ else {
 
 if ($AllowAzureServices) {
   Write-Host "Ensuring firewall rule allows Azure services (0.0.0.0)..."
-  $fwShow = Invoke-AzCapture -Label "postgres flexible-server firewall-rule show allow-azure-services" -Args @(
-    "postgres", "flexible-server", "firewall-rule", "show",
-    "--resource-group", $ResourceGroup,
-    "--name", $ServerName,
-    "--rule-name", "allow-azure-services",
-    "--only-show-errors",
-    "-o", "none"
-  )
-  if (-not $fwShow.Success) {
-    Invoke-Az -Label "postgres flexible-server firewall-rule create allow-azure-services" -Args @(
+  Invoke-Az -Label "postgres flexible-server firewall-rule create allow-azure-services" -Args @(
       "postgres", "flexible-server", "firewall-rule", "create",
       "--resource-group", $ResourceGroup,
       "--name", $ServerName,
@@ -324,10 +315,6 @@ if ($AllowAzureServices) {
       "--only-show-errors",
       "-o", "none"
     )
-  }
-  else {
-    Write-Host "Firewall rule already exists; skipping."
-  }
 }
 
 if ($AllowIpRangeStart) {
@@ -359,20 +346,20 @@ if ($AllowIpRangeStart) {
 }
 
 if ($AllowCurrentClientIp) {
-    $myIp = Get-PublicIp
-    if ($myIp) {
-      Write-Host "Ensuring firewall rule allows current client IP ($myIp)..."
-      Invoke-Az -Label "postgres flexible-server firewall-rule create allow-current-client-ip" -Args @(
-            "postgres", "flexible-server", "firewall-rule", "create",
-            "--resource-group", $ResourceGroup,
-            "--name", $ServerName,
-            "--rule-name", "allow-current-client-ip",
-            "--start-ip-address", $myIp,
-            "--end-ip-address", $myIp,
-            "--only-show-errors",
-            "-o", "none"
-      )
-    }
+  $myIp = Get-PublicIp
+  if ($myIp) {
+    Write-Host "Ensuring firewall rule allows current client IP ($myIp)..."
+    Invoke-Az -Label "postgres flexible-server firewall-rule create allow-current-client-ip" -Args @(
+      "postgres", "flexible-server", "firewall-rule", "create",
+      "--resource-group", $ResourceGroup,
+      "--name", $ServerName,
+      "--rule-name", "allow-current-client-ip",
+      "--start-ip-address", $myIp,
+      "--end-ip-address", $myIp,
+      "--only-show-errors",
+      "-o", "none"
+    )
+  }
 }
 
 $fqdn = & az postgres flexible-server show --name $ServerName --resource-group $ResourceGroup --only-show-errors --query fullyQualifiedDomainName -o tsv 2>$null
