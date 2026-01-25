@@ -164,7 +164,7 @@ function getBaseUrl(): string {
   const raw = String(
     runtime.backtestApiBaseUrl ||
     import.meta.env.VITE_BACKTEST_API_BASE_URL ||
-    'http://localhost:8000'
+    '/api'
   ).trim();
   return raw.replace(/\/+$/, '');
 }

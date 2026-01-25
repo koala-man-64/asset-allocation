@@ -28,17 +28,14 @@ RUN pnpm run build
 FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
 
-# Default backend origin for local runs; overridden in Azure Container Apps.
-ENV BACKTEST_API_ORIGIN=http://localhost:8000
-
 # Remove default nginx static assets
 RUN rm -rf ./*
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist .
 
-# Render reverse-proxy config from a template at container startup.
-COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+# Nginx reverse proxy for UI + API (single origin).
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

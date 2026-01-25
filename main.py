@@ -51,7 +51,6 @@ def main():
             host=args.host,
             port=args.port,
             reload=args.reload,
-            factory=True,
         )
     elif args.command == "task":
         print(f"Executing task: {args.name}")

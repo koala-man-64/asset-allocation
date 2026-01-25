@@ -8,16 +8,19 @@ export function useRealtime() {
     const wsRef = useRef<WebSocket | null>(null);
 
     useEffect(() => {
-        // Construct WebSocket URL
-        // Replace http/https with ws/wss
-        const baseUrl = config.apiBaseUrl.replace(/^http/, 'ws');
-        const wsUrl = `${baseUrl}/api/ws/updates`;
+        // `config.apiBaseUrl` is the API base (expected to include `/api`).
+        // The websocket endpoint is mounted at `/api/ws/updates`, so append `/ws/updates`.
+        const httpBase = config.apiBaseUrl.replace(/\/+$/, '');
+        const wsPath = `${httpBase}/ws/updates`;
+        const wsUrl = new URL(wsPath, window.location.origin);
+        wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 
         function connect() {
             if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-            console.log('[Realtime] Connecting to', wsUrl);
-            const ws = new WebSocket(wsUrl);
+            const wsHref = wsUrl.toString();
+            console.log('[Realtime] Connecting to', wsHref);
+            const ws = new WebSocket(wsHref);
             wsRef.current = ws;
 
             ws.onopen = () => {

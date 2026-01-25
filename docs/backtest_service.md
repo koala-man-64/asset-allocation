@@ -132,7 +132,7 @@ Backtest API env vars (recommended for Option A):
 - `BACKTEST_UI_OIDC_CLIENT_ID=...` (SPA app registration client id)
 - `BACKTEST_UI_OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>` (optional; defaults from `BACKTEST_OIDC_ISSUER`)
 - `BACKTEST_UI_OIDC_SCOPES=api://<api-client-id>/backtests.read api://<api-client-id>/backtests.write`
-- `BACKTEST_UI_API_BASE_URL=` (optional; default empty means “same origin”)
+- `BACKTEST_UI_API_BASE_URL=` (optional; defaults to `/api` for this repo’s routing)
 
 ### UI env vars (Vite, local dev)
 
@@ -141,6 +141,8 @@ These are used when running the UI via Vite (`pnpm dev`) and as a fallback if `/
 - `VITE_OIDC_CLIENT_ID=...`
 - `VITE_OIDC_AUTHORITY=https://login.microsoftonline.com/<tenant-id>`
 - `VITE_OIDC_SCOPES=api://<api-client-id>/backtests.read api://<api-client-id>/backtests.write`
+- `VITE_API_BASE_URL=/api` (optional; UI expects API routes under `/api/*`)
+- `VITE_BACKTEST_API_BASE_URL=/api` (optional; same as `VITE_API_BASE_URL`)
 
 Dev-only API key support:
 - `VITE_BACKTEST_API_KEY=...` (only sent automatically in dev unless `VITE_ALLOW_BROWSER_API_KEY=true`)

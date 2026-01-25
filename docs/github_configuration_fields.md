@@ -15,7 +15,7 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
 
 ### 3.1 Critical (Must Fix)
 - **Deploy can break if `BACKTEST_AUTH_MODE` is unset**
-  - **Evidence:** `backtest/service/settings.py` requires `BACKTEST_AUTH_MODE`; `deploy/app_backtest_api.yaml` templates `${BACKTEST_AUTH_MODE}`; `.github/workflows/deploy.yml` sources it from `secrets.BACKTEST_AUTH_MODE`, but the deploy “Validate required secrets” preflight does not enforce it.
+  - **Evidence:** `api/service/settings.py` requires `BACKTEST_AUTH_MODE`; `deploy/app_backtest_api.yaml` templates `${BACKTEST_AUTH_MODE}`; `.github/workflows/deploy.yml` sources it from `secrets.BACKTEST_AUTH_MODE`, but the deploy “Validate required secrets” preflight does not enforce it.
   - **Why it matters:** A missing/empty secret can produce a container that fails to start after redeploy.
   - **Recommendation:** Treat `BACKTEST_AUTH_MODE` as required and validate it in deploy preflight.
   - **Acceptance Criteria:** Deploy workflow fails fast if missing; Backtest API starts after redeploy.
@@ -109,7 +109,7 @@ These are required/used by the Backtest API and/or system health collection logi
   - `deploy/app_backtest_api.yaml`
   - `deploy/job_*.yaml`
   - `services/backtest_api/app.py`
-  - `backtest/service/settings.py`
+  - `api/service/settings.py`
   - `monitoring/system_health.py`
   - `.env.template`
 

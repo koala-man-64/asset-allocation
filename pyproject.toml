@@ -62,7 +62,6 @@ packages = [
     "backtest",
     "backtest.configured_strategy",
     "backtest.data_access",
-    "backtest.service",
     "core",
     "monitoring",
     "tasks",
