@@ -19,7 +19,8 @@ param(
   [switch]$EmitSecrets,
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
-  [string]$ContainerAppsEnvironmentName = "asset-allocation-env"
+  [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
+  [string]$AzureClientId = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +34,42 @@ function Assert-CommandExists {
 }
 
 Assert-CommandExists -Name "az"
+
+if ($AzureClientId) {
+    Write-Host "Checking for existing Federated Credential 'github-actions-production'..."
+    $paramsFile = "credential.json"
+    $subject = "repo:koala-man-64/asset-allocation:environment:production"
+    
+    # Check if exists
+    $creds = az ad app federated-credential list --id $AzureClientId --query "[?name=='github-actions-production']" -o json | ConvertFrom-Json
+    
+    if (-not $creds) {
+        Write-Host "Creating Federated Credential 'github-actions-production'..."
+        $json = @{
+            name = "github-actions-production"
+            issuer = "https://token.actions.githubusercontent.com"
+            subject = $subject
+            description = "GitHub Actions Production Environment"
+            audiences = @("api://AzureADTokenExchange")
+        } | ConvertTo-Json -Compress
+
+        Set-Content -Path $paramsFile -Value $json
+        
+        try {
+            az ad app federated-credential create --id $AzureClientId --parameters $paramsFile 2>&1
+            Write-Host "Successfully created federated credential."
+        }
+        catch {
+            Write-Error "Failed to create federated credential: $_"
+            if (Test-Path $paramsFile) { Remove-Item $paramsFile }
+            throw
+        }
+        
+        if (Test-Path $paramsFile) { Remove-Item $paramsFile }
+    } else {
+        Write-Host "Federated Credential 'github-actions-production' already exists."
+    }
+}
 
 Write-Host "Using subscription: $SubscriptionId"
 az account set --subscription $SubscriptionId | Out-Null
