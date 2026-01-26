@@ -134,3 +134,24 @@ export const getAzurePortalUrl = (azureId?: string | null) => {
     if (!azureId) return '';
     return `https://portal.azure.com/#resource${azureId}`;
 };
+
+export const getAzureJobExecutionsUrl = (jobPortalUrl?: string | null) => {
+    if (!jobPortalUrl) return '';
+    const trimmed = String(jobPortalUrl).trim();
+    if (!trimmed) return '';
+
+    // Container App Job portal URLs are generated as:
+    // https://portal.azure.com/#resource/.../providers/Microsoft.App/jobs/<job>/overview
+    // The execution history lives under the same resource path with `/executions`.
+    const overviewMatch = trimmed.match(/\/overview([?#].*)?$/);
+    if (overviewMatch) {
+        return trimmed.replace(/\/overview([?#].*)?$/, '/executions$1');
+    }
+
+    // If we only have a base resource URL, append `/executions`.
+    if (/\/providers\/Microsoft\.App\/jobs\/[^/]+$/.test(trimmed)) {
+        return `${trimmed}/executions`;
+    }
+
+    return trimmed;
+};

@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { DataDomain, DataLayer, JobRun } from '@/types/strategy';
-import { formatTimeAgo, getStatusConfig } from './SystemStatusHelpers';
+import { formatTimeAgo, getAzureJobExecutionsUrl, getStatusConfig } from './SystemStatusHelpers';
 import { StatusTypos, StatusColors } from './StatusTokens';
 import { CalendarDays, Database, FolderOpen, Loader2, Play, ScrollText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
@@ -11,10 +11,9 @@ interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
-    onViewJobLogs?: (jobName: string, startTime?: string | null) => void;
 }
 
-export function StatusOverview({ overall, dataLayers, recentJobs, onViewJobLogs }: StatusOverviewProps) {
+export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {
     const sysConfig = getStatusConfig(overall);
     const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' : sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
     const { triggeringJob, triggerJob } = useJobTrigger();
@@ -326,36 +325,40 @@ export function StatusOverview({ overall, dataLayers, recentJobs, onViewJobLogs 
 
                                                             return (
                                                                 <>
-                                                                    {onViewJobLogs && (
-                                                                        <Tooltip>
-                                                                            <TooltipTrigger asChild>
-                                                                                {jobName ? (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() => onViewJobLogs(jobName, run?.startTime ?? null)}
-                                                                                        className="p-1 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
-                                                                                        aria-label={`View ${domainName} logs`}
-                                                                                    >
-                                                                                        <ScrollText className="h-4 w-4" />
-                                                                                    </button>
-                                                                                ) : (
-                                                                                    <span
-                                                                                        className="p-1 text-slate-300 rounded cursor-not-allowed"
-                                                                                        aria-label={`No job name for ${domainName}`}
-                                                                                    >
-                                                                                        <ScrollText className="h-4 w-4" />
-                                                                                    </span>
-                                                                                )}
-                                                                            </TooltipTrigger>
-                                                                            <TooltipContent side="bottom">
-                                                                                {jobName
-                                                                                    ? run
-                                                                                        ? `View logs (${run.status.toUpperCase()}, ${formatTimeAgo(run.startTime)} ago)`
-                                                                                        : 'View latest logs'
-                                                                                    : 'Log viewing not configured'}
-                                                                            </TooltipContent>
-                                                                        </Tooltip>
-                                                                    )}
+                                                                    {(() => {
+                                                                        const executionsUrl = getAzureJobExecutionsUrl(domain.jobUrl);
+                                                                        return (
+                                                                            <Tooltip>
+                                                                                <TooltipTrigger asChild>
+                                                                                    {executionsUrl ? (
+                                                                                        <a
+                                                                                            href={executionsUrl}
+                                                                                            target="_blank"
+                                                                                            rel="noreferrer"
+                                                                                            className="p-1 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
+                                                                                            aria-label={`Open ${domainName} executions in Azure`}
+                                                                                        >
+                                                                                            <ScrollText className="h-4 w-4" />
+                                                                                        </a>
+                                                                                    ) : (
+                                                                                        <span
+                                                                                            className="p-1 text-slate-300 rounded cursor-not-allowed"
+                                                                                            aria-label={`No job URL for ${domainName}`}
+                                                                                        >
+                                                                                            <ScrollText className="h-4 w-4" />
+                                                                                        </span>
+                                                                                    )}
+                                                                                </TooltipTrigger>
+                                                                                <TooltipContent side="bottom">
+                                                                                    {executionsUrl
+                                                                                        ? run
+                                                                                            ? `Open execution history (${run.status.toUpperCase()}, ${formatTimeAgo(run.startTime)} ago)`
+                                                                                            : 'Open execution history'
+                                                                                        : 'Azure link not configured'}
+                                                                                </TooltipContent>
+                                                                            </Tooltip>
+                                                                        );
+                                                                    })()}
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>
                                                                             {jobName ? (

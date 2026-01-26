@@ -36,10 +36,11 @@ describe('LeftNavigation', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('DATA PIPELINE')).toBeDefined();
-    expect(screen.getByText('Pipeline Health')).toBeDefined();
     expect(screen.getByText('STRATEGY RESEARCH')).toBeDefined();
+    expect(screen.getByText('Stock Explorer')).toBeDefined();
     expect(screen.getByText('Strategy Universe')).toBeDefined();
+    expect(screen.getByText('LIVE OPERATIONS')).toBeDefined();
+    expect(screen.getByText('System Status')).toBeDefined();
   });
 
   it('toggles collapsed state when clicking the button', () => {

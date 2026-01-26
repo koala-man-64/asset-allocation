@@ -8,13 +8,11 @@ import { AzureResources } from './system-status/AzureResources';
 import { JobMonitor } from './system-status/JobMonitor';
 import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
 import { getAzurePortalUrl } from './system-status/SystemStatusHelpers';
-import { JobLogDrawer } from './system-status/JobLogDrawer';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
-    const [logTarget, setLogTarget] = useState<{ jobName: string; startTime?: string | null } | null>(null);
     const jobLinks = useMemo(() => {
         if (!data) {
             return {};
@@ -81,7 +79,6 @@ export function SystemStatusPage() {
                 overall={overall}
                 dataLayers={dataLayers}
                 recentJobs={recentJobs}
-                onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
             />
 
             {/* Jobs */}
@@ -89,13 +86,11 @@ export function SystemStatusPage() {
                 <JobMonitor
                     recentJobs={recentJobs}
                     jobLinks={jobLinks}
-                    onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
                 />
                 <ScheduledJobMonitor
                     dataLayers={dataLayers}
                     recentJobs={recentJobs}
                     jobLinks={jobLinks}
-                    onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
                 />
             </div>
 
@@ -111,15 +106,6 @@ export function SystemStatusPage() {
                     {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
                 </div>
             </div>
-
-            <JobLogDrawer
-                open={Boolean(logTarget)}
-                onOpenChange={(open) => {
-                    if (!open) setLogTarget(null);
-                }}
-                jobName={logTarget?.jobName ?? null}
-                startTime={logTarget?.startTime ?? null}
-            />
         </div>
     );
 }
