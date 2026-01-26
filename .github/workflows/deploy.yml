@@ -11,6 +11,13 @@ on:
         required: false
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      force_redeploy:
+        description: Force redeploy/update all jobs (ignore change filters)
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -21,7 +28,7 @@ permissions:
   contents: read
 
 env:
-  FORCE_REDEPLOY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true' }}
+  FORCE_REDEPLOY: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true') || (github.event_name == 'workflow_call' && inputs.force_redeploy) }}
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
