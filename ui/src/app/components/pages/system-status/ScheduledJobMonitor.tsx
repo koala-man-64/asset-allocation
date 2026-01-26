@@ -72,7 +72,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
   }, [dataLayers, jobIndex]);
 
   return (
-    <Card className="h-full flex flex-col">
+    <Card className={`h - full flex flex - col ${ className || '' } `}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -97,7 +97,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
             </TableHeader>
             <TableBody>
               {scheduledJobs.map((job) => (
-                <TableRow key={`${job.layerName}:${job.domainName}:${job.jobName}`}>
+                <TableRow key={`${ job.layerName }:${ job.domainName }:${ job.jobName } `}>
                   <TableCell className="py-2">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
@@ -110,7 +110,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-muted-foreground hover:text-primary transition-colors"
-                                aria-label={`Open ${job.jobName} in Azure`}
+                                aria-label={`Open ${ job.jobName } in Azure`}
                               >
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </a>
@@ -177,7 +177,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                             className="h-7 w-7"
                             disabled={Boolean(triggeringJob)}
                             onClick={() => void triggerJob(job.jobName)}
-                            aria-label={`Run ${job.jobName}`}
+                            aria-label={`Run ${ job.jobName } `}
                           >
                             {triggeringJob === job.jobName ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
