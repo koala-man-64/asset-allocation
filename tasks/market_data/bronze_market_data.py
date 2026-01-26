@@ -11,8 +11,7 @@ from core import core as mdc
 from tasks.market_data import config as cfg
 from core.pipeline import ListManager
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
+
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)

@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core import core as mdc
-from tasks.earnings_data import config as cfg
+from core import config as cfg
 from core import playwright_lib as pl
 from core.pipeline import ListManager
 
@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-list_manager = ListManager(bronze_client, "earnings-data")
+list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX)
 
 def _validate_environment() -> None:
     required = [

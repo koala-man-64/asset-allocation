@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime
 
 from core import core as mdc
-from tasks.earnings_data import config as cfg
+from core import config as cfg
 from core import delta_core
 from core.pipeline import DataPaths
 
@@ -19,7 +19,8 @@ silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
 def process_file(blob_name):
     # Expecting earnings-data/{symbol}.json
-    ticker = blob_name.replace('earnings-data/', '').replace('.json', '')
+    prefix_len = len(cfg.EARNINGS_DATA_PREFIX) + 1 # +1 for slash
+    ticker = blob_name[prefix_len:].replace('.json', '')
     mdc.write_line(f"Processing {ticker} from {blob_name}...")
     
     # 1. Read Raw from Bronze
