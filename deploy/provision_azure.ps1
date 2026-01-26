@@ -6,14 +6,8 @@ param(
   [string]$ResourceGroup = "AssetAllocationRG",
 
   [string]$StorageAccountName = "assetallocstorage001",
-  [string[]]$StorageContainers = @(
-    "bronze",
-    "silver",
-    "gold",
-    "platinum",
-    "common"
-  ),
 
+  [string[]]$StorageContainers = @(),
   [string]$AcrName = "assetallocationacr",
   [switch]$EnableAcrAdmin,
   [switch]$EmitSecrets,
@@ -25,6 +19,32 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Load containers from .env if not specified
+if ($StorageContainers.Count -eq 0) {
+    $envPath = "$PSScriptRoot\..\.env"
+    if (Test-Path $envPath) {
+        Write-Host "Reading container names from .env..."
+        $envLines = Get-Content $envPath
+        $containers = @()
+        foreach ($line in $envLines) {
+            if ($line -match "^AZURE_CONTAINER_[^=]+=(.*)$") {
+                $val = $matches[1].Trim('"').Trim("'")
+                Write-Host "Found container: $val" -ForegroundColor Cyan
+                $containers += $val
+            }
+        }
+        if ($containers.Count -gt 0) {
+            $StorageContainers = $containers | Select-Object -Unique
+        }
+    }
+}
+
+# If still empty, fall back to defaults (or error? original script had defaults)
+if ($StorageContainers.Count -eq 0) {
+    Write-Warning "No containers found in .env and none provided. Using defaults."
+    $StorageContainers = @("bronze", "silver", "gold", "platinum", "common")
+}
 
 function Assert-CommandExists {
   param([Parameter(Mandatory = $true)][string]$Name)
