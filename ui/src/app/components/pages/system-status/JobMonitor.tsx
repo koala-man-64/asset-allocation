@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 import { Button } from '@/app/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { ExternalLink, Loader2, Play, PlayCircle, ScrollText } from 'lucide-react';
+import { ExternalLink, Loader2, Play, PlayCircle } from 'lucide-react';
 import { formatDuration, formatRecordCount, formatTimestamp, getStatusBadge } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { JobRun } from '@/types/strategy';
@@ -11,10 +11,9 @@ import { JobRun } from '@/types/strategy';
 interface JobMonitorProps {
     recentJobs: JobRun[];
     jobLinks?: Record<string, string>;
-    onViewJobLogs?: (jobName: string, startTime?: string | null) => void;
 }
 
-export function JobMonitor({ recentJobs, jobLinks = {}, onViewJobLogs }: JobMonitorProps) {
+export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
     const { triggeringJob, triggerJob } = useJobTrigger();
     const successJobs = recentJobs.filter(j => j.status === 'success').length;
     const runningJobs = recentJobs.filter(j => j.status === 'running').length;
@@ -25,7 +24,7 @@ export function JobMonitor({ recentJobs, jobLinks = {}, onViewJobLogs }: JobMoni
             <CardHeader>
                 <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2">
-                        <PlayCircle className="h-6 w-6" />
+                        <PlayCircle className="h-5 w-5" />
                         Recent Jobs
                     </CardTitle>
                     <div className="flex gap-3 text-sm">
@@ -75,7 +74,7 @@ export function JobMonitor({ recentJobs, jobLinks = {}, onViewJobLogs }: JobMoni
                                                                 className="text-muted-foreground hover:text-primary transition-colors"
                                                                 aria-label={`Open ${job.jobName} in Azure`}
                                                             >
-                                                                <ExternalLink className="h-4 w-4" />
+                                                                <ExternalLink className="h-3.5 w-3.5" />
                                                             </a>
                                                         </TooltipTrigger>
                                                         <TooltipContent side="right">Open job</TooltipContent>
@@ -99,44 +98,25 @@ export function JobMonitor({ recentJobs, jobLinks = {}, onViewJobLogs }: JobMoni
                                         <div>{formatTimestamp(job.startTime)}</div>
                                     </TableCell>
                                     <TableCell className="py-2 text-right">
-                                        <div className="flex items-center justify-end gap-1">
-                                            {onViewJobLogs && (
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="h-8 w-8"
-                                                            onClick={() => onViewJobLogs(job.jobName, job.startTime)}
-                                                            aria-label={`View ${job.jobName} logs`}
-                                                        >
-                                                            <ScrollText className="h-5 w-5" />
-                                                        </Button>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent side="left">View latest logs</TooltipContent>
-                                                </Tooltip>
-                                            )}
-
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8"
-                                                        disabled={Boolean(triggeringJob)}
-                                                        onClick={() => void triggerJob(job.jobName)}
-                                                        aria-label={`Run ${job.jobName}`}
-                                                    >
-                                                        {triggeringJob === job.jobName ? (
-                                                            <Loader2 className="h-5 w-5 animate-spin" />
-                                                        ) : (
-                                                            <Play className="h-5 w-5" />
-                                                        )}
-                                                    </Button>
-                                                </TooltipTrigger>
-                                                <TooltipContent side="left">Trigger job</TooltipContent>
-                                            </Tooltip>
-                                        </div>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-7 w-7"
+                                                    disabled={Boolean(triggeringJob)}
+                                                    onClick={() => void triggerJob(job.jobName)}
+                                                    aria-label={`Run ${job.jobName}`}
+                                                >
+                                                    {triggeringJob === job.jobName ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <Play className="h-4 w-4" />
+                                                    )}
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="left">Trigger job</TooltipContent>
+                                        </Tooltip>
                                     </TableCell>
                                 </TableRow>
                             ))}

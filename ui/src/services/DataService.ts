@@ -9,7 +9,6 @@ import type {
   RiskMetrics,
 } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
-import type { JobLogResponse } from '@/services/backtestApi';
 import { backtestApi } from '@/services/backtestApi';
 
 export type { FinanceData, MarketData };
@@ -77,13 +76,5 @@ export const DataService = {
 
   async getExecutionMetrics(_strategyId: string): Promise<ExecutionMetrics> {
     throw new Error('Execution metrics are not available in this deployment.');
-  },
-
-  getJobLogs(
-    jobName: string,
-    params: { startTime?: string | null; sinceMinutes?: number; limit?: number } = {},
-    signal?: AbortSignal,
-  ): Promise<JobLogResponse> {
-    return backtestApi.getJobLogs(jobName, params, signal);
   },
 };
