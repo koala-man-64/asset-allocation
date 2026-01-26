@@ -37,7 +37,7 @@ describe('LeftNavigation', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('STRATEGY RESEARCH')).toBeDefined();
+    expect(screen.getByText('MARKET INTELLIGENCE')).toBeDefined();
     expect(screen.getByText('Stock Explorer')).toBeDefined();
     expect(screen.getByText('LIVE OPERATIONS')).toBeDefined();
     expect(screen.getByText('Data Quality')).toBeDefined();
