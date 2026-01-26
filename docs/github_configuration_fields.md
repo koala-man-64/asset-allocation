@@ -80,8 +80,8 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `BACKTEST_UI_OIDC_SCOPES`
   - `BACKTEST_UI_API_BASE_URL`
 
-### 4.2 GitHub-managed fields recommended to persist “Run job” + ARM health across redeploys
-These are required/used by the Backtest API and/or system health collection logic, but are not currently wired into the deployment template.
+### 4.2 GitHub-managed fields recommended to persist “Run job” + job log tails across redeploys
+These are required/used by the Backtest API and/or system health collection logic; ensure they are set in GitHub-managed config so deploy templates can render them.
 
 - **Required for UI “Run job” allowlist + ARM start calls:**
   - `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID`
@@ -92,6 +92,11 @@ These are required/used by the Backtest API and/or system health collection logi
   - `SYSTEM_HEALTH_ARM_API_VERSION`
   - `SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS`
   - `SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB`
+
+- **Required for `/api/system/jobs/{job_name}/logs` (Log Analytics):**
+  - `SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED`
+  - `SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID`
+  - `SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS`
 
 ## 5. Operational Readiness & Observability
 - Prefer **GitHub Variables** for non-sensitive config (e.g., subscription/resource group, job allowlists) and **GitHub Secrets** for secrets (connection strings, API keys, passwords).
