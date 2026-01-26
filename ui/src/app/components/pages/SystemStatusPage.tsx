@@ -93,7 +93,12 @@ export function SystemStatusPage() {
                     jobLinks={jobLinks}
                 />
             </div>
+            </div>
 
+            {/* Connectors / Resources */}
+            {resources && resources.length > 0 && (
+                <AzureResources resources={resources} />
+            )}
             {/* Connectors / Resources */}
             {resources && resources.length > 0 && (
                 <AzureResources resources={resources} />

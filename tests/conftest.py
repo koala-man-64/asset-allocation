@@ -19,14 +19,14 @@ os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")
 os.environ.setdefault("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS", "259200")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_API_VERSION", "2023-05-01")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5.0")
-os.environ.setdefault("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED", "false")
+os.environ["SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION", "2022-10-01")
-os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED", "false")
+os.environ["SYSTEM_HEALTH_MONITOR_METRICS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION", "2018-01-01")
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES", "15")
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL", "PT1M")
 os.environ.setdefault("SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION", "Average")
-os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "false")
+os.environ["SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", "5.0")
 os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", "15")
 os.environ.setdefault("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "3")

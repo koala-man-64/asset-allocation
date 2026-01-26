@@ -40,11 +40,20 @@ interface NavSection {
   title: string;
   items: NavItem[];
 }
-title: 'PORTFOLIO CONSTRUCTION',
-  items: [
-    { path: '/portfolio', label: 'Allocation Builder', icon: Folder },
 
 const navSections: NavSection[] = [
+  {
+    title: 'STRATEGY RESEARCH',
+    items: [
+      { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
+      { path: '/stock-detail', label: 'Live Stock View', icon: TrendingUp },
+      { path: '/strategy-universe', label: 'Strategy Universe', icon: LayoutDashboard },
+      { path: '/backtest-compare', label: 'Backtest Compare', icon: GitCompare },
+      { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
+      { path: '/attribution', label: 'Attribution', icon: PieChart },
+      { path: '/robustness', label: 'Robustness', icon: Target },
+    ]
+  },
   {
     title: 'PORTFOLIO CONSTRUCTION',
     items: [
@@ -54,11 +63,8 @@ const navSections: NavSection[] = [
   {
     title: 'RISK & EXECUTION',
     items: [
-      { path: '/strategy-universe', label: 'Strategy Universe', icon: LayoutDashboard },
-      { path: '/backtest-compare', label: 'Backtest Compare', icon: GitCompare },
-      { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
-      { path: '/attribution', label: 'Attribution', icon: PieChart },
-      { path: '/robustness', label: 'Robustness', icon: Target },
+      { path: '/risk', label: 'Risk & Exposures', icon: Shield },
+      { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
     ]
   },
   {

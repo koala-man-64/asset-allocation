@@ -34,56 +34,60 @@ function AppContent() {
 
   return (
     <div className="h-screen flex flex-col bg-background">
+      <div className="flex-1 flex overflow-hidden">
+        <LeftNavigation />
 
-      function AppContent() {
-  const navigate = useNavigate();
+        <main className="flex-1 overflow-y-auto">
+          <div className="container mx-auto p-8 max-w-[1800px]">
+            <Routes>
+              <Route path="/" element={<Navigate to="/system-status" replace />} />
+              <Route path="/strategy-universe" element={<StrategyUniversePage />} />
+              <Route path="/backtest-compare" element={<BacktestComparePage />} />
+              <Route path="/deep-dive" element={<DeepDivePage />} />
+              <Route path="/attribution" element={<AttributionPage />} />
+              <Route path="/risk" element={<RiskPage />} />
+              <Route path="/execution" element={<ExecutionPage />} />
+              <Route path="/robustness" element={<RobustnessPage />} />
+              <Route path="/portfolio" element={<PortfolioPage />} />
+              <Route path="/data-explorer" element={<DataExplorerPage />} />
+              <Route path="/signal-monitor" element={<SignalMonitorPage />} />
+              <Route path="/live-trading" element={<LiveTradingPage />} />
+              <Route path="/alerts" element={<AlertsPage />} />
+              <Route path="/data-quality" element={<DataQualityPage />} />
+              <Route path="/system-status" element={<SystemStatusPage />} />
+              <Route path="/stock-explorer" element={<StockExplorerPage />} />
+              <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+        </main>
+      </div>
 
-      // Enable real-time updates from backend
-      useRealtime();
+      <RunCart
+        onCompare={() => navigate('/backtest-compare')}
+        onPortfolioBuilder={() => navigate('/portfolio')}
+      />
+      <Toaster />
+    </div>
+  );
+}
 
-      return (
-      <div className="h-screen flex flex-col bg-background">
-        <div className="flex-1 flex overflow-hidden">
-          <LeftNavigation />
-
-          <main className="flex-1 overflow-y-auto">
-            <div className="container mx-auto p-8 max-w-[1800px]">
-              <Routes>
-                <Route path="/" element={<Navigate to="/system-status" replace />} />
-                <Route path="/strategy-universe" element={<StrategyUniversePage />} />
-                onCompare={() => navigate('/backtest-compare')}" element={<BacktestComparePage />} />
-                <Route path="/deep-dive" element={<DeepDivePage />} />
-                <Route path="/attribution" element={<AttributionPage />} />
-                <Route path="/risk" element={<RiskPage />} />
-                <Route path="/execution" element={<ExecutionPage />} />
-                <Route path="/robustness" element={<RobustnessPage />} />
-                <Route path="/portfolio" element={<PortfolioPage />} />
-                <Route path="/data-explorer" element={<DataExplorerPage />} />
-                <Route path="/signal-monitor" element={<SignalMonitorPage />} />
-                <Route path="/live-trading" element={<LiveTradingPage />} />
-                <Route path="/alerts" element={<AlertsPage />} />
-                <Route path="/data-quality" element={<DataQualityPage />} />
-                <Route path="/system-status" element={<SystemStatusPage />} />
-                <Route path="/stock-explorer" element={<StockExplorerPage />} />
-                <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-              export default function App() {
+export default function App() {
   const isDarkMode = useUIStore((s) => s.isDarkMode);
 
   useEffect(() => {
     if (isDarkMode) {
-                document.documentElement.classList.add('dark');
+      document.documentElement.classList.add('dark');
     } else {
-                document.documentElement.classList.remove('dark');
+      document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
 
-              return (
-              <AuthProvider>
-                <QueryProvider>
-                  <AppContent />
-                </QueryProvider>
-              </AuthProvider>
-              );
+  return (
+    <AuthProvider>
+      <QueryProvider>
+        <AppContent />
+      </QueryProvider>
+    </AuthProvider>
+  );
 }

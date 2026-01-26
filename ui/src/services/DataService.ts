@@ -10,6 +10,7 @@ import type {
 } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
 import type { JobLogsResponse } from '@/services/backtestApi';
+import type { StockScreenerResponse } from '@/services/backtestApi';
 import { backtestApi } from '@/services/backtestApi';
 
 export type { FinanceData, MarketData };
@@ -85,5 +86,12 @@ export const DataService = {
     signal?: AbortSignal,
   ): Promise<JobLogsResponse> {
     return backtestApi.getJobLogs(jobName, params, signal);
+  },
+
+  getStockScreener(
+    params: { q?: string; limit?: number; offset?: number; asOf?: string; sort?: string; direction?: 'asc' | 'desc' } = {},
+    signal?: AbortSignal,
+  ): Promise<StockScreenerResponse> {
+    return backtestApi.getStockScreener(params, signal);
   },
 };

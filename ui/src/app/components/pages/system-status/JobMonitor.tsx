@@ -135,40 +135,40 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                                 );
                                             })()}
 
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                disabled={Boolean(triggeringJob)}
-                                                onClick={() => void triggerJob(job.jobName)}
-                                                aria-label={`Run ${job.jobName}`}
-                                            >
-                                                {triggeringJob === job.jobName ? (
-                                                    <Loader2 className="h-5 w-5 animate-spin" />
-                                                ) : (
-                                                    <Play className="h-5 w-5" />
-                                                )}
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="left">Trigger job</TooltipContent>
-                                    </Tooltip>
-                                </div>
-                            </TableCell>
-                        </TableRow>
-                    ))}
-                    {recentJobs.length === 0 && (
-                        <TableRow>
-                            <TableCell colSpan={4} className="text-center text-muted-foreground text-sm py-4">
-                                No recent jobs found
-                            </TableCell>
-                        </TableRow>
-                    )}
-                </TableBody>
-            </Table>
-        </div>
-    </CardContent>
-        </Card >
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8"
+                                                        disabled={Boolean(triggeringJob)}
+                                                        onClick={() => void triggerJob(job.jobName)}
+                                                        aria-label={`Run ${job.jobName}`}
+                                                    >
+                                                        {triggeringJob === job.jobName ? (
+                                                            <Loader2 className="h-5 w-5 animate-spin" />
+                                                        ) : (
+                                                            <Play className="h-5 w-5" />
+                                                        )}
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent side="left">Trigger job</TooltipContent>
+                                            </Tooltip>
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                            {recentJobs.length === 0 && (
+                                <TableRow>
+                                    <TableCell colSpan={4} className="text-center text-muted-foreground text-sm py-4">
+                                        No recent jobs found
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
+            </CardContent>
+        </Card>
     );
 }
