@@ -166,15 +166,6 @@ export interface JobTriggerResponse {
   executionName?: string | null;
 }
 
-export interface JobLogResponse {
-  jobName: string;
-  startTime?: string | null;
-  timespan: string;
-  source: string;
-  truncated: boolean;
-  text: string;
-}
-
 export interface TradeResponse {
   execution_date: string;
   symbol: string;
@@ -439,19 +430,5 @@ export const backtestApi = {
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
     const encoded = encodeURIComponent(jobName);
     return requestJson<JobTriggerResponse>(`/system/jobs/${encoded}/run`, { method: 'POST', signal });
-  },
-
-  async getJobLogs(
-    jobName: string,
-    params: { startTime?: string | null; sinceMinutes?: number; limit?: number } = {},
-    signal?: AbortSignal,
-  ): Promise<JobLogResponse> {
-    const encoded = encodeURIComponent(jobName);
-    const query = buildQuery({
-      startTime: params.startTime ?? undefined,
-      sinceMinutes: params.sinceMinutes ?? undefined,
-      limit: params.limit ?? undefined,
-    });
-    return requestJson<JobLogResponse>(`/system/jobs/${encoded}/logs${query}`, { signal });
   },
 };

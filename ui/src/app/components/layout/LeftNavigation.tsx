@@ -48,6 +48,7 @@ const navSections: NavSection[] = [
     title: 'DATA PIPELINE',
     items: [
       { path: '/system-status', label: 'Pipeline Health', icon: Activity },
+      { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
       { path: '/data', label: 'Data Lineage', icon: Database },
       { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
     ]
