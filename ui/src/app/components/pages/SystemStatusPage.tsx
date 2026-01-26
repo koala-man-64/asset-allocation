@@ -93,6 +93,7 @@ export function SystemStatusPage() {
                 />
                 <ScheduledJobMonitor
                     dataLayers={dataLayers}
+                    recentJobs={recentJobs}
                     jobLinks={jobLinks}
                     onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
                 />

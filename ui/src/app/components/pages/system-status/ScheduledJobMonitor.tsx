@@ -6,7 +6,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 
 import { useJobTrigger } from '@/hooks/useJobTrigger';
-import type { DataLayer } from '@/types/strategy';
+import type { DataLayer, JobRun } from '@/types/strategy';
+import { formatTimestamp, getStatusBadge } from './SystemStatusHelpers';
 
 import { CalendarDays, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
 
@@ -15,16 +16,30 @@ type ScheduledJobRow = {
   layerName: string;
   domainName: string;
   schedule: string;
+  jobRun: JobRun | null;
 };
 
 interface ScheduledJobMonitorProps {
   dataLayers: DataLayer[];
+  recentJobs: JobRun[];
   jobLinks?: Record<string, string>;
   onViewJobLogs?: (jobName: string, startTime?: string | null) => void;
 }
 
-export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }: ScheduledJobMonitorProps) {
+export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onViewJobLogs }: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
+
+  const jobIndex = useMemo(() => {
+    const index = new Map<string, JobRun>();
+    for (const job of recentJobs || []) {
+      if (!job?.jobName) continue;
+      const existing = index.get(job.jobName);
+      if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
+        index.set(job.jobName, job);
+      }
+    }
+    return index;
+  }, [recentJobs]);
 
   const scheduledJobs = useMemo(() => {
     const rows: ScheduledJobRow[] = [];
@@ -41,6 +56,7 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
           layerName: layer.name,
           domainName: domain.name,
           schedule,
+          jobRun: jobIndex.get(jobName) ?? null,
         });
       }
     }
@@ -54,7 +70,7 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
     });
 
     return rows;
-  }, [dataLayers]);
+  }, [dataLayers, jobIndex]);
 
   return (
     <Card className="h-full flex flex-col">
@@ -74,6 +90,8 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
             <TableHeader>
               <TableRow>
                 <TableHead>Job</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Last Start</TableHead>
                 <TableHead>Schedule</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -107,6 +125,8 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
                       </span>
                     </div>
                   </TableCell>
+                  <TableCell className="py-2">{getStatusBadge(job.jobRun?.status || 'unknown')}</TableCell>
+                  <TableCell className="py-2 font-mono text-sm">{formatTimestamp(job.jobRun?.startTime || null)}</TableCell>
                   <TableCell className="py-2 font-mono text-sm">
                     <span className="text-slate-700">{job.schedule}</span>
                   </TableCell>
@@ -119,7 +139,7 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7"
-                              onClick={() => onViewJobLogs(job.jobName, null)}
+                              onClick={() => onViewJobLogs(job.jobName, job.jobRun?.startTime ?? null)}
                               aria-label={`View ${job.jobName} logs`}
                             >
                               <ScrollText className="h-4 w-4" />
@@ -154,7 +174,7 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
               ))}
               {scheduledJobs.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-muted-foreground text-sm py-4">
+                  <TableCell colSpan={5} className="text-center text-muted-foreground text-sm py-4">
                     No scheduled jobs found
                   </TableCell>
                 </TableRow>
@@ -166,4 +186,3 @@ export function ScheduledJobMonitor({ dataLayers, jobLinks = {}, onViewJobLogs }
     </Card>
   );
 }
-
