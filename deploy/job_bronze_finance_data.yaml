@@ -11,15 +11,11 @@ properties:
       parallelism: 1
       replicaCompletionCount: 1
     registries:
-    - identity: ''
-      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
-      server: assetallocationacr.azurecr.io
-      username: assetallocationacr
+    - server: assetallocationacr.azurecr.io
+      identity: system
     replicaRetryLimit: 2
     replicaTimeout: 1800
     secrets:
-    - name: assetallocationacrazurecrio-assetallocationacr
-      value: ${ACR_PASSWORD}
     - name: nasdaq-api-key
       value: ${NASDAQ_API_KEY}
     - name: yahoo-username

@@ -13,13 +13,9 @@ properties:
       transport: auto
       allowInsecure: false
     registries:
-    - identity: ''
-      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
-      server: assetallocationacr.azurecr.io
-      username: assetallocationacr
+    - server: assetallocationacr.azurecr.io
+      identity: system
     secrets:
-    - name: assetallocationacrazurecrio-assetallocationacr
-      value: ${ACR_PASSWORD}
     - name: api-key
       value: "${BACKTEST_API_KEY}"
     - name: backtest-pg-dsn
