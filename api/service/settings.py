@@ -213,9 +213,9 @@ class ServiceSettings:
             container, _ = parse_container_and_path(adls_runs_dir)
             assert_allowed_container(container, adls_container_allowlist)
 
-        postgres_dsn = _get_optional_str("BACKTEST_POSTGRES_DSN")
+        postgres_dsn = _get_optional_str("POSTGRES_DSN")
         if run_store_mode == "postgres" and not postgres_dsn:
-            raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires BACKTEST_POSTGRES_DSN to be set.")
+            raise ValueError("BACKTEST_RUN_STORE_MODE=postgres requires POSTGRES_DSN to be set.")
         
         ui_auth_mode_raw = _get_optional_str("BACKTEST_UI_AUTH_MODE")
         if ui_auth_mode_raw is None:

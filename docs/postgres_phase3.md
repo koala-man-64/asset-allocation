@@ -12,13 +12,13 @@ Phase 3 moves **backtest run-state** (queued/running/completed/failed + metadata
 - Backtest service Postgres store implementation:
   - `api/service/postgres_run_store.py`
 - Backtest API wiring:
-  - `api/service/settings.py` adds `BACKTEST_RUN_STORE_MODE=postgres` and requires `BACKTEST_POSTGRES_DSN`
+  - `api/service/settings.py` adds `BACKTEST_RUN_STORE_MODE=postgres` and requires `POSTGRES_DSN`
   - `api/service/app.py` selects `PostgresRunStore` when configured
 
 ## Required configuration
 
 - `BACKTEST_RUN_STORE_MODE=postgres`
-- `BACKTEST_POSTGRES_DSN` (secret) — DSN used by the backtest API to read/write run state.
+- `POSTGRES_DSN` (secret) — DSN used by the backtest API to read/write run state.
 
 Recommended DSN format:
 - `postgresql://backtest_service:<password>@<server>.postgres.database.azure.com:5432/asset_allocation?sslmode=require`
@@ -38,7 +38,7 @@ pwsh deploy/apply_postgres_migrations.ps1 -Dsn "<ADMIN_DSN>" -UseDockerPsql
 
 ## Verify
 
-1) Run the backtest API with `BACKTEST_RUN_STORE_MODE=postgres` and a valid `BACKTEST_POSTGRES_DSN`.
+1) Run the backtest API with `BACKTEST_RUN_STORE_MODE=postgres` and a valid `POSTGRES_DSN`.
 2) Submit a backtest and confirm rows appear:
 
 ```sql

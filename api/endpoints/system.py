@@ -141,7 +141,7 @@ def _require_alert_store(request: Request):
     if store is None:
         raise HTTPException(
             status_code=503,
-            detail="Alert lifecycle persistence is not configured (BACKTEST_POSTGRES_DSN).",
+            detail="Alert lifecycle persistence is not configured (POSTGRES_DSN).",
         )
     return store
 

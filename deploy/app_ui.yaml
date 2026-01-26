@@ -13,13 +13,8 @@ properties:
       transport: auto
       allowInsecure: false
     registries:
-    - identity: ''
-      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
-      server: assetallocationacr.azurecr.io
-      username: assetallocationacr
-    secrets:
-    - name: assetallocationacrazurecrio-assetallocationacr
-      value: ${ACR_PASSWORD}
+    - server: assetallocationacr.azurecr.io
+      identity: system
   template:
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-ui:${IMAGE_TAG}

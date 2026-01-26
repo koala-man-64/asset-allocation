@@ -22,7 +22,7 @@ class _FakeConn:
 
 def test_symbols_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("BACKTEST_POSTGRES_DSN", raising=False)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
     app = create_app()
     with TestClient(app) as client:
@@ -32,7 +32,7 @@ def test_symbols_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_screener_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
-    monkeypatch.delenv("BACKTEST_POSTGRES_DSN", raising=False)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
     app = create_app()
     with TestClient(app) as client:

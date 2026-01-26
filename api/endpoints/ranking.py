@@ -59,7 +59,7 @@ def get_signals(
     settings = get_settings(request)
     dsn = (settings.postgres_dsn or "").strip()
     if not dsn:
-        raise HTTPException(status_code=503, detail="Postgres is not configured (BACKTEST_POSTGRES_DSN).")
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
 
     resolved_date: Optional[date] = None
     if signal_date:

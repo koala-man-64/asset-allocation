@@ -62,8 +62,8 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `YAHOO_PASSWORD`
   - `NASDAQ_API_KEY`
 - **Databases (deploy/jobs):**
-  - `RANKING_POSTGRES_DSN`
-  - `BACKTEST_POSTGRES_DSN`
+  - `POSTGRES_DSN`
+  - `POSTGRES_DSN`
 - **Backtest API security (deploy):**
   - `BACKTEST_API_KEY` (required for `BACKTEST_AUTH_MODE=api_key|api_key_or_oidc`)
   - `BACKTEST_CSP`

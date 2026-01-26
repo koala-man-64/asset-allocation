@@ -11,15 +11,11 @@ properties:
       parallelism: 1
       replicaCompletionCount: 1
     registries:
-    - identity: ''
-      passwordSecretRef: assetallocationacrazurecrio-assetallocationacr
-      server: assetallocationacr.azurecr.io
-      username: assetallocationacr
+    - server: assetallocationacr.azurecr.io
+      identity: system
     replicaRetryLimit: 2
     replicaTimeout: 1800
     secrets:
-    - name: assetallocationacrazurecrio-assetallocationacr
-      value: ${ACR_PASSWORD}
     - name: yahoo-username
       value: ${YAHOO_USERNAME}
     - name: yahoo-password
@@ -27,7 +23,7 @@ properties:
     - name: az-cs
       value: ${AZURE_STORAGE_CONNECTION_STRING}
     - name: pg-dsn
-      value: ${RANKING_POSTGRES_DSN}
+      value: ${POSTGRES_DSN}
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
     containers:

@@ -38,7 +38,7 @@ def test_ranking_strategies_calls_delta(monkeypatch):
 
 
 def test_ranking_signals_requires_postgres_dsn(monkeypatch):
-    monkeypatch.delenv("BACKTEST_POSTGRES_DSN", raising=False)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
     local_app = create_app()
     with TestClient(local_app) as client:
         resp = client.get("/api/ranking/signals")

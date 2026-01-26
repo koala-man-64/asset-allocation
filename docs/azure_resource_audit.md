@@ -49,7 +49,7 @@ Secrets are stored in GitHub Actions and passed to Azure resources during deploy
 | Secret Name | Usage | Description | Security Check |
 | -- | -- | -- | -- |
 | `AZURE_CREDENTIALS` | `azure/login` | OIDC Federation Service Principal | ✅ **Secure** |
-| `ACR_PASSWORD` | `docker/login` & ACA `secretRef` | Registry Pull Credentials | ✅ **Secure** (Injected as Secret) |
+| *(none)* | ACA System Managed Identity + `AcrPull` | Registry Pull Credentials | ✅ **Secure** (RBAC, no secret) |
 | `AZURE_STORAGE_CONNECTION_STRING` | ACA `secretRef` | Blob Storage Access Key | ⚠️ **Rotate** (Prefer Managed Identity) |
 | `BACKTEST_API_KEY` | ACA `secretRef` | API Backend Authentication | ✅ **Secure** (Injected as Secret) |
 | `YAHOO_USERNAME` | ACA `secretRef` | External Data Provider Creds | ✅ **Secure** (Injected as Secret) |

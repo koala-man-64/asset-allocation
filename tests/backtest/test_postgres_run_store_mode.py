@@ -13,13 +13,13 @@ def test_settings_requires_postgres_dsn_when_mode_postgres(tmp_path: Path, monke
     monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
     monkeypatch.setenv("BACKTEST_RUN_STORE_MODE", "postgres")
-    monkeypatch.delenv("BACKTEST_POSTGRES_DSN", raising=False)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
-    with pytest.raises(ValueError, match="BACKTEST_POSTGRES_DSN"):
+    with pytest.raises(ValueError, match="POSTGRES_DSN"):
         ServiceSettings.from_env()
 
     monkeypatch.setenv(
-        "BACKTEST_POSTGRES_DSN",
+        "POSTGRES_DSN",
         "postgresql://backtest_service:pw@localhost:5432/asset_allocation?sslmode=require",
     )
     settings = ServiceSettings.from_env()
@@ -32,7 +32,7 @@ def test_create_app_uses_postgres_run_store_when_configured(tmp_path: Path, monk
     monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
     monkeypatch.setenv("BACKTEST_RUN_STORE_MODE", "postgres")
     monkeypatch.setenv(
-        "BACKTEST_POSTGRES_DSN",
+        "POSTGRES_DSN",
         "postgresql://backtest_service:pw@localhost:5432/asset_allocation?sslmode=require",
     )
 
