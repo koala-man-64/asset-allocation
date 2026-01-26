@@ -34,6 +34,9 @@ env:
 
 jobs:
   trigger-jobs:
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
     runs-on: ubuntu-22.04
     steps:
       - name: Azure Login

@@ -93,7 +93,6 @@ export function SystemStatusPage() {
                     jobLinks={jobLinks}
                 />
             </div>
-            </div>
 
             {/* Connectors / Resources */}
             {resources && resources.length > 0 && (

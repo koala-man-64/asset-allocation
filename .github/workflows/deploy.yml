@@ -3,7 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - '**'
+      - main
   workflow_dispatch:
     inputs:
       force_redeploy:
@@ -58,7 +58,17 @@ env:
   AZURE_CONTAINER_COMMON: common
 
 jobs:
+  tests:
+    uses: ./.github/workflows/run_tests.yml
+    secrets: inherit
+    permissions:
+      contents: read
+
   build-and-deploy:
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
     runs-on: ubuntu-22.04
 
     steps:
