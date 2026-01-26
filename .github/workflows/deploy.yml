@@ -307,7 +307,7 @@ jobs:
           # Sanitize branch name: replace non-alphanumeric chars with dashes
           # usage: feature/my-branch -> feature-my-branch
           RAW="${{ github.ref_name }}"
-          SANITIZED=$(echo "$RAW" | sed 's/[^a-zA-Z0-9]/-/g')
+          SANITIZED="${RAW//[^a-zA-Z0-9]/-}"
           # Remove leading/trailing dashes if any created
           SANITIZED=$(echo "$SANITIZED" | sed 's/^-*//;s/-*$//')
           echo "tag=$SANITIZED" >> "$GITHUB_OUTPUT"
