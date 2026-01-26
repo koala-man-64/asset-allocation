@@ -77,7 +77,7 @@ export function StockExplorerPage() {
                         ),
                     );
                 }
-            } catch (_err) {
+            } catch {
                 setWatchlist((prevList) =>
                     prevList.map((item) => (item.symbol === symbol ? { ...item, loading: false, error: true } : item)),
                 );
