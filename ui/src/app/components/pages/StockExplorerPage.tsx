@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getStocks } from '@/data/mockStockData';
 import { Stock } from '@/types/stock';
-import { useApp } from '@/contexts/AppContext'; // Use the shim context or direct store if preferred
 import { mapping } from '@/utils/mapping'; // Ensure mapping util exists or remove if unused, user code looked clean so we stick to it
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
@@ -65,7 +64,7 @@ interface FilterState {
 }
 
 export function StockExplorerPage() {
-    const { dataSource } = useApp();
+    const dataSource = 'mock';
     const [stocks, setStocks] = useState<Stock[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');

@@ -1,6 +1,6 @@
 // Allocation Builder Page
 
-import { useApp } from '@/contexts/AppContext';
+import { useUIStore } from '@/stores/useUIStore';
 import { DataService } from '@/services/DataService';
 import { StrategyRun } from '@/types/strategy';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -11,7 +11,7 @@ import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
 import { TimeSeriesPoint } from '@/types/strategy';
 
 export function PortfolioPage() {
-  const { selectedRuns } = useApp();
+  const { selectedRuns } = useUIStore();
   const [strategies, setStrategies] = useState<StrategyRun[]>([]);
   const [weights, setWeights] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -31,7 +31,7 @@ export function PortfolioPage() {
     loadStrategies();
   }, []);
 
-  const selectedStrategies = strategies.filter(s => selectedRuns.has(s.id));
+  const selectedStrategies = strategies.filter(s => selectedRuns.includes(s.id));
 
   // Initialize weights when strategies are loaded or selection changes
   useEffect(() => {

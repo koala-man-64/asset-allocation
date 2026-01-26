@@ -1,8 +1,9 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
-import { AppProvider } from '@/contexts/AppContext';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { useRealtime } from '@/hooks/useRealtime';
+import { useUIStore } from '@/stores/useUIStore';
 
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
 import { RunCart } from '@/app/components/layout/RunCart';
@@ -69,12 +70,20 @@ function AppContent() {
 }
 
 export default function App() {
+  const isDarkMode = useUIStore((s) => s.isDarkMode);
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
   return (
     <AuthProvider>
       <QueryProvider>
-        <AppProvider>
-          <AppContent />
-        </AppProvider>
+        <AppContent />
       </QueryProvider>
     </AuthProvider>
   );

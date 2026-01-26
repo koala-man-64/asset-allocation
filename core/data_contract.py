@@ -12,7 +12,3 @@ CANONICAL_RANKINGS_PATH = "platinum/rankings"
 CANONICAL_COMPOSITE_SIGNALS_PATH = "platinum/signals/daily"
 CANONICAL_RANKING_SIGNALS_PATH = "platinum/signals/ranking_signals"
 
-# Legacy paths kept for backward compatibility/migration.
-LEGACY_COMPOSITE_SIGNALS_PATH = "gold/composite_signals"
-LEGACY_RANKING_SIGNALS_PATH = "gold/ranking_signals"
-

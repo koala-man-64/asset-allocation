@@ -5,6 +5,7 @@ import { StatusTypos, StatusColors } from './StatusTokens';
 import { CalendarDays, Database, FolderOpen, Loader2, Play, ScrollText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 
 interface StatusOverviewProps {

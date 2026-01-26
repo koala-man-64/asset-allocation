@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { RunCart } from '../components/layout/RunCart';
-import { useApp } from '@/contexts/AppContext';
+import { useUIStore } from '@/stores/useUIStore';
 import { useRunList, useRunSummaries } from '@/services/backtestHooks';
 
-// Mock context and hooks
-vi.mock('@/contexts/AppContext', () => ({
-  useApp: vi.fn(),
+// Mock store and hooks
+vi.mock('@/stores/useUIStore', () => ({
+  useUIStore: vi.fn(),
 }));
 
 vi.mock('@/services/backtestHooks', () => ({
@@ -35,7 +35,7 @@ vi.mock('@/app/components/ui/sheet', () => ({
 }));
 
 describe('RunCart', () => {
-  const mockedUseApp = vi.mocked(useApp);
+  const mockedUseUIStore = vi.mocked(useUIStore);
   const mockedUseRunList = vi.mocked(useRunList);
   const mockedUseRunSummaries = vi.mocked(useRunSummaries);
 
@@ -52,27 +52,27 @@ describe('RunCart', () => {
   });
 
   it('renders empty state when no runs are selected', () => {
-    mockedUseApp.mockReturnValue({
-      selectedRuns: new Set<string>(),
+    mockedUseUIStore.mockReturnValue({
+      selectedRuns: [],
       removeFromCart: mockRemoveFromCart,
       clearCart: mockClearCart,
       cartOpen: true,
       setCartOpen: mockSetCartOpen,
-    } as unknown as ReturnType<typeof useApp>);
+    } as unknown as ReturnType<typeof useUIStore>);
 
     render(<RunCart onCompare={mockOnCompare} onPortfolioBuilder={mockOnPortfolioBuilder} />);
     expect(screen.getByText('No runs selected')).toBeDefined();
   });
 
   it('renders selected runs and enables buttons when 2+ runs are selected', () => {
-    const selectedRuns = new Set(['run1', 'run2']);
-    mockedUseApp.mockReturnValue({
+    const selectedRuns = ['run1', 'run2'];
+    mockedUseUIStore.mockReturnValue({
       selectedRuns,
       removeFromCart: mockRemoveFromCart,
       clearCart: mockClearCart,
       cartOpen: true,
       setCartOpen: mockSetCartOpen,
-    } as unknown as ReturnType<typeof useApp>);
+    } as unknown as ReturnType<typeof useUIStore>);
 
     mockedUseRunList.mockReturnValue({
       runs: [

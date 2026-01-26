@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { DataService } from '@/services/DataService';
 import { StrategyRun } from '@/types/strategy';
-import { useApp } from '@/contexts/AppContext';
+import { useUIStore } from '@/stores/useUIStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Switch } from '@/app/components/ui/switch';
 import { Label } from '@/app/components/ui/label';
@@ -33,7 +33,7 @@ const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#eab308'
 type ChartRow = Record<string, number | string>;
 
 export function RunComparePage() {
-  const { selectedRuns, removeFromCart } = useApp();
+  const { selectedRuns, removeFromCart } = useUIStore();
   const [strategies, setStrategies] = useState<StrategyRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [normalizeToHundred, setNormalizeToHundred] = useState(true);
@@ -51,7 +51,7 @@ export function RunComparePage() {
     loadStrategies();
   }, []);
 
-  const selectedStrategies = strategies.filter(s => selectedRuns.has(s.id));
+  const selectedStrategies = strategies.filter(s => selectedRuns.includes(s.id));
 
   if (loading) {
     return (
