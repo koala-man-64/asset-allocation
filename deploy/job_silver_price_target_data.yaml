@@ -53,7 +53,7 @@ properties:
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_TARGETS
-        value: price-targets
+        value: ${AZURE_CONTAINER_TARGETS}
       - name: AZURE_CONTAINER_COMMON
         value: ${AZURE_CONTAINER_COMMON}
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest

@@ -14,18 +14,19 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
 ## 3. Findings (Triaged)
 
 ### 3.1 Critical (Must Fix)
-- **Deploy can break if `BACKTEST_AUTH_MODE` is unset**
-  - **Evidence:** `api/service/settings.py` requires `BACKTEST_AUTH_MODE`; `deploy/app_backtest_api.yaml` templates `${BACKTEST_AUTH_MODE}`; `.github/workflows/deploy.yml` sources it from `secrets.BACKTEST_AUTH_MODE`, but the deploy “Validate required secrets” preflight does not enforce it.
-  - **Why it matters:** A missing/empty secret can produce a container that fails to start after redeploy.
-  - **Recommendation:** Treat `BACKTEST_AUTH_MODE` as required and validate it in deploy preflight.
-  - **Acceptance Criteria:** Deploy workflow fails fast if missing; Backtest API starts after redeploy.
+
+- **Deploy fails fast if `BACKTEST_AUTH_MODE` is unset (resolved)**
+  - **Evidence:** `.github/workflows/deploy.yml` now validates `BACKTEST_AUTH_MODE` and required companion settings before deploying.
+  - **Why it matters:** A missing/empty value can produce a container that fails to start after redeploy.
+  - **Recommendation:** Keep preflight validation aligned with `api/service/settings.py` requirements.
+  - **Acceptance Criteria:** Deploy workflow fails fast if missing/invalid; Backtest API starts after redeploy.
   - **Owner Suggestion:** DevOps Agent / Delivery Engineer Agent
 
 ### 3.2 Major
-- **Job-trigger + ARM health config won’t persist unless GitHub-managed**
-  - **Evidence:** Job trigger reads `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID`, `SYSTEM_HEALTH_ARM_RESOURCE_GROUP`, `SYSTEM_HEALTH_ARM_JOBS`; these are not present in `deploy/app_backtest_api.yaml`.
+- **Job-trigger + ARM health config must be GitHub-managed to survive redeploys**
+  - **Evidence:** Backtest API uses ARM/job configuration for job triggers and health reporting; deployment manifests should be the single source of truth (see `deploy/app_backtest_api.yaml` env vars).
   - **Why it matters:** Manually set Azure env vars can be overwritten by future redeploys.
-  - **Recommendation:** Add these fields to GitHub-managed config and wire them into the deploy template.
+  - **Recommendation:** Keep `SYSTEM_HEALTH_ARM_*` fields sourced from GitHub-managed config (Secrets/Variables) and rendered into the deploy template.
   - **Acceptance Criteria:** After redeploy, `/api/system/jobs/{job}/run` still works and job executions still show up in `/api/system/health`.
   - **Owner Suggestion:** DevOps Agent / Delivery Engineer Agent
 
@@ -64,7 +65,7 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `RANKING_POSTGRES_DSN`
   - `BACKTEST_POSTGRES_DSN`
 - **Backtest API security (deploy):**
-  - `BACKTEST_API_KEY`
+  - `BACKTEST_API_KEY` (required for `BACKTEST_AUTH_MODE=api_key|api_key_or_oidc`)
   - `BACKTEST_CSP`
   - `BACKTEST_AUTH_MODE`
 - **Backtest API OIDC config (deploy; required when `BACKTEST_AUTH_MODE` enables OIDC):**

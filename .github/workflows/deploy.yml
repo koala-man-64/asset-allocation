@@ -87,7 +87,10 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
+          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
+          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
           BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
           BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
@@ -112,9 +115,28 @@ jobs:
           require_secret YAHOO_PASSWORD
           require_secret NASDAQ_API_KEY
           require_secret RANKING_POSTGRES_DSN
-          require_secret BACKTEST_API_KEY
+          require_secret BACKTEST_AUTH_MODE
           require_secret BACKTEST_POSTGRES_DSN
           require_secret BACKTEST_CSP
+
+          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          case "$auth_mode" in
+            none|api_key|oidc|api_key_or_oidc)
+              ;;
+            *)
+              echo "::error::Invalid BACKTEST_AUTH_MODE (expected none|api_key|oidc|api_key_or_oidc)"
+              exit 1
+              ;;
+          esac
+
+          if [ "$auth_mode" = "api_key" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
+            require_secret BACKTEST_API_KEY
+          fi
+
+          if [ "$auth_mode" = "oidc" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
+            require_secret BACKTEST_OIDC_ISSUER
+            require_secret BACKTEST_OIDC_AUDIENCE
+          fi
 
           python3 - <<'PY'
           import os

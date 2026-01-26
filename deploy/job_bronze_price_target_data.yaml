@@ -55,7 +55,7 @@ properties:
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: az-cs
       - name: AZURE_CONTAINER_TARGETS
-        value: price-targets
+        value: ${AZURE_CONTAINER_TARGETS}
       - name: NASDAQ_API_KEY
         secretRef: nasdaq-api-key
       - name: AZURE_CONTAINER_COMMON
