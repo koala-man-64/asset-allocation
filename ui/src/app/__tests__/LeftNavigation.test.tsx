@@ -23,6 +23,7 @@ vi.mock('lucide-react', () => ({
   ChevronRight: () => <span>icon-right</span>,
   Pin: () => <div data-testid="icon-pin" />,
   PinOff: () => <div data-testid="icon-pinoff" />,
+  Globe: () => <div data-testid="icon-globe" />,
   ChevronUp: () => <div data-testid="icon-up" />,
   ChevronDown: () => <div data-testid="icon-down" />,
 }));

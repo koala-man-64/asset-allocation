@@ -92,8 +92,8 @@ export function DataExplorerPage() {
                                         setSelectedDomainName(null); // Reset domain selection when switching layers
                                     }}
                                     className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-sm border transition-all group ${isLayerSelected
-                                            ? 'bg-white border-slate-200 shadow-sm text-slate-900'
-                                            : 'bg-transparent border-transparent text-slate-600 hover:bg-slate-200/50'
+                                        ? 'bg-white border-slate-200 shadow-sm text-slate-900'
+                                        : 'bg-transparent border-transparent text-slate-600 hover:bg-slate-200/50'
                                         }`}
                                 >
                                     <div
@@ -120,8 +120,8 @@ export function DataExplorerPage() {
                                                         setSelectedDomainName(domain.name);
                                                     }}
                                                     className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-sm border-l-2 transition-colors ${isDomainSelected
-                                                            ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-medium'
-                                                            : 'bg-transparent border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                                                        ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-medium'
+                                                        : 'bg-transparent border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100'
                                                         }`}
                                                 >
                                                     <Folder className={`h-3.5 w-3.5 ${isDomainSelected ? 'text-indigo-500' : 'text-slate-300'}`} />
