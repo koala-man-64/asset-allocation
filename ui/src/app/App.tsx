@@ -2,19 +2,11 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { QueryProvider } from '@/providers/QueryProvider';
-import { useRealtime } from '@/hooks/useRealtime';
+
 import { useUIStore } from '@/stores/useUIStore';
 
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
-import { RunCart } from '@/app/components/layout/RunCart';
-import { StrategyUniversePage } from '@/app/components/pages/StrategyUniversePage';
-import { BacktestComparePage } from '@/app/components/pages/BacktestComparePage';
-import { DeepDivePage } from '@/app/components/pages/DeepDivePage';
-import { AttributionPage } from '@/app/components/pages/AttributionPage';
-import { RiskPage } from '@/app/components/pages/RiskPage';
-import { ExecutionPage } from '@/app/components/pages/ExecutionPage';
-import { RobustnessPage } from '@/app/components/pages/RobustnessPage';
-import { PortfolioPage } from '@/app/components/pages/PortfolioPage';
+
 import { DataExplorerPage } from '@/app/components/pages/DataExplorerPage';
 import { SignalMonitorPage } from '@/app/components/pages/SignalMonitorPage';
 import { LiveTradingPage } from '@/app/components/pages/LiveTradingPage';
@@ -30,7 +22,7 @@ function AppContent() {
   const navigate = useNavigate();
 
   // Enable real-time updates from backend
-  useRealtime();
+
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -41,14 +33,6 @@ function AppContent() {
           <div className="container mx-auto p-8 max-w-[1800px]">
             <Routes>
               <Route path="/" element={<Navigate to="/system-status" replace />} />
-              <Route path="/strategy-universe" element={<StrategyUniversePage />} />
-              <Route path="/backtest-compare" element={<BacktestComparePage />} />
-              <Route path="/deep-dive" element={<DeepDivePage />} />
-              <Route path="/attribution" element={<AttributionPage />} />
-              <Route path="/risk" element={<RiskPage />} />
-              <Route path="/execution" element={<ExecutionPage />} />
-              <Route path="/robustness" element={<RobustnessPage />} />
-              <Route path="/portfolio" element={<PortfolioPage />} />
               <Route path="/data-explorer" element={<DataExplorerPage />} />
               <Route path="/signal-monitor" element={<SignalMonitorPage />} />
               <Route path="/live-trading" element={<LiveTradingPage />} />
@@ -63,10 +47,7 @@ function AppContent() {
         </main>
       </div>
 
-      <RunCart
-        onCompare={() => navigate('/backtest-compare')}
-        onPortfolioBuilder={() => navigate('/portfolio')}
-      />
+
       <Toaster />
     </div>
   );

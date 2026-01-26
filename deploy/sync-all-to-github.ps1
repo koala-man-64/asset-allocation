@@ -33,11 +33,10 @@ $ConfigPatterns = @(
     "^DISABLE_DOTENV$",
     "^LOG_",
     "^TEST_MODE$",
-    "^BACKTEST_OUTPUT_",
-    "^BACKTEST_DELAY_",
-    "^BACKTEST_MAX_",
-    "^BACKTEST_ALLOW_",
-    "^BACKTEST_DB_PATH$"
+    "^API_AUTH_MODE$",
+    "^API_CSP$",
+    "^API_OIDC_",
+    "^UI_"
 )
 
 # -------------------------------------------------------------------------

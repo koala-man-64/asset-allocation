@@ -4,8 +4,7 @@ from fastapi import Request
 from monitoring.ttl_cache import TtlCache
 
 from api.service.auth import AuthManager
-from api.service.job_manager import JobManager
-from api.service.run_store import RunStore
+from api.service.auth import AuthManager
 from api.service.settings import ServiceSettings
 
 logger = logging.getLogger("asset-allocation.api.auth")
@@ -14,12 +13,6 @@ def get_settings(request: Request) -> ServiceSettings:
     return request.app.state.settings
 
 
-def get_store(request: Request) -> RunStore:
-    return request.app.state.store
-
-
-def get_manager(request: Request) -> JobManager:
-    return request.app.state.manager
 
 
 def get_auth_manager(request: Request) -> AuthManager:

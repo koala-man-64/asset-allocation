@@ -10,7 +10,7 @@ from tasks.ranking.strategies import (
     ValueStrategy,
 )
 
-logger = logging.getLogger("backtest.lineage")
+logger = logging.getLogger("asset_allocation.monitoring.lineage")
 
 
 def _utc_now_iso() -> str:

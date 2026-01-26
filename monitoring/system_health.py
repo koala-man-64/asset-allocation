@@ -24,7 +24,7 @@ from monitoring.monitor_metrics import (
 )
 from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 
-logger = logging.getLogger("backtest.system_health")
+logger = logging.getLogger("asset_allocation.monitoring.system_health")
 
 
 def _utc_now() -> datetime:
