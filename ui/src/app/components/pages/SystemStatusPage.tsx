@@ -6,12 +6,15 @@ import { AzureResources } from './system-status/AzureResources';
 // JobMonitor and DataLayerHealth are redundant with the new dense StatusOverview or can be re-added below if needed.
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
 import { JobMonitor } from './system-status/JobMonitor';
+import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
 import { getAzurePortalUrl } from './system-status/SystemStatusHelpers';
+import { JobLogDrawer } from './system-status/JobLogDrawer';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
+    const [logTarget, setLogTarget] = useState<{ jobName: string; startTime?: string | null } | null>(null);
     const jobLinks = useMemo(() => {
         if (!data) {
             return {};
@@ -69,31 +72,53 @@ export function SystemStatusPage() {
         );
     }
 
-    const { overall, dataLayers, recentJobs, alerts, resources } = data;
+    const { overall, dataLayers, recentJobs, resources } = data;
 
     return (
         <div className="space-y-8 pb-10">
             {/* Status Matrix - The Hero Component */}
-            <StatusOverview overall={overall} dataLayers={dataLayers} recentJobs={recentJobs} />
+            <StatusOverview
+                overall={overall}
+                dataLayers={dataLayers}
+                recentJobs={recentJobs}
+                onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
+            />
 
-            {/* Secondary Details Grid */}
-            <JobMonitor recentJobs={recentJobs} jobLinks={jobLinks} />
+            {/* Jobs */}
+            <div className="grid gap-6 lg:grid-cols-2">
+                <JobMonitor
+                    recentJobs={recentJobs}
+                    jobLinks={jobLinks}
+                    onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
+                />
+                <ScheduledJobMonitor
+                    dataLayers={dataLayers}
+                    jobLinks={jobLinks}
+                    onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
+                />
+            </div>
+
+            {/* Connectors / Resources */}
+            {resources && resources.length > 0 && (
+                <AzureResources resources={resources} />
+            )}
+
+            {/* Footer Status Line */}
+            <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
+                <div className="flex items-center gap-2 font-mono text-[10px]">
+                    <span className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`} />
+                    {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
+                </div>
+            </div>
+
+            <JobLogDrawer
+                open={Boolean(logTarget)}
+                onOpenChange={(open) => {
+                    if (!open) setLogTarget(null);
+                }}
+                jobName={logTarget?.jobName ?? null}
+                startTime={logTarget?.startTime ?? null}
+            />
         </div>
-
-            {/* Connectors / Resources */ }
-    {
-        resources && resources.length > 0 && (
-            <AzureResources resources={resources} />
-        )
-    }
-
-    {/* Footer Status Line */ }
-    <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
-        <div className="flex items-center gap-2 font-mono text-[10px]">
-            <span className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`} />
-            {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
-        </div>
-    </div>
-        </div >
     );
 }

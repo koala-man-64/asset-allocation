@@ -17,6 +17,7 @@ from api.service.dependencies import (
 )
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
+from monitoring.log_analytics import AzureLogAnalyticsClient, render_query
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 
@@ -46,6 +47,89 @@ def _get_actor(request: Request) -> Optional[str]:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_truthy_env(name: str) -> bool:
+    raw = os.environ.get(name)
+    value = raw.strip().lower() if raw else ""
+    return value in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _format_log_analytics_table(payload: Dict[str, Any], *, max_chars: int) -> tuple[str, bool]:
+    tables = payload.get("tables") if isinstance(payload.get("tables"), list) else []
+    if not tables:
+        return "", False
+    table = tables[0] if isinstance(tables[0], dict) else {}
+    columns_raw = table.get("columns") if isinstance(table.get("columns"), list) else []
+    columns: list[str] = []
+    for col in columns_raw:
+        if isinstance(col, dict) and isinstance(col.get("name"), str):
+            columns.append(col["name"])
+
+    rows = table.get("rows") if isinstance(table.get("rows"), list) else []
+    if not rows:
+        return "", False
+
+    def _col_index(candidates: set[str]) -> Optional[int]:
+        for idx, name in enumerate(columns):
+            if name in candidates:
+                return idx
+        lowered = {c.lower() for c in candidates}
+        for idx, name in enumerate(columns):
+            if name.lower() in lowered:
+                return idx
+        return None
+
+    time_idx = _col_index({"TimeGenerated", "timestamp", "Timestamp"})
+    msg_idx = _col_index({"Log", "Log_s", "Message", "Message_s", "msg", "message"})
+
+    out_lines: list[str] = []
+    chars = 0
+    truncated = False
+
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        time_text = ""
+        if time_idx is not None and time_idx < len(row):
+            cell = row[time_idx]
+            if cell is not None:
+                time_text = str(cell)
+
+        message = ""
+        if msg_idx is not None and msg_idx < len(row):
+            cell = row[msg_idx]
+            if cell is not None:
+                message = str(cell)
+        elif len(row) == 1:
+            cell = row[0]
+            message = "" if cell is None else str(cell)
+        else:
+            message = " | ".join("" if cell is None else str(cell) for cell in row)
+
+        line = f"{time_text} {message}".strip()
+        if not line:
+            continue
+        chars += len(line) + 1
+        if chars > max_chars:
+            truncated = True
+            break
+        out_lines.append(line)
+
+    return "\n".join(out_lines), truncated
 
 
 @router.get("/health")
@@ -232,6 +316,73 @@ def system_lineage(request: Request) -> JSONResponse:
         len((payload.get("impactsByDomain") or {}).keys()),
     )
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/jobs/{job_name}/logs")
+def job_logs(
+    job_name: str,
+    request: Request,
+    start_time: Optional[str] = Query(default=None, alias="startTime"),
+    since_minutes: int = Query(default=120, ge=1, le=24 * 60, alias="sinceMinutes"),
+    limit: int = Query(default=2000, ge=1, le=5000),
+) -> JSONResponse:
+    validate_auth(request)
+
+    resolved = (job_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?", resolved or ""):
+        raise HTTPException(status_code=400, detail="Invalid job name.")
+
+    allowlist_raw = os.environ.get("SYSTEM_HEALTH_ARM_JOBS")
+    allowlist = [item.strip() for item in (allowlist_raw or "").split(",") if item.strip()]
+    if allowlist and resolved not in allowlist:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    if not _is_truthy_env("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"):
+        raise HTTPException(status_code=503, detail="Job logs are not configured (Log Analytics disabled).")
+
+    workspace_id_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
+    workspace_id = workspace_id_raw.strip() if workspace_id_raw else ""
+    if not workspace_id:
+        raise HTTPException(status_code=503, detail="Job logs are not configured (missing Log Analytics workspace).")
+
+    query_template_raw = os.environ.get("SYSTEM_HEALTH_JOB_LOG_QUERY")
+    query_template = query_template_raw.strip() if query_template_raw else ""
+    if not query_template:
+        raise HTTPException(status_code=503, detail="Job logs are not configured (set SYSTEM_HEALTH_JOB_LOG_QUERY).")
+
+    timeout_env = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS")
+    try:
+        timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
+    except ValueError:
+        timeout_seconds = 5.0
+
+    now = datetime.now(timezone.utc)
+    requested_start = _parse_iso_timestamp(start_time)
+    start = requested_start or (now - timedelta(minutes=int(since_minutes)))
+    timespan = f"{_iso(start)}/{_iso(now)}"
+
+    rendered = render_query(query_template, resource_name=resolved, resource_id=None)
+    rendered = f"{rendered}\n| take {int(limit)}"
+
+    try:
+        with AzureLogAnalyticsClient(timeout_seconds=timeout_seconds) as client:
+            payload = client.query(workspace_id=workspace_id, query=rendered, timespan=timespan)
+    except Exception as exc:
+        logger.exception("Job log query failed: job=%s", resolved)
+        raise HTTPException(status_code=502, detail=f"Failed to fetch logs: {exc}") from exc
+
+    text, truncated = _format_log_analytics_table(payload, max_chars=200_000)
+    return JSONResponse(
+        {
+            "jobName": resolved,
+            "startTime": _iso(requested_start),
+            "timespan": timespan,
+            "source": "log-analytics",
+            "truncated": truncated,
+            "text": text,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/jobs/{job_name}/run")
