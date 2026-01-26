@@ -11,7 +11,7 @@ interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
-    onViewJobLogs?: (jobName: string, startTime?: string | null) => void;
+    onViewJobLogs?: (jobName: string) => void;
 }
 
 export function StatusOverview({ overall, dataLayers, recentJobs, onViewJobLogs }: StatusOverviewProps) {
@@ -332,7 +332,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, onViewJobLogs 
                                                                                 {jobName ? (
                                                                                     <button
                                                                                         type="button"
-                                                                                        onClick={() => onViewJobLogs(jobName, run?.startTime ?? null)}
+                                                                                        onClick={() => onViewJobLogs(jobName)}
                                                                                         className="p-1 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
                                                                                         aria-label={`View ${domainName} logs`}
                                                                                     >

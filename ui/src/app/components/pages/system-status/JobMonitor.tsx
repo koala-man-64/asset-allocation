@@ -11,7 +11,7 @@ import { JobRun } from '@/types/strategy';
 interface JobMonitorProps {
     recentJobs: JobRun[];
     jobLinks?: Record<string, string>;
-    onViewJobLogs?: (jobName: string, startTime?: string | null) => void;
+    onViewJobLogs?: (jobName: string) => void;
 }
 
 export function JobMonitor({ recentJobs, jobLinks = {}, onViewJobLogs }: JobMonitorProps) {
@@ -104,14 +104,14 @@ export function JobMonitor({ recentJobs, jobLinks = {}, onViewJobLogs }: JobMoni
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="h-8 w-8"
-                                                            onClick={() => onViewJobLogs(job.jobName, job.startTime)}
-                                                            aria-label={`View ${job.jobName} logs`}
-                                                        >
-                                                            <ScrollText className="h-5 w-5" />
-                                                        </Button>
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8"
+                                                        onClick={() => onViewJobLogs(job.jobName)}
+                                                        aria-label={`View ${job.jobName} logs`}
+                                                    >
+                                                        <ScrollText className="h-5 w-5" />
+                                                    </Button>
                                                     </TooltipTrigger>
                                                     <TooltipContent side="left">View latest logs</TooltipContent>
                                                 </Tooltip>

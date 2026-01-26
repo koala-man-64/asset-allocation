@@ -32,7 +32,8 @@ API Root
     │   │       ├── /snooze [POST] (system.snooze_alert) - Snoozes an alert for a specified duration :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
     │   │       └── /resolve [POST] (system.resolve_alert) - Marks an alert as resolved :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
     │   └── /jobs
-    │       └── /{job_name}/run [POST] (system.trigger_job_run) - Manually triggers an Azure Container App Job :: api/endpoints/system.py <== ui/src/hooks/useJobTrigger.ts
+    │       ├── /{job_name}/run [POST] (system.trigger_job_run) - Manually triggers an Azure Container App Job :: api/endpoints/system.py <== ui/src/hooks/useJobTrigger.ts
+    │       └── /{job_name}/logs [GET] (system.get_job_logs) - Returns log tail for last N Job runs :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/JobLogDrawer.tsx
 
     # Strategy & Signals (Matches ui/src/hooks/useDataQueries.ts)
     ├── /ranking

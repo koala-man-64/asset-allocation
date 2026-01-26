@@ -14,7 +14,7 @@ export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
-    const [logTarget, setLogTarget] = useState<{ jobName: string; startTime?: string | null } | null>(null);
+    const [logTarget, setLogTarget] = useState<{ jobName: string } | null>(null);
     const jobLinks = useMemo(() => {
         if (!data) {
             return {};
@@ -81,7 +81,7 @@ export function SystemStatusPage() {
                 overall={overall}
                 dataLayers={dataLayers}
                 recentJobs={recentJobs}
-                onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
+                onViewJobLogs={(jobName) => setLogTarget({ jobName })}
             />
 
             {/* Jobs */}
@@ -89,13 +89,13 @@ export function SystemStatusPage() {
                 <JobMonitor
                     recentJobs={recentJobs}
                     jobLinks={jobLinks}
-                    onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
+                    onViewJobLogs={(jobName) => setLogTarget({ jobName })}
                 />
                 <ScheduledJobMonitor
                     dataLayers={dataLayers}
                     recentJobs={recentJobs}
                     jobLinks={jobLinks}
-                    onViewJobLogs={(jobName, startTime) => setLogTarget({ jobName, startTime })}
+                    onViewJobLogs={(jobName) => setLogTarget({ jobName })}
                 />
             </div>
 
@@ -118,7 +118,6 @@ export function SystemStatusPage() {
                     if (!open) setLogTarget(null);
                 }}
                 jobName={logTarget?.jobName ?? null}
-                startTime={logTarget?.startTime ?? null}
             />
         </div>
     );

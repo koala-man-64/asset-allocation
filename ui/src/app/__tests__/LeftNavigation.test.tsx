@@ -19,6 +19,7 @@ vi.mock('lucide-react', () => ({
   Zap: () => <div data-testid="icon-zap" />,
   TrendingUp: () => <div data-testid="icon-trending" />,
   Bell: () => <div data-testid="icon-bell" />,
+  ScanSearch: () => <div data-testid="icon-scan" />,
   ChevronLeft: () => <span>icon-left</span>,
   ChevronRight: () => <span>icon-right</span>,
   Pin: () => <div data-testid="icon-pin" />,
@@ -36,10 +37,11 @@ describe('LeftNavigation', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('DATA PIPELINE')).toBeDefined();
-    expect(screen.getByText('Pipeline Health')).toBeDefined();
     expect(screen.getByText('STRATEGY RESEARCH')).toBeDefined();
-    expect(screen.getByText('Strategy Universe')).toBeDefined();
+    expect(screen.getByText('Stock Explorer')).toBeDefined();
+    expect(screen.getByText('LIVE OPERATIONS')).toBeDefined();
+    expect(screen.getByText('Data Quality')).toBeDefined();
+    expect(screen.getByText('System Status')).toBeDefined();
   });
 
   it('toggles collapsed state when clicking the button', () => {

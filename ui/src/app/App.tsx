@@ -20,6 +20,7 @@ import { SignalMonitorPage } from '@/app/components/pages/SignalMonitorPage';
 import { LiveTradingPage } from '@/app/components/pages/LiveTradingPage';
 import { AlertsPage } from '@/app/components/pages/AlertsPage';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
+import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
 import { StockExplorerPage } from '@/app/components/pages/StockExplorerPage';
 import { Toaster } from '@/app/components/ui/sonner';
 
@@ -52,6 +53,7 @@ function AppContent() {
               <Route path="/signals" element={<SignalMonitorPage />} />
               <Route path="/live-trading" element={<LiveTradingPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
+              <Route path="/data-quality" element={<DataQualityPage />} />
               <Route path="/system-status" element={<SystemStatusPage />} />
               <Route path="/stock-explorer" element={<StockExplorerPage />} />
               <Route path="/stock/:ticker?" element={<StockDetailPage />} />

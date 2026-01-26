@@ -1,9 +1,6 @@
 import { Stock } from '@/types/stock';
 
-const SECTORS = [
-    'Technology', 'Healthcare', 'Financials', 'Consumer Discretionary',
-    'Industrials', 'Energy', 'Utilities', 'Real Estate', 'Materials'
-];
+
 
 const EXCHANGES = ['NASDAQ', 'NYSE', 'AMEX'];
 
@@ -126,7 +123,7 @@ export async function getStocks(dataSource: string): Promise<Stock[]> {
             employees: Math.floor(Math.random() * 100000),
             website: `https://www.example.com/${item.s}`,
             esgScore: 50 + Math.random() * 50,
-            analystRating: ['Buy', 'Hold', 'Sell'][Math.floor(Math.random() * 3)] as any,
+            analystRating: ['Buy', 'Hold', 'Sell'][Math.floor(Math.random() * 3)] as 'Buy' | 'Hold' | 'Sell',
             analystCount: Math.floor(Math.random() * 50),
             volatility52W: 10 + Math.random() * 50,
             rsi14: 30 + Math.random() * 40,

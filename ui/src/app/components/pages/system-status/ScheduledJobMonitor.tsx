@@ -23,7 +23,7 @@ interface ScheduledJobMonitorProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobLinks?: Record<string, string>;
-  onViewJobLogs?: (jobName: string, startTime?: string | null) => void;
+  onViewJobLogs?: (jobName: string) => void;
 }
 
 export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onViewJobLogs }: ScheduledJobMonitorProps) {
@@ -139,7 +139,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onV
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7"
-                              onClick={() => onViewJobLogs(job.jobName, job.jobRun?.startTime ?? null)}
+                              onClick={() => onViewJobLogs(job.jobName)}
                               aria-label={`View ${job.jobName} logs`}
                             >
                               <ScrollText className="h-4 w-4" />
