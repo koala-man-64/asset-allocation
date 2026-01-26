@@ -1,5 +1,7 @@
 param(
   # Note: some subscriptions are restricted from provisioning Postgres Flexible Server in certain regions (e.g., eastus).
+  [string]$SubscriptionId = "",
+  [string]$DotEnvPath = "",
   [string]$Location = "eastus",
   # If provisioning fails due to a restricted region, retry creation in these locations (in order).
   # Example: -Location "eastus" -LocationFallback @("eastus2","centralus","westus2")
@@ -63,6 +65,53 @@ function Assert-CommandExists {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "Missing required command '$Name'. Install it and retry."
   }
+}
+
+function Read-DotEnvValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+
+  if (-not (Test-Path -Path $Path)) {
+    return ""
+  }
+
+  foreach ($line in (Get-Content -Path $Path -ErrorAction SilentlyContinue)) {
+    if (-not $line) { continue }
+    $t = $line.Trim()
+    if (-not $t) { continue }
+    if ($t.StartsWith("#")) { continue }
+    if ($t.StartsWith("export ")) { $t = $t.Substring(7).Trim() }
+
+    $idx = $t.IndexOf("=")
+    if ($idx -lt 1) { continue }
+
+    $k = $t.Substring(0, $idx).Trim()
+    if ($k -ne $Key) { continue }
+
+    $v = $t.Substring($idx + 1).Trim()
+    if (-not $v) { return "" }
+
+    $isSingleQuoted = $v.StartsWith("'") -and $v.EndsWith("'")
+    $isDoubleQuoted = $v.StartsWith('"') -and $v.EndsWith('"')
+
+    if (-not ($isSingleQuoted -or $isDoubleQuoted)) {
+      # Treat leading '#' as an inline comment (common in .env templates: KEY= # comment).
+      if ($v.StartsWith("#")) { return "" }
+
+      # Strip inline comments for unquoted values: KEY=value # comment
+      $m = [regex]::Match($v, '^(.*?)\s+#')
+      if ($m.Success) { $v = $m.Groups[1].Value.TrimEnd() }
+    }
+    elseif ($v.Length -ge 2) {
+      $v = $v.Substring(1, $v.Length - 2)
+    }
+
+    return $v.Trim()
+  }
+
+  return ""
 }
 
 function Invoke-Az {
@@ -175,7 +224,16 @@ Assert-PgIdentifier -Value $BacktestServiceUser -Label "BacktestServiceUser"
 $SkuName = $SkuName.ToLowerInvariant().Trim()
 $selectedLocation = $Location
 
-$SubscriptionId = "eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9"
+if (-not $SubscriptionId) {
+  $effectiveDotEnvPath = if ($DotEnvPath) { $DotEnvPath } else { Join-Path (Join-Path $PSScriptRoot "..") ".env" }
+  $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID"
+  if (-not $SubscriptionId) { $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "AZURE_SUBSCRIPTION_ID" }
+  if (-not $SubscriptionId) { $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "SUBSCRIPTION_ID" }
+}
+
+if (-not $SubscriptionId) {
+  throw "Missing SubscriptionId. Pass -SubscriptionId or set SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID (or AZURE_SUBSCRIPTION_ID or SUBSCRIPTION_ID) in .env."
+}
 Write-Host "Using subscription: $SubscriptionId"
 Invoke-Az -Label "account set" -Args @("account", "set", "--subscription", $SubscriptionId, "--only-show-errors")
 

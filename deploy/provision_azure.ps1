@@ -1,6 +1,6 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$SubscriptionId,
+  [string]$SubscriptionId = "",
+  [string]$DotEnvPath = "",
 
   [string]$Location = "eastus",
   [string]$ResourceGroup = "AssetAllocationRG",
@@ -33,7 +33,65 @@ function Assert-CommandExists {
   }
 }
 
+function Read-DotEnvValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+
+  if (-not (Test-Path -Path $Path)) {
+    return ""
+  }
+
+  foreach ($line in (Get-Content -Path $Path -ErrorAction SilentlyContinue)) {
+    if (-not $line) { continue }
+    $t = $line.Trim()
+    if (-not $t) { continue }
+    if ($t.StartsWith("#")) { continue }
+    if ($t.StartsWith("export ")) { $t = $t.Substring(7).Trim() }
+
+    $idx = $t.IndexOf("=")
+    if ($idx -lt 1) { continue }
+
+    $k = $t.Substring(0, $idx).Trim()
+    if ($k -ne $Key) { continue }
+
+    $v = $t.Substring($idx + 1).Trim()
+    if (-not $v) { return "" }
+
+    $isSingleQuoted = $v.StartsWith("'") -and $v.EndsWith("'")
+    $isDoubleQuoted = $v.StartsWith('"') -and $v.EndsWith('"')
+
+    if (-not ($isSingleQuoted -or $isDoubleQuoted)) {
+      # Treat leading '#' as an inline comment (common in .env templates: KEY= # comment).
+      if ($v.StartsWith("#")) { return "" }
+
+      # Strip inline comments for unquoted values: KEY=value # comment
+      $m = [regex]::Match($v, '^(.*?)\s+#')
+      if ($m.Success) { $v = $m.Groups[1].Value.TrimEnd() }
+    }
+    elseif ($v.Length -ge 2) {
+      $v = $v.Substring(1, $v.Length - 2)
+    }
+
+    return $v.Trim()
+  }
+
+  return ""
+}
+
 Assert-CommandExists -Name "az"
+
+if (-not $SubscriptionId) {
+  $effectiveDotEnvPath = if ($DotEnvPath) { $DotEnvPath } else { Join-Path (Join-Path $PSScriptRoot "..") ".env" }
+  $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID"
+  if (-not $SubscriptionId) { $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "AZURE_SUBSCRIPTION_ID" }
+  if (-not $SubscriptionId) { $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "SUBSCRIPTION_ID" }
+}
+
+if (-not $SubscriptionId) {
+  throw "Missing SubscriptionId. Pass -SubscriptionId or set SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID (or AZURE_SUBSCRIPTION_ID or SUBSCRIPTION_ID) in .env."
+}
 
 Write-Host "Using subscription: $SubscriptionId"
 az account set --subscription $SubscriptionId | Out-Null
@@ -197,6 +255,36 @@ function Ensure-AcrPullRoleAssignment {
   return $true
 }
 
+function Get-AcaPrincipalId {
+  param(
+    [Parameter(Mandatory = $true)][ValidateSet("app", "job")][string]$Kind,
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$ResourceGroup,
+    [int]$Retries = 10,
+    [int]$DelaySeconds = 3
+  )
+
+  for ($i = 0; $i -lt $Retries; $i++) {
+    $principalId = if ($Kind -eq "app") {
+      az containerapp show --name $Name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors 2>$null
+    }
+    else {
+      az containerapp job show --name $Name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors 2>$null
+    }
+
+    if ($principalId) { $principalId = $principalId.Trim() }
+    if ($principalId -and $principalId -ne "None") {
+      return $principalId
+    }
+
+    if ($i -lt ($Retries - 1)) {
+      Start-Sleep -Seconds $DelaySeconds
+    }
+  }
+
+  return ""
+}
+
 $acrPullAssignmentsCreated = 0
 $acrPullAssignmentsSkipped = 0
 
@@ -219,7 +307,11 @@ if ($GrantAcrPullToAcaResources) {
   foreach ($name in $appNames) {
     if (-not $name) { continue }
     try {
-      $principalId = az containerapp show --name $name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors
+      $principalId = Get-AcaPrincipalId -Kind "app" -Name $name -ResourceGroup $ResourceGroup
+      if (-not $principalId) {
+        Write-Warning "No system-assigned identity principalId found (app '$name')."
+        continue
+      }
       if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
         $acrPullAssignmentsCreated += 1
         Write-Host "  AcrPull granted (app): $name"
@@ -243,7 +335,11 @@ if ($GrantAcrPullToAcaResources) {
   foreach ($name in $jobNames) {
     if (-not $name) { continue }
     try {
-      $principalId = az containerapp job show --name $name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors
+      $principalId = Get-AcaPrincipalId -Kind "job" -Name $name -ResourceGroup $ResourceGroup
+      if (-not $principalId) {
+        Write-Warning "No system-assigned identity principalId found (job '$name')."
+        continue
+      }
       if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
         $acrPullAssignmentsCreated += 1
         Write-Host "  AcrPull granted (job): $name"

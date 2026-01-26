@@ -14,7 +14,9 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 
 ## What Phase 1 adds
 
-- **Provisioning script:** `deploy/provision_azure_postgres.ps1`
+- **Provisioning scripts:**
+  - Combined infra + Postgres: `deploy/provision_azure_all.ps1`
+  - Postgres-only: `deploy/provision_azure_postgres.ps1`
 - **Migrations baseline:**
   - `deploy/sql/postgres/migrations/0001_schema_migrations.sql`
   - `deploy/sql/postgres/migrations/0002_init_schemas.sql`
@@ -46,6 +48,23 @@ Recommended DSN format:
 Run (PowerShell):
 
 ```powershell
+# Recommended: provision core infra + Postgres in one step
+pwsh deploy/provision_azure_all.ps1 `
+  -Location "eastus2" `
+  -SkuName "standard_b1ms" `
+  -Tier "Burstable" `
+  -LocationFallback @("eastus2","centralus","westus2") `
+  -ServerName "<server-name>" `
+  -AllowAzureServices `
+  -ApplyMigrations `
+  -CreateAppUsers `
+  -UseDockerPsql `
+  -EmitSecrets
+```
+
+Or, Postgres-only:
+
+```powershell
 pwsh deploy/provision_azure_postgres.ps1 `
   -SubscriptionId "<SUBSCRIPTION_ID>" `
   -Location "eastus2" `
@@ -61,6 +80,7 @@ pwsh deploy/provision_azure_postgres.ps1 `
 ```
 
 Notes:
+- `deploy/provision_azure_all.ps1` and `deploy/provision_azure_postgres.ps1` use `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID` (or `AZURE_SUBSCRIPTION_ID` / `SUBSCRIPTION_ID`) from the repo root `.env` when `-SubscriptionId` is omitted.
 - If you see: “The location is restricted for provisioning of flexible servers”, pick another region (often `eastus2`, `centralus`, `westus2`).
   - Quick check: `az postgres flexible-server list-skus -l <region> --query "[0].reason" -o tsv` (empty output means “allowed”).
 - The provisioning script retries server creation in `-LocationFallback` regions if the first location is restricted.
