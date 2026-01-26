@@ -77,6 +77,15 @@ export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'
 # Required: system-health cache TTL (used by /api/system/* endpoints)
 export SYSTEM_HEALTH_TTL_SECONDS=30
 
+# Optional: Job execution log tails (Azure Container Apps Jobs via Log Analytics)
+# Used by: GET /api/system/jobs/{job_name}/logs?runs=N  (returns last 3 lines per run)
+export SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID="<subscription-id>"
+export SYSTEM_HEALTH_ARM_RESOURCE_GROUP="<resource-group>"
+export SYSTEM_HEALTH_ARM_JOBS="bronze-market-job,platinum-ranking-job"
+export SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED="true"
+export SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID="<log-analytics-workspace-id>"
+export SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=5
+
 uvicorn api.service.app:app --reload --port 8000
 ```
 
