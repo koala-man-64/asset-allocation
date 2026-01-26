@@ -22,21 +22,22 @@ This phase **does not** enable Postgres writers/readers in application code yet;
   - `deploy/sql/postgres/migrations/0002_init_schemas.sql`
 - **Migration runner:** `deploy/apply_postgres_migrations.ps1` (supports local `psql` or Dockerized `psql`)
 - **Deploy wiring (secrets only; unused until later phases):**
-  - Ranking job: `deploy/job_platinum_ranking.yaml` → `POSTGRES_DSN` secret ref
-  - Backtest API: `deploy/app_backtest_api.yaml` → `POSTGRES_DSN` secret ref
+  - Ranking job: `deploy/job_platinum_ranking.yaml` → `POSTGRES_DSN` (secret value from `POSTGRES_DSN_RANKING` or `POSTGRES_DSN`)
+  - API service: `deploy/app_backtest_api.yaml` → `POSTGRES_DSN` (secret value from `POSTGRES_DSN_API` or `POSTGRES_DSN`)
   - GitHub deploy workflow: `.github/workflows/deploy.yml` passes the secrets to `envsubst`
 
 ## Required GitHub Secrets (for deploy workflow)
 
 Add these secrets in your GitHub repo settings:
 
-- `POSTGRES_DSN` — DSN for the ranking job (future Phase 2 writer).
-- `POSTGRES_DSN` — DSN for the backtest API (future Phase 3 run store).
+- `POSTGRES_DSN` — single DSN used by both workloads (simplest setup), **or** provide both overrides below.
+- `POSTGRES_DSN_RANKING` — optional override DSN for the ranking job (recommended: `ranking_writer`).
+- `POSTGRES_DSN_API` — optional override DSN for the API service (recommended: `api_service`).
 
 **Single Postgres server + database**
 
 This repo assumes **one Postgres server** and **one database** (with multiple schemas like `ranking` and `backtest`).
-`POSTGRES_DSN` and `POSTGRES_DSN` should therefore point to the **same host/port/database** and typically
+`POSTGRES_DSN_RANKING` and `POSTGRES_DSN_API` should therefore point to the **same host/port/database** and typically
 only differ by **username/password** (separate least-privileged roles).
 
 Recommended DSN format:
@@ -66,7 +67,6 @@ Or, Postgres-only:
 
 ```powershell
 pwsh deploy/provision_azure_postgres.ps1 `
-  -SubscriptionId "<SUBSCRIPTION_ID>" `
   -Location "eastus2" `
   -SkuName "standard_b1ms" `
   -Tier "Burstable" `
@@ -85,7 +85,7 @@ Notes:
   - Quick check: `az postgres flexible-server list-skus -l <region> --query "[0].reason" -o tsv` (empty output means “allowed”).
 - The provisioning script retries server creation in `-LocationFallback` regions if the first location is restricted.
 - If you see a `ResourceNotFound` for the database during `db show`, the script will create the database and continue (expected for first-time setup when the server exists but the database does not).
-- If you re-run with `-CreateAppUsers`, the script will set (rotate) the app role passwords to the `-RankingWriterPassword/-BacktestServicePassword` values (or newly generated values if omitted).
+- If you re-run with `-CreateAppUsers`, the script will set (rotate) the app role passwords to the `-RankingWriterPassword/-ApiServicePassword` values (or newly generated values if omitted).
 - `-AllowAzureServices` adds a firewall rule `0.0.0.0` (Azure-internal access). For tighter rules, use `-AllowIpRangeStart/-AllowIpRangeEnd`.
 - Without `-EmitSecrets`, outputs redact the admin password and connection strings.
 

@@ -87,10 +87,15 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          POSTGRES_DSN_RANKING: ${{ secrets.POSTGRES_DSN_RANKING }}
+          POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
           BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
           BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
+          BACKTEST_OIDC_JWKS_URL: ${{ secrets.BACKTEST_OIDC_JWKS_URL }}
+          BACKTEST_OIDC_REQUIRED_SCOPES: ${{ secrets.BACKTEST_OIDC_REQUIRED_SCOPES }}
+          BACKTEST_OIDC_REQUIRED_ROLES: ${{ secrets.BACKTEST_OIDC_REQUIRED_ROLES }}
           BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
           set -euo pipefail
@@ -113,9 +118,16 @@ jobs:
           require_secret YAHOO_USERNAME
           require_secret YAHOO_PASSWORD
           require_secret NASDAQ_API_KEY
-          require_secret POSTGRES_DSN
+
+          # Postgres DSN wiring supports either:
+          # - POSTGRES_DSN (single DSN for both workloads), or
+          # - POSTGRES_DSN_RANKING + POSTGRES_DSN_API (separate users, same host/port/db).
+          if [ -z "${POSTGRES_DSN:-}" ]; then
+            require_secret POSTGRES_DSN_RANKING
+            require_secret POSTGRES_DSN_API
+          fi
+
           require_secret BACKTEST_AUTH_MODE
-          require_secret POSTGRES_DSN
           require_secret BACKTEST_CSP
 
           auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
@@ -162,11 +174,14 @@ jobs:
               return host, int(port), db
           
           
-          ranking = parse_postgres_url("POSTGRES_DSN")
-          backtest = parse_postgres_url("POSTGRES_DSN")
-          if ranking != backtest:
+          ranking_name = "POSTGRES_DSN_RANKING" if os.environ.get("POSTGRES_DSN_RANKING", "").strip() else "POSTGRES_DSN"
+          api_name = "POSTGRES_DSN_API" if os.environ.get("POSTGRES_DSN_API", "").strip() else "POSTGRES_DSN"
+
+          ranking = parse_postgres_url(ranking_name)
+          api = parse_postgres_url(api_name)
+          if ranking != api:
               print(
-                  "::error::POSTGRES_DSN and POSTGRES_DSN must point to the same host/port/database "
+                  f"::error::{ranking_name} and {api_name} must point to the same host/port/database "
                   "(single Postgres server + database)."
               )
               sys.exit(1)
@@ -524,6 +539,8 @@ jobs:
         env:
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
           BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
           BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
@@ -539,7 +556,40 @@ jobs:
         run: |
           set -euo pipefail
           export IMAGE_TAG="${{ github.sha }}"
-          
+
+          # Backwards-compatible default: allow a single DSN secret, with optional overrides.
+          export POSTGRES_DSN_API="${POSTGRES_DSN_API:-$POSTGRES_DSN}"
+
+          # Map BACKTEST_* secrets into API/UI env vars expected by deploy/app_backtest_api.yaml.
+          export API_AUTH_MODE="${BACKTEST_AUTH_MODE:-}"
+          export API_OIDC_ISSUER="${BACKTEST_OIDC_ISSUER:-}"
+          export API_OIDC_AUDIENCE="${BACKTEST_OIDC_AUDIENCE:-}"
+          export API_OIDC_JWKS_URL="${BACKTEST_OIDC_JWKS_URL:-}"
+          export API_OIDC_REQUIRED_SCOPES="${BACKTEST_OIDC_REQUIRED_SCOPES:-}"
+          export API_OIDC_REQUIRED_ROLES="${BACKTEST_OIDC_REQUIRED_ROLES:-}"
+          export API_CSP="${BACKTEST_CSP:-}"
+
+          export UI_AUTH_MODE="${BACKTEST_UI_AUTH_MODE:-}"
+          export UI_OIDC_CLIENT_ID="${BACKTEST_UI_OIDC_CLIENT_ID:-}"
+          export UI_OIDC_AUTHORITY="${BACKTEST_UI_OIDC_AUTHORITY:-}"
+          export UI_OIDC_SCOPES="${BACKTEST_UI_OIDC_SCOPES:-}"
+          export UI_API_BASE_URL="${BACKTEST_UI_API_BASE_URL:-}"
+
+          # Defaults for ARM probes and health endpoints (avoid empty envs causing probe disablement).
+          export SYSTEM_HEALTH_ARM_API_VERSION="${SYSTEM_HEALTH_ARM_API_VERSION:-2023-05-01}"
+          export SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS="${SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS:-5}"
+          export SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED="${SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED:-false}"
+          export SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION="${SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION:-2022-10-01}"
+          export SYSTEM_HEALTH_MONITOR_METRICS_ENABLED="${SYSTEM_HEALTH_MONITOR_METRICS_ENABLED:-false}"
+          export SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION="${SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION:-2018-01-01}"
+          export SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES="${SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES:-15}"
+          export SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL="${SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL:-PT1M}"
+          export SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION="${SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION:-Average}"
+          export SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED="${SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED:-false}"
+          export SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS="${SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS:-5}"
+          export SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES="${SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES:-15}"
+          export SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB="${SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB:-3}"
+
           export INGRESS_EXTERNAL="true"
           auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
           if [ "$auth_mode" = "none" ]; then
@@ -1218,7 +1268,9 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          POSTGRES_DSN_RANKING: ${{ secrets.POSTGRES_DSN_RANKING }}
         run: |
+          export POSTGRES_DSN_RANKING="${POSTGRES_DSN_RANKING:-$POSTGRES_DSN}"
           echo "Deploying Platinum Ranking Job from YAML..."
           envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml
           

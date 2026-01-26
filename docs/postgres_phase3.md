@@ -21,6 +21,9 @@ Phase 3 moves **backtest run-state** (queued/running/completed/failed + metadata
 - `POSTGRES_DSN` (secret) — DSN used by the backtest API to read/write run state.
 
 Recommended DSN format:
+- `postgresql://api_service:<password>@<server>.postgres.database.azure.com:5432/asset_allocation?sslmode=require`
+
+Legacy (older role name; still supported in migrations/provisioning):
 - `postgresql://backtest_service:<password>@<server>.postgres.database.azure.com:5432/asset_allocation?sslmode=require`
 
 ## Artifact storage (unchanged)

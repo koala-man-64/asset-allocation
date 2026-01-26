@@ -25,6 +25,11 @@ CREATE INDEX IF NOT EXISTS idx_backtest_runs_status
 
 DO $$
 BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_service') THEN
+    GRANT USAGE ON SCHEMA backtest TO api_service;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE backtest.runs TO api_service;
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backtest_service') THEN
     GRANT USAGE ON SCHEMA backtest TO backtest_service;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE backtest.runs TO backtest_service;

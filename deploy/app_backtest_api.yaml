@@ -19,7 +19,7 @@ properties:
     - name: api-key
       value: "${BACKTEST_API_KEY}"
     - name: backtest-pg-dsn
-      value: "${POSTGRES_DSN}"
+      value: "${POSTGRES_DSN_API}"
   template:
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}

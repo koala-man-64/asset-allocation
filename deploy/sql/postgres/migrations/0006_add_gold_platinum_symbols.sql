@@ -107,7 +107,16 @@ BEGIN
     ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ranking_writer;
   END IF;
 
-    -- Backtest service (read-only on gold generally, but potentially writable in future? sticking to explicit needs)
+  -- API service (read-only on gold generally; additional privileges handled in provisioning scripts)
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_service') THEN
+    GRANT USAGE ON SCHEMA gold TO api_service;
+    GRANT SELECT ON ALL TABLES IN SCHEMA gold TO api_service;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT ON TABLES TO api_service;
+
+    GRANT SELECT ON TABLE core.symbols TO api_service;
+  END IF;
+
+  -- Backtest service (legacy role name)
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backtest_service') THEN
     GRANT USAGE ON SCHEMA gold TO backtest_service;
     GRANT SELECT ON ALL TABLES IN SCHEMA gold TO backtest_service;

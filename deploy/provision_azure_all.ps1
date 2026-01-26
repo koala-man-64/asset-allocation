@@ -35,8 +35,8 @@ param(
   [switch]$CreateAppUsers,
   [string]$RankingWriterUser = "ranking_writer",
   [string]$RankingWriterPassword = $AdminPassword,
-  [string]$BacktestServiceUser = "backtest_service",
-  [string]$BacktestServicePassword = $AdminPassword,
+  [string]$ApiServiceUser = "api_service",
+  [string]$ApiServicePassword = $AdminPassword,
 
   [string]$SkuName = "standard_b1ms",
   [ValidateSet("", "Burstable", "GeneralPurpose", "MemoryOptimized")]
@@ -158,8 +158,8 @@ if (-not $SkipPostgres) {
     -CreateAppUsers:$CreateAppUsers `
     -RankingWriterUser $RankingWriterUser `
     -RankingWriterPassword $RankingWriterPassword `
-    -BacktestServiceUser $BacktestServiceUser `
-    -BacktestServicePassword $BacktestServicePassword `
+    -ApiServiceUser $ApiServiceUser `
+    -ApiServicePassword $ApiServicePassword `
     -SkuName $SkuName `
     -Tier $Tier `
     -StorageSizeGiB $StorageSizeGiB `
