@@ -32,7 +32,7 @@ import { Button } from '@/app/components/ui/button';
 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#eab308'];
 type ChartRow = Record<string, number | string>;
 
-export function RunComparePage() {
+export function BacktestComparePage() {
   const { selectedRuns, removeFromCart } = useUIStore();
   const [strategies, setStrategies] = useState<StrategyRun[]>([]);
   const [loading, setLoading] = useState(true);

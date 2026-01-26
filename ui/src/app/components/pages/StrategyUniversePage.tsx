@@ -27,7 +27,7 @@ import { LineChart, Line, ResponsiveContainer, ScatterChart, Scatter, XAxis, YAx
 import { MetricTooltip, InfoTooltip } from '@/app/components/ui/metric-tooltip';
 import { StrategyConfigModal } from '@/app/components/modals/StrategyConfigModal';
 
-export function OverviewPage() {
+export function StrategyUniversePage() {
   const { selectedRuns, addToCart, removeFromCart } = useUIStore();
   const { data: strategies = [], isLoading: loading, error } = useStrategiesQuery();
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyRun | null>(null);

@@ -40,38 +40,31 @@ interface NavSection {
   title: string;
   items: NavItem[];
 }
-
+title: 'PORTFOLIO CONSTRUCTION',
+  items: [
+    { path: '/portfolio', label: 'Allocation Builder', icon: Folder },
 
 const navSections: NavSection[] = [
   {
-    title: 'STRATEGY RESEARCH',
-    items: [
-      { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
-      { path: '/stock', label: 'Live Stock View', icon: TrendingUp },
-      { path: '/overview', label: 'Strategy Universe', icon: LayoutDashboard },
-      { path: '/compare', label: 'Backtest Compare', icon: GitCompare },
-      { path: '/deep-dive', label: 'Tear Sheet', icon: FileText },
-      { path: '/attribution', label: 'Return Attribution', icon: PieChart },
-      { path: '/robustness', label: 'Robustness', icon: Target },
-    ]
-  },
-  {
     title: 'PORTFOLIO CONSTRUCTION',
     items: [
-      { path: '/portfolio', label: 'Allocation Builder', icon: Folder },
+      { path: '/portfolio', label: 'Portfolio', icon: Folder },
     ]
   },
   {
     title: 'RISK & EXECUTION',
     items: [
-      { path: '/risk', label: 'Risk & Exposures', icon: Shield },
-      { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
+      { path: '/strategy-universe', label: 'Strategy Universe', icon: LayoutDashboard },
+      { path: '/backtest-compare', label: 'Backtest Compare', icon: GitCompare },
+      { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
+      { path: '/attribution', label: 'Attribution', icon: PieChart },
+      { path: '/robustness', label: 'Robustness', icon: Target },
     ]
   },
   {
     title: 'LIVE OPERATIONS',
     items: [
-      { path: '/signals', label: 'Signal Monitor', icon: Zap },
+      { path: '/signal-monitor', label: 'Signal Monitor', icon: Zap },
       { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
       { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
