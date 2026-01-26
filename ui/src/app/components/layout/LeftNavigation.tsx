@@ -45,15 +45,6 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    title: 'DATA PIPELINE',
-    items: [
-      { path: '/system-status', label: 'Pipeline Health', icon: Activity },
-      { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
-      { path: '/data', label: 'Data Lineage', icon: Database },
-      { path: '/data-tiers', label: 'Data Tiers', icon: Layers },
-    ]
-  },
-  {
     title: 'STRATEGY RESEARCH',
     items: [
       { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
@@ -82,8 +73,10 @@ const navSections: NavSection[] = [
     title: 'LIVE OPERATIONS',
     items: [
       { path: '/signals', label: 'Signal Monitor', icon: Zap },
+      { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alerts', icon: Bell },
+      { path: '/system-status', label: 'System Status', icon: Activity },
     ]
   }
 ];
