@@ -85,7 +85,7 @@ jobs:
         AZURE_CONTAINER_MARKET: "market-data"
         AZURE_CONTAINER_FINANCE: "finance-data"
         AZURE_CONTAINER_EARNINGS: "earnings-data"
-        AZURE_CONTAINER_TARGETS: "price-targets"
+        AZURE_CONTAINER_TARGETS: "price-target-data"
         AZURE_CONTAINER_COMMON: "common"
         AZURE_CONTAINER_RANKING: "ranking-data"
         AZURE_CONTAINER_BRONZE: "bronze"

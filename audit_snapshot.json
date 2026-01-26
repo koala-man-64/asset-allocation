@@ -1,9 +1,9 @@
 {
-  "generated_at_utc": "2026-01-22T00:03:54.403804+00:00",
+  "generated_at_utc": "2026-01-26T07:54:02.764658+00:00",
   "git": {
-    "branch": "vsc-postgres-integration",
-    "commit": "7924da971f37ebf3ac111d84f9ce60210fc442fc",
-    "status_porcelain": "M .github/workflows/deploy.yml\n M README.md\n M asset_allocation/backtest/service/app.py\n M asset_allocation/backtest/service/settings.py\n M asset_allocation/ui2.0/src/contexts/AuthContext.tsx\n M asset_allocation/ui2.0/src/services/backtestApi.ts\n M asset_allocation/ui2.0/src/vite-env.d.ts\n M backend/api/main.py\n M deploy/app_backtest_api.yaml\n M deploy/job_platinum_ranking.yaml\n M docs/backtest_service.md\n M requirements-dev.lock.txt\n M requirements.lock.txt\n M requirements.txt\n M scripts/ranking/signals.py\n?? asset_allocation/backtest/service/postgres_run_store.py\n?? backend/api/endpoints/aliases.py\n?? deploy/apply_postgres_migrations.ps1\n?? deploy/provision_azure_postgres.ps1\n?? deploy/sql/\n?? docs/postgres_phase1.md\n?? docs/postgres_phase2.md\n?? docs/postgres_phase3.md\n?? docs/postgres_phase4.md\n?? docs/signoffs/architecture_audit_report_merge_prep_ag_ui_wiring.md\n?? docs/signoffs/architecture_audit_report_phase1_postgres.md\n?? docs/signoffs/architecture_audit_report_phase2_postgres_signals.md\n?? docs/signoffs/architecture_audit_report_phase3_postgres_run_store.md\n?? docs/signoffs/code_hygiene_report_phase1_postgres.md\n?? docs/signoffs/code_hygiene_report_phase2_postgres_signals.md\n?? docs/signoffs/code_hygiene_report_phase3_postgres_run_store.md\n?? docs/signoffs/implementation_report_phase1_postgres.md\n?? docs/signoffs/implementation_report_phase2_postgres_signals.md\n?? docs/signoffs/implementation_report_phase3_postgres_run_store.md\n?? docs/signoffs/project_workflow_audit_report_phase1_postgres.md\n?? docs/signoffs/project_workflow_audit_report_phase2_postgres_signals.md\n?? docs/signoffs/project_workflow_audit_report_phase3_postgres_run_store.md\n?? docs/signoffs/qa_verification_report_phase1_postgres.md\n?? docs/signoffs/qa_verification_report_phase2_postgres_signals.md\n?? docs/signoffs/qa_verification_report_phase3_postgres_run_store.md\n?? scripts/common/postgres.py\n?? scripts/ranking/postgres_signals.py\n?? tests/backend/\n?? tests/backtest/test_postgres_run_store_mode.py"
+    "branch": "main",
+    "commit": "3614c5b551657c1bb4a07b3e9526e251b51f5c4a",
+    "status_porcelain": "M .github/workflows/deploy.yml\n M .github/workflows/run_tests.yml\n?? .pnpm-store/"
   },
   "github": {
     ".github/workflows": true,
@@ -29,12 +29,12 @@
     "LICENSE": false,
     "Makefile": false,
     "README.md": true,
-    "docker-compose.yml": false,
+    "docker-compose.yml": true,
     "pyproject.toml": true,
     "requirements-dev.txt": true,
     "requirements.txt": true
   },
-  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation - AG/asset-allocation",
+  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation",
   "workflows": {
     "files": [
       {
