@@ -9,13 +9,6 @@ import {
   TooltipTrigger,
 } from '@/app/components/ui/tooltip';
 import {
-  LayoutDashboard,
-  GitCompare,
-  FileText,
-  PieChart,
-  Shield,
-  DollarSign,
-  Target,
   Folder,
   ChevronLeft,
   ChevronRight,
@@ -43,28 +36,10 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    title: 'STRATEGY RESEARCH',
+    title: 'MARKET INTELLIGENCE',
     items: [
       { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
       { path: '/stock-detail', label: 'Live Stock View', icon: TrendingUp },
-      { path: '/strategy-universe', label: 'Strategy Universe', icon: LayoutDashboard },
-      { path: '/backtest-compare', label: 'Backtest Compare', icon: GitCompare },
-      { path: '/deep-dive', label: 'Deep Dive', icon: FileText },
-      { path: '/attribution', label: 'Attribution', icon: PieChart },
-      { path: '/robustness', label: 'Robustness', icon: Target },
-    ]
-  },
-  {
-    title: 'PORTFOLIO CONSTRUCTION',
-    items: [
-      { path: '/portfolio', label: 'Portfolio', icon: Folder },
-    ]
-  },
-  {
-    title: 'RISK & EXECUTION',
-    items: [
-      { path: '/risk', label: 'Risk & Exposures', icon: Shield },
-      { path: '/execution', label: 'Execution & Costs', icon: DollarSign },
     ]
   },
   {

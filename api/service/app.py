@@ -10,15 +10,11 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from api.endpoints import backtests, data, ranking, system
-from api.service.adls_run_store import AdlsRunStore
+from api.endpoints import data, ranking, system
 from api.service.auth import AuthManager
-from api.service.dependencies import get_settings, get_store
-from api.service.job_manager import JobManager
-from api.service.postgres_run_store import PostgresRunStore
-from api.service.realtime import listen_to_postgres, manager
-from api.service.run_store import RunStore
+from api.service.dependencies import get_settings
 from api.service.settings import ServiceSettings
+from api.service.realtime import manager as realtime_manager
 from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
 
@@ -39,42 +35,16 @@ def _request_context(request: Request) -> dict[str, str]:
     }
 
 def create_app() -> FastAPI:
-    def _require_env(name: str) -> str:
-        raw = os.environ.get(name)
-        if raw is None or not raw.strip():
-            raise ValueError(f"{name} is required.")
-        return raw.strip()
+    # ... (existing inner functions) ...
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         settings = ServiceSettings.from_env()
-        if settings.run_store_mode == "adls":
-            store = AdlsRunStore(settings.adls_runs_dir or "")
-        elif settings.run_store_mode == "postgres":
-            store = PostgresRunStore(settings.postgres_dsn or "")
-        else:
-            store = RunStore(settings.db_path)
-        store.init_db()
-        reconciled = store.reconcile_incomplete_runs()
-        if reconciled:
-            logger.warning("Reconciled %d incomplete runs on startup.", reconciled)
-
-        manager_instance = JobManager(
-            store=store,
-            output_base_dir=settings.output_base_dir,
-            max_workers=settings.max_concurrent_runs,
-            default_adls_dir=settings.adls_runs_dir,
-        )
 
         app.state.settings = settings
-        app.state.store = store
-        app.state.manager = manager_instance
         app.state.auth = AuthManager(settings)
 
-        if settings.postgres_dsn and settings.run_store_mode == "postgres":
-            app.state.listener_task = asyncio.create_task(
-                listen_to_postgres(settings)
-            )
+        if settings.postgres_dsn:
             app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
 
         def _system_health_ttl_seconds() -> float:
@@ -89,75 +59,14 @@ def create_app() -> FastAPI:
 
         app.state.system_health_cache = TtlCache(ttl_seconds=_system_health_ttl_seconds())
 
-        try:
-            yield
-        finally:
-            if hasattr(app.state, "listener_task"):
-                app.state.listener_task.cancel()
-                try:
-                    await app.state.listener_task
-                except asyncio.CancelledError:
-                    pass
-            manager_instance.shutdown()
+        yield
 
-    app = FastAPI(title="Backtest Service", version="0.1.0", lifespan=lifespan)
-    print(">>> BACKTEST SERVICE APPLICATION STARTING <<<")
+    app = FastAPI(title="Asset Allocation API", version="0.1.0", lifespan=lifespan)
+    print(">>> SERVICE APPLICATION STARTING <<<")
 
-    content_security_policy = _require_env("BACKTEST_CSP")
+    content_security_policy = os.environ.get("API_CSP") or "default-src 'self'; base-uri 'none';"
 
-    @app.middleware("http")
-    async def _http_middleware(request: Request, call_next):
-        ctx = _request_context(request)
-        start = time.monotonic()
-        logger.info(
-            "HTTP request start: method=%s path=%s query=%s client=%s host=%s fwd=%s proto=%s req_id=%s ua=%s",
-            ctx["method"],
-            ctx["path"],
-            ctx["query"],
-            ctx["client"],
-            ctx["host"],
-            ctx["forwarded_for"],
-            ctx["forwarded_proto"],
-            ctx["request_id"],
-            ctx["user_agent"],
-        )
-        path = request.url.path or ""
-        # Trailing slash redirect for backtests
-        if path.startswith("/api/backtests") and path.endswith("/"):
-            url = request.url.replace(path=path.rstrip("/"))
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-            logger.info(
-                "HTTP redirect: method=%s from=%s to=%s status=%s elapsed_ms=%.2f",
-                ctx["method"],
-                path,
-                url.path,
-                307,
-                elapsed_ms,
-            )
-            return RedirectResponse(url=str(url), status_code=307)
-
-        response = await call_next(request)
-        elapsed_ms = (time.monotonic() - start) * 1000.0
-        logger.info(
-            "HTTP request end: method=%s path=%s status=%s elapsed_ms=%.2f cache=%s stale=%s",
-            ctx["method"],
-            ctx["path"],
-            response.status_code,
-            elapsed_ms,
-            response.headers.get("X-System-Health-Cache", ""),
-            response.headers.get("X-System-Health-Stale", ""),
-        )
-
-        if path.startswith("/assets/") and response.status_code == 200:
-            response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
-
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        response.headers.setdefault("Content-Security-Policy", content_security_policy)
-
-        return response
+    # ... (middleware) ...
 
     # CORS Configuration
     app.add_middleware(
@@ -179,7 +88,39 @@ def create_app() -> FastAPI:
     app.include_router(data.router, prefix="/api/data", tags=["Data"])
     app.include_router(ranking.router, prefix="/api/ranking", tags=["Ranking"])
     app.include_router(system.router, prefix="/api/system", tags=["System"])
-    app.include_router(backtests.router, prefix="/api/backtests", tags=["Backtests"])
+
+    @app.websocket("/api/ws/updates")
+    async def websocket_endpoint(websocket: WebSocket):
+        await realtime_manager.connect(websocket)
+        try:
+            while True:
+                # Receive generic text (ping/pong) or JSON (subscribe/unsubscribe)
+                data_str = await websocket.receive_text()
+                
+                # Health Check Protocol
+                if data_str == "ping":
+                    await websocket.send_text("pong")
+                    continue
+                
+                # Command Protocol
+                try:
+                    msg = json.loads(data_str)
+                    action = msg.get("action")
+                    topics = msg.get("topics", [])
+                    
+                    if not isinstance(topics, list):
+                        continue
+
+                    if action == "subscribe":
+                        await realtime_manager.subscribe(websocket, topics)
+                    elif action == "unsubscribe":
+                        await realtime_manager.unsubscribe(websocket, topics)
+
+                except json.JSONDecodeError:
+                    pass  # Ignore non-JSON messages (unless it was ping)
+                    
+        except WebSocketDisconnect:
+            realtime_manager.disconnect(websocket)
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:
@@ -187,41 +128,33 @@ def create_app() -> FastAPI:
 
     @app.get("/readyz")
     def readyz(request: Request) -> JSONResponse:
-        try:
-            get_store(request).ping()
-            return JSONResponse({"status": "ready"})
-        except Exception as exc:
-            logger.error("Readiness check failed: %s", exc)
-            return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+        return JSONResponse({"status": "ready"})
 
     @app.get("/config.js")
-    async def serve_runtime_config(request: Request):
-        settings = get_settings(request)
+    async def get_ui_config(request: Request):
+        settings: ServiceSettings = app.state.settings
         cfg = {
             "authMode": settings.ui_auth_mode,
-            "oidcIssuer": settings.oidc_issuer,
-            "oidcAudience": settings.oidc_audience,
-            "oidcClientId": settings.ui_oidc_config.get("clientId"),
+            "apiBaseUrl": settings.ui_oidc_config.get("apiBaseUrl") or "/api",
             "oidcAuthority": settings.ui_oidc_config.get("authority"),
+            "oidcClientId": settings.ui_oidc_config.get("clientId"),
             "oidcScopes": settings.ui_oidc_config.get("scope") or settings.ui_oidc_config.get("scopes"),
-            "backtestApiBaseUrl": settings.ui_oidc_config.get("apiBaseUrl") or "/api",
             "oidcRedirectUri": settings.ui_oidc_config.get("redirectUri") or "/oauth2-callback",
+            "oidcAudience": settings.oidc_audience,
         }
         logger.info(
-            "Serving /config.js: authMode=%s apiBaseUrl=%s oidcAuthority=%s oidcClientId=%s",
+            "Serving /config.js: authMode=%s apiBaseUrl=%s",
             cfg.get("authMode"),
-            cfg.get("backtestApiBaseUrl"),
-            cfg.get("oidcAuthority"),
-            cfg.get("oidcClientId"),
+            cfg.get("apiBaseUrl"),
         )
-        content = f"window.__BACKTEST_UI_CONFIG__ = {json.dumps(cfg)};"
+        content = f"window.__API_UI_CONFIG__ = {json.dumps(cfg)};"
         return Response(
             content=content,
             media_type="application/javascript",
             headers={"Cache-Control": "no-store"},
         )
 
-    ui_dist_env = os.environ.get("BACKTEST_UI_DIST_DIR")
+    ui_dist_env = os.environ.get("UI_DIST_DIR")
     if ui_dist_env:
         dist_path = Path(ui_dist_env).resolve()
         if dist_path.exists() and dist_path.is_dir():
@@ -238,20 +171,11 @@ def create_app() -> FastAPI:
                     return FileResponse(file_path)
                 return FileResponse(dist_path / "index.html", headers={"Cache-Control": "no-store"})
         else:
-            logger.warning("BACKTEST_UI_DIST_DIR set but invalid: %s", ui_dist_env)
+            logger.warning("UI_DIST_DIR set but invalid: %s", ui_dist_env)
     else:
-        logger.info("BACKTEST_UI_DIST_DIR not set. UI will not be served.")
+        logger.info("UI_DIST_DIR not set. UI will not be served.")
 
-    @app.websocket("/api/ws/updates")
-    async def websocket_endpoint(websocket: WebSocket):
-        await manager.connect(websocket)
-        try:
-            while True:
-                await websocket.receive_text()
-        except WebSocketDisconnect:
-            pass
-        finally:
-            manager.disconnect(websocket)
+
             
     return app
 

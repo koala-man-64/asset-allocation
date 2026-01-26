@@ -75,12 +75,10 @@ def test_make_job_portal_url_uses_resource_anchor() -> None:
 
 
 def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
-    monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
-    monkeypatch.delenv("BACKTEST_API_KEY", raising=False)
-    monkeypatch.setenv("BACKTEST_AUTH_MODE", "none")
-    monkeypatch.delenv("BACKTEST_OIDC_ISSUER", raising=False)
-    monkeypatch.delenv("BACKTEST_OIDC_AUDIENCE", raising=False)
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
+    monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
     app = create_app()
     with TestClient(app) as client:
@@ -91,18 +89,16 @@ def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BACKTEST_OUTPUT_DIR", str(tmp_path / "out"))
-    monkeypatch.setenv("BACKTEST_DB_PATH", str(tmp_path / "runs.sqlite3"))
-    monkeypatch.setenv("BACKTEST_API_KEY", "secret")
-    monkeypatch.setenv("BACKTEST_AUTH_MODE", "api_key")
-    monkeypatch.delenv("BACKTEST_OIDC_ISSUER", raising=False)
-    monkeypatch.delenv("BACKTEST_OIDC_AUDIENCE", raising=False)
+    monkeypatch.setenv("API_KEY", "secret")
+    monkeypatch.setenv("API_AUTH_MODE", "api_key")
+    monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
+    monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
     app = create_app()
     with TestClient(app) as client:
         resp = client.get("/api/system/health")
         assert resp.status_code == 401
-
+        
         resp2 = client.get("/api/system/health", headers={"X-API-Key": "secret"})
         assert resp2.status_code == 200
 

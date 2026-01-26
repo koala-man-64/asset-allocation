@@ -9,29 +9,29 @@ import type {
   RiskMetrics,
 } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
-import type { JobLogsResponse } from '@/services/backtestApi';
-import type { StockScreenerResponse } from '@/services/backtestApi';
-import { backtestApi } from '@/services/backtestApi';
+import type { JobLogsResponse } from '@/services/apiService';
+import type { StockScreenerResponse } from '@/services/apiService';
+import { apiService } from '@/services/apiService';
 
 export type { FinanceData, MarketData };
 
 export const DataService = {
   getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
-    return backtestApi.getMarketData(ticker, layer);
+    return apiService.getMarketData(ticker, layer);
   },
 
   getFinanceData(ticker: string, subDomain: string, layer: 'silver' | 'gold' = 'silver'): Promise<FinanceData[]> {
-    return backtestApi.getFinanceData(ticker, subDomain, layer);
+    return apiService.getFinanceData(ticker, subDomain, layer);
   },
 
   getStrategies(): Promise<StrategyRun[]> {
-    return backtestApi.getStrategies();
+    return apiService.getStrategies();
   },
 
   async getSystemHealth(): Promise<SystemHealth> {
     console.info('[DataService] getSystemHealth');
     try {
-      const data = await backtestApi.getSystemHealth();
+      const data = await apiService.getSystemHealth();
       console.info('[DataService] getSystemHealth success', {
         overall: data?.overall,
         layers: data?.dataLayers?.length ?? 0,
@@ -45,15 +45,15 @@ export const DataService = {
   },
 
   getLineage(): Promise<unknown> {
-    return backtestApi.getLineage();
+    return apiService.getLineage();
   },
 
   getSignals(params: { date?: string; limit?: number } = {}): Promise<TradingSignal[]> {
-    return backtestApi.getSignals(params);
+    return apiService.getSignals(params);
   },
 
   getStressEvents(): Promise<StressEvent[]> {
-    return backtestApi.getStressEvents();
+    return apiService.getStressEvents();
   },
 
   async getPositions(_strategyId?: string): Promise<Position[]> {
@@ -85,13 +85,13 @@ export const DataService = {
     params: { runs?: number } = {},
     signal?: AbortSignal,
   ): Promise<JobLogsResponse> {
-    return backtestApi.getJobLogs(jobName, params, signal);
+    return apiService.getJobLogs(jobName, params, signal);
   },
 
   getStockScreener(
     params: { q?: string; limit?: number; offset?: number; asOf?: string; sort?: string; direction?: 'asc' | 'desc' } = {},
     signal?: AbortSignal,
   ): Promise<StockScreenerResponse> {
-    return backtestApi.getStockScreener(params, signal);
+    return apiService.getStockScreener(params, signal);
   },
 };

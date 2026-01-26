@@ -48,56 +48,42 @@ properties:
         value: "${AZURE_CONTAINER_RANKING}"
       - name: AZURE_CONTAINER_COMMON
         value: "${AZURE_CONTAINER_COMMON}"
-      - name: BACKTEST_API_KEY
+      - name: API_KEY
         secretRef: api-key
-      - name: BACKTEST_API_KEY_HEADER
+      - name: API_KEY_HEADER
         value: "X-API-Key"
       - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
-      - name: BACKTEST_AUTH_MODE
-        value: "${BACKTEST_AUTH_MODE}"
-      - name: BACKTEST_OIDC_ISSUER
-        value: "${BACKTEST_OIDC_ISSUER}"
-      - name: BACKTEST_OIDC_AUDIENCE
-        value: "${BACKTEST_OIDC_AUDIENCE}"
-      - name: BACKTEST_OIDC_JWKS_URL
-        value: "${BACKTEST_OIDC_JWKS_URL}"
-      - name: BACKTEST_OIDC_REQUIRED_SCOPES
-        value: "${BACKTEST_OIDC_REQUIRED_SCOPES}"
-      - name: BACKTEST_OIDC_REQUIRED_ROLES
-        value: "${BACKTEST_OIDC_REQUIRED_ROLES}"
-      - name: BACKTEST_CSP
-        value: "${BACKTEST_CSP}"
+      - name: API_AUTH_MODE
+        value: "${API_AUTH_MODE}"
+      - name: API_OIDC_ISSUER
+        value: "${API_OIDC_ISSUER}"
+      - name: API_OIDC_AUDIENCE
+        value: "${API_OIDC_AUDIENCE}"
+      - name: API_OIDC_JWKS_URL
+        value: "${API_OIDC_JWKS_URL}"
+      - name: API_OIDC_REQUIRED_SCOPES
+        value: "${API_OIDC_REQUIRED_SCOPES}"
+      - name: API_OIDC_REQUIRED_ROLES
+        value: "${API_OIDC_REQUIRED_ROLES}"
+      - name: API_CSP
+        value: "${API_CSP}"
       - name: SYSTEM_HEALTH_TTL_SECONDS
         value: "10"
       - name: SYSTEM_HEALTH_MAX_AGE_SECONDS
         value: "129600"
       - name: SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS
         value: "259200"
-      - name: BACKTEST_UI_AUTH_MODE
-        value: "${BACKTEST_UI_AUTH_MODE}"
-      - name: BACKTEST_UI_OIDC_CLIENT_ID
-        value: "${BACKTEST_UI_OIDC_CLIENT_ID}"
-      - name: BACKTEST_UI_OIDC_AUTHORITY
-        value: "${BACKTEST_UI_OIDC_AUTHORITY}"
-      - name: BACKTEST_UI_OIDC_SCOPES
-        value: "${BACKTEST_UI_OIDC_SCOPES}"
-      - name: BACKTEST_UI_API_BASE_URL
-        value: "${BACKTEST_UI_API_BASE_URL}"
-      - name: BACKTEST_MAX_CONCURRENT
-        value: "1"
-      - name: BACKTEST_ALLOW_LOCAL_DATA
-        value: "false"
-      - name: BACKTEST_OUTPUT_DIR
-        value: "/tmp/backtest_results"
-      - name: BACKTEST_DB_PATH
-        value: "/tmp/backtest_results/runs.sqlite3"
-      - name: BACKTEST_ADLS_CONTAINER_ALLOWLIST
-        value: "bronze,silver,gold,platinum,ranking-data,common"
-      - name: BACKTEST_RUN_STORE_MODE
-        value: "postgres"
-      - name: BACKTEST_ADLS_RUNS_DIR
-        value: "platinum/backtest-api-results"
+      - name: UI_AUTH_MODE
+        value: "${UI_AUTH_MODE}"
+      - name: UI_OIDC_CLIENT_ID
+        value: "${UI_OIDC_CLIENT_ID}"
+      - name: UI_OIDC_AUTHORITY
+        value: "${UI_OIDC_AUTHORITY}"
+      - name: UI_OIDC_SCOPES
+        value: "${UI_OIDC_SCOPES}"
+      - name: UI_API_BASE_URL
+        value: "${UI_API_BASE_URL}"
       - name: LOG_FORMAT
         value: "JSON"
       - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID

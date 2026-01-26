@@ -1,0 +1,162 @@
+param (
+    [string]$EnvFilePath = "$PSScriptRoot\..\.env",
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+
+if (-not (Test-Path $EnvFilePath)) {
+    Write-Error "Error: .env file not found at $EnvFilePath"
+    exit 1
+}
+
+# Check if gh CLI is installed
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Write-Error "Error: GitHub CLI (gh) is not installed or not in PATH."
+    exit 1
+}
+
+Write-Host "Reading local .env from: $EnvFilePath"
+if ($DryRun) { Write-Host "Running in DRY RUN mode (no changes will be made)..." -ForegroundColor Yellow }
+
+$lines = Get-Content $EnvFilePath
+$ExpectedSecrets = @()
+$ExpectedVars = @()
+
+# These patterns identify CONFIGURATION variables (GitHub Variables).
+# Anything NOT matching these patterns is treated as a SECRET.
+$ConfigPatterns = @(
+    "^AZURE_CONTAINER_",
+    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET|RANKING)_JOB$",
+    "^SYSTEM_HEALTH_",
+    "^HEADLESS_MODE$",
+    "^DISABLE_DOTENV$",
+    "^LOG_",
+    "^TEST_MODE$",
+    "^API_AUTH_MODE$",
+    "^API_CSP$",
+    "^API_OIDC_",
+    "^UI_"
+)
+
+# -------------------------------------------------------------------------
+# 1. PARSE .ENV
+# -------------------------------------------------------------------------
+foreach ($line in $lines) {
+    $line = $line.Trim()
+    if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) { continue }
+
+    if ($line -match "^([^=]+)=(.*)$") {
+        $key = $matches[1].Trim()
+        $value = $matches[2].Trim()
+
+        # Remove surrounding quotes for value
+        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or 
+            ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+
+        # Classify as Config (Var) or Secret
+        $isConfig = $false
+        foreach ($pattern in $ConfigPatterns) {
+            if ($key -match $pattern) {
+                $isConfig = $true
+                break
+            }
+        }
+
+        if ($isConfig) {
+            # It's a Variable
+            if ($DryRun) {
+                Write-Host "[DRY RUN] Would set VARIABLE: $key" -ForegroundColor Cyan
+            } else {
+                Write-Host "Setting VARIABLE: $key" -NoNewline
+                try {
+                    $value | gh variable set "$key" 
+                    Write-Host " [OK]" -ForegroundColor Green
+                } catch {
+                    Write-Host " [FAILED]" -ForegroundColor Red
+                    Write-Error $_
+                }
+            }
+            $ExpectedVars += $key
+        } else {
+            # It's a Secret
+            if ($DryRun) {
+                Write-Host "[DRY RUN] Would set SECRET:   $key" -ForegroundColor Magenta
+            } else {
+                Write-Host "Setting SECRET:   $key" -NoNewline
+                try {
+                    $value | gh secret set "$key" 
+                    Write-Host " [OK]" -ForegroundColor Green
+                } catch {
+                    Write-Host " [FAILED]" -ForegroundColor Red
+                    Write-Error $_
+                }
+            }
+            $ExpectedSecrets += $key
+        }
+    }
+}
+
+# -------------------------------------------------------------------------
+# 2. PRUNE SECRETS
+# -------------------------------------------------------------------------
+Write-Host "`n----------------------------------------"
+Write-Host "Checking for unexpected SECRETS in GitHub..."
+$remoteSecrets = gh secret list --json name --jq ".[].name" 2>$null
+if (-not $remoteSecrets) { $remoteSecrets = @() }
+
+$secretsToDelete = @()
+foreach ($s in $remoteSecrets) {
+    if ($ExpectedSecrets -notcontains $s) {
+        $secretsToDelete += $s
+    }
+}
+
+if ($secretsToDelete.Count -gt 0) {
+    $secretsToDelete | ForEach-Object { Write-Host " - [UNEXPECTED SECRET] $_" -ForegroundColor Red }
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Would delete these secrets." -ForegroundColor Cyan
+    } else {
+        foreach ($s in $secretsToDelete) {
+            Write-Host "Deleting secret: $s..." -NoNewline
+            gh secret delete "$s"
+            Write-Host " [OK]" -ForegroundColor Green
+        }
+    }
+} else {
+    Write-Host "No unexpected secrets found." -ForegroundColor Green
+}
+
+# -------------------------------------------------------------------------
+# 3. PRUNE VARIABLES
+# -------------------------------------------------------------------------
+Write-Host "`n----------------------------------------"
+Write-Host "Checking for unexpected VARIABLES in GitHub..."
+$remoteVars = gh variable list --json name --jq ".[].name" 2>$null
+if (-not $remoteVars) { $remoteVars = @() }
+
+$varsToDelete = @()
+foreach ($v in $remoteVars) {
+    if ($ExpectedVars -notcontains $v) {
+        $varsToDelete += $v
+    }
+}
+
+if ($varsToDelete.Count -gt 0) {
+    $varsToDelete | ForEach-Object { Write-Host " - [UNEXPECTED VARIABLE] $_" -ForegroundColor Red }
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Would delete these variables." -ForegroundColor Cyan
+    } else {
+        foreach ($v in $varsToDelete) {
+            Write-Host "Deleting variable: $v..." -NoNewline
+            gh variable delete "$v"
+            Write-Host " [OK]" -ForegroundColor Green
+        }
+    }
+} else {
+    Write-Host "No unexpected variables found." -ForegroundColor Green
+}
+
+Write-Host "`nSync complete." -ForegroundColor Green

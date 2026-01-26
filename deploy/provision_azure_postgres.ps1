@@ -18,8 +18,8 @@ param(
   [switch]$CreateAppUsers,
   [string]$RankingWriterUser = "ranking_writer",
   [string]$RankingWriterPassword = $AdminPassword,
-  [string]$BacktestServiceUser = "backtest_service",
-  [string]$BacktestServicePassword = $AdminPassword,
+  [string]$ApiServiceUser = "api_service",
+  [string]$ApiServicePassword = $AdminPassword,
 
   # Burstable SKUs (standard_b*) require `--tier Burstable`.
   [string]$SkuName = "standard_b1ms",
@@ -219,7 +219,7 @@ Assert-CommandExists -Name "az"
 
 Assert-PgIdentifier -Value $DatabaseName -Label "DatabaseName"
 Assert-PgIdentifier -Value $RankingWriterUser -Label "RankingWriterUser"
-Assert-PgIdentifier -Value $BacktestServiceUser -Label "BacktestServiceUser"
+Assert-PgIdentifier -Value $ApiServiceUser -Label "ApiServiceUser"
 
 $SkuName = $SkuName.ToLowerInvariant().Trim()
 $selectedLocation = $Location
@@ -440,7 +440,7 @@ if ($ApplyMigrations) {
 
 if ($CreateAppUsers) {
   if (-not $RankingWriterPassword) { $RankingWriterPassword = New-RandomPassword -Length 32 }
-  if (-not $BacktestServicePassword) { $BacktestServicePassword = New-RandomPassword -Length 32 }
+  if (-not $ApiServicePassword) { $ApiServicePassword = New-RandomPassword -Length 32 }
 
   Write-Host "Creating least-privileged application roles..."
 
@@ -450,16 +450,16 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$RankingWriterUser') THEN
     CREATE ROLE $RankingWriterUser LOGIN PASSWORD '$RankingWriterPassword';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$BacktestServiceUser') THEN
-    CREATE ROLE $BacktestServiceUser LOGIN PASSWORD '$BacktestServicePassword';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$ApiServiceUser') THEN
+    CREATE ROLE $ApiServiceUser LOGIN PASSWORD '$ApiServicePassword';
   END IF;
 END
 \$\$;
 
 ALTER ROLE $RankingWriterUser WITH PASSWORD '$RankingWriterPassword';
-ALTER ROLE $BacktestServiceUser WITH PASSWORD '$BacktestServicePassword';
+ALTER ROLE $ApiServiceUser WITH PASSWORD '$ApiServicePassword';
 
-GRANT CONNECT ON DATABASE $DatabaseName TO $RankingWriterUser, $BacktestServiceUser;
+GRANT CONNECT ON DATABASE $DatabaseName TO $RankingWriterUser, $ApiServiceUser;
 
   CREATE SCHEMA IF NOT EXISTS gold;
   CREATE SCHEMA IF NOT EXISTS platinum;
@@ -468,9 +468,8 @@ GRANT USAGE, CREATE ON SCHEMA ranking TO $RankingWriterUser;
 GRANT USAGE, CREATE ON SCHEMA gold TO $RankingWriterUser;
 GRANT USAGE, CREATE ON SCHEMA platinum TO $RankingWriterUser;
 
-GRANT USAGE, CREATE ON SCHEMA backtest TO $BacktestServiceUser;
-GRANT USAGE ON SCHEMA gold TO $BacktestServiceUser;
-GRANT USAGE ON SCHEMA platinum TO $BacktestServiceUser;
+GRANT USAGE ON SCHEMA gold TO $ApiServiceUser;
+GRANT USAGE ON SCHEMA platinum TO $ApiServiceUser;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
@@ -481,24 +480,21 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES
 ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA backtest GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $BacktestServiceUser;
-ALTER DEFAULT PRIVILEGES IN SCHEMA backtest GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $BacktestServiceUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT ON TABLES TO $ApiServiceUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $ApiServiceUser;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT ON TABLES TO $BacktestServiceUser;
-ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $BacktestServiceUser;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT ON TABLES TO $BacktestServiceUser;
-ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $BacktestServiceUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT ON TABLES TO $ApiServiceUser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $ApiServiceUser;
 "@
 
   Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", $sql)
 }
 
 $rankingWriterDsn = ""
-$backtestServiceDsn = ""
+$apiServiceDsn = ""
 if ($CreateAppUsers) {
   $rankingWriterDsn = "postgresql://$RankingWriterUser`:$RankingWriterPassword@$fqdn`:5432/${DatabaseName}?sslmode=require"
-  $backtestServiceDsn = "postgresql://$BacktestServiceUser`:$BacktestServicePassword@$fqdn`:5432/${DatabaseName}?sslmode=require"
+  $apiServiceDsn = "postgresql://$ApiServiceUser`:$ApiServicePassword@$fqdn`:5432/${DatabaseName}?sslmode=require"
 }
 
 $outputs = [ordered]@{
@@ -514,8 +510,8 @@ $outputs = [ordered]@{
     [ordered]@{
       rankingWriterUser       = $RankingWriterUser
       rankingWriterPassword   = if ($EmitSecrets) { $RankingWriterPassword } else { "<redacted>" }
-      backtestServiceUser     = $BacktestServiceUser
-      backtestServicePassword = if ($EmitSecrets) { $BacktestServicePassword } else { "<redacted>" }
+      apiServiceUser          = $ApiServiceUser
+      apiServicePassword      = if ($EmitSecrets) { $ApiServicePassword } else { "<redacted>" }
     }
   }
   else {
@@ -525,7 +521,7 @@ $outputs = [ordered]@{
     [ordered]@{
       adminDsn           = if ($adminDsn) { $adminDsn } else { "<unavailable>" }
       rankingWriterDsn   = if ($rankingWriterDsn) { $rankingWriterDsn } else { "<not_created>" }
-      backtestServiceDsn = if ($backtestServiceDsn) { $backtestServiceDsn } else { "<not_created>" }
+      apiServiceDsn      = if ($apiServiceDsn) { $apiServiceDsn } else { "<not_created>" }
     }
   }
   else {

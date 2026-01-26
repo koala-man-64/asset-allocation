@@ -6,25 +6,46 @@ param(
   [string]$ResourceGroup = "AssetAllocationRG",
 
   [string]$StorageAccountName = "assetallocstorage001",
-  [string[]]$StorageContainers = @(
-    "bronze",
-    "silver",
-    "gold",
-    "platinum",
-    "common"
-  ),
 
+  [string[]]$StorageContainers = @(),
   [string]$AcrName = "assetallocationacr",
   [switch]$EnableAcrAdmin,
   [switch]$EmitSecrets,
   [switch]$GrantAcrPullToAcaResources,
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
-  [string]$ContainerAppsEnvironmentName = "asset-allocation-env"
+  [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
+  [string]$AzureClientId = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Load containers from .env if not specified
+if ($StorageContainers.Count -eq 0) {
+    $envPath = "$PSScriptRoot\..\.env"
+    if (Test-Path $envPath) {
+        Write-Host "Reading container names from .env..."
+        $envLines = Get-Content $envPath
+        $containers = @()
+        foreach ($line in $envLines) {
+            if ($line -match "^AZURE_CONTAINER_[^=]+=(.*)$") {
+                $val = $matches[1].Trim('"').Trim("'")
+                Write-Host "Found container: $val" -ForegroundColor Cyan
+                $containers += $val
+            }
+        }
+        if ($containers.Count -gt 0) {
+            $StorageContainers = $containers | Select-Object -Unique
+        }
+    }
+}
+
+# If still empty, fall back to defaults (or error? original script had defaults)
+if ($StorageContainers.Count -eq 0) {
+    Write-Warning "No containers found in .env and none provided. Using defaults."
+    $StorageContainers = @("bronze", "silver", "gold", "platinum", "common")
+}
 
 function Assert-CommandExists {
   param([Parameter(Mandatory = $true)][string]$Name)
@@ -91,6 +112,42 @@ if (-not $SubscriptionId) {
 
 if (-not $SubscriptionId) {
   throw "Missing SubscriptionId. Pass -SubscriptionId or set SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID (or AZURE_SUBSCRIPTION_ID or SUBSCRIPTION_ID) in .env."
+}
+
+if ($AzureClientId) {
+    Write-Host "Checking for existing Federated Credential 'github-actions-production'..."
+    $paramsFile = "credential.json"
+    $subject = "repo:koala-man-64/asset-allocation:environment:production"
+    
+    # Check if exists
+    $creds = az ad app federated-credential list --id $AzureClientId --query "[?name=='github-actions-production']" -o json | ConvertFrom-Json
+    
+    if (-not $creds) {
+        Write-Host "Creating Federated Credential 'github-actions-production'..."
+        $json = @{
+            name = "github-actions-production"
+            issuer = "https://token.actions.githubusercontent.com"
+            subject = $subject
+            description = "GitHub Actions Production Environment"
+            audiences = @("api://AzureADTokenExchange")
+        } | ConvertTo-Json -Compress
+
+        Set-Content -Path $paramsFile -Value $json
+        
+        try {
+            az ad app federated-credential create --id $AzureClientId --parameters $paramsFile 2>&1
+            Write-Host "Successfully created federated credential."
+        }
+        catch {
+            Write-Error "Failed to create federated credential: $_"
+            if (Test-Path $paramsFile) { Remove-Item $paramsFile }
+            throw
+        }
+        
+        if (Test-Path $paramsFile) { Remove-Item $paramsFile }
+    } else {
+        Write-Host "Federated Credential 'github-actions-production' already exists."
+    }
 }
 
 Write-Host "Using subscription: $SubscriptionId"
