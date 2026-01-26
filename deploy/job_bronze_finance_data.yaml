@@ -75,7 +75,7 @@ properties:
       image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
       imageType: ContainerImage
       name: bronze-finance-job
-      command: ["python", "-m", "scripts.finance_data.bronze_finance_data"]
+      command: ["python", "-m", "tasks.finance_data.bronze_finance_data"]
       resources:
         cpu: 1.0
         memory: 2Gi

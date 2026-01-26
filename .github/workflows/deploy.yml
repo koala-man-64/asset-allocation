@@ -3,7 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - '**'
+      - main
   workflow_dispatch:
     inputs:
       force_redeploy:
@@ -58,7 +58,17 @@ env:
   AZURE_CONTAINER_COMMON: common
 
 jobs:
+  tests:
+    uses: ./.github/workflows/run_tests.yml
+    secrets: inherit
+    permissions:
+      contents: read
+
   build-and-deploy:
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
     runs-on: ubuntu-22.04
     environment: production
 
@@ -77,8 +87,12 @@ jobs:
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
+          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
+          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
+          BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
           BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
           set -euo pipefail
@@ -101,9 +115,29 @@ jobs:
           require_secret YAHOO_USERNAME
           require_secret YAHOO_PASSWORD
           require_secret NASDAQ_API_KEY
-          require_secret POSTGRES_DSN
-          require_secret BACKTEST_API_KEY
+          require_secret RANKING_POSTGRES_DSN
+          require_secret BACKTEST_AUTH_MODE
+          require_secret BACKTEST_POSTGRES_DSN
           require_secret BACKTEST_CSP
+
+          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          case "$auth_mode" in
+            none|api_key|oidc|api_key_or_oidc)
+              ;;
+            *)
+              echo "::error::Invalid BACKTEST_AUTH_MODE (expected none|api_key|oidc|api_key_or_oidc)"
+              exit 1
+              ;;
+          esac
+
+          if [ "$auth_mode" = "api_key" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
+            require_secret BACKTEST_API_KEY
+          fi
+
+          if [ "$auth_mode" = "oidc" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
+            require_secret BACKTEST_OIDC_ISSUER
+            require_secret BACKTEST_OIDC_AUDIENCE
+          fi
 
           python3 - <<'PY'
           import os
@@ -140,20 +174,41 @@ jobs:
         with:
           filters: |
             bronze_market:
-              - "scripts/common/**"
-              - "scripts/market_data/bronze_market_data.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/market_data/config.py"
+              - "tasks/market_data/bronze_market_data.py"
               - "deploy/job_bronze_market_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_market:
-              - "scripts/common/**"
-              - "scripts/market_data/silver_market_data.py"
-              - "scripts/market_data/materialize_silver_market_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/market_data/config.py"
+              - "tasks/market_data/silver_market_data.py"
+              - "tasks/market_data/materialize_silver_market_by_date.py"
               - "deploy/job_silver_market_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_market:
-              - "scripts/common/**"
-              - "scripts/market_data/gold_market_data.py"
-              - "scripts/market_data/materialize_gold_market_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/market_data/config.py"
+              - "tasks/market_data/gold_market_data.py"
+              - "tasks/market_data/materialize_gold_market_by_date.py"
               - "deploy/job_gold_market_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -163,20 +218,41 @@ jobs:
         with:
           filters: |
             bronze_finance:
-              - "scripts/common/**"
-              - "scripts/finance_data/bronze_finance_data.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/finance_data/config.py"
+              - "tasks/finance_data/bronze_finance_data.py"
               - "deploy/job_bronze_finance_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_finance:
-              - "scripts/common/**"
-              - "scripts/finance_data/silver_finance_data.py"
-              - "scripts/finance_data/materialize_silver_finance_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/finance_data/config.py"
+              - "tasks/finance_data/silver_finance_data.py"
+              - "tasks/finance_data/materialize_silver_finance_by_date.py"
               - "deploy/job_silver_finance_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_finance:
-              - "scripts/common/**"
-              - "scripts/finance_data/gold_finance_data.py"
-              - "scripts/finance_data/materialize_gold_finance_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/finance_data/config.py"
+              - "tasks/finance_data/gold_finance_data.py"
+              - "tasks/finance_data/materialize_gold_finance_by_date.py"
               - "deploy/job_gold_finance_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -186,20 +262,41 @@ jobs:
         with:
           filters: |
             bronze_earnings:
-              - "scripts/common/**"
-              - "scripts/earnings_data/bronze_earnings_data.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/earnings_data/config.py"
+              - "tasks/earnings_data/bronze_earnings_data.py"
               - "deploy/job_bronze_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_earnings:
-              - "scripts/common/**"
-              - "scripts/earnings_data/silver_earnings_data.py"
-              - "scripts/earnings_data/materialize_silver_earnings_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/earnings_data/config.py"
+              - "tasks/earnings_data/silver_earnings_data.py"
+              - "tasks/earnings_data/materialize_silver_earnings_by_date.py"
               - "deploy/job_silver_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_earnings:
-              - "scripts/common/**"
-              - "scripts/earnings_data/gold_earnings_data.py"
-              - "scripts/earnings_data/materialize_gold_earnings_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/earnings_data/config.py"
+              - "tasks/earnings_data/gold_earnings_data.py"
+              - "tasks/earnings_data/materialize_gold_earnings_by_date.py"
               - "deploy/job_gold_earnings_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -209,20 +306,41 @@ jobs:
         with:
           filters: |
             bronze_price_target:
-              - "scripts/common/**"
-              - "scripts/price_target_data/bronze_price_target_data.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/price_target_data/config.py"
+              - "tasks/price_target_data/bronze_price_target_data.py"
               - "deploy/job_bronze_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
             silver_price_target:
-              - "scripts/common/**"
-              - "scripts/price_target_data/silver_price_target_data.py"
-              - "scripts/price_target_data/materialize_silver_price_target_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/price_target_data/config.py"
+              - "tasks/price_target_data/silver_price_target_data.py"
+              - "tasks/price_target_data/materialize_silver_price_target_by_date.py"
               - "deploy/job_silver_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_price_target:
-              - "scripts/common/**"
-              - "scripts/price_target_data/gold_price_target_data.py"
-              - "scripts/price_target_data/materialize_gold_price_target_by_date.py"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/price_target_data/config.py"
+              - "tasks/price_target_data/gold_price_target_data.py"
+              - "tasks/price_target_data/materialize_gold_price_target_by_date.py"
               - "deploy/job_gold_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
 
@@ -232,8 +350,14 @@ jobs:
         with:
           filters: |
             PLATINUM_RANKING_JOB:
-              - "scripts/common/**"
-              - "scripts/ranking/**"
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "alpaca/**"
+              - "tasks/common/**"
+              - "tasks/ranking/**"
               - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 

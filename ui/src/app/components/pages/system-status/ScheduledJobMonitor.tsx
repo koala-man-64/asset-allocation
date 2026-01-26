@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/too
 
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import type { DataLayer, JobRun } from '@/types/strategy';
-import { formatTimestamp, getStatusBadge } from './SystemStatusHelpers';
+import { formatSchedule, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge } from './SystemStatusHelpers';
 
 import { CalendarDays, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
 
@@ -23,11 +23,9 @@ interface ScheduledJobMonitorProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobLinks?: Record<string, string>;
-  onViewJobLogs?: (jobName: string) => void;
-  className?: string;
 }
 
-export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onViewJobLogs, className }: ScheduledJobMonitorProps) {
+export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
 
   const jobIndex = useMemo(() => {
@@ -74,7 +72,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onV
   }, [dataLayers, jobIndex]);
 
   return (
-    <Card className={`h-full flex flex-col ${className || ''}`}>
+    <Card className="h-full flex flex-col">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -129,26 +127,47 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onV
                   <TableCell className="py-2">{getStatusBadge(job.jobRun?.status || 'unknown')}</TableCell>
                   <TableCell className="py-2 font-mono text-sm">{formatTimestamp(job.jobRun?.startTime || null)}</TableCell>
                   <TableCell className="py-2 font-mono text-sm">
-                    <span className="text-slate-700">{job.schedule}</span>
+                    <span className="text-slate-700" title={job.schedule}>
+                      {formatSchedule(job.schedule)}
+                    </span>
                   </TableCell>
                   <TableCell className="py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {onViewJobLogs && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => onViewJobLogs(job.jobName)}
-                              aria-label={`View ${job.jobName} logs`}
-                            >
-                              <ScrollText className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">View latest logs</TooltipContent>
-                        </Tooltip>
-                      )}
+                      {(() => {
+                        const executionsUrl = getAzureJobExecutionsUrl(jobLinks[job.jobName]);
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              {executionsUrl ? (
+                                <Button
+                                  asChild
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  aria-label={`Open ${job.jobName} executions in Azure`}
+                                >
+                                  <a href={executionsUrl} target="_blank" rel="noreferrer">
+                                    <ScrollText className="h-4 w-4" />
+                                  </a>
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  disabled
+                                  aria-label={`No Azure portal link for ${job.jobName}`}
+                                >
+                                  <ScrollText className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </TooltipTrigger>
+                            <TooltipContent side="left">
+                              {executionsUrl ? 'Open execution history' : 'Azure link not configured'}
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })()}
 
                       <Tooltip>
                         <TooltipTrigger asChild>

@@ -130,7 +130,108 @@ export const formatRecordCount = (count?: number | null) => {
     return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(count);
 };
 
+const CRON_EXPRESSION_RE = /(^|\b)([\d*/,-]+)\s+([\d*/,-]+)\s+([\d*/,-]+)\s+([\d*/,-]+)\s+([\d*/,-]+)(\b|$)/;
+
+const formatUtcTime = (hour24: number, minute: number) => {
+    const hour = ((hour24 + 11) % 12) + 1;
+    const period = hour24 >= 12 ? 'PM' : 'AM';
+    const paddedMinute = String(minute).padStart(2, '0');
+    return `${hour}:${paddedMinute} ${period}`;
+};
+
+const buildCronEnglish = (expression: string) => {
+    const match = expression.trim().match(CRON_EXPRESSION_RE);
+    if (!match) return '';
+
+    const minute = match[2];
+    const hour = match[3];
+    const dayOfMonth = match[4];
+    const month = match[5];
+    const dayOfWeek = match[6];
+
+    const minuteStep = minute.match(/^\*\/(\d+)$/);
+    const hourStep = hour.match(/^\*\/(\d+)$/);
+    const hourRange = hour.match(/^(\d{1,2})-(\d{1,2})$/);
+    const hourList = hour.match(/^\d{1,2}(,\d{1,2})+$/);
+
+    const minuteValue = Number(minute);
+    const hourValue = Number(hour);
+    const minuteIsNumber = Number.isFinite(minuteValue) && /^\d{1,2}$/.test(minute);
+    const hourIsNumber = Number.isFinite(hourValue) && /^\d{1,2}$/.test(hour);
+
+    const isDaily = dayOfMonth === '*' && month === '*' && dayOfWeek === '*';
+
+    if (isDaily) {
+        if (minuteStep && hour === '*') {
+            return `Every ${minuteStep[1]} minutes UTC`;
+        }
+
+        if (hourStep && minuteIsNumber) {
+            return `Every ${hourStep[1]} hours at :${String(minuteValue).padStart(2, '0')} UTC`;
+        }
+
+        if (hourRange && minuteIsNumber) {
+            const startHour = Number(hourRange[1]);
+            const endHour = Number(hourRange[2]);
+            const startTime = formatUtcTime(startHour, minuteValue);
+            const endTime = formatUtcTime(endHour, minuteValue);
+            if (minuteValue === 0) {
+                return `Hourly between ${startTime}–${endTime} UTC`;
+            }
+            return `Hourly at :${String(minuteValue).padStart(2, '0')} between ${startTime}–${endTime} UTC`;
+        }
+
+        if (hourList && minuteIsNumber) {
+            const times = hour.split(',').map((value) => formatUtcTime(Number(value), minuteValue));
+            return `Daily at ${times.join(', ')} UTC`;
+        }
+
+        if (hourIsNumber && minuteIsNumber) {
+            return `Daily at ${formatUtcTime(hourValue, minuteValue)} UTC`;
+        }
+
+        if (hour === '*' && minuteIsNumber) {
+            return `Every hour at :${String(minuteValue).padStart(2, '0')} UTC`;
+        }
+    }
+
+    return '';
+};
+
+export const formatSchedule = (schedule?: string | null) => {
+    if (!schedule) return '-';
+    const raw = String(schedule).trim();
+    if (!raw) return '-';
+
+    const cronMatch = raw.match(CRON_EXPRESSION_RE);
+    if (!cronMatch) return raw;
+
+    const cronExpression = `${cronMatch[2]} ${cronMatch[3]} ${cronMatch[4]} ${cronMatch[5]} ${cronMatch[6]}`;
+    return buildCronEnglish(cronExpression) || raw;
+};
+
 export const getAzurePortalUrl = (azureId?: string | null) => {
     if (!azureId) return '';
     return `https://portal.azure.com/#resource${azureId}`;
+};
+
+export const getAzureJobExecutionsUrl = (jobPortalUrl?: string | null) => {
+    if (!jobPortalUrl) return '';
+    const trimmed = String(jobPortalUrl).trim();
+    if (!trimmed) return '';
+
+    // Container App Job portal URLs are generated as:
+    // https://portal.azure.com/#resource/.../providers/Microsoft.App/jobs/<job>/overview
+    // The execution history lives under the same resource path with `/executions`.
+    const overviewMatch = trimmed.match(/\/overview([?#].*)?$/);
+    if (overviewMatch) {
+        return trimmed.replace(/\/overview([?#].*)?$/, '/executions$1');
+    }
+
+    // If we only have a base resource URL, append `/executions`.
+    if (/\/providers\/Microsoft\.App\/jobs\/[^/]+$/.test(trimmed)) {
+        return `${trimmed}/executions`;
+    }
+
+    return trimmed;
 };

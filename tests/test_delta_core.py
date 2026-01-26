@@ -113,13 +113,13 @@ def test_store_delta_schema_overwrite_migrates_local_table(monkeypatch, tmp_path
         }
     )
 
-    delta_core.store_delta(df_old, container="price-targets", path="gold/AAPL", mode="overwrite")
+    delta_core.store_delta(df_old, container="price-target-data", path="gold/AAPL", mode="overwrite")
     old_cols = [f.name for f in DeltaTable(str(table_dir)).schema().fields]
     assert "ticker" in old_cols
     assert "symbol" not in old_cols
 
     df_new = df_old.rename(columns={"ticker": "symbol"})
-    delta_core.store_delta(df_new, container="price-targets", path="gold/AAPL", mode="overwrite", schema_mode="overwrite")
+    delta_core.store_delta(df_new, container="price-target-data", path="gold/AAPL", mode="overwrite", schema_mode="overwrite")
     new_cols = [f.name for f in DeltaTable(str(table_dir)).schema().fields]
     assert "symbol" in new_cols
     assert "ticker" not in new_cols

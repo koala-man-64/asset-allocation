@@ -8,13 +8,11 @@ import { AzureResources } from './system-status/AzureResources';
 import { JobMonitor } from './system-status/JobMonitor';
 import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
 import { getAzurePortalUrl } from './system-status/SystemStatusHelpers';
-import { JobLogDrawer } from './system-status/JobLogDrawer';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
-    const [logTarget, setLogTarget] = useState<{ jobName: string } | null>(null);
     const jobLinks = useMemo(() => {
         if (!data) {
             return {};
@@ -81,25 +79,25 @@ export function SystemStatusPage() {
                 overall={overall}
                 dataLayers={dataLayers}
                 recentJobs={recentJobs}
-                onViewJobLogs={(jobName) => setLogTarget({ jobName })}
             />
 
             {/* Jobs */}
-            <div className="grid gap-6 lg:grid-cols-5">
+            <div className="grid gap-6 lg:grid-cols-2">
                 <JobMonitor
-                    className="lg:col-span-2"
                     recentJobs={recentJobs}
                     jobLinks={jobLinks}
-                    onViewJobLogs={(jobName) => setLogTarget({ jobName })}
                 />
                 <ScheduledJobMonitor
-                    className="lg:col-span-3"
                     dataLayers={dataLayers}
                     recentJobs={recentJobs}
                     jobLinks={jobLinks}
                 />
             </div>
 
+            {/* Connectors / Resources */}
+            {resources && resources.length > 0 && (
+                <AzureResources resources={resources} />
+            )}
             {/* Connectors / Resources */}
             {resources && resources.length > 0 && (
                 <AzureResources resources={resources} />
@@ -112,14 +110,6 @@ export function SystemStatusPage() {
                     {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
                 </div>
             </div>
-
-            <JobLogDrawer
-                open={Boolean(logTarget)}
-                onOpenChange={(open) => {
-                    if (!open) setLogTarget(null);
-                }}
-                jobName={logTarget?.jobName ?? null}
-            />
         </div>
     );
 }
