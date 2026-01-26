@@ -57,6 +57,7 @@ const navSections: NavSection[] = [
     title: 'STRATEGY RESEARCH',
     items: [
       { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
+      { path: '/stock', label: 'Live Stock View', icon: TrendingUp },
       { path: '/overview', label: 'Strategy Universe', icon: LayoutDashboard },
       { path: '/compare', label: 'Backtest Compare', icon: GitCompare },
       { path: '/deep-dive', label: 'Tear Sheet', icon: FileText },

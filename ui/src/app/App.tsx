@@ -24,6 +24,8 @@ import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
 import { StockExplorerPage } from '@/app/components/pages/StockExplorerPage';
 import { Toaster } from '@/app/components/ui/sonner';
 
+import { StockDetailPage } from '@/app/components/pages/StockDetailPage';
+
 function AppContent() {
   const navigate = useNavigate();
 
@@ -55,6 +57,7 @@ function AppContent() {
               <Route path="/system-status" element={<SystemStatusPage />} />
               <Route path="/data-tiers" element={<DataTiersPage />} />
               <Route path="/stock-explorer" element={<StockExplorerPage />} />
+              <Route path="/stock/:ticker?" element={<StockDetailPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
