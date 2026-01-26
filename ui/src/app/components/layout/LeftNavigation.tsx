@@ -17,14 +17,13 @@ import {
   DollarSign,
   Target,
   Folder,
-  Database,
   ChevronLeft,
   ChevronRight,
   Activity,
   Zap,
   TrendingUp,
   Bell,
-  Layers,
+  ScanSearch,
   Pin,
   PinOff,
   Globe
@@ -74,6 +73,7 @@ const navSections: NavSection[] = [
     items: [
       { path: '/signals', label: 'Signal Monitor', icon: Zap },
       { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
+      { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alerts', icon: Bell },
       { path: '/system-status', label: 'System Status', icon: Activity },

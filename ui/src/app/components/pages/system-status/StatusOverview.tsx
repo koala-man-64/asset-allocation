@@ -11,6 +11,7 @@ interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
+    onViewJobLogs?: (jobName: string) => void;
 }
 
 export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {

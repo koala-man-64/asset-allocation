@@ -495,3 +495,149 @@ def test_service_job_trigger_starts_allowed_job(tmp_path: Path, monkeypatch: pyt
     assert calls == [
         "https://management.azure.com/subscriptions/sub-123/resourceGroups/rg-123/providers/Microsoft.App/jobs/platinum-ranking-job/start"
     ]
+
+
+def test_service_job_logs_requires_arm_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_JOBS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-123")
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/api/system/jobs/platinum-ranking-job/logs")
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["detail"].lower()
+
+
+def test_service_job_logs_requires_log_analytics_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "platinum-ranking-job")
+    monkeypatch.delenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", raising=False)
+    monkeypatch.delenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", raising=False)
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/api/system/jobs/platinum-ranking-job/logs")
+        assert resp.status_code == 503
+        assert "log analytics" in resp.json()["detail"].lower()
+
+
+def test_service_job_logs_rejects_unknown_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "platinum-ranking-job")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-123")
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/api/system/jobs/unknown-job/logs")
+        assert resp.status_code == 404
+
+
+def test_service_job_logs_returns_tail_for_last_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg-123")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "platinum-ranking-job")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-123")
+
+    arm_calls: List[str] = []
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            return (
+                f"https://management.azure.com/subscriptions/{self.cfg.subscription_id}"
+                f"/resourceGroups/{self.cfg.resource_group}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params=None):  # type: ignore[no-untyped-def]
+            arm_calls.append(url)
+            return {
+                "value": [
+                    {
+                        "name": "exec-1",
+                        "id": "execution-id-1",
+                        "properties": {
+                            "status": "succeeded",
+                            "startTime": "2025-01-01T00:00:00Z",
+                            "endTime": "2025-01-01T00:05:00Z",
+                        },
+                    },
+                    {
+                        "name": "exec-2",
+                        "id": "execution-id-2",
+                        "properties": {
+                            "status": "failed",
+                            "startTime": "2025-01-02T00:00:00Z",
+                            "endTime": "2025-01-02T00:06:00Z",
+                        },
+                    },
+                ]
+            }
+
+    log_calls: List[Dict[str, Any]] = []
+
+    class FakeAzureLogAnalyticsClient:
+        def __init__(self, timeout_seconds: float = 5.0):
+            self.timeout_seconds = timeout_seconds
+            self._call_idx = 0
+
+        def __enter__(self) -> "FakeAzureLogAnalyticsClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def query(self, *, workspace_id: str, query: str, timespan: str):  # type: ignore[no-untyped-def]
+            self._call_idx += 1
+            log_calls.append({"workspace_id": workspace_id, "query": query, "timespan": timespan})
+            lines = [f"line-{self._call_idx}-1", f"line-{self._call_idx}-2", f"line-{self._call_idx}-3"]
+            return {
+                "tables": [
+                    {
+                        "name": "PrimaryResult",
+                        "columns": [{"name": "TimeGenerated", "type": "datetime"}, {"name": "msg", "type": "string"}],
+                        "rows": [["2025-01-02T00:00:01Z", lines[0]], ["2025-01-02T00:00:02Z", lines[1]], ["2025-01-02T00:00:03Z", lines[2]]],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("api.endpoints.system.AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr("api.endpoints.system.AzureLogAnalyticsClient", FakeAzureLogAnalyticsClient)
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get("/api/system/jobs/platinum-ranking-job/logs", params={"runs": 2})
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["jobName"] == "platinum-ranking-job"
+        assert payload["runsRequested"] == 2
+        assert payload["runsReturned"] == 2
+        assert payload["tailLines"] == 3
+        assert payload["runs"][0]["executionName"] == "exec-2"
+        assert payload["runs"][0]["tail"] == ["line-1-1", "line-1-2", "line-1-3"]
+        assert payload["runs"][0]["error"] is None
+        assert payload["runs"][1]["executionName"] == "exec-1"
+        assert payload["runs"][1]["tail"] == ["line-2-1", "line-2-2", "line-2-3"]
+        assert payload["runs"][1]["error"] is None
+
+    assert arm_calls == [
+        "https://management.azure.com/subscriptions/sub-123/resourceGroups/rg-123/providers/Microsoft.App/jobs/platinum-ranking-job/executions"
+    ]
+    assert len(log_calls) == 2
+    assert all(call["workspace_id"] == "workspace-123" for call in log_calls)
+    assert all("take 3" in call["query"] for call in log_calls)

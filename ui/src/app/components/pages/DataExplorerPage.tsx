@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useSystemHealthQuery } from '@/hooks/useDataQueries';
-import { StatusTypos, StatusColors } from './system-status/StatusTokens';
-import { getStatusConfig, formatTimeAgo, formatDuration } from './system-status/SystemStatusHelpers';
+import { StatusTypos } from './system-status/StatusTokens';
+import { getStatusConfig, formatTimeAgo } from './system-status/SystemStatusHelpers';
 import {
     Database,
     Folder,
@@ -10,16 +10,13 @@ import {
     Activity,
     Search,
     ChevronRight,
-    ChevronDown,
     Server,
     ExternalLink,
     Clock,
     RotateCw,
-    AlertCircle,
-    CheckCircle2
+    AlertCircle
 } from 'lucide-react';
 import { DataLayer, DataDomain } from '@/types/strategy';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 
 export function DataExplorerPage() {
     const { data, isLoading, error } = useSystemHealthQuery();

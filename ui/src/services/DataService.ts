@@ -9,7 +9,7 @@ import type {
   RiskMetrics,
 } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
-import type { JobLogResponse } from '@/services/backtestApi';
+import type { JobLogsResponse } from '@/services/backtestApi';
 import { backtestApi } from '@/services/backtestApi';
 
 export type { FinanceData, MarketData };
@@ -81,9 +81,9 @@ export const DataService = {
 
   getJobLogs(
     jobName: string,
-    params: { startTime?: string | null; sinceMinutes?: number; limit?: number } = {},
+    params: { runs?: number } = {},
     signal?: AbortSignal,
-  ): Promise<JobLogResponse> {
+  ): Promise<JobLogsResponse> {
     return backtestApi.getJobLogs(jobName, params, signal);
   },
 };

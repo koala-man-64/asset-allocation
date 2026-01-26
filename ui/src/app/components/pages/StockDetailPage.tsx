@@ -6,7 +6,7 @@ import { CandlestickChart } from '@/app/components/CandlestickChart';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
+
 import { Search, Activity, Table as TableIcon, AlertCircle, Loader2, TrendingUp } from 'lucide-react';
 import {
     Table,

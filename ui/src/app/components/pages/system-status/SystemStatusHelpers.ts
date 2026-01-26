@@ -1,7 +1,7 @@
 import React from 'react';
 import {
-    Activity, CheckSquare, AlertOctagon, AlertTriangle,
-    Zap, Play, Power, ExternalLink, Info, XCircle, Database, CheckCircle2, Clock, Loader2
+    CheckSquare, AlertOctagon, AlertTriangle,
+    Power, Info, XCircle, Database, Clock, Loader2
 } from 'lucide-react';
 import { StatusColors } from './StatusTokens';
 import { Badge } from '@/app/components/ui/badge';
@@ -104,7 +104,7 @@ export const getSeverityIcon = (severity: string) => {
     }
 };
 
-export const getJobTypeIcon = (jobType: string) => {
+export const getJobTypeIcon = (_jobType: string) => {
     return React.createElement(Database, { className: "h-4 w-4" });
 };
 

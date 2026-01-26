@@ -1,6 +1,9 @@
 import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
 
-const runtime = (window as any).__BACKTEST_UI_CONFIG__ || {};
+interface WindowWithConfig extends Window {
+    __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string };
+}
+const runtime = (window as WindowWithConfig).__BACKTEST_UI_CONFIG__ || {};
 
 const resolvedApiBaseUrl = normalizeApiBaseUrl(
     runtime.backtestApiBaseUrl ||

@@ -5,12 +5,17 @@ import { config } from '@/config';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
+export type DataDomain = 'market' | 'earnings' | 'price-target';
 
 type AccessTokenProvider = () => Promise<string | null>;
 
 let accessTokenProvider: AccessTokenProvider | null = null;
 
-const runtimeConfig = (window as any).__BACKTEST_UI_CONFIG__ || {};
+// Define config interface locally to avoid circular dependencies if needed, or just extend Window
+interface WindowWithConfig extends Window {
+  __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string };
+}
+const runtimeConfig = (window as WindowWithConfig).__BACKTEST_UI_CONFIG__ || {};
 const debugApi = (() => {
   const isTruthy = (value: unknown): boolean => {
     if (typeof value === 'boolean') return value;
@@ -42,7 +47,7 @@ const debugApi = (() => {
 })();
 
 const apiLogPrefix = '[Backtest API]';
-let requestCounter = 0;
+
 
 function logApi(message: string, meta: Record<string, unknown> = {}): void {
   if (!debugApi) return;
@@ -53,26 +58,7 @@ function logApi(message: string, meta: Record<string, unknown> = {}): void {
   console.info(apiLogPrefix, message);
 }
 
-function safeHeaderSnapshot(headers: Headers): Record<string, string> {
-  const allowlist = new Set(['accept', 'content-type', 'x-request-id', 'x-correlation-id']);
-  const redact = new Set(['authorization', 'x-api-key', 'cookie']);
-  const snapshot: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    const normalized = key.toLowerCase();
-    if (allowlist.has(normalized)) {
-      snapshot[normalized] = value;
-    } else if (redact.has(normalized)) {
-      snapshot[normalized] = '<redacted>';
-    }
-  });
-  if (headers.has('Authorization')) {
-    snapshot.authorization = '<redacted>';
-  }
-  if (headers.has('X-API-Key')) {
-    snapshot['x-api-key'] = '<redacted>';
-  }
-  return snapshot;
-}
+
 
 if (debugApi) {
   logApi('Runtime config', {
@@ -166,13 +152,22 @@ export interface JobTriggerResponse {
   executionName?: string | null;
 }
 
-export interface JobLogResponse {
-  jobName: string;
+export interface JobLogRunResponse {
+  executionName?: string | null;
+  executionId?: string | null;
+  status?: string | null;
   startTime?: string | null;
-  timespan: string;
-  source: string;
-  truncated: boolean;
-  text: string;
+  endTime?: string | null;
+  tail: string[];
+  error?: string | null;
+}
+
+export interface JobLogsResponse {
+  jobName: string;
+  runsRequested: number;
+  runsReturned: number;
+  tailLines: number;
+  runs: JobLogRunResponse[];
 }
 
 export interface TradeResponse {
@@ -192,6 +187,8 @@ export interface TradeListResponse {
   limit: number;
   offset: number;
 }
+
+export type GenericDataRow = Record<string, unknown>;
 
 export interface BacktestSummary {
   run_id?: string;
@@ -421,6 +418,17 @@ export const backtestApi = {
     return requestJson<MarketData[]>(`/data/${layer}/market${query}`, { signal });
   },
 
+  async getDomainData(
+    ticker: string,
+    domain: Exclude<DataDomain, 'market'>,
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal,
+  ): Promise<GenericDataRow[]> {
+    const query = buildQuery({ ticker });
+    const encoded = encodeURIComponent(domain);
+    return requestJson<GenericDataRow[]>(`/data/${layer}/${encoded}${query}`, { signal });
+  },
+
   async getFinanceData(
     ticker: string,
     subDomain: string,
@@ -443,15 +451,11 @@ export const backtestApi = {
 
   async getJobLogs(
     jobName: string,
-    params: { startTime?: string | null; sinceMinutes?: number; limit?: number } = {},
+    params: { runs?: number } = {},
     signal?: AbortSignal,
-  ): Promise<JobLogResponse> {
+  ): Promise<JobLogsResponse> {
     const encoded = encodeURIComponent(jobName);
-    const query = buildQuery({
-      startTime: params.startTime ?? undefined,
-      sinceMinutes: params.sinceMinutes ?? undefined,
-      limit: params.limit ?? undefined,
-    });
-    return requestJson<JobLogResponse>(`/system/jobs/${encoded}/logs${query}`, { signal });
+    const query = buildQuery({ runs: params.runs ?? 1 });
+    return requestJson<JobLogsResponse>(`/system/jobs/${encoded}/logs${query}`, { signal });
   },
 };

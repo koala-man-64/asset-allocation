@@ -1,12 +1,27 @@
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional
-from core import pipeline
-from deltalake import DeltaTable  # type: ignore
+
+import pandas as pd
+
+from core import config as cfg
+from core import delta_core
+from core.pipeline import DataPaths
 
 class DataService:
     """
     Service layer for accessing financial data from Delta Lake storage.
     Decouples API from direct pipeline script usage.
     """
+
+    @staticmethod
+    def _container_for_layer(layer: str) -> str:
+        key = str(layer or "").strip().lower()
+        if key == "silver":
+            return cfg.AZURE_CONTAINER_SILVER
+        if key == "gold":
+            return cfg.AZURE_CONTAINER_GOLD
+        raise ValueError(f"Unsupported layer: {layer!r}")
     
     @staticmethod
     def get_data(
@@ -17,25 +32,27 @@ class DataService:
         """
         Generic data retrieval for market, earnings, and price-target domains.
         """
-        container = pipeline.Containers.SILVER if layer == "silver" else pipeline.Containers.BRONZE
+        resolved_layer = str(layer or "").strip().lower()
+        resolved_domain = str(domain or "").strip().lower()
+        container = DataService._container_for_layer(resolved_layer)
         
         # Determine Path based on Domain & Layer
         path = ""
-        if domain == "market":
+        if resolved_domain == "market":
             if ticker:
-                path = pipeline.DataPaths.get_market_data_path(ticker) if layer == "silver" else pipeline.DataPaths.get_gold_features_path(ticker)
+                path = DataPaths.get_market_data_path(ticker) if resolved_layer == "silver" else DataPaths.get_gold_features_path(ticker)
             else:
-                path = pipeline.DataPaths.get_market_data_by_date_path() if layer == "silver" else pipeline.DataPaths.get_gold_features_by_date_path()
-        elif domain == "earnings":
+                path = DataPaths.get_market_data_by_date_path() if resolved_layer == "silver" else DataPaths.get_gold_features_by_date_path()
+        elif resolved_domain == "earnings":
             if ticker:
-                path = pipeline.DataPaths.get_earnings_path(ticker) if layer == "silver" else pipeline.DataPaths.get_gold_earnings_path(ticker)
+                path = DataPaths.get_earnings_path(ticker) if resolved_layer == "silver" else DataPaths.get_gold_earnings_path(ticker)
             else:
-                path = pipeline.DataPaths.get_earnings_by_date_path() if layer == "silver" else pipeline.DataPaths.get_gold_earnings_by_date_path()
-        elif domain == "price-target":
+                path = DataPaths.get_earnings_by_date_path() if resolved_layer == "silver" else DataPaths.get_gold_earnings_by_date_path()
+        elif resolved_domain in {"price-target", "price_target"}:
             if ticker:
-                path = pipeline.DataPaths.get_price_target_path(ticker) if layer == "silver" else pipeline.DataPaths.get_gold_price_targets_path(ticker)
+                path = DataPaths.get_price_target_path(ticker) if resolved_layer == "silver" else DataPaths.get_gold_price_targets_path(ticker)
             else:
-                path = pipeline.DataPaths.get_price_targets_by_date_path() if layer == "silver" else pipeline.DataPaths.get_gold_price_targets_by_date_path()
+                path = DataPaths.get_price_targets_by_date_path() if resolved_layer == "silver" else DataPaths.get_gold_price_targets_by_date_path()
         else:
              raise ValueError(f"Domain '{domain}' not supported on generic endpoint")
              
@@ -50,39 +67,37 @@ class DataService:
         """
         Specialized retrieval for Finance data.
         """
-        container = pipeline.Containers.SILVER if layer == "silver" else pipeline.Containers.BRONZE # Gold container? pipeline.py variable? Assuming similar logic.
-        # Actually pipeline.py defines containers often. 
-        # For now assume same container logic as endpoint: resolve_container(layer, "finance") -> usually silver container.
+        resolved_layer = str(layer or "").strip().lower()
+        resolved_sub = str(sub_domain or "").strip().lower()
+        container = DataService._container_for_layer(resolved_layer)
         
-        if layer == "silver":
+        if resolved_layer == "silver":
             folder_map = {
                 "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
                 "income_statement": ("Income Statement", "quarterly_financials"),
                 "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
                 "valuation": ("Valuation", "quarterly_valuation_measures")
             }
-            if sub_domain not in folder_map:
+            if resolved_sub not in folder_map:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
             
-            folder, suffix = folder_map[sub_domain]
-            path = pipeline.DataPaths.get_finance_path(folder, ticker, suffix)
+            folder, suffix = folder_map[resolved_sub]
+            path = DataPaths.get_finance_path(folder, ticker, suffix)
         else:
             # Gold logic
-            if sub_domain == "all":
-                path = pipeline.DataPaths.get_gold_finance_path(ticker)
-            else:
-                path = pipeline.DataPaths.get_gold_finance_path(ticker)
+            path = DataPaths.get_gold_finance_path(ticker)
                 
         return DataService._read_delta(container, path)
 
     @staticmethod
     def _read_delta(container: str, path: str) -> List[Dict[str, Any]]:
         try:
-            # Assuming shared access signature or current creds work
-            dt = pipeline.get_delta_table(container, path)
-            df = dt.to_pandas()
-            # Handle NaN/NaT for JSON serializability if needed
-            df = df.fillna(0) # Simple fallback, potentially risky for real data
+            df = delta_core.load_delta(container, path)
+            if df is None:
+                raise FileNotFoundError(f"Delta table not found: {container}/{path}")
+
+            # Preserve nulls (do not coerce to 0); make JSON-safe.
+            df = df.where(pd.notnull(df), None)
             return df.to_dict(orient="records")
         except Exception as e:
             # Log error

@@ -23,6 +23,7 @@ interface ScheduledJobMonitorProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobLinks?: Record<string, string>;
+  onViewJobLogs?: (jobName: string) => void;
 }
 
 export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: ScheduledJobMonitorProps) {
@@ -133,6 +134,22 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                   </TableCell>
                   <TableCell className="py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {onViewJobLogs && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => onViewJobLogs(job.jobName)}
+                              aria-label={`View ${job.jobName} logs`}
+                            >
+                              <ScrollText className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">View latest logs</TooltipContent>
+                        </Tooltip>
+                      )}
                       {(() => {
                         const executionsUrl = getAzureJobExecutionsUrl(jobLinks[job.jobName]);
                         return (
