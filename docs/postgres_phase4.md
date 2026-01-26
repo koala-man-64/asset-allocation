@@ -16,7 +16,7 @@ Phase 4 adds **optional** support for reading **platinum composite signals** fro
 ## Preconditions
 
 - Phase 2 has been deployed and is writing `ranking.composite_signal_daily` to Postgres.
-- The backtest environment has a DSN available (suggested: reuse `BACKTEST_POSTGRES_DSN`).
+- The backtest environment has a DSN available (suggested: reuse `POSTGRES_DSN`).
 
 ## Design decisions (Phase 4)
 
@@ -45,7 +45,7 @@ Acceptance criteria:
 Update `backtest/data_access/loader.py`:
 
 - Add `_load_signals_postgres(config: BacktestConfig, data: DataConfig) -> Optional[pd.DataFrame]`
-  - DSN source: `BACKTEST_POSTGRES_DSN` (default) with an optional override env var if needed later.
+  - DSN source: `POSTGRES_DSN` (default) with an optional override env var if needed later.
   - Query `ranking.composite_signal_daily` filtered by:
     - `date BETWEEN :start AND :end`
     - `symbol = ANY(:symbols)` (or `IN (...)` batched if needed)

@@ -86,12 +86,12 @@ jobs:
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
           BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
-          BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
           set -euo pipefail
@@ -114,9 +114,9 @@ jobs:
           require_secret YAHOO_USERNAME
           require_secret YAHOO_PASSWORD
           require_secret NASDAQ_API_KEY
-          require_secret RANKING_POSTGRES_DSN
+          require_secret POSTGRES_DSN
           require_secret BACKTEST_AUTH_MODE
-          require_secret BACKTEST_POSTGRES_DSN
+          require_secret POSTGRES_DSN
           require_secret BACKTEST_CSP
 
           auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
@@ -163,11 +163,11 @@ jobs:
               return host, int(port), db
           
           
-          ranking = parse_postgres_url("RANKING_POSTGRES_DSN")
-          backtest = parse_postgres_url("BACKTEST_POSTGRES_DSN")
+          ranking = parse_postgres_url("POSTGRES_DSN")
+          backtest = parse_postgres_url("POSTGRES_DSN")
           if ranking != backtest:
               print(
-                  "::error::RANKING_POSTGRES_DSN and BACKTEST_POSTGRES_DSN must point to the same host/port/database "
+                  "::error::POSTGRES_DSN and POSTGRES_DSN must point to the same host/port/database "
                   "(single Postgres server + database)."
               )
               sys.exit(1)
@@ -524,7 +524,7 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
         env:
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
-          BACKTEST_POSTGRES_DSN: ${{ secrets.BACKTEST_POSTGRES_DSN }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
           BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
           BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
@@ -1218,7 +1218,7 @@ jobs:
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-          RANKING_POSTGRES_DSN: ${{ secrets.RANKING_POSTGRES_DSN }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
         run: |
           echo "Deploying Platinum Ranking Job from YAML..."
           envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml

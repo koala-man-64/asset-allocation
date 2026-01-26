@@ -17,6 +17,7 @@ param(
   [string]$AcrName = "assetallocationacr",
   [switch]$EnableAcrAdmin,
   [switch]$EmitSecrets,
+  [switch]$GrantAcrPullToAcaResources,
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env"
@@ -41,6 +42,7 @@ Write-Host "Ensuring required Azure resource providers are registered..."
 $providers = @(
   "Microsoft.Storage",
   "Microsoft.ContainerRegistry",
+  "Microsoft.ManagedIdentity",
   "Microsoft.OperationalInsights",
   "Microsoft.App"
 )
@@ -163,12 +165,104 @@ if ($EmitSecrets) {
 }
 
 $acrLoginServer = az acr show --name $AcrName --resource-group $ResourceGroup --query loginServer -o tsv
+$acrId = az acr show --name $AcrName --resource-group $ResourceGroup --query id -o tsv --only-show-errors
 
-$acrPassword = ""
-if ($EnableAcrAdmin) {
-  if ($EmitSecrets) {
-    $acrPassword = az acr credential show --name $AcrName --resource-group $ResourceGroup --query "passwords[0].value" -o tsv
+function Ensure-AcrPullRoleAssignment {
+  param(
+    [Parameter(Mandatory = $true)][string]$PrincipalId,
+    [Parameter(Mandatory = $true)][string]$Scope
+  )
+
+  if (-not $PrincipalId -or $PrincipalId -eq "None") {
+    return $false
   }
+
+  $existing = "0"
+  try {
+    $existing = az role assignment list `
+      --assignee $PrincipalId `
+      --scope $Scope `
+      --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv --only-show-errors 2>$null
+    if (-not $existing) { $existing = "0" }
+  }
+  catch {
+    $existing = "0"
+  }
+
+  if ([int]$existing -gt 0) {
+    return $false
+  }
+
+  az role assignment create --assignee $PrincipalId --role "AcrPull" --scope $Scope --only-show-errors | Out-Null
+  return $true
+}
+
+$acrPullAssignmentsCreated = 0
+$acrPullAssignmentsSkipped = 0
+
+if ($GrantAcrPullToAcaResources) {
+  Write-Host ""
+  Write-Host "Granting AcrPull on ACR to existing Container Apps + Jobs (best-effort)..."
+  Write-Host "  ACR: $AcrName"
+  Write-Host "  Scope: $acrId"
+
+  $appNames = @()
+  $jobNames = @()
+
+  try {
+    $appNames = @(az containerapp list --resource-group $ResourceGroup --query "[].name" -o tsv --only-show-errors)
+  }
+  catch {
+    Write-Warning "Could not list Container Apps in RG '$ResourceGroup'."
+  }
+
+  foreach ($name in $appNames) {
+    if (-not $name) { continue }
+    try {
+      $principalId = az containerapp show --name $name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors
+      if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
+        $acrPullAssignmentsCreated += 1
+        Write-Host "  AcrPull granted (app): $name"
+      }
+      else {
+        $acrPullAssignmentsSkipped += 1
+      }
+    }
+    catch {
+      Write-Warning "Failed to grant AcrPull (app '$name'): $($_.Exception.Message)"
+    }
+  }
+
+  try {
+    $jobNames = @(az containerapp job list --resource-group $ResourceGroup --query "[].name" -o tsv --only-show-errors)
+  }
+  catch {
+    Write-Warning "Could not list Container App Jobs in RG '$ResourceGroup'."
+  }
+
+  foreach ($name in $jobNames) {
+    if (-not $name) { continue }
+    try {
+      $principalId = az containerapp job show --name $name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors
+      if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
+        $acrPullAssignmentsCreated += 1
+        Write-Host "  AcrPull granted (job): $name"
+      }
+      else {
+        $acrPullAssignmentsSkipped += 1
+      }
+    }
+    catch {
+      Write-Warning "Failed to grant AcrPull (job '$name'): $($_.Exception.Message)"
+    }
+  }
+
+  Write-Host "AcrPull role assignment summary: created=$acrPullAssignmentsCreated skipped=$acrPullAssignmentsSkipped"
+}
+else {
+  Write-Host ""
+  Write-Host "NOTE: This repo's Container Apps/Jobs are configured to pull ACR images via managed identity."
+  Write-Host "To grant pull permissions, re-run this script after deployment with -GrantAcrPullToAcaResources (requires RBAC permissions to create role assignments)."
 }
 
 $outputs = [ordered]@{
@@ -179,9 +273,12 @@ $outputs = [ordered]@{
   storageConnectionString      = if ($EmitSecrets) { $storageConnectionString } else { "<redacted>" }
   storageContainers            = $StorageContainers
   acrName                      = $AcrName
+  acrId                        = $acrId
   acrLoginServer               = $acrLoginServer
   acrAdminEnabled              = [bool]$EnableAcrAdmin
-  acrPassword                  = if ($EmitSecrets) { $acrPassword } else { "<redacted>" }
+  acrPullAuthMode              = "managedIdentity"
+  acrPullAssignmentsCreated    = $acrPullAssignmentsCreated
+  acrPullAssignmentsSkipped    = $acrPullAssignmentsSkipped
   logAnalyticsWorkspaceName    = $LogAnalyticsWorkspaceName
   logAnalyticsCustomerId       = $lawCustomerId
   containerAppsEnvironmentName = $ContainerAppsEnvironmentName

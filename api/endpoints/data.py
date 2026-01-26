@@ -25,7 +25,7 @@ def _strip_or_none(value: object) -> Optional[str]:
 
 def _resolve_postgres_dsn(request: Request) -> Optional[str]:
     """
-    Prefer POSTGRES_DSN when present (core scripts), otherwise fall back to BACKTEST_POSTGRES_DSN.
+    Prefer POSTGRES_DSN when present (core scripts), otherwise fall back to POSTGRES_DSN.
 
     Normalizes SQLAlchemy-style DSNs (postgresql+asyncpg://...) to psycopg-friendly (postgresql://...).
     """
@@ -127,7 +127,7 @@ def list_symbols(
     validate_auth(request)
     dsn = _resolve_postgres_dsn(request)
     if not dsn:
-        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN or BACKTEST_POSTGRES_DSN).")
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN or POSTGRES_DSN).")
 
     try:
         with connect(dsn) as conn:
@@ -173,7 +173,7 @@ def get_stock_screener(
 
     dsn = _resolve_postgres_dsn(request)
     if not dsn:
-        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN or BACKTEST_POSTGRES_DSN).")
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN or POSTGRES_DSN).")
 
     gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or os.environ.get("AZURE_CONTAINER_MARKET") or ""
     silver_container = os.environ.get("AZURE_CONTAINER_SILVER") or ""

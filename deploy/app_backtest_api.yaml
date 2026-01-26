@@ -19,7 +19,7 @@ properties:
     - name: api-key
       value: "${BACKTEST_API_KEY}"
     - name: backtest-pg-dsn
-      value: "${BACKTEST_POSTGRES_DSN}"
+      value: "${POSTGRES_DSN}"
   template:
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}
@@ -52,7 +52,7 @@ properties:
         secretRef: api-key
       - name: BACKTEST_API_KEY_HEADER
         value: "X-API-Key"
-      - name: BACKTEST_POSTGRES_DSN
+      - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
       - name: BACKTEST_AUTH_MODE
         value: "${BACKTEST_AUTH_MODE}"

@@ -23,7 +23,7 @@ def _set_required_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKTEST_CSP", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 
     monkeypatch.delenv("BACKTEST_UI_DIST_DIR", raising=False)
-    monkeypatch.delenv("BACKTEST_POSTGRES_DSN", raising=False)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
 
 def test_websocket_updates_endpoint_accepts_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

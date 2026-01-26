@@ -21,20 +21,20 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 - **Migration runner:** `deploy/apply_postgres_migrations.ps1` (supports local `psql` or Dockerized `psql`)
 - **Deploy wiring (secrets only; unused until later phases):**
   - Ranking job: `deploy/job_platinum_ranking.yaml` → `POSTGRES_DSN` secret ref
-  - Backtest API: `deploy/app_backtest_api.yaml` → `BACKTEST_POSTGRES_DSN` secret ref
+  - Backtest API: `deploy/app_backtest_api.yaml` → `POSTGRES_DSN` secret ref
   - GitHub deploy workflow: `.github/workflows/deploy.yml` passes the secrets to `envsubst`
 
 ## Required GitHub Secrets (for deploy workflow)
 
 Add these secrets in your GitHub repo settings:
 
-- `RANKING_POSTGRES_DSN` — DSN for the ranking job (future Phase 2 writer).
-- `BACKTEST_POSTGRES_DSN` — DSN for the backtest API (future Phase 3 run store).
+- `POSTGRES_DSN` — DSN for the ranking job (future Phase 2 writer).
+- `POSTGRES_DSN` — DSN for the backtest API (future Phase 3 run store).
 
 **Single Postgres server + database**
 
 This repo assumes **one Postgres server** and **one database** (with multiple schemas like `ranking` and `backtest`).
-`RANKING_POSTGRES_DSN` and `BACKTEST_POSTGRES_DSN` should therefore point to the **same host/port/database** and typically
+`POSTGRES_DSN` and `POSTGRES_DSN` should therefore point to the **same host/port/database** and typically
 only differ by **username/password** (separate least-privileged roles).
 
 Recommended DSN format:

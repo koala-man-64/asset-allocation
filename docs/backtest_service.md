@@ -42,7 +42,7 @@ export BACKTEST_MAX_CONCURRENT=1
 export BACKTEST_RUN_STORE_MODE=sqlite
 
 # When BACKTEST_RUN_STORE_MODE=postgres, this is required:
-export BACKTEST_POSTGRES_DSN="postgresql://backtest_service:<password>@<server>.postgres.database.azure.com:5432/asset_allocation?sslmode=require"
+export POSTGRES_DSN="postgresql://backtest_service:<password>@<server>.postgres.database.azure.com:5432/asset_allocation?sslmode=require"
 
 # When BACKTEST_RUN_STORE_MODE=adls, this is required and is used as the run-store location.
 # When BACKTEST_RUN_STORE_MODE=postgres, this is optional and is used as the default upload
