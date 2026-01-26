@@ -20,41 +20,7 @@ python3 -m pip install -e .
 python3 -m pytest -q
 ```
 
-## Backtesting
 
-The backtest execution model is:
-- Generate targets at **close(T)**
-- Execute trades at **open(T+1)** (daily bars)
-
-### CLI
-```bash
-python3 -m backtest.cli -c backtests/platinum_vcp_breakout_long.yaml
-```
-
-Artifacts are written under `backtest_results/<RUN_ID>/` (configurable via `output.local_dir`) and include:
-- `config.resolved.json`
-- `trades.csv`
-- `daily_positions.parquet`
-- `metrics_timeseries.parquet`
-- `metrics_rolling.parquet`
-- `metrics.json`
-- `constraint_hits.json`
-- `returns_monthly.csv`, `returns_quarterly.csv`, `returns_yearly.csv`
-
-### Python API
-```python
-from backtest import BacktestConfig, run_backtest
-
-cfg = BacktestConfig.from_yaml("backtests/platinum_vcp_breakout_long.yaml", strict=True)
-result = run_backtest(cfg)
-print(result.run_id, result.output_dir)
-```
-
-### Service API (FastAPI)
-See `docs/backtest_service.md`. Locally:
-```bash
-uvicorn api.service.app:app --reload
-```
 
 ## Backend API (UI)
 
@@ -75,6 +41,5 @@ Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under
 - `requirements-dev.lock.txt` is used by CI for reproducible test installs.
 
 ## Docs
-- `docs/backtesting_guide.md`
-- `docs/backtest_framework_analysis.md`
-- `docs/backtest_service.md`
+- `api/API_ENDPOINTS.md`
+
