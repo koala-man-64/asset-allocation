@@ -66,7 +66,32 @@ def create_app() -> FastAPI:
 
     content_security_policy = os.environ.get("API_CSP") or "default-src 'self'; base-uri 'none';"
 
-    # ... (middleware) ...
+    @app.middleware("http")
+    async def _http_middleware(request: Request, call_next):
+        try:
+            start = time.monotonic()
+            path = request.url.path or ""
+            method = request.method
+            
+            # Simple context extraction for logging (safe access)
+            client_host = request.client.host if request.client else "unknown"
+            
+            response = await call_next(request)
+            
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            
+            # Safe logic for headers
+            if path.startswith("/assets/") and response.status_code == 200:
+                response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            
+            return response
+            
+        except Exception:
+            # Let Starlette's ServerErrorMiddleware handle it, but log it first if needed
+            raise
 
     # CORS Configuration
     app.add_middleware(
