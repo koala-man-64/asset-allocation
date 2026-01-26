@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { BarChart3, Calendar, Clock, Database, DollarSign, ExternalLink, Folder, PlayCircle, Target, TrendingUp, Zap } from 'lucide-react';
-import { getStatusIcon, getStatusBadge, formatTimestamp } from './SystemStatusHelpers';
+import { getStatusIcon, getStatusBadge, formatSchedule, formatTimestamp } from './SystemStatusHelpers';
 import { DataDomain, DataLayer, JobRun, TradingSignal } from '@/types/strategy';
 
 interface DataLayerHealthProps {
@@ -110,8 +110,8 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                         <TableCell className="font-mono text-sm">
                                             {formatTimestamp(layer.lastUpdated)}
                                         </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">
-                                            {layer.refreshFrequency}
+                                        <TableCell className="text-sm text-muted-foreground" title={layer.refreshFrequency}>
+                                            {formatSchedule(layer.refreshFrequency)}
                                         </TableCell>
                                     </TableRow>
                                     {(layer.domains || []).map((domain: DataDomain, dIdx: number) => {
@@ -216,7 +216,9 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                                 </TableCell>
                                                 <TableCell className="text-sm text-muted-foreground">
                                                     <div className="flex flex-col gap-1">
-                                                        <div className="font-mono text-sm">{domain.frequency || domain.cron || '-'}</div>
+                                                        <div className="font-mono text-sm" title={domain.frequency || domain.cron || '-'}>
+                                                            {formatSchedule(domain.frequency || domain.cron || '-')}
+                                                        </div>
                                                         {typeof behindSeconds === 'number' && (
                                                             <div className="flex items-center gap-1 text-xs">
                                                                 <Clock className="h-3 w-3" />

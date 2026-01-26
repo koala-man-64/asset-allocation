@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/too
 
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import type { DataLayer, JobRun } from '@/types/strategy';
-import { formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge } from './SystemStatusHelpers';
+import { formatSchedule, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge } from './SystemStatusHelpers';
 
 import { CalendarDays, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
 
@@ -127,7 +127,9 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                   <TableCell className="py-2">{getStatusBadge(job.jobRun?.status || 'unknown')}</TableCell>
                   <TableCell className="py-2 font-mono text-sm">{formatTimestamp(job.jobRun?.startTime || null)}</TableCell>
                   <TableCell className="py-2 font-mono text-sm">
-                    <span className="text-slate-700">{job.schedule}</span>
+                    <span className="text-slate-700" title={job.schedule}>
+                      {formatSchedule(job.schedule)}
+                    </span>
                   </TableCell>
                   <TableCell className="py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
