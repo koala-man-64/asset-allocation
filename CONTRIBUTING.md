@@ -25,9 +25,7 @@ virtualenv -p python3 /tmp/assetallocation-lock
 rm -rf /tmp/assetallocation-lock
 ```
 
-## Backtest development notes
-- The backtest engine generates targets at close(T) and executes at open(T+1).
-- Backtest strategies should consume precomputed signals (no recomputation inside the backtest loop) unless explicitly scoped.
+
 
 ## Pull requests
 - Keep changes scoped and add tests for any new behavior.

@@ -412,6 +412,42 @@ jobs:
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
           echo "backtest_api=${{ steps.backtest_api_changes.outputs.backtest_api }}"
           echo "ui=${{ steps.ui_changes.outputs.ui }}"
+      - name: Provision Postgres
+        shell: pwsh
+        id: provision_postgres
+        run: |
+          $outputs = ./scripts/provision_azure_postgres.ps1 `
+            -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
+            -ResourceGroup "${{ secrets.AZURE_RESOURCE_GROUP }}" `
+            -Location "${{ secrets.AZURE_LOCATION }}" `
+            -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}" `
+            -AppSubnetId "${{ needs.provision_infra.outputs.APP_SUBNET_ID }}"
+          
+          # Parse JSON output and set output variables
+            echo "POSTGRES_FQDN=$($outputs.fqdn)" >> $env:GITHUB_OUTPUT
+      - name: Apply Migrations
+        shell: pwsh
+        run: |
+          ./scripts/apply_postgres_migrations.ps1 `
+             -PostgresFqdn "${{ needs.provision_postgres.outputs.POSTGRES_FQDN }}" `
+             -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
+      - name: Apply Federated Credential
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          # Ensure ACR Pull permission
+          chmod +x ./scripts/ensure_acr_pull.sh
+          ./scripts/ensure_acr_pull.sh \
+            "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            "${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }}" \
+            "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}"
+          ./scripts/add_federated_credential.ps1 `
+            -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
+            -ResourceGroup "${{ secrets.AZURE_RESOURCE_GROUP }}" `
+            -UserAssignedIdentityName "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}" `
+            -GitHubOrg "${{ github.repository_owner }}" `
+            -GitHubRepo "${{ github.event.repository.name }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
