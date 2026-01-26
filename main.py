@@ -5,7 +5,7 @@ from pathlib import Path
 
 import uvicorn
 
-from core.logging import setup_logging
+from core.logging_config import configure_logging
 from core.config import settings
 
 
@@ -26,7 +26,9 @@ def main():
 
     args = parser.parse_args()
 
-    setup_logging(level=settings.log_level)
+    os.environ.setdefault("LOG_LEVEL", settings.log_level)
+    os.environ.setdefault("LOG_FORMAT", "TEXT")
+    configure_logging()
 
     if args.command == "serve":
         # Configure UI serving

@@ -78,22 +78,18 @@ export function SystemStatusPage() {
 
             {/* Secondary Details Grid */}
             <JobMonitor recentJobs={recentJobs} jobLinks={jobLinks} />
-        </div>
+            {/* Connectors / Resources */}
+            {resources && resources.length > 0 && (
+                <AzureResources resources={resources} />
+            )}
 
-            {/* Connectors / Resources */ }
-    {
-        resources && resources.length > 0 && (
-            <AzureResources resources={resources} />
-        )
-    }
-
-    {/* Footer Status Line */ }
-    <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
-        <div className="flex items-center gap-2 font-mono text-[10px]">
-            <span className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`} />
-            {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
+            {/* Footer Status Line */}
+            <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
+                <div className="flex items-center gap-2 font-mono text-[10px]">
+                    <span className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`} />
+                    {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
+                </div>
+            </div>
         </div>
-    </div>
-        </div >
     );
 }

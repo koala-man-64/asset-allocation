@@ -1,7 +1,7 @@
 // Top sticky header with global controls
 
 import { ShoppingCart, Download, User, Moon, Sun, Bell } from 'lucide-react';
-import { useApp } from '@/contexts/AppContext';
+import { useUIStore } from '@/stores/useUIStore';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import {
@@ -21,7 +21,7 @@ export function AppHeader() {
     setIsDarkMode,
     environment,
     setEnvironment,
-  } = useApp();
+  } = useUIStore();
   const auth = useAuth();
 
   return (
@@ -59,9 +59,9 @@ export function AppHeader() {
             className="relative h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
             <ShoppingCart className="h-5 w-5" />
-            {selectedRuns.size > 0 && (
+            {selectedRuns.length > 0 && (
               <Badge className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center p-0 bg-primary text-primary-foreground text-[10px]">
-                {selectedRuns.size}
+                {selectedRuns.length}
               </Badge>
             )}
           </Button>

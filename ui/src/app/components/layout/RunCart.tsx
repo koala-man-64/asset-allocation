@@ -1,7 +1,7 @@
 // Run comparison cart/tray component
 
 import { X, GitCompare, Folder } from 'lucide-react';
-import { useApp } from '@/contexts/AppContext';
+import { useUIStore } from '@/stores/useUIStore';
 import { useRunList, useRunSummaries } from '@/services/backtestHooks';
 import { formatNumber, formatPercentDecimal } from '@/utils/format';
 import { Button } from '@/app/components/ui/button';
@@ -14,9 +14,9 @@ interface RunCartProps {
 }
 
 export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
-  const { selectedRuns, removeFromCart, clearCart, cartOpen, setCartOpen } = useApp();
+  const { selectedRuns, removeFromCart, clearCart, cartOpen, setCartOpen } = useUIStore();
   
-  const selectedRunIds = useMemo(() => Array.from(selectedRuns.values()), [selectedRuns]);
+  const selectedRunIds = useMemo(() => selectedRuns, [selectedRuns]);
   const { runs } = useRunList({ limit: 200, offset: 0 });
   const runsById = useMemo(() => new Map(runs.map((r) => [r.run_id, r])), [runs]);
   const { summaries } = useRunSummaries(selectedRunIds, { source: 'auto' });
@@ -35,7 +35,7 @@ export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
         </SheetHeader>
         
         <div className="mt-6 space-y-4">
-          {selectedRuns.size === 0 ? (
+          {selectedRuns.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <p>No runs selected</p>
               <p className="text-sm mt-2">Select strategies from the Strategy Universe table to compare</p>
@@ -81,10 +81,10 @@ export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
                     onCompare();
                     setCartOpen(false);
                   }}
-                  disabled={selectedRuns.size < 2}
+                  disabled={selectedRuns.length < 2}
                 >
                   <GitCompare className="h-4 w-4 mr-2" />
-                  Compare {selectedRuns.size} Runs
+                  Compare {selectedRuns.length} Runs
                 </Button>
                 
                 <Button
@@ -94,7 +94,7 @@ export function RunCart({ onCompare, onPortfolioBuilder }: RunCartProps) {
                     onPortfolioBuilder();
                     setCartOpen(false);
                   }}
-                  disabled={selectedRuns.size < 2}
+                  disabled={selectedRuns.length < 2}
                 >
                   <Folder className="h-4 w-4 mr-2" />
                   Create Portfolio
