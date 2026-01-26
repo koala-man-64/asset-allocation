@@ -56,6 +56,8 @@ API Root
 
     # Raw Data Layer
     ├── /data
+    │   ├── /symbols [GET] (data.list_symbols) - Returns Postgres symbol universe :: api/endpoints/data.py <== ui/src/app/components/pages/StockExplorerPage.tsx
+    │   ├── /screener [GET] (data.get_stock_screener) - Daily screener snapshot (Silver+Gold+Postgres) :: api/endpoints/data.py <== ui/src/app/components/pages/StockExplorerPage.tsx
     │   ├── /{layer}
     │   │   ├── /{domain} [GET] (data.get_data_generic) - generic accessor for Silver/Gold delta tables (prices, earnings) :: api/endpoints/data.py <== ui/src/services/DataService.ts
     │   │   └── /finance/{sub_domain} [GET] (data.get_finance_data) - Specialized accessor for financial statements :: api/endpoints/data.py <== ui/src/services/DataService.ts

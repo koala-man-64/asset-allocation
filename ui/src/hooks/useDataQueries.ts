@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
+import type { SystemHealth } from '@/types/strategy';
 
 // Key Factory for consistent query keys
 // Key Factory for consistent query keys
@@ -26,7 +27,7 @@ export const queryKeys = {
  */
 
 export function useSystemHealthQuery() {
-    return useQuery({
+    return useQuery<SystemHealth>({
         queryKey: queryKeys.systemHealth(),
         queryFn: async () => {
             console.info('[useSystemHealthQuery] fetch start');

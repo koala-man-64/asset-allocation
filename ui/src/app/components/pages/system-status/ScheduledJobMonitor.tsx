@@ -18,33 +18,22 @@ type ScheduledJobRow = {
   schedule: string;
   jobRun: JobRun | null;
 };
-```
-import React, { useMemo } from 'react';
-
-import { Button } from '@/app/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-
-import { useJobTrigger } from '@/hooks/useJobTrigger';
-import type { DataLayer, JobRun } from '@/types/strategy';
-import { formatTimestamp, getStatusBadge } from './SystemStatusHelpers';
-
-import { CalendarDays, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
-
-type ScheduledJobRow = {
-  jobName: string;
-  layerName: string;
-  domainName: string;
-  schedule: string;
-  jobRun: JobRun | null;
-};
 
 interface ScheduledJobMonitorProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobLinks?: Record<string, string>;
   onViewJobLogs?: (jobName: string) => void;
+  className?: string;
+}
+
+export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {}, onViewJobLogs, className }: ScheduledJobMonitorProps) {
+  const { triggeringJob, triggerJob } = useJobTrigger();
+
+  const jobIndex = useMemo(() => {
+    const index = new Map<string, JobRun>();
+    for (const job of recentJobs || []) {
+      if (!job?.jobName) continue;
       const existing = index.get(job.jobName);
       if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
         index.set(job.jobName, job);
@@ -85,7 +74,7 @@ interface ScheduledJobMonitorProps {
   }, [dataLayers, jobIndex]);
 
   return (
-    <Card className={`h - full flex flex - col ${ className || '' } `}>
+    <Card className={`h-full flex flex-col ${className || ''}`}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -110,7 +99,7 @@ interface ScheduledJobMonitorProps {
             </TableHeader>
             <TableBody>
               {scheduledJobs.map((job) => (
-                <TableRow key={`${ job.layerName }:${ job.domainName }:${ job.jobName } `}>
+                <TableRow key={`${job.layerName}:${job.domainName}:${job.jobName}`}>
                   <TableCell className="py-2">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
@@ -123,7 +112,7 @@ interface ScheduledJobMonitorProps {
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-muted-foreground hover:text-primary transition-colors"
-                                aria-label={`Open ${ job.jobName } in Azure`}
+                                aria-label={`Open ${job.jobName} in Azure`}
                               >
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </a>
@@ -152,7 +141,7 @@ interface ScheduledJobMonitorProps {
                               size="icon"
                               className="h-7 w-7"
                               onClick={() => onViewJobLogs(job.jobName)}
-                              aria-label={`View ${ job.jobName } logs`}
+                              aria-label={`View ${job.jobName} logs`}
                             >
                               <ScrollText className="h-4 w-4" />
                             </Button>
@@ -169,7 +158,7 @@ interface ScheduledJobMonitorProps {
                             className="h-7 w-7"
                             disabled={Boolean(triggeringJob)}
                             onClick={() => void triggerJob(job.jobName)}
-                            aria-label={`Run ${ job.jobName } `}
+                            aria-label={`Run ${job.jobName}`}
                           >
                             {triggeringJob === job.jobName ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
