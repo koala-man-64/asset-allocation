@@ -450,16 +450,7 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Ensure ACR Pull Permission
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          chmod +x ./scripts/ensure_acr_pull.sh
-          ./scripts/ensure_acr_pull.sh \
-            "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            "${{ env.RESOURCE_GROUP }}" \
-            "${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }}" \
-            "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}"
+
       - name: Apply Federated Credential
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
@@ -655,7 +646,7 @@ jobs:
                --yaml "deploy/app_api.tmp.yaml"
           fi
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.API_APP }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.API_APP }}"
           
           rm deploy/app_api.tmp.yaml
 
@@ -704,7 +695,7 @@ jobs:
                --yaml "deploy/app_ui.tmp.yaml"
           fi
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.UI_APP }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.UI_APP }}"
           
           rm deploy/app_ui.tmp.yaml
 
@@ -763,7 +754,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -809,12 +800,12 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_MARKET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -861,7 +852,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_MARKET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -908,7 +899,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_FINANCE_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -954,7 +945,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_FINANCE_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1001,7 +992,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_FINANCE_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1049,7 +1040,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_PRICE_TARGET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1095,7 +1086,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_PRICE_TARGET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1142,7 +1133,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_PRICE_TARGET_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1189,7 +1180,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_EARNINGS_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1235,7 +1226,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_EARNINGS_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1282,7 +1273,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_EARNINGS_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1332,7 +1323,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.PLATINUM_RANKING_JOB }}"
+          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.PLATINUM_RANKING_JOB }}"
           az containerapp job start \
             --name ${{ env.PLATINUM_RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
