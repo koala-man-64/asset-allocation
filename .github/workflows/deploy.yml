@@ -96,14 +96,14 @@ jobs:
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           POSTGRES_DSN_RANKING: ${{ secrets.POSTGRES_DSN_RANKING }}
           POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
-          API_AUTH_MODE: ${{ secrets.API_AUTH_MODE }}
+          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
           API_KEY: ${{ secrets.API_KEY }}
-          API_OIDC_ISSUER: ${{ secrets.API_OIDC_ISSUER }}
-          API_OIDC_AUDIENCE: ${{ secrets.API_OIDC_AUDIENCE }}
-          API_OIDC_JWKS_URL: ${{ secrets.API_OIDC_JWKS_URL }}
-          API_OIDC_REQUIRED_SCOPES: ${{ secrets.API_OIDC_REQUIRED_SCOPES }}
-          API_OIDC_REQUIRED_ROLES: ${{ secrets.API_OIDC_REQUIRED_ROLES }}
-          API_CSP: ${{ secrets.API_CSP }}
+          API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
+          API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
+          API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
+          API_OIDC_REQUIRED_SCOPES: ${{ vars.API_OIDC_REQUIRED_SCOPES }}
+          API_OIDC_REQUIRED_ROLES: ${{ vars.API_OIDC_REQUIRED_ROLES }}
+          API_CSP: ${{ vars.API_CSP }}
         run: |
           set -euo pipefail
 
@@ -114,6 +114,17 @@ jobs:
             value="${value%"${value##*[![:space:]]}"}"
             if [ -z "$value" ]; then
               echo "::error::Missing required GitHub Actions secret: $name"
+              exit 1
+            fi
+          }
+
+          require_var() {
+            local name="$1"
+            local value="${!name:-}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            if [ -z "$value" ]; then
+              echo "::error::Missing required GitHub Actions variable: $name"
               exit 1
             fi
           }
@@ -134,8 +145,8 @@ jobs:
             require_secret POSTGRES_DSN_API
           fi
 
-          require_secret API_AUTH_MODE
-          require_secret API_CSP
+          require_var API_AUTH_MODE
+          require_var API_CSP
 
           auth_mode="$(echo "${API_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
           case "$auth_mode" in
@@ -152,8 +163,8 @@ jobs:
           fi
 
           if [ "$auth_mode" = "oidc" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
-            require_secret API_OIDC_ISSUER
-            require_secret API_OIDC_AUDIENCE
+            require_var API_OIDC_ISSUER
+            require_var API_OIDC_AUDIENCE
           fi
 
           python3 - <<'PY'
@@ -441,8 +452,7 @@ jobs:
             -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
             -ResourceGroup "${{ secrets.AZURE_RESOURCE_GROUP }}" `
             -Location "${{ secrets.AZURE_LOCATION }}" `
-            -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}" `
-            -AppSubnetId "${{ needs.provision_infra.outputs.APP_SUBNET_ID }}"
+            -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
           
           # Parse JSON output and set output variables
             echo "POSTGRES_FQDN=$($outputs.fqdn)" >> $env:GITHUB_OUTPUT
@@ -450,7 +460,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/apply_postgres_migrations.ps1 `
-             -PostgresFqdn "${{ needs.provision_postgres.outputs.POSTGRES_FQDN }}" `
+             -PostgresFqdn "${{ steps.provision_postgres.outputs.POSTGRES_FQDN }}" `
              -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
       - name: Apply Federated Credential
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -583,18 +593,18 @@ jobs:
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          API_AUTH_MODE: ${{ secrets.API_AUTH_MODE }}
-          API_OIDC_ISSUER: ${{ secrets.API_OIDC_ISSUER }}
-          API_OIDC_AUDIENCE: ${{ secrets.API_OIDC_AUDIENCE }}
-          API_OIDC_JWKS_URL: ${{ secrets.API_OIDC_JWKS_URL }}
-          API_OIDC_REQUIRED_SCOPES: ${{ secrets.API_OIDC_REQUIRED_SCOPES }}
-          API_OIDC_REQUIRED_ROLES: ${{ secrets.API_OIDC_REQUIRED_ROLES }}
-          API_CSP: ${{ secrets.API_CSP }}
-          UI_AUTH_MODE: ${{ secrets.UI_AUTH_MODE }}
-          UI_OIDC_CLIENT_ID: ${{ secrets.UI_OIDC_CLIENT_ID }}
-          UI_OIDC_AUTHORITY: ${{ secrets.UI_OIDC_AUTHORITY }}
-          UI_OIDC_SCOPES: ${{ secrets.UI_OIDC_SCOPES }}
-          UI_API_BASE_URL: ${{ secrets.UI_API_BASE_URL }}
+          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
+          API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
+          API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
+          API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
+          API_OIDC_REQUIRED_SCOPES: ${{ vars.API_OIDC_REQUIRED_SCOPES }}
+          API_OIDC_REQUIRED_ROLES: ${{ vars.API_OIDC_REQUIRED_ROLES }}
+          API_CSP: ${{ vars.API_CSP }}
+          UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
+          UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
+          UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
+          UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
+          UI_API_BASE_URL: ${{ vars.UI_API_BASE_URL }}
         run: |
           set -euo pipefail
           export IMAGE_TAG="${{ github.sha }}"
