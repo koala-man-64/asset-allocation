@@ -3,7 +3,7 @@ param(
   [string]$ResourceGroup = "AssetAllocationRG",
   [string]$AcrName = "assetallocationacr",
   [string]$StorageAccountName = "assetallocstorage001",
-  [string]$ApiAppName = "asset-allocation-api",
+  [string]$BacktestAppName = "backtest-api",
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
   [switch]$SkipGitHub,
   [switch]$SkipAzure
@@ -166,7 +166,7 @@ function Select-FromList {
 Write-Host "Phase 3 Monitoring Setup (GitHub + Azure)"
 Write-Host "This script configures:"
 Write-Host "- GitHub Actions OIDC + repo secrets (optional)"
-Write-Host "- Azure RBAC + asset-allocation-api env vars for system health probes (Phase 2/3A/3B)"
+Write-Host "- Azure RBAC + backtest-api env vars for system health probes (Phase 2/3A/3B)"
 Write-Host ""
 
 Assert-CommandExists -Name "az"
@@ -322,7 +322,7 @@ if (-not $SkipGitHub) {
 
 if (-not $SkipAzure) {
   Write-Host ""
-  if (-not (Read-YesNo -Prompt "Configure Azure RBAC + asset-allocation-api env vars for monitoring?" -Default $true)) {
+  if (-not (Read-YesNo -Prompt "Configure Azure RBAC + backtest-api env vars for monitoring?" -Default $true)) {
     Write-Host "Skipping Azure setup."
     exit 0
   }
@@ -336,16 +336,16 @@ if (-not $SkipAzure) {
   }
 
   $ResourceGroup = Read-Value -Prompt "Azure Resource Group" -Default $ResourceGroup
-  $ApiAppName = Read-Value -Prompt "API Container App name" -Default $ApiAppName
+  $BacktestAppName = Read-Value -Prompt "Backtest API Container App name" -Default $BacktestAppName
   $StorageAccountName = Read-Value -Prompt "Storage Account name (ADLS/Blob)" -Default $StorageAccountName
 
   $rgId = (Invoke-Cli -Exe "az" -Args @("group", "show", "--name", $ResourceGroup, "--query", "id", "-o", "tsv")).Trim()
   $storageId = (Invoke-Cli -Exe "az" -Args @("storage", "account", "show", "--name", $StorageAccountName, "--resource-group", $ResourceGroup, "--query", "id", "-o", "tsv") -AllowFail).Trim()
 
-  Write-Host "Checking asset-allocation-api managed identity..."
+  Write-Host "Checking backtest-api managed identity..."
   $principalId = (Invoke-Cli -Exe "az" -Args @(
       "containerapp", "show",
-      "--name", $ApiAppName,
+      "--name", $BacktestAppName,
       "--resource-group", $ResourceGroup,
       "--query", "identity.principalId",
       "-o", "tsv"
@@ -353,10 +353,10 @@ if (-not $SkipAzure) {
 
   if (-not $principalId) {
     if (Read-YesNo -Prompt "Container App has no system-assigned identity. Assign one now?" -Default $true) {
-      Invoke-Cli -Exe "az" -Args @("containerapp", "identity", "assign", "--name", $ApiAppName, "--resource-group", $ResourceGroup, "--system-assigned") | Out-Null
+      Invoke-Cli -Exe "az" -Args @("containerapp", "identity", "assign", "--name", $BacktestAppName, "--resource-group", $ResourceGroup, "--system-assigned") | Out-Null
       $principalId = (Invoke-Cli -Exe "az" -Args @(
           "containerapp", "show",
-          "--name", $ApiAppName,
+          "--name", $BacktestAppName,
           "--resource-group", $ResourceGroup,
           "--query", "identity.principalId",
           "-o", "tsv"
@@ -365,7 +365,7 @@ if (-not $SkipAzure) {
   }
 
   if (-not $principalId) {
-    throw "Could not resolve managed identity principalId for '$ApiAppName'."
+    throw "Could not resolve managed identity principalId for '$BacktestAppName'."
   }
   Write-Host "Managed identity principalId: $principalId"
 
@@ -490,12 +490,12 @@ if (-not $SkipAzure) {
   Write-Host "Updating Container App env vars..."
   Invoke-Cli -Exe "az" -Args @(
     "containerapp", "update",
-    "--name", $ApiAppName,
+    "--name", $BacktestAppName,
     "--resource-group", $ResourceGroup,
     "--set-env-vars"
   ) + $envVars | Out-Null
 
-  Write-Host "Done. Monitoring env vars applied to $ApiAppName."
+  Write-Host "Done. Monitoring env vars applied to $BacktestAppName."
 }
 
 Write-Host ""

@@ -1,19 +1,20 @@
 import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
 
 interface WindowWithConfig extends Window {
-    __API_UI_CONFIG__?: { apiBaseUrl?: string };
+    __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string };
 }
-const runtime = (window as WindowWithConfig).__API_UI_CONFIG__ || {};
+const runtime = (window as WindowWithConfig).__BACKTEST_UI_CONFIG__ || {};
 
 const resolvedApiBaseUrl = normalizeApiBaseUrl(
-    runtime.apiBaseUrl ||
-    import.meta.env.VITE_API_BASE_URL,
+    runtime.backtestApiBaseUrl ||
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_BACKTEST_API_BASE_URL,
 );
 
 console.info('[UI Config] apiBaseUrl resolved', {
     apiBaseUrl: resolvedApiBaseUrl,
-    runtimeApiBaseUrl: runtime.apiBaseUrl,
-    envApiBaseUrl: import.meta.env.VITE_API_BASE_URL,
+    runtimeApiBaseUrl: runtime.backtestApiBaseUrl,
+    envApiBaseUrl: import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKTEST_API_BASE_URL,
 });
 
 export const config = {

@@ -76,7 +76,7 @@ class AuthManager:
                 discovery = _fetch_openid_configuration(issuer)
                 jwks_url = str(discovery.get("jwks_uri") or "").strip() or None
             if not jwks_url:
-                raise ValueError("OIDC jwks_url could not be resolved (set API_OIDC_JWKS_URL).")
+                raise ValueError("OIDC jwks_url could not be resolved (set BACKTEST_OIDC_JWKS_URL).")
 
             self._jwks_url = jwks_url
             return self._jwks_url

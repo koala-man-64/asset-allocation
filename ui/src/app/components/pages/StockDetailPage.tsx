@@ -90,7 +90,7 @@ export function StockDetailPage() {
                     <div>
                         <h1 className="text-2xl font-black text-slate-900 tracking-tight">LIVE MARKET DATA</h1>
                         <p className="text-xs text-slate-500 font-mono tracking-widest uppercase">
-                            DATA LAYER: SILVER • SOURCE: DATA ENGINE
+                            DATA LAYER: SILVER • SOURCE: BACKTEST ENGINE
                         </p>
                     </div>
                 </div>

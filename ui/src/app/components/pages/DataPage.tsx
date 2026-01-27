@@ -104,7 +104,7 @@ export function DataPage({ onNavigate }: DataPageProps) {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Comprehensive audit trail ensuring reproducibility and trust in strategy results.
+            Comprehensive audit trail ensuring reproducibility and trust in backtest results.
           </p>
         </CardContent>
       </Card>

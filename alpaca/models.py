@@ -125,7 +125,7 @@ class TradeUpdateEvent:
 
 @dataclass
 class PositionStateLike:
-    """Matches the shape of the legacy PositionState for compatibility."""
+    """Matches the shape of internal backtest PositionState for compatibility."""
     symbol: str
     shares: float
     avg_entry_price: float

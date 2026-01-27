@@ -6,7 +6,7 @@ __pycache__
 artifacts
 Data
 Symbols
-tests
+Tests
 .env
 .github
 *.md
@@ -16,9 +16,3 @@ node_modules
 ui/dist
 ui/.vite
 ui/.pnpm-store
-.pnpm-store
-.agent
-.codex
-docs
-
-deploy

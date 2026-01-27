@@ -40,11 +40,10 @@ BEGIN
     GRANT SELECT ON TABLE monitoring.alert_state TO ranking_writer;
   END IF;
 
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_service') THEN
-    GRANT USAGE ON SCHEMA monitoring TO api_service;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE monitoring.alert_state TO api_service;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backtest_service') THEN
+    GRANT USAGE ON SCHEMA monitoring TO backtest_service;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE monitoring.alert_state TO backtest_service;
   END IF;
-
 END $$;
 
 COMMIT;

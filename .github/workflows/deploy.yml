@@ -11,13 +11,6 @@ on:
         required: false
         type: boolean
         default: false
-  workflow_call:
-    inputs:
-      force_redeploy:
-        description: Force redeploy/update all jobs (ignore change filters)
-        required: false
-        type: boolean
-        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -28,12 +21,12 @@ permissions:
   contents: read
 
 env:
-  FORCE_REDEPLOY: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true') || (github.event_name == 'workflow_call' && inputs.force_redeploy) }}
+  FORCE_REDEPLOY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true' }}
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
-  API_IMAGE_NAME: asset-allocation-api
-  API_APP: asset-allocation-api
+  BACKTEST_API_IMAGE_NAME: asset-allocation-api
+  BACKTEST_API_APP: asset-allocation-api
   UI_IMAGE_NAME: asset-allocation-ui
   UI_APP: asset-allocation-ui
   BRONZE_MARKET_JOB: bronze-market-job
@@ -94,16 +87,11 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          POSTGRES_DSN_RANKING: ${{ secrets.POSTGRES_DSN_RANKING }}
-          POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
-          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
-          API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
-          API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
-          API_OIDC_REQUIRED_SCOPES: ${{ vars.API_OIDC_REQUIRED_SCOPES }}
-          API_OIDC_REQUIRED_ROLES: ${{ vars.API_OIDC_REQUIRED_ROLES }}
-          API_CSP: ${{ vars.API_CSP }}
+          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
+          BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
+          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
+          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
           set -euo pipefail
 
@@ -118,17 +106,6 @@ jobs:
             fi
           }
 
-          require_var() {
-            local name="$1"
-            local value="${!name:-}"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-            if [ -z "$value" ]; then
-              echo "::error::Missing required GitHub Actions variable: $name"
-              exit 1
-            fi
-          }
-
           require_secret AZURE_CLIENT_ID
           require_secret AZURE_TENANT_ID
           require_secret AZURE_SUBSCRIPTION_ID
@@ -136,35 +113,28 @@ jobs:
           require_secret YAHOO_USERNAME
           require_secret YAHOO_PASSWORD
           require_secret NASDAQ_API_KEY
+          require_secret POSTGRES_DSN
+          require_secret BACKTEST_AUTH_MODE
+          require_secret POSTGRES_DSN
+          require_secret BACKTEST_CSP
 
-          # Postgres DSN wiring supports either:
-          # - POSTGRES_DSN (single DSN for both workloads), or
-          # - POSTGRES_DSN_RANKING + POSTGRES_DSN_API (separate users, same host/port/db).
-          if [ -z "${POSTGRES_DSN:-}" ]; then
-            require_secret POSTGRES_DSN_RANKING
-            require_secret POSTGRES_DSN_API
-          fi
-
-          require_var API_AUTH_MODE
-          require_var API_CSP
-
-          auth_mode="$(echo "${API_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
           case "$auth_mode" in
             none|api_key|oidc|api_key_or_oidc)
               ;;
             *)
-              echo "::error::Invalid API_AUTH_MODE (expected none|api_key|oidc|api_key_or_oidc)"
+              echo "::error::Invalid BACKTEST_AUTH_MODE (expected none|api_key|oidc|api_key_or_oidc)"
               exit 1
               ;;
           esac
 
           if [ "$auth_mode" = "api_key" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
-            require_secret API_KEY
+            require_secret BACKTEST_API_KEY
           fi
 
           if [ "$auth_mode" = "oidc" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
-            require_var API_OIDC_ISSUER
-            require_var API_OIDC_AUDIENCE
+            require_secret BACKTEST_OIDC_ISSUER
+            require_secret BACKTEST_OIDC_AUDIENCE
           fi
 
           python3 - <<'PY'
@@ -192,14 +162,11 @@ jobs:
               return host, int(port), db
           
           
-          ranking_name = "POSTGRES_DSN_RANKING" if os.environ.get("POSTGRES_DSN_RANKING", "").strip() else "POSTGRES_DSN"
-          api_name = "POSTGRES_DSN_API" if os.environ.get("POSTGRES_DSN_API", "").strip() else "POSTGRES_DSN"
-
-          ranking = parse_postgres_url(ranking_name)
-          api = parse_postgres_url(api_name)
-          if ranking != api:
+          ranking = parse_postgres_url("POSTGRES_DSN")
+          backtest = parse_postgres_url("POSTGRES_DSN")
+          if ranking != backtest:
               print(
-                  f"::error::{ranking_name} and {api_name} must point to the same host/port/database "
+                  "::error::POSTGRES_DSN and POSTGRES_DSN must point to the same host/port/database "
                   "(single Postgres server + database)."
               )
               sys.exit(1)
@@ -398,20 +365,21 @@ jobs:
               - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 
-      - name: Detect API Changes
+      - name: Detect Backtest API Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: api_changes
+        id: backtest_api_changes
         with:
           filters: |
-            api:
+            backtest_api:
               - "api/**"
+              - "backtest/**"
               - "services/**"
               - "api/**"
               - "core/**"
               - "monitoring/**"
               - "ui/**"
               - "Dockerfile.asset_allocation_api"
-              - "deploy/app_api.yaml"
+              - "deploy/app_backtest_api.yaml"
               - "pyproject.toml"
               - "requirements.txt"
               - "requirements.lock.txt"
@@ -442,16 +410,50 @@ jobs:
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
-          echo "api=${{ steps.api_changes.outputs.api }}"
+          echo "backtest_api=${{ steps.backtest_api_changes.outputs.backtest_api }}"
           echo "ui=${{ steps.ui_changes.outputs.ui }}"
+      - name: Provision Postgres
+        shell: pwsh
+        id: provision_postgres
+        run: |
+          $outputs = ./scripts/provision_azure_postgres.ps1 `
+            -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
+            -ResourceGroup "${{ secrets.AZURE_RESOURCE_GROUP }}" `
+            -Location "${{ secrets.AZURE_LOCATION }}" `
+            -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}" `
+            -AppSubnetId "${{ needs.provision_infra.outputs.APP_SUBNET_ID }}"
+          
+          # Parse JSON output and set output variables
+            echo "POSTGRES_FQDN=$($outputs.fqdn)" >> $env:GITHUB_OUTPUT
+      - name: Apply Migrations
+        shell: pwsh
+        run: |
+          ./scripts/apply_postgres_migrations.ps1 `
+             -PostgresFqdn "${{ needs.provision_postgres.outputs.POSTGRES_FQDN }}" `
+             -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
+      - name: Apply Federated Credential
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          # Ensure ACR Pull permission
+          chmod +x ./scripts/ensure_acr_pull.sh
+          ./scripts/ensure_acr_pull.sh \
+            "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            "${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }}" \
+            "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}"
+          ./scripts/add_federated_credential.ps1 `
+            -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
+            -ResourceGroup "${{ secrets.AZURE_RESOURCE_GROUP }}" `
+            -UserAssignedIdentityName "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}" `
+            -GitHubOrg "${{ github.repository_owner }}" `
+            -GitHubRepo "${{ github.event.repository.name }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-
 
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
@@ -488,26 +490,26 @@ jobs:
             docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
           fi
 
-      - name: Build and Push API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true'
+      - name: Build and Push Backtest API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
         run: |
           BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
           
           # 1. Build immutable SHA tag
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
           
           # 2. Build branch tag
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:$BRANCH_TAG
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
           
           # 3. Push SHA tag and Branch tag
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:$BRANCH_TAG
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
           
           # 4. Handle 'latest' tag (Only on main branch)
           if [ "${{ github.ref }}" == "refs/heads/main" ]; then
             echo "Pushing latest tag..."
-            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:latest
-            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:latest
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
           fi
 
       - name: Build and Push UI Image
@@ -544,114 +546,79 @@ jobs:
               --auth-mode login
           done
 
-      - name: Check API App Exists
-        id: api_app_check
+      - name: Check Backtest API App Exists
+        id: backtest_api_app_check
         run: |
-          if az containerapp show --name ${{ env.API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+          if az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "app_exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "app_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy API App
-        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.api_app_check.outputs.app_exists == 'false'
+      - name: Deploy Backtest API App
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
         env:
-          API_KEY: ${{ secrets.API_KEY }}
+          BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
-          API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
-          API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
-          API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
-          API_OIDC_REQUIRED_SCOPES: ${{ vars.API_OIDC_REQUIRED_SCOPES }}
-          API_OIDC_REQUIRED_ROLES: ${{ vars.API_OIDC_REQUIRED_ROLES }}
-          API_CSP: ${{ vars.API_CSP }}
-          UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
-          UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
-          UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
-          UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
-          UI_API_BASE_URL: ${{ vars.UI_API_BASE_URL }}
+          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
+          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
+          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
+          BACKTEST_OIDC_JWKS_URL: ${{ secrets.BACKTEST_OIDC_JWKS_URL }}
+          BACKTEST_OIDC_REQUIRED_SCOPES: ${{ secrets.BACKTEST_OIDC_REQUIRED_SCOPES }}
+          BACKTEST_OIDC_REQUIRED_ROLES: ${{ secrets.BACKTEST_OIDC_REQUIRED_ROLES }}
+          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
+          BACKTEST_UI_AUTH_MODE: ${{ secrets.BACKTEST_UI_AUTH_MODE }}
+          BACKTEST_UI_OIDC_CLIENT_ID: ${{ secrets.BACKTEST_UI_OIDC_CLIENT_ID }}
+          BACKTEST_UI_OIDC_AUTHORITY: ${{ secrets.BACKTEST_UI_OIDC_AUTHORITY }}
+          BACKTEST_UI_OIDC_SCOPES: ${{ secrets.BACKTEST_UI_OIDC_SCOPES }}
+          BACKTEST_UI_API_BASE_URL: ${{ secrets.BACKTEST_UI_API_BASE_URL }}
         run: |
           set -euo pipefail
           export IMAGE_TAG="${{ github.sha }}"
-
-          # Backwards-compatible default: allow a single DSN secret, with optional overrides.
-          export POSTGRES_DSN_API="${POSTGRES_DSN_API:-$POSTGRES_DSN}"
-
-          # Map API/UI secrets into env vars expected by deploy/app_api.yaml.
-          export API_AUTH_MODE="${API_AUTH_MODE:-}"
-          export API_OIDC_ISSUER="${API_OIDC_ISSUER:-}"
-          export API_OIDC_AUDIENCE="${API_OIDC_AUDIENCE:-}"
-          export API_OIDC_JWKS_URL="${API_OIDC_JWKS_URL:-}"
-          export API_OIDC_REQUIRED_SCOPES="${API_OIDC_REQUIRED_SCOPES:-}"
-          export API_OIDC_REQUIRED_ROLES="${API_OIDC_REQUIRED_ROLES:-}"
-          export API_CSP="${API_CSP:-}"
-
-          export UI_AUTH_MODE="${UI_AUTH_MODE:-}"
-          export UI_OIDC_CLIENT_ID="${UI_OIDC_CLIENT_ID:-}"
-          export UI_OIDC_AUTHORITY="${UI_OIDC_AUTHORITY:-}"
-          export UI_OIDC_SCOPES="${UI_OIDC_SCOPES:-}"
-          export UI_API_BASE_URL="${UI_API_BASE_URL:-}"
-
-          # Defaults for ARM probes and health endpoints (avoid empty envs causing probe disablement).
-          export SYSTEM_HEALTH_ARM_API_VERSION="${SYSTEM_HEALTH_ARM_API_VERSION:-2023-05-01}"
-          export SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS="${SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS:-5}"
-          export SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED="${SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED:-false}"
-          export SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION="${SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION:-2022-10-01}"
-          export SYSTEM_HEALTH_MONITOR_METRICS_ENABLED="${SYSTEM_HEALTH_MONITOR_METRICS_ENABLED:-false}"
-          export SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION="${SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION:-2018-01-01}"
-          export SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES="${SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES:-15}"
-          export SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL="${SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL:-PT1M}"
-          export SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION="${SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION:-Average}"
-          export SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED="${SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED:-false}"
-          export SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS="${SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS:-5}"
-          export SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES="${SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES:-15}"
-          export SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB="${SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB:-3}"
-
+          
           export INGRESS_EXTERNAL="true"
-          auth_mode="$(echo "${API_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
           if [ "$auth_mode" = "none" ]; then
-            echo "WARNING: API_AUTH_MODE=none. Forcing internal ingress."
+            echo "WARNING: BACKTEST_AUTH_MODE=none. Forcing internal ingress."
             export INGRESS_EXTERNAL="false"
-          elif [ -z "${API_KEY:-}" ] && { [ -z "${API_OIDC_ISSUER:-}" ] || [ -z "${API_OIDC_AUDIENCE:-}" ]; }; then
-            echo "WARNING: No API_KEY and no OIDC issuer/audience configured. Deploying with internal ingress."
+          elif [ -z "${BACKTEST_API_KEY:-}" ] && { [ -z "${BACKTEST_OIDC_ISSUER:-}" ] || [ -z "${BACKTEST_OIDC_AUDIENCE:-}" ]; }; then
+            echo "WARNING: No BACKTEST_API_KEY and no OIDC issuer/audience configured. Deploying with internal ingress."
             export INGRESS_EXTERNAL="false"
           fi
 
-          echo "Deploying API (App) from YAML..."
-          envsubst < deploy/app_api.yaml > deploy/app_api.tmp.yaml
+          echo "Deploying Backtest API (App) from YAML..."
+          envsubst < deploy/app_backtest_api.yaml > deploy/app_backtest_api.tmp.yaml
 
-          if ! az containerapp show --name ${{ env.API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-             echo "App ${{ env.API_APP }} not found. Creating..."
+          if ! az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+             echo "App ${{ env.BACKTEST_API_APP }} not found. Creating..."
              az containerapp create \
-               --name ${{ env.API_APP }} \
+               --name ${{ env.BACKTEST_API_APP }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
                --environment asset-allocation-env \
-               --yaml "deploy/app_api.tmp.yaml"
+               --yaml "deploy/app_backtest_api.tmp.yaml"
           else
-             echo "App ${{ env.API_APP }} found. Updating..."
+             echo "App ${{ env.BACKTEST_API_APP }} found. Updating..."
              az containerapp update \
-               --name ${{ env.API_APP }} \
+               --name ${{ env.BACKTEST_API_APP }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
-               --yaml "deploy/app_api.tmp.yaml"
+               --yaml "deploy/app_backtest_api.tmp.yaml"
           fi
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.API_APP }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.BACKTEST_API_APP }}"
           
-          rm deploy/app_api.tmp.yaml
+          rm deploy/app_backtest_api.tmp.yaml
 
-      - name: Verify API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.api_app_check.outputs.app_exists == 'false'
+      - name: Verify Backtest API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
         run: |
           set -euo pipefail
-          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
-          actual_image=$(az containerapp show --name "${{ env.API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
+          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}"
+          actual_image=$(az containerapp show --name "${{ env.BACKTEST_API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
           if [ "$actual_image" != "$expected_image" ]; then
-            echo "Image mismatch for ${{ env.API_APP }}: expected $expected_image, got $actual_image"
+            echo "Image mismatch for ${{ env.BACKTEST_API_APP }}: expected $expected_image, got $actual_image"
             exit 1
           fi
-          echo "Verified ${{ env.API_APP }} image $actual_image"
+          echo "Verified ${{ env.BACKTEST_API_APP }} image $actual_image"
 
       - name: Check UI App Exists
         id: ui_app_check
@@ -686,7 +653,7 @@ jobs:
                --yaml "deploy/app_ui.tmp.yaml"
           fi
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.UI_APP }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.UI_APP }}"
           
           rm deploy/app_ui.tmp.yaml
 
@@ -745,7 +712,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -791,12 +758,12 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_MARKET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -843,7 +810,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_MARKET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -890,7 +857,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_FINANCE_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -936,7 +903,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_FINANCE_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -983,7 +950,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_FINANCE_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1031,7 +998,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_PRICE_TARGET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1077,7 +1044,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_PRICE_TARGET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1124,7 +1091,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_PRICE_TARGET_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1171,7 +1138,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_EARNINGS_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1217,7 +1184,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_EARNINGS_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1264,7 +1231,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_EARNINGS_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1287,9 +1254,7 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          POSTGRES_DSN_RANKING: ${{ secrets.POSTGRES_DSN_RANKING }}
         run: |
-          export POSTGRES_DSN_RANKING="${POSTGRES_DSN_RANKING:-$POSTGRES_DSN}"
           echo "Deploying Platinum Ranking Job from YAML..."
           envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml
           
@@ -1314,7 +1279,7 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.PLATINUM_RANKING_JOB }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.PLATINUM_RANKING_JOB }}"
           az containerapp job start \
             --name ${{ env.PLATINUM_RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}

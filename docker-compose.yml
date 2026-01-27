@@ -8,11 +8,13 @@ services:
     env_file:
       - .env
     environment:
-      UI_AUTH_MODE: ${UI_AUTH_MODE:-none}
-      UI_API_BASE_URL: ${UI_API_BASE_URL:-/api}
+      BACKTEST_UI_AUTH_MODE: ${BACKTEST_UI_AUTH_MODE:-none}
+      BACKTEST_UI_API_BASE_URL: ${BACKTEST_UI_API_BASE_URL:-/api}
       TEST_MODE: ${TEST_MODE:-true}
       LOG_FORMAT: ${LOG_FORMAT:-TEXT}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - backtest_results:/app/backtest_results
 
   asset-allocation-ui:
     build:
@@ -20,8 +22,11 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
+        VITE_BACKTEST_API_BASE_URL: /api
     ports:
       - "8080:80"
     depends_on:
       - asset-allocation-api
 
+volumes:
+  backtest_results: {}

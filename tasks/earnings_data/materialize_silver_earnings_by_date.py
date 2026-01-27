@@ -81,12 +81,6 @@ def _extract_tickers_from_delta_tables(blob_names: Iterable[str], root_prefix: s
     return sorted(tickers)
 
 
-def _earnings_root_prefix() -> str:
-    from core import config as cfg
-
-    return str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/") or "earnings-data"
-
-
 def _try_load_tickers_from_container(container: str, root_prefix: str) -> Optional[List[str]]:
     """
     Attempt to list tickers from the target container (preferred).
@@ -98,128 +92,30 @@ def _try_load_tickers_from_container(container: str, root_prefix: str) -> Option
 
     from core import core as mdc
 
-    client = mdc.get_storage_client(container)
-    if client is None:
-        return None
-
-    prefix = root_prefix.strip("/") + "/"
-    try:
-        blobs = client.container_client.list_blobs(name_starts_with=prefix)
-        return _extract_tickers_from_delta_tables((b.name for b in blobs), root_prefix=root_prefix)
-    except Exception as exc:
-        write_warning(
-            f"Unable to list per-ticker tables under {prefix} in container={container}: {exc}. "
-            "Falling back to symbol universe."
-        )
-        return None
-
 
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
-    parser = argparse.ArgumentParser(
-        description="Materialize Silver earnings data into a cross-sectional Delta table (partitioned by date)."
-    )
-    parser.add_argument("--container", help="Earnings container (default: AZURE_CONTAINER_EARNINGS).")
+    parser = argparse.ArgumentParser(description="Materialize Silver Earnings by Date")
+    parser.add_argument("--container", required=True, help="Azure container name")
     parser.add_argument("--year-month", required=True, help="YYYY-MM to materialize")
-    parser.add_argument(
-        "--output-path",
-        default=DataPaths.get_earnings_by_date_path(),
-        help="Delta table path for output",
-    )
-    parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
+    parser.add_argument("--output-path", required=True, help="Delta table path for output")
+    
     args = parser.parse_args(argv)
-
-    container_raw = args.container or os.environ.get("AZURE_CONTAINER_EARNINGS")
-    if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing earnings container. Set AZURE_CONTAINER_EARNINGS or pass --container.")
-    container = str(container_raw).strip()
-
-    max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
-    if max_tickers is not None and max_tickers <= 0:
-        max_tickers = None
-
     return MaterializeConfig(
-        container=container,
-        year_month=str(args.year_month).strip(),
-        output_path=str(args.output_path).strip().lstrip("/"),
-        max_tickers=max_tickers,
+        container=args.container,
+        year_month=args.year_month,
+        output_path=args.output_path,
     )
 
 
 def materialize_silver_earnings_by_date(cfg: MaterializeConfig) -> int:
-    start, end = _parse_year_month_bounds(cfg.year_month)
-    root_prefix = _earnings_root_prefix()
-
-    tickers_from_container = _try_load_tickers_from_container(cfg.container, root_prefix=root_prefix)
-    if tickers_from_container is None:
-        tickers = _load_ticker_universe()
-        ticker_source = "symbol_universe"
-    else:
-        tickers = tickers_from_container
-        ticker_source = "container_listing"
-
-    if cfg.max_tickers is not None:
-        tickers = tickers[: cfg.max_tickers]
-
-    write_line(
-        f"Materializing earnings-data-by-date for {cfg.year_month}: container={cfg.container} "
-        f"tickers={len(tickers)} ticker_source={ticker_source} output_path={cfg.output_path}"
-    )
-
-    if not tickers:
-        write_line(f"No per-ticker earnings tables found (source={ticker_source}); nothing to materialize.")
-        return 0
-
-    frames = []
-    for ticker in tickers:
-        src_path = DataPaths.get_earnings_path(ticker)
-        df = load_delta(cfg.container, src_path)
-        if df is None or df.empty:
-            continue
-
-        date_col = "Date" if "Date" in df.columns else ("date" if "date" in df.columns else None)
-        if not date_col:
-            continue
-
-        df = df.copy()
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.normalize()
-        df = df.dropna(subset=[date_col])
-        if df.empty:
-            continue
-
-        df = df[(df[date_col] >= start) & (df[date_col] < end)]
-        if df.empty:
-            continue
-
-        if "Symbol" not in df.columns and "symbol" not in df.columns:
-            df["symbol"] = ticker
-
-        df["year_month"] = df[date_col].dt.strftime("%Y-%m")
-        df = df[df["year_month"] == cfg.year_month]
-        if df.empty:
-            continue
-
-        frames.append(df)
-
-    if not frames:
-        write_line(f"No Silver earnings rows found for {cfg.year_month}; nothing to materialize.")
-        return 0
-
-    out = pd.concat(frames, ignore_index=True)
-    date_col = "Date" if "Date" in out.columns else "date"
-    predicate = f"year_month = '{cfg.year_month}'"
-
-    store_delta(
-        out,
+    return materialize_by_date(
         container=cfg.container,
-        path=cfg.output_path,
-        mode="overwrite",
-        partition_by=["year_month", date_col],
-        merge_schema=True,
-        predicate=predicate,
+        output_path=cfg.output_path,
+        year_month=cfg.year_month,
+        get_source_path_func=DataPaths.get_earnings_path,
+        date_col_candidates=["Date", "date"], # Source has Date usually
+        ticker_col="Symbol"
     )
-
-    write_line(f"Materialized {len(out)} row(s) into {cfg.container}/{cfg.output_path} ({cfg.year_month}).")
-    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:

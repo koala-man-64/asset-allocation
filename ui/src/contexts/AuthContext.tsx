@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import type { AccountInfo, AuthenticationResult } from '@azure/msal-browser';
 import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/msal-browser';
 
-import { setAccessTokenProvider } from '@/services/apiClient';
+import { setAccessTokenProvider } from '@/services/backtestApi';
 
 type AuthMode = 'none' | 'oidc' | 'api_key';
 
@@ -14,7 +14,7 @@ type RuntimeConfig = {
 };
 
 function getRuntimeConfig(): RuntimeConfig {
-  return (window.__API_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
+  return (window.__BACKTEST_UI_CONFIG__ as RuntimeConfig | undefined) ?? {};
 }
 
 function parseScopes(raw: unknown): string[] {

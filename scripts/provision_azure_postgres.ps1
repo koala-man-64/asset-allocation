@@ -1,7 +1,5 @@
 param(
   # Note: some subscriptions are restricted from provisioning Postgres Flexible Server in certain regions (e.g., eastus).
-  [string]$SubscriptionId = "",
-  [string]$DotEnvPath = "",
   [string]$Location = "eastus",
   # If provisioning fails due to a restricted region, retry creation in these locations (in order).
   # Example: -Location "eastus" -LocationFallback @("eastus2","centralus","westus2")
@@ -65,53 +63,6 @@ function Assert-CommandExists {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "Missing required command '$Name'. Install it and retry."
   }
-}
-
-function Read-DotEnvValue {
-  param(
-    [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][string]$Key
-  )
-
-  if (-not (Test-Path -Path $Path)) {
-    return ""
-  }
-
-  foreach ($line in (Get-Content -Path $Path -ErrorAction SilentlyContinue)) {
-    if (-not $line) { continue }
-    $t = $line.Trim()
-    if (-not $t) { continue }
-    if ($t.StartsWith("#")) { continue }
-    if ($t.StartsWith("export ")) { $t = $t.Substring(7).Trim() }
-
-    $idx = $t.IndexOf("=")
-    if ($idx -lt 1) { continue }
-
-    $k = $t.Substring(0, $idx).Trim()
-    if ($k -ne $Key) { continue }
-
-    $v = $t.Substring($idx + 1).Trim()
-    if (-not $v) { return "" }
-
-    $isSingleQuoted = $v.StartsWith("'") -and $v.EndsWith("'")
-    $isDoubleQuoted = $v.StartsWith('"') -and $v.EndsWith('"')
-
-    if (-not ($isSingleQuoted -or $isDoubleQuoted)) {
-      # Treat leading '#' as an inline comment (common in .env templates: KEY= # comment).
-      if ($v.StartsWith("#")) { return "" }
-
-      # Strip inline comments for unquoted values: KEY=value # comment
-      $m = [regex]::Match($v, '^(.*?)\s+#')
-      if ($m.Success) { $v = $m.Groups[1].Value.TrimEnd() }
-    }
-    elseif ($v.Length -ge 2) {
-      $v = $v.Substring(1, $v.Length - 2)
-    }
-
-    return $v.Trim()
-  }
-
-  return ""
 }
 
 function Invoke-Az {
@@ -224,16 +175,7 @@ Assert-PgIdentifier -Value $ApiServiceUser -Label "ApiServiceUser"
 $SkuName = $SkuName.ToLowerInvariant().Trim()
 $selectedLocation = $Location
 
-if (-not $SubscriptionId) {
-  $effectiveDotEnvPath = if ($DotEnvPath) { $DotEnvPath } else { Join-Path (Join-Path $PSScriptRoot "..") ".env" }
-  $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID"
-  if (-not $SubscriptionId) { $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "AZURE_SUBSCRIPTION_ID" }
-  if (-not $SubscriptionId) { $SubscriptionId = Read-DotEnvValue -Path $effectiveDotEnvPath -Key "SUBSCRIPTION_ID" }
-}
-
-if (-not $SubscriptionId) {
-  throw "Missing SubscriptionId. Pass -SubscriptionId or set SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID (or AZURE_SUBSCRIPTION_ID or SUBSCRIPTION_ID) in .env."
-}
+$SubscriptionId = "eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9"
 Write-Host "Using subscription: $SubscriptionId"
 Invoke-Az -Label "account set" -Args @("account", "set", "--subscription", $SubscriptionId, "--only-show-errors")
 
@@ -461,48 +403,18 @@ ALTER ROLE $ApiServiceUser WITH PASSWORD '$ApiServicePassword';
 
 GRANT CONNECT ON DATABASE $DatabaseName TO $RankingWriterUser, $ApiServiceUser;
 
-CREATE SCHEMA IF NOT EXISTS core;
-CREATE SCHEMA IF NOT EXISTS ranking;
-CREATE SCHEMA IF NOT EXISTS monitoring;
-CREATE SCHEMA IF NOT EXISTS gold;
-CREATE SCHEMA IF NOT EXISTS platinum;
+  CREATE SCHEMA IF NOT EXISTS gold;
+  CREATE SCHEMA IF NOT EXISTS platinum;
 
 GRANT USAGE, CREATE ON SCHEMA ranking TO $RankingWriterUser;
 GRANT USAGE, CREATE ON SCHEMA gold TO $RankingWriterUser;
 GRANT USAGE, CREATE ON SCHEMA platinum TO $RankingWriterUser;
 
-GRANT USAGE ON SCHEMA core TO $RankingWriterUser;
-GRANT USAGE ON SCHEMA monitoring TO $RankingWriterUser;
-
-GRANT USAGE ON SCHEMA core TO $ApiServiceUser;
-GRANT USAGE ON SCHEMA ranking TO $ApiServiceUser;
-GRANT USAGE ON SCHEMA monitoring TO $ApiServiceUser;
 GRANT USAGE ON SCHEMA gold TO $ApiServiceUser;
 GRANT USAGE ON SCHEMA platinum TO $ApiServiceUser;
 
--- Ensure grants work regardless of whether roles existed when migrations ran.
-GRANT SELECT ON ALL TABLES IN SCHEMA core TO $RankingWriterUser, $ApiServiceUser;
-GRANT SELECT ON ALL TABLES IN SCHEMA monitoring TO $RankingWriterUser;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ranking TO $RankingWriterUser;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA gold TO $RankingWriterUser;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platinum TO $RankingWriterUser;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ranking TO $RankingWriterUser;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA gold TO $RankingWriterUser;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA platinum TO $RankingWriterUser;
-
-GRANT SELECT ON ALL TABLES IN SCHEMA ranking TO $ApiServiceUser;
-GRANT SELECT ON ALL TABLES IN SCHEMA gold TO $ApiServiceUser;
-GRANT SELECT ON ALL TABLES IN SCHEMA platinum TO $ApiServiceUser;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA monitoring TO $ApiServiceUser;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA gold TO $ApiServiceUser;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA platinum TO $ApiServiceUser;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA monitoring TO $ApiServiceUser;
-
 ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT SELECT ON TABLES TO $RankingWriterUser;
-ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT SELECT ON TABLES TO $ApiServiceUser;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
@@ -510,18 +422,11 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES
 ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $RankingWriterUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $RankingWriterUser;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA ranking GRANT SELECT ON TABLES TO $ApiServiceUser;
-
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT ON TABLES TO $ApiServiceUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $ApiServiceUser;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT ON TABLES TO $ApiServiceUser;
 ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $ApiServiceUser;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA monitoring GRANT SELECT ON TABLES TO $RankingWriterUser;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA monitoring GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $ApiServiceUser;
-ALTER DEFAULT PRIVILEGES IN SCHEMA monitoring GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO $ApiServiceUser;
 "@
 
   Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", $sql)

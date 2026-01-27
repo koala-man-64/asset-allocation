@@ -111,20 +111,20 @@ export function LeftNavigation() {
                 to={item.path}
                 className={({ isActive }) =>
                   cn(
-                    'block w-full px-3 py-2 rounded-md transition-colors',
+                    'flex items-center gap-3 px-3 py-2 rounded-md transition-colors w-full',
                     'hover:bg-accent/50 group-hover:pr-9', // Make space for pin button on hover
                     isActive
                       ? 'bg-accent text-accent-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground',
-                    collapsed && 'px-2'
+                    collapsed && 'justify-center px-2'
                   )
                 }
               >
                 {({ isActive }) => (
-                  <span className={cn('flex items-center gap-3', collapsed && 'justify-center')}>
+                  <>
                     <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
-                    {!collapsed && <span className="min-w-0 truncate">{item.label}</span>}
-                  </span>
+                    {!collapsed && <span className="truncate">{item.label}</span>}
+                  </>
                 )}
               </NavLink>
             </TooltipTrigger>

@@ -38,6 +38,8 @@ local.settings.json
 data/
 !ui/src/data/
 !ui/src/data/**
+# Backtest Artifacts
+backtest_results/
 
 # --- Node / Frontend ---
 node_modules/

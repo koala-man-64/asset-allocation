@@ -96,16 +96,23 @@ jobs:
         AZURE_CONTAINER_SILVER: "silver"
         AZURE_CONTAINER_GOLD: "gold"
 
-        # API auth defaults for CI
-        API_AUTH_MODE: "none"
-        API_CSP: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+        # Backtest service defaults for CI
+        BACKTEST_OUTPUT_DIR: "/tmp/backtest_results"
+        BACKTEST_DB_PATH: "/tmp/backtest_results/runs.sqlite3"
+        BACKTEST_MAX_CONCURRENT: "1"
+        BACKTEST_API_KEY_HEADER: "X-API-Key"
+        BACKTEST_AUTH_MODE: "none"
+        BACKTEST_ALLOW_LOCAL_DATA: "false"
+        BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,ranking-data,common"
+        BACKTEST_RUN_STORE_MODE: "sqlite"
+        BACKTEST_CSP: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
 
         # System health config (required by monitoring/system_health.py)
         SYSTEM_HEALTH_TTL_SECONDS: "30"
         SYSTEM_HEALTH_MAX_AGE_SECONDS: "129600"
         SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS: "259200"
       run: |
-        python -m pytest --cov=alpaca --cov=api --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing
+        python -m pytest --cov=alpaca --cov=api --cov=backtest --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing
         echo "::group::Coverage Summary"
         coverage report | grep TOTAL | awk '{print "Backend Total Coverage: " $NF}'
         echo "::endgroup::"

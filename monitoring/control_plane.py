@@ -39,6 +39,8 @@ def _map_job_execution_status(raw: str) -> str:
 
 def _job_type_from_name(job_name: str) -> str:
     text = (job_name or "").lower()
+    if "backtest" in text:
+        return "backtest"
     if "risk" in text:
         return "risk-calc"
     if "attribution" in text:

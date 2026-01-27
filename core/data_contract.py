@@ -1,7 +1,7 @@
 """
 Centralized data-lake path contracts.
 
-This module standardizes how jobs and UI reference shared Delta tables.
+This module standardizes how jobs, UI, and backtests reference shared Delta tables.
 All paths here are *table paths within a container* (not abfss URIs).
 """
 
