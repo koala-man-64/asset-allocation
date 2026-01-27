@@ -444,6 +444,12 @@ jobs:
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
           echo "api=${{ steps.api_changes.outputs.api }}"
           echo "ui=${{ steps.ui_changes.outputs.ui }}"
+      - name: Azure Login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Ensure ACR Pull Permission
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
@@ -464,12 +470,6 @@ jobs:
             -UserAssignedIdentityName "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}" `
             -GitHubOrg "${{ github.repository_owner }}" `
             -GitHubRepo "${{ github.event.repository.name }}"
-      - name: Azure Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
