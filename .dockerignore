@@ -20,5 +20,5 @@ ui/.pnpm-store
 .agent
 .codex
 docs
-scripts
+
 deploy
