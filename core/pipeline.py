@@ -46,7 +46,9 @@ class DataPaths:
 
     @staticmethod
     def get_earnings_path(ticker: str) -> str:
-        return f"earnings-data/{ticker}"
+        from core import config as cfg
+        prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")
+        return f"{prefix}/{ticker}"
 
     @staticmethod
     def get_finance_path(folder: str, ticker: str, file_suffix: str) -> str:
