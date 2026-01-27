@@ -444,17 +444,20 @@ jobs:
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
           echo "api=${{ steps.api_changes.outputs.api }}"
           echo "ui=${{ steps.ui_changes.outputs.ui }}"
-      - name: Apply Federated Credential
+      - name: Ensure ACR Pull Permission
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: pwsh
+        shell: bash
         run: |
-          # Ensure ACR Pull permission
           chmod +x ./scripts/ensure_acr_pull.sh
           ./scripts/ensure_acr_pull.sh \
             "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             "${{ env.RESOURCE_GROUP }}" \
             "${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }}" \
             "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}"
+      - name: Apply Federated Credential
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
           ./scripts/add_federated_credential.ps1 `
             -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
             -ResourceGroup "${{ env.RESOURCE_GROUP }}" `
