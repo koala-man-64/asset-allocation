@@ -17,8 +17,8 @@ properties:
       identity: system
     secrets:
     - name: api-key
-      value: "${BACKTEST_API_KEY}"
-    - name: backtest-pg-dsn
+      value: "${API_KEY}"
+    - name: api-pg-dsn
       value: "${POSTGRES_DSN_API}"
   template:
     containers:
@@ -53,7 +53,7 @@ properties:
       - name: API_KEY_HEADER
         value: "X-API-Key"
       - name: POSTGRES_DSN
-        secretRef: backtest-pg-dsn
+        secretRef: api-pg-dsn
       - name: API_AUTH_MODE
         value: "${API_AUTH_MODE}"
       - name: API_OIDC_ISSUER

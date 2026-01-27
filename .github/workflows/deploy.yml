@@ -32,8 +32,8 @@ env:
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   IMAGE_NAME: asset-allocation-scraper
-  BACKTEST_API_IMAGE_NAME: asset-allocation-api
-  BACKTEST_API_APP: asset-allocation-api
+  API_IMAGE_NAME: asset-allocation-api
+  API_APP: asset-allocation-api
   UI_IMAGE_NAME: asset-allocation-ui
   UI_APP: asset-allocation-ui
   BRONZE_MARKET_JOB: bronze-market-job
@@ -96,14 +96,14 @@ jobs:
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           POSTGRES_DSN_RANKING: ${{ secrets.POSTGRES_DSN_RANKING }}
           POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
-          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
-          BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
-          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
-          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
-          BACKTEST_OIDC_JWKS_URL: ${{ secrets.BACKTEST_OIDC_JWKS_URL }}
-          BACKTEST_OIDC_REQUIRED_SCOPES: ${{ secrets.BACKTEST_OIDC_REQUIRED_SCOPES }}
-          BACKTEST_OIDC_REQUIRED_ROLES: ${{ secrets.BACKTEST_OIDC_REQUIRED_ROLES }}
-          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
+          API_AUTH_MODE: ${{ secrets.API_AUTH_MODE }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_OIDC_ISSUER: ${{ secrets.API_OIDC_ISSUER }}
+          API_OIDC_AUDIENCE: ${{ secrets.API_OIDC_AUDIENCE }}
+          API_OIDC_JWKS_URL: ${{ secrets.API_OIDC_JWKS_URL }}
+          API_OIDC_REQUIRED_SCOPES: ${{ secrets.API_OIDC_REQUIRED_SCOPES }}
+          API_OIDC_REQUIRED_ROLES: ${{ secrets.API_OIDC_REQUIRED_ROLES }}
+          API_CSP: ${{ secrets.API_CSP }}
         run: |
           set -euo pipefail
 
@@ -134,26 +134,26 @@ jobs:
             require_secret POSTGRES_DSN_API
           fi
 
-          require_secret BACKTEST_AUTH_MODE
-          require_secret BACKTEST_CSP
+          require_secret API_AUTH_MODE
+          require_secret API_CSP
 
-          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          auth_mode="$(echo "${API_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
           case "$auth_mode" in
             none|api_key|oidc|api_key_or_oidc)
               ;;
             *)
-              echo "::error::Invalid BACKTEST_AUTH_MODE (expected none|api_key|oidc|api_key_or_oidc)"
+              echo "::error::Invalid API_AUTH_MODE (expected none|api_key|oidc|api_key_or_oidc)"
               exit 1
               ;;
           esac
 
           if [ "$auth_mode" = "api_key" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
-            require_secret BACKTEST_API_KEY
+            require_secret API_KEY
           fi
 
           if [ "$auth_mode" = "oidc" ] || [ "$auth_mode" = "api_key_or_oidc" ]; then
-            require_secret BACKTEST_OIDC_ISSUER
-            require_secret BACKTEST_OIDC_AUDIENCE
+            require_secret API_OIDC_ISSUER
+            require_secret API_OIDC_AUDIENCE
           fi
 
           python3 - <<'PY'
@@ -387,21 +387,20 @@ jobs:
               - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 
-      - name: Detect Backtest API Changes
+      - name: Detect API Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: backtest_api_changes
+        id: api_changes
         with:
           filters: |
-            backtest_api:
+            api:
               - "api/**"
-              - "backtest/**"
               - "services/**"
               - "api/**"
               - "core/**"
               - "monitoring/**"
               - "ui/**"
               - "Dockerfile.asset_allocation_api"
-              - "deploy/app_backtest_api.yaml"
+              - "deploy/app_api.yaml"
               - "pyproject.toml"
               - "requirements.txt"
               - "requirements.lock.txt"
@@ -432,7 +431,7 @@ jobs:
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
-          echo "backtest_api=${{ steps.backtest_api_changes.outputs.backtest_api }}"
+          echo "api=${{ steps.api_changes.outputs.api }}"
           echo "ui=${{ steps.ui_changes.outputs.ui }}"
       - name: Provision Postgres
         shell: pwsh
@@ -512,26 +511,26 @@ jobs:
             docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
           fi
 
-      - name: Build and Push Backtest API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true'
+      - name: Build and Push API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true'
         run: |
           BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
           
           # 1. Build immutable SHA tag
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
           
           # 2. Build branch tag
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
+          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:$BRANCH_TAG
           
           # 3. Push SHA tag and Branch tag
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:$BRANCH_TAG
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:$BRANCH_TAG
           
           # 4. Handle 'latest' tag (Only on main branch)
           if [ "${{ github.ref }}" == "refs/heads/main" ]; then
             echo "Pushing latest tag..."
-            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
-            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:latest
+            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:latest
+            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:latest
           fi
 
       - name: Build and Push UI Image
@@ -568,34 +567,34 @@ jobs:
               --auth-mode login
           done
 
-      - name: Check Backtest API App Exists
-        id: backtest_api_app_check
+      - name: Check API App Exists
+        id: api_app_check
         run: |
-          if az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+          if az containerapp show --name ${{ env.API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "app_exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "app_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy Backtest API App
-        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
+      - name: Deploy API App
+        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.api_app_check.outputs.app_exists == 'false'
         env:
-          BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
+          API_KEY: ${{ secrets.API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           POSTGRES_DSN_API: ${{ secrets.POSTGRES_DSN_API }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          BACKTEST_AUTH_MODE: ${{ secrets.BACKTEST_AUTH_MODE }}
-          BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
-          BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
-          BACKTEST_OIDC_JWKS_URL: ${{ secrets.BACKTEST_OIDC_JWKS_URL }}
-          BACKTEST_OIDC_REQUIRED_SCOPES: ${{ secrets.BACKTEST_OIDC_REQUIRED_SCOPES }}
-          BACKTEST_OIDC_REQUIRED_ROLES: ${{ secrets.BACKTEST_OIDC_REQUIRED_ROLES }}
-          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
-          BACKTEST_UI_AUTH_MODE: ${{ secrets.BACKTEST_UI_AUTH_MODE }}
-          BACKTEST_UI_OIDC_CLIENT_ID: ${{ secrets.BACKTEST_UI_OIDC_CLIENT_ID }}
-          BACKTEST_UI_OIDC_AUTHORITY: ${{ secrets.BACKTEST_UI_OIDC_AUTHORITY }}
-          BACKTEST_UI_OIDC_SCOPES: ${{ secrets.BACKTEST_UI_OIDC_SCOPES }}
-          BACKTEST_UI_API_BASE_URL: ${{ secrets.BACKTEST_UI_API_BASE_URL }}
+          API_AUTH_MODE: ${{ secrets.API_AUTH_MODE }}
+          API_OIDC_ISSUER: ${{ secrets.API_OIDC_ISSUER }}
+          API_OIDC_AUDIENCE: ${{ secrets.API_OIDC_AUDIENCE }}
+          API_OIDC_JWKS_URL: ${{ secrets.API_OIDC_JWKS_URL }}
+          API_OIDC_REQUIRED_SCOPES: ${{ secrets.API_OIDC_REQUIRED_SCOPES }}
+          API_OIDC_REQUIRED_ROLES: ${{ secrets.API_OIDC_REQUIRED_ROLES }}
+          API_CSP: ${{ secrets.API_CSP }}
+          UI_AUTH_MODE: ${{ secrets.UI_AUTH_MODE }}
+          UI_OIDC_CLIENT_ID: ${{ secrets.UI_OIDC_CLIENT_ID }}
+          UI_OIDC_AUTHORITY: ${{ secrets.UI_OIDC_AUTHORITY }}
+          UI_OIDC_SCOPES: ${{ secrets.UI_OIDC_SCOPES }}
+          UI_API_BASE_URL: ${{ secrets.UI_API_BASE_URL }}
         run: |
           set -euo pipefail
           export IMAGE_TAG="${{ github.sha }}"
@@ -603,20 +602,20 @@ jobs:
           # Backwards-compatible default: allow a single DSN secret, with optional overrides.
           export POSTGRES_DSN_API="${POSTGRES_DSN_API:-$POSTGRES_DSN}"
 
-          # Map BACKTEST_* secrets into API/UI env vars expected by deploy/app_backtest_api.yaml.
-          export API_AUTH_MODE="${BACKTEST_AUTH_MODE:-}"
-          export API_OIDC_ISSUER="${BACKTEST_OIDC_ISSUER:-}"
-          export API_OIDC_AUDIENCE="${BACKTEST_OIDC_AUDIENCE:-}"
-          export API_OIDC_JWKS_URL="${BACKTEST_OIDC_JWKS_URL:-}"
-          export API_OIDC_REQUIRED_SCOPES="${BACKTEST_OIDC_REQUIRED_SCOPES:-}"
-          export API_OIDC_REQUIRED_ROLES="${BACKTEST_OIDC_REQUIRED_ROLES:-}"
-          export API_CSP="${BACKTEST_CSP:-}"
+          # Map API/UI secrets into env vars expected by deploy/app_api.yaml.
+          export API_AUTH_MODE="${API_AUTH_MODE:-}"
+          export API_OIDC_ISSUER="${API_OIDC_ISSUER:-}"
+          export API_OIDC_AUDIENCE="${API_OIDC_AUDIENCE:-}"
+          export API_OIDC_JWKS_URL="${API_OIDC_JWKS_URL:-}"
+          export API_OIDC_REQUIRED_SCOPES="${API_OIDC_REQUIRED_SCOPES:-}"
+          export API_OIDC_REQUIRED_ROLES="${API_OIDC_REQUIRED_ROLES:-}"
+          export API_CSP="${API_CSP:-}"
 
-          export UI_AUTH_MODE="${BACKTEST_UI_AUTH_MODE:-}"
-          export UI_OIDC_CLIENT_ID="${BACKTEST_UI_OIDC_CLIENT_ID:-}"
-          export UI_OIDC_AUTHORITY="${BACKTEST_UI_OIDC_AUTHORITY:-}"
-          export UI_OIDC_SCOPES="${BACKTEST_UI_OIDC_SCOPES:-}"
-          export UI_API_BASE_URL="${BACKTEST_UI_API_BASE_URL:-}"
+          export UI_AUTH_MODE="${UI_AUTH_MODE:-}"
+          export UI_OIDC_CLIENT_ID="${UI_OIDC_CLIENT_ID:-}"
+          export UI_OIDC_AUTHORITY="${UI_OIDC_AUTHORITY:-}"
+          export UI_OIDC_SCOPES="${UI_OIDC_SCOPES:-}"
+          export UI_API_BASE_URL="${UI_API_BASE_URL:-}"
 
           # Defaults for ARM probes and health endpoints (avoid empty envs causing probe disablement).
           export SYSTEM_HEALTH_ARM_API_VERSION="${SYSTEM_HEALTH_ARM_API_VERSION:-2023-05-01}"
@@ -634,48 +633,48 @@ jobs:
           export SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB="${SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB:-3}"
 
           export INGRESS_EXTERNAL="true"
-          auth_mode="$(echo "${BACKTEST_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          auth_mode="$(echo "${API_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
           if [ "$auth_mode" = "none" ]; then
-            echo "WARNING: BACKTEST_AUTH_MODE=none. Forcing internal ingress."
+            echo "WARNING: API_AUTH_MODE=none. Forcing internal ingress."
             export INGRESS_EXTERNAL="false"
-          elif [ -z "${BACKTEST_API_KEY:-}" ] && { [ -z "${BACKTEST_OIDC_ISSUER:-}" ] || [ -z "${BACKTEST_OIDC_AUDIENCE:-}" ]; }; then
-            echo "WARNING: No BACKTEST_API_KEY and no OIDC issuer/audience configured. Deploying with internal ingress."
+          elif [ -z "${API_KEY:-}" ] && { [ -z "${API_OIDC_ISSUER:-}" ] || [ -z "${API_OIDC_AUDIENCE:-}" ]; }; then
+            echo "WARNING: No API_KEY and no OIDC issuer/audience configured. Deploying with internal ingress."
             export INGRESS_EXTERNAL="false"
           fi
 
-          echo "Deploying Backtest API (App) from YAML..."
-          envsubst < deploy/app_backtest_api.yaml > deploy/app_backtest_api.tmp.yaml
+          echo "Deploying API (App) from YAML..."
+          envsubst < deploy/app_api.yaml > deploy/app_api.tmp.yaml
 
-          if ! az containerapp show --name ${{ env.BACKTEST_API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-             echo "App ${{ env.BACKTEST_API_APP }} not found. Creating..."
+          if ! az containerapp show --name ${{ env.API_APP }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+             echo "App ${{ env.API_APP }} not found. Creating..."
              az containerapp create \
-               --name ${{ env.BACKTEST_API_APP }} \
+               --name ${{ env.API_APP }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
                --environment asset-allocation-env \
-               --yaml "deploy/app_backtest_api.tmp.yaml"
+               --yaml "deploy/app_api.tmp.yaml"
           else
-             echo "App ${{ env.BACKTEST_API_APP }} found. Updating..."
+             echo "App ${{ env.API_APP }} found. Updating..."
              az containerapp update \
-               --name ${{ env.BACKTEST_API_APP }} \
+               --name ${{ env.API_APP }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
-               --yaml "deploy/app_backtest_api.tmp.yaml"
+               --yaml "deploy/app_api.tmp.yaml"
           fi
 
-          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.BACKTEST_API_APP }}"
+          bash deploy/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.API_APP }}"
           
-          rm deploy/app_backtest_api.tmp.yaml
+          rm deploy/app_api.tmp.yaml
 
-      - name: Verify Backtest API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.backtest_api_changes.outputs.backtest_api == 'true' || steps.backtest_api_app_check.outputs.app_exists == 'false'
+      - name: Verify API Image
+        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.api_app_check.outputs.app_exists == 'false'
         run: |
           set -euo pipefail
-          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKTEST_API_IMAGE_NAME }}:${{ github.sha }}"
-          actual_image=$(az containerapp show --name "${{ env.BACKTEST_API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
+          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
+          actual_image=$(az containerapp show --name "${{ env.API_APP }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
           if [ "$actual_image" != "$expected_image" ]; then
-            echo "Image mismatch for ${{ env.BACKTEST_API_APP }}: expected $expected_image, got $actual_image"
+            echo "Image mismatch for ${{ env.API_APP }}: expected $expected_image, got $actual_image"
             exit 1
           fi
-          echo "Verified ${{ env.BACKTEST_API_APP }} image $actual_image"
+          echo "Verified ${{ env.API_APP }} image $actual_image"
 
       - name: Check UI App Exists
         id: ui_app_check

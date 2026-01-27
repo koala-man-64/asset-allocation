@@ -2,7 +2,7 @@
 import os
 import re
 
-TARGET_DIRS = ['alpaca', 'api', 'backtest', 'monitoring', 'scripts', 'tests']
+TARGET_DIRS = ['alpaca', 'api', 'monitoring', 'scripts', 'tests']
 
 def refactor_file(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:

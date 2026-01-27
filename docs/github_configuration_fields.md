@@ -3,28 +3,28 @@
 **Scope:** GitHub Actions configuration inputs (GitHub Secrets / Variables) required or implied by this repository.
 
 ## 1. Executive Summary
-GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azure OIDC login, storage access, external data providers, Postgres DSNs, and Backtest API authentication. Some runtime-critical fields are referenced in deployment templates but are not consistently validated in workflow preflight checks. For the UI “Run job” action (Backtest API → Azure Container Apps Jobs) to persist across redeploys, ARM/job monitoring configuration should be promoted into GitHub-managed config and wired into the deploy manifest.
+GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azure OIDC login, storage access, external data providers, Postgres DSNs, and API authentication. Some runtime-critical fields are referenced in deployment templates but are not consistently validated in workflow preflight checks. For the UI “Run job” action (API → Azure Container Apps Jobs) to persist across redeploys, ARM/job monitoring configuration should be promoted into GitHub-managed config and wired into the deploy manifest.
 
 ## 2. System Map (High-Level)
 - **CI/CD workflows:** `.github/workflows/deploy.yml`, `.github/workflows/run_tests.yml`, `.github/workflows/trigger_all_jobs.yml`
-- **Deploy mechanism:** `envsubst`-rendered ACA YAML templates (e.g., `deploy/app_backtest_api.yaml`, `deploy/job_*.yaml`) applied via `az containerapp ... --yaml ...`
+- **Deploy mechanism:** `envsubst`-rendered ACA YAML templates (e.g., `deploy/app_api.yaml`, `deploy/job_*.yaml`) applied via `az containerapp ... --yaml ...`
 - **Runtime config path:** GitHub Secrets → workflow `env:` → `envsubst` → Azure Container Apps env vars/secrets
-- **Job triggering feature:** Backtest API endpoint reads ARM/job env vars (see `api/endpoints/system.py` `POST /api/system/jobs/{job_name}/run`)
+- **Job triggering feature:** API endpoint reads ARM/job env vars (see `api/endpoints/system.py` `POST /api/system/jobs/{job_name}/run`)
 
 ## 3. Findings (Triaged)
 
 ### 3.1 Critical (Must Fix)
 
-- **Deploy fails fast if `BACKTEST_AUTH_MODE` is unset (resolved)**
-  - **Evidence:** `.github/workflows/deploy.yml` now validates `BACKTEST_AUTH_MODE` and required companion settings before deploying.
+- **Deploy fails fast if `API_AUTH_MODE` is unset (resolved)**
+  - **Evidence:** `.github/workflows/deploy.yml` now validates `API_AUTH_MODE` and required companion settings before deploying.
   - **Why it matters:** A missing/empty value can produce a container that fails to start after redeploy.
   - **Recommendation:** Keep preflight validation aligned with `api/service/settings.py` requirements.
-  - **Acceptance Criteria:** Deploy workflow fails fast if missing/invalid; Backtest API starts after redeploy.
+  - **Acceptance Criteria:** Deploy workflow fails fast if missing/invalid; API starts after redeploy.
   - **Owner Suggestion:** DevOps Agent / Delivery Engineer Agent
 
 ### 3.2 Major
 - **Job-trigger + ARM health config must be GitHub-managed to survive redeploys**
-  - **Evidence:** Backtest API uses ARM/job configuration for job triggers and health reporting; deployment manifests should be the single source of truth (see `deploy/app_backtest_api.yaml` env vars).
+  - **Evidence:** API uses ARM/job configuration for job triggers and health reporting; deployment manifests should be the single source of truth (see `deploy/app_api.yaml` env vars).
   - **Why it matters:** Manually set Azure env vars can be overwritten by future redeploys.
   - **Recommendation:** Keep `SYSTEM_HEALTH_ARM_*` fields sourced from GitHub-managed config (Secrets/Variables) and rendered into the deploy template.
   - **Acceptance Criteria:** After redeploy, `/api/system/jobs/{job}/run` still works and job executions still show up in `/api/system/health`.
@@ -65,25 +65,25 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `POSTGRES_DSN` (single DSN for both ranking + API), or use both overrides:
   - `POSTGRES_DSN_RANKING` (ranking job DSN override)
   - `POSTGRES_DSN_API` (API service DSN override)
-- **Backtest API security (deploy):**
-  - `BACKTEST_API_KEY` (required for `BACKTEST_AUTH_MODE=api_key|api_key_or_oidc`)
-  - `BACKTEST_CSP`
-  - `BACKTEST_AUTH_MODE`
-- **Backtest API OIDC config (deploy; required when `BACKTEST_AUTH_MODE` enables OIDC):**
-  - `BACKTEST_OIDC_ISSUER`
-  - `BACKTEST_OIDC_AUDIENCE`
-  - `BACKTEST_OIDC_JWKS_URL`
-  - `BACKTEST_OIDC_REQUIRED_SCOPES`
-  - `BACKTEST_OIDC_REQUIRED_ROLES`
-- **UI runtime auth config served by backtest-api (deploy; optional):**
-  - `BACKTEST_UI_AUTH_MODE`
-  - `BACKTEST_UI_OIDC_CLIENT_ID`
-  - `BACKTEST_UI_OIDC_AUTHORITY`
-  - `BACKTEST_UI_OIDC_SCOPES`
-  - `BACKTEST_UI_API_BASE_URL`
+- **API security (deploy):**
+  - `API_KEY` (required for `API_AUTH_MODE=api_key|api_key_or_oidc`)
+  - `API_CSP`
+  - `API_AUTH_MODE`
+- **API OIDC config (deploy; required when `API_AUTH_MODE` enables OIDC):**
+  - `API_OIDC_ISSUER`
+  - `API_OIDC_AUDIENCE`
+  - `API_OIDC_JWKS_URL`
+  - `API_OIDC_REQUIRED_SCOPES`
+  - `API_OIDC_REQUIRED_ROLES`
+- **UI runtime auth config served by asset-allocation-api (deploy; optional):**
+  - `UI_AUTH_MODE`
+  - `UI_OIDC_CLIENT_ID`
+  - `UI_OIDC_AUTHORITY`
+  - `UI_OIDC_SCOPES`
+  - `UI_API_BASE_URL`
 
 ### 4.2 GitHub-managed fields recommended to persist “Run job” + job log tails across redeploys
-These are required/used by the Backtest API and/or system health collection logic; ensure they are set in GitHub-managed config so deploy templates can render them.
+These are required/used by the API and/or system health collection logic; ensure they are set in GitHub-managed config so deploy templates can render them.
 
 - **Required for UI “Run job” allowlist + ARM start calls:**
   - `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID`
@@ -102,21 +102,20 @@ These are required/used by the Backtest API and/or system health collection logi
 
 ## 5. Operational Readiness & Observability
 - Prefer **GitHub Variables** for non-sensitive config (e.g., subscription/resource group, job allowlists) and **GitHub Secrets** for secrets (connection strings, API keys, passwords).
-- Ensure the `backtest-api` managed identity has RBAC to start Container Apps Jobs (`Microsoft.App/jobs/start/action`); otherwise `/api/system/jobs/{job}/run` will return errors even if configuration is present.
+- Ensure the `asset-allocation-api` managed identity has RBAC to start Container Apps Jobs (`Microsoft.App/jobs/start/action`); otherwise `/api/system/jobs/{job}/run` will return errors even if configuration is present.
 
 ## 6. Refactoring Examples (Targeted)
-- Add missing deploy preflight validation for `BACKTEST_AUTH_MODE` in `.github/workflows/deploy.yml` alongside existing secret checks.
-- Add `SYSTEM_HEALTH_ARM_*` fields to `deploy/app_backtest_api.yaml` and source them from GitHub-managed config.
+- Add missing deploy preflight validation for `API_AUTH_MODE` in `.github/workflows/deploy.yml` alongside existing secret checks.
+- Add `SYSTEM_HEALTH_ARM_*` fields to `deploy/app_api.yaml` and source them from GitHub-managed config.
 
 ## 7. Evidence & Telemetry
 - Files reviewed:
   - `.github/workflows/deploy.yml`
   - `.github/workflows/run_tests.yml`
   - `.github/workflows/trigger_all_jobs.yml`
-  - `deploy/app_backtest_api.yaml`
+  - `deploy/app_api.yaml`
   - `deploy/job_*.yaml`
-  - `services/backtest_api/app.py`
+  - `api/service/app.py`
   - `api/service/settings.py`
   - `monitoring/system_health.py`
   - `.env.template`
-

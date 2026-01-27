@@ -42,7 +42,7 @@ def main():
 
         if ui_dir.exists() and ui_dir.is_dir():
             print(f"Serving UI from: {ui_dir}")
-            os.environ["BACKTEST_UI_DIST_DIR"] = str(ui_dir)
+            os.environ["UI_DIST_DIR"] = str(ui_dir)
         else:
             print(f"UI directory not found at: {ui_dir}")
             print("To serve UI: cd ui && npm run build")

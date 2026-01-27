@@ -7,14 +7,14 @@ def refactor_file(filepath):
         content = f.read()
 
     # Pattern 1: from xyz import ... -> from xyz import ...
-    # This covers: from backtest import Engine
-    # Becomes: from backtest import Engine
+    # This covers: from engine import Engine
+    # Becomes: from engine import Engine
     content = re.sub(r'from asset_allocation\.', 'from ', content)
     
     # Pattern 2: import xyz -> import xyz
     content = re.sub(r'import asset_allocation\.', 'import ', content)
     
-    # Pattern 3: Usage in code, e.g. x = backtest.Engine()
+    # Pattern 3: Usage in code, e.g. x = engine.Engine()
     # Ideally imports are fixed, this handles fully qualified names IF they were used.
     # We should be careful. replacing "" globally is strictly what flattens it.
     # But let's check for "my_asset_allocation" variable names. 

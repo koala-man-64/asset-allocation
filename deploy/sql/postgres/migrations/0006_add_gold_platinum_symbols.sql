@@ -116,14 +116,6 @@ BEGIN
     GRANT SELECT ON TABLE core.symbols TO api_service;
   END IF;
 
-  -- Backtest service (legacy role name)
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backtest_service') THEN
-    GRANT USAGE ON SCHEMA gold TO backtest_service;
-    GRANT SELECT ON ALL TABLES IN SCHEMA gold TO backtest_service;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT ON TABLES TO backtest_service;
-
-    GRANT SELECT ON TABLE core.symbols TO backtest_service;
-  END IF;
 END $$;
 
 COMMIT;

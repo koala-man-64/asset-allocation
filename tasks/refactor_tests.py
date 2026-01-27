@@ -12,7 +12,7 @@ def refactor_file(filepath):
     # Pattern 2: import xyz -> import xyz
     content = re.sub(r'import asset_allocation\.', 'import ', content)
     
-    # Pattern 3: Usage in code, e.g. x = backtest.Engine()
+    # Pattern 3: Usage in code, e.g. x = engine.Engine()
     content = re.sub(r'(?<![a-zA-Z0-9_])asset_allocation\.', '', content)
 
     with open(filepath, 'w', encoding='utf-8') as f:

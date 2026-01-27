@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "asset-allocation"
 version = "0.1.0"
-description = "Market/finance ETL, ranking signals, and a backtest framework."
+description = "Market/finance ETL, ranking signals, and strategy analytics."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -44,7 +44,6 @@ where = ["."]
 include = [
     "alpaca*",
     "api*",
-    "backtest*",
     "core*",
     "monitoring*",
     "services*",

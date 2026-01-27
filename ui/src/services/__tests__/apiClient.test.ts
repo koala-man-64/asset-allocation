@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { backtestApi } from '../backtestApi';
+import { apiClient } from '../apiClient';
 
 // Mock the global fetch
 const fetchMock = vi.fn();
 global.fetch = fetchMock;
 
-describe('backtestApi', () => {
+describe('apiClient', () => {
     beforeEach(() => {
         fetchMock.mockReset();
     });
@@ -27,7 +27,7 @@ describe('backtestApi', () => {
                 }),
             });
 
-            await backtestApi.getJobLogs('test-job');
+            await apiClient.getJobLogs('test-job');
 
             expect(fetchMock).toHaveBeenCalledTimes(1);
             const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
@@ -45,7 +45,7 @@ describe('backtestApi', () => {
                 json: async () => ({ jobName: 'test-job', runs: [] }),
             });
 
-            await backtestApi.getJobLogs('test-job', { runs: 5 });
+            await apiClient.getJobLogs('test-job', { runs: 5 });
 
             const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
             expect(url.searchParams.get('runs')).toBe('5');
@@ -59,7 +59,7 @@ describe('backtestApi', () => {
                 json: async () => ([]),
             });
 
-            await backtestApi.getDomainData('AAPL', 'earnings', 'silver');
+            await apiClient.getDomainData('AAPL', 'earnings', 'silver');
 
             expect(fetchMock).toHaveBeenCalledTimes(1);
             const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
@@ -77,7 +77,7 @@ describe('backtestApi', () => {
             });
 
             // 'price-target' contains a dash
-            await backtestApi.getDomainData('MSFT', 'price-target', 'gold');
+            await apiClient.getDomainData('MSFT', 'price-target', 'gold');
 
             const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
             expect(url.pathname).toBe('/api/data/gold/price-target');

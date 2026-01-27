@@ -30,10 +30,6 @@ import { renderWithProviders } from '@/test/utils';
 
 import App from '../App';
 
-vi.mock('@/hooks/useRealtime', () => ({
-    useRealtime: () => undefined,
-}));
-
 vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
 

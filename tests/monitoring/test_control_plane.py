@@ -19,11 +19,11 @@ class FakeArmClient:
 def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
     arm = FakeArmClient(
         responses={
-            "https://example.test/Microsoft.App/jobs/my-backtest-job": {
-                "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/my-backtest-job",
+            "https://example.test/Microsoft.App/jobs/my-risk-job": {
+                "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/my-risk-job",
                 "properties": {"provisioningState": "Succeeded"},
             },
-            "https://example.test/Microsoft.App/jobs/my-backtest-job/executions": {
+            "https://example.test/Microsoft.App/jobs/my-risk-job/executions": {
                 "value": [
                     {
                         "properties": {
@@ -58,14 +58,14 @@ def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
 
     resources, runs = collect_jobs_and_executions(
         arm,
-        job_names=["my-backtest-job"],
+        job_names=["my-risk-job"],
         last_checked_iso="2024-01-10T00:00:00+00:00",
         include_ids=False,
         max_executions_per_job=3,
     )
 
     assert len(resources) == 1
-    assert resources[0].name == "my-backtest-job"
+    assert resources[0].name == "my-risk-job"
     assert resources[0].status == "healthy"
 
     # Limit applies before sorting.
@@ -77,6 +77,6 @@ def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
         "2024-01-01T00:00:00+00:00",
     ]
     assert [r["duration"] for r in runs] == [None, 120, 60]
-    assert all(r["jobType"] == "backtest" for r in runs)
+    assert all(r["jobType"] == "risk-calc" for r in runs)
     assert all(r["triggeredBy"] == "azure" for r in runs)
 

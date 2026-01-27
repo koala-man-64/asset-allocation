@@ -45,7 +45,15 @@ def create_app() -> FastAPI:
         app.state.auth = AuthManager(settings)
 
         if settings.postgres_dsn:
-            app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
+            try:
+                store = PostgresAlertStateStore(settings.postgres_dsn)
+                store.init_db()
+                app.state.alert_state_store = store
+            except Exception as exc:
+                logger.warning(
+                    "Alert state store not ready (monitoring.alert_state missing or DB unavailable): %s",
+                    exc,
+                )
 
         def _system_health_ttl_seconds() -> float:
             raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "300")

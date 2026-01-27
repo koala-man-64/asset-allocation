@@ -3,19 +3,16 @@ import type { FinanceData, MarketData } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
 import { config } from '@/config';
 
-export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
-export type DataSource = 'auto' | 'local' | 'adls';
-export type DataDomain = 'market' | 'earnings' | 'price-target';
-
 type AccessTokenProvider = () => Promise<string | null>;
 
 let accessTokenProvider: AccessTokenProvider | null = null;
 
-// Define config interface locally to avoid circular dependencies if needed, or just extend Window
 interface WindowWithConfig extends Window {
-  __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string };
+  __API_UI_CONFIG__?: { apiBaseUrl?: string; debugApi?: unknown };
 }
-const runtimeConfig = (window as WindowWithConfig).__BACKTEST_UI_CONFIG__ || {};
+
+const runtimeConfig = (window as WindowWithConfig).__API_UI_CONFIG__ || {};
+
 const debugApi = (() => {
   const isTruthy = (value: unknown): boolean => {
     if (typeof value === 'boolean') return value;
@@ -32,12 +29,7 @@ const debugApi = (() => {
   }
 
   const queryFlag = new URLSearchParams(window.location.search).get('debugApi');
-  const candidates = [
-    runtimeConfig.debugApi,
-    import.meta.env.VITE_DEBUG_API,
-    queryFlag,
-    localStorageFlag,
-  ];
+  const candidates = [runtimeConfig.debugApi, import.meta.env.VITE_DEBUG_API, queryFlag, localStorageFlag];
   const explicitFlag = candidates.find((value) => {
     if (value === undefined || value === null) return false;
     return String(value).trim() !== '';
@@ -46,8 +38,7 @@ const debugApi = (() => {
   return isTruthy(explicitFlag);
 })();
 
-const apiLogPrefix = '[Backtest API]';
-
+const apiLogPrefix = '[API]';
 
 function logApi(message: string, meta: Record<string, unknown> = {}): void {
   if (!debugApi) return;
@@ -58,13 +49,11 @@ function logApi(message: string, meta: Record<string, unknown> = {}): void {
   console.info(apiLogPrefix, message);
 }
 
-
-
 if (debugApi) {
   logApi('Runtime config', {
     apiBaseUrl: config.apiBaseUrl,
-    runtimeBaseUrl: runtimeConfig.backtestApiBaseUrl,
-    envBaseUrl: import.meta.env.VITE_BACKTEST_API_BASE_URL || import.meta.env.VITE_API_BASE_URL,
+    runtimeBaseUrl: runtimeConfig.apiBaseUrl,
+    envBaseUrl: import.meta.env.VITE_API_BASE_URL,
     origin: window.location.origin,
   });
 }
@@ -83,67 +72,7 @@ export class ApiError extends Error {
   }
 }
 
-export interface RunRecordResponse {
-  run_id: string;
-  status: RunStatus;
-  submitted_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  run_name?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
-  output_dir?: string | null;
-  adls_container?: string | null;
-  adls_prefix?: string | null;
-  error?: string | null;
-}
-
-export interface RunListResponse {
-  runs: RunRecordResponse[];
-  limit: number;
-  offset: number;
-}
-
-export interface TimeseriesPointResponse {
-  date: string;
-  portfolio_value: number;
-  drawdown: number;
-  daily_return?: number | null;
-  cumulative_return?: number | null;
-  cash?: number | null;
-  gross_exposure?: number | null;
-  net_exposure?: number | null;
-  turnover?: number | null;
-  commission?: number | null;
-  slippage_cost?: number | null;
-}
-
-export interface TimeseriesResponse {
-  points: TimeseriesPointResponse[];
-  total_points: number;
-  truncated: boolean;
-}
-
-export interface RollingMetricPointResponse {
-  date: string;
-  window_days: number;
-  rolling_return?: number | null;
-  rolling_volatility?: number | null;
-  rolling_sharpe?: number | null;
-  rolling_max_drawdown?: number | null;
-  turnover_sum?: number | null;
-  commission_sum?: number | null;
-  slippage_cost_sum?: number | null;
-  n_trades_sum?: number | null;
-  gross_exposure_avg?: number | null;
-  net_exposure_avg?: number | null;
-}
-
-export interface RollingMetricsResponse {
-  points: RollingMetricPointResponse[];
-  total_points: number;
-  truncated: boolean;
-}
+export type DataDomain = 'market' | 'earnings' | 'price-target' | string;
 
 export interface JobTriggerResponse {
   jobName: string;
@@ -208,66 +137,7 @@ export interface StockScreenerResponse {
   rows: StockScreenerRow[];
 }
 
-export interface TradeResponse {
-  execution_date: string;
-  symbol: string;
-  quantity: number;
-  price: number;
-  notional: number;
-  commission: number;
-  slippage_cost: number;
-  cash_after: number;
-}
-
-export interface TradeListResponse {
-  trades: TradeResponse[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
 export type GenericDataRow = Record<string, unknown>;
-
-export interface BacktestSummary {
-  run_id?: string;
-  run_name?: string;
-  start_date?: string;
-  end_date?: string;
-  total_return?: number;
-  annualized_return?: number;
-  annualized_volatility?: number;
-  sharpe_ratio?: number;
-  max_drawdown?: number;
-  trades?: number;
-  initial_cash?: number;
-  final_equity?: number;
-  [key: string]: unknown;
-}
-
-export interface ListRunsParams {
-  status?: RunStatus;
-  q?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface GetTimeseriesParams {
-  source?: DataSource;
-  maxPoints?: number;
-}
-
-export interface GetRollingParams {
-  source?: DataSource;
-  windowDays?: number;
-  maxPoints?: number;
-}
-
-export interface GetTradesParams {
-  source?: DataSource;
-  limit?: number;
-  offset?: number;
-}
-
 
 function getBaseUrl(): string {
   return config.apiBaseUrl;
@@ -275,7 +145,7 @@ function getBaseUrl(): string {
 
 function getApiKey(): string {
   // NOTE: Do not rely on this for production secrets. This is intended for local/dev only.
-  return (import.meta.env.VITE_BACKTEST_API_KEY ?? '').trim();
+  return (import.meta.env.VITE_API_KEY ?? '').trim();
 }
 
 function shouldSendApiKey(): boolean {
@@ -305,7 +175,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   const url = baseUrl ? `${baseUrl}${path}` : path;
   const method = (init.method ?? 'GET').toUpperCase();
 
-  console.info('[backtestApi] request start', {
+  logApi('request start', {
     method,
     baseUrl,
     path,
@@ -330,14 +200,14 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   }
 
   const resp = await fetch(url, { ...init, headers });
-  console.info('[backtestApi] response', {
+  logApi('response', {
     method,
     url: resp.url,
     status: resp.status,
   });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
-    console.error('[backtestApi] response error', {
+    logApi('response error', {
       method,
       url: resp.url,
       status: resp.status,
@@ -353,58 +223,9 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
   return resp.json() as Promise<T>;
 }
 
-export const backtestApi = {
-  async listRuns(params: ListRunsParams = {}, signal?: AbortSignal): Promise<RunListResponse> {
-    const query = buildQuery({
-      status: params.status,
-      q: params.q,
-      limit: params.limit ?? 200,
-      offset: params.offset ?? 0,
-    });
-    return requestJson<RunListResponse>(`/backtests${query}`, { signal });
-  },
-
-  async getSummary(runId: string, params: { source?: DataSource } = {}, signal?: AbortSignal): Promise<BacktestSummary> {
-    const query = buildQuery({ source: params.source ?? 'auto' });
-    return requestJson<BacktestSummary>(`/backtests/${encodeURIComponent(runId)}/summary${query}`, { signal });
-  },
-
-  async getTimeseries(
-    runId: string,
-    params: GetTimeseriesParams = {},
-    signal?: AbortSignal,
-  ): Promise<TimeseriesResponse> {
-    const query = buildQuery({
-      source: params.source ?? 'auto',
-      max_points: params.maxPoints ?? 5000,
-    });
-    return requestJson<TimeseriesResponse>(`/backtests/${encodeURIComponent(runId)}/metrics/timeseries${query}`, { signal });
-  },
-
-  async getRolling(
-    runId: string,
-    params: GetRollingParams = {},
-    signal?: AbortSignal,
-  ): Promise<RollingMetricsResponse> {
-    const query = buildQuery({
-      source: params.source ?? 'auto',
-      window_days: params.windowDays ?? 63,
-      max_points: params.maxPoints ?? 5000,
-    });
-    return requestJson<RollingMetricsResponse>(`/backtests/${encodeURIComponent(runId)}/metrics/rolling${query}`, { signal });
-  },
-
-  async getTrades(runId: string, params: GetTradesParams = {}, signal?: AbortSignal): Promise<TradeListResponse> {
-    const query = buildQuery({
-      source: params.source ?? 'auto',
-      limit: params.limit ?? 2000,
-      offset: params.offset ?? 0,
-    });
-    return requestJson<TradeListResponse>(`/backtests/${encodeURIComponent(runId)}/trades${query}`, { signal });
-  },
-
+export const apiClient = {
   async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
-    console.info('[backtestApi] getSystemHealth', { baseUrl: getBaseUrl() });
+    logApi('getSystemHealth', { baseUrl: getBaseUrl() });
     return requestJson<SystemHealth>('/system/health', { signal });
   },
 
@@ -421,30 +242,6 @@ export const backtestApi = {
       limit: params.limit ?? 500,
     });
     return requestJson<TradingSignal[]>(`/ranking/signals${query}`, { signal });
-  },
-
-  async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
-    const encoded = encodeURIComponent(alertId);
-    return requestJson<unknown>(`/system/alerts/${encoded}/ack`, { method: 'POST', signal });
-  },
-
-  async snoozeAlert(
-    alertId: string,
-    payload: { minutes?: number; until?: string } = {},
-    signal?: AbortSignal,
-  ): Promise<unknown> {
-    const encoded = encodeURIComponent(alertId);
-    return requestJson<unknown>(`/system/alerts/${encoded}/snooze`, {
-      method: 'POST',
-      signal,
-      body: JSON.stringify(payload),
-      headers: { 'Content-Type': 'application/json' },
-    });
-  },
-
-  async resolveAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
-    const encoded = encodeURIComponent(alertId);
-    return requestJson<unknown>(`/system/alerts/${encoded}/resolve`, { method: 'POST', signal });
   },
 
   async getStrategies(signal?: AbortSignal): Promise<StrategyRun[]> {
@@ -502,6 +299,30 @@ export const backtestApi = {
 
   async getStressEvents(_signal?: AbortSignal): Promise<StressEvent[]> {
     return [];
+  },
+
+  async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
+    const encoded = encodeURIComponent(alertId);
+    return requestJson<unknown>(`/system/alerts/${encoded}/ack`, { method: 'POST', signal });
+  },
+
+  async snoozeAlert(
+    alertId: string,
+    payload: { minutes?: number; until?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const encoded = encodeURIComponent(alertId);
+    return requestJson<unknown>(`/system/alerts/${encoded}/snooze`, {
+      method: 'POST',
+      signal,
+      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+
+  async resolveAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
+    const encoded = encodeURIComponent(alertId);
+    return requestJson<unknown>(`/system/alerts/${encoded}/resolve`, { method: 'POST', signal });
   },
 
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
