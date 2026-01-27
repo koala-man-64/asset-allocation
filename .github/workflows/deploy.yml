@@ -451,16 +451,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Apply Federated Credential
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: pwsh
-        run: |
-          ./scripts/add_federated_credential.ps1 `
-            -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
-            -ResourceGroup "${{ env.RESOURCE_GROUP }}" `
-            -UserAssignedIdentityName "${{ secrets.AZURE_USER_ASSIGNED_IDENTITY_NAME }}" `
-            -GitHubOrg "${{ github.repository_owner }}" `
-            -GitHubRepo "${{ github.event.repository.name }}"
+
 
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
