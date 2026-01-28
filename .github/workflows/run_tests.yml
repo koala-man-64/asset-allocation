@@ -24,6 +24,7 @@ jobs:
         AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}
         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+        VITE_PORT: ${{ vars.VITE_PORT }}
       run: |
         set -euo pipefail
 
@@ -41,10 +42,12 @@ jobs:
         require_secret AZURE_STORAGE_CONNECTION_STRING
         require_secret AZURE_STORAGE_ACCOUNT_NAME
         require_secret NASDAQ_API_KEY
+        require_secret VITE_PORT
 
     - name: Build UI (ui)
       run: |
         docker run --rm \
+          -e VITE_PORT="${{ vars.VITE_PORT }}" \
           -v "${{ github.workspace }}/ui:/app" \
           -v /app/node_modules \
           -w /app \
