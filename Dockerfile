@@ -15,7 +15,6 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 COPY pyproject.toml README.md ./
 COPY core/ core/
 COPY tasks/ tasks/
-COPY services/ services/
 COPY alpaca/ alpaca/
 COPY api/ api/
 COPY monitoring/ monitoring/
