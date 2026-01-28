@@ -1,21 +1,5 @@
-# Stage 1: build the UI bundle (used for single-container hosting).
-FROM node:20-bookworm-slim AS ui-builder
-
-WORKDIR /ui
-
-ARG VITE_PORT
-ENV VITE_PORT=${VITE_PORT}
-
-COPY ui/package.json ui/pnpm-lock.yaml ./
-COPY ui/index.html ui/postcss.config.mjs ui/tsconfig.json ui/vite.config.ts ./
-COPY ui/public ./public
-COPY ui/src ./src
-
-# Build the static UI assets.
-RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
-
-
-# Stage 2: API runtime (FastAPI).
+# Tasks-only image for Azure Container Apps Jobs.
+# NOTE: API/UI are intentionally excluded from this image to minimize size and attack surface.
 FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 WORKDIR /app
@@ -24,21 +8,11 @@ COPY requirements.lock.txt .
 # Install Python dependencies first for better layer caching.
 RUN pip install --no-cache-dir -r requirements.lock.txt
 
-# Copy application code (shared across API + jobs).
+# Copy application code required by jobs.
 COPY pyproject.toml README.md ./
 COPY core/ core/
 COPY tasks/ tasks/
-COPY alpaca/ alpaca/
-COPY ui/ ui/
-COPY api/ api/
-COPY monitoring/ monitoring/
 RUN pip install --no-cache-dir .
 
-# Copy the built UI assets into the API image (single-container hosting).
-COPY --from=ui-builder /ui/dist /app/ui-dist
-
-# FastAPI listens on 8000 inside the container.
-EXPOSE 8000
-
-# Start the API server.
-CMD ["uvicorn", "api.service.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Jobs override the command in their YAML; keep a benign default.
+CMD ["python", "-c", "print('asset-allocation task image: specify a job command (e.g., python -m tasks.market_data.bronze_market_data)')"]
