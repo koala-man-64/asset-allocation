@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/too
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
+import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 
 interface StatusOverviewProps {
     overall: string;
@@ -20,6 +21,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
     const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' : sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
     const { triggeringJob, triggerJob } = useJobTrigger();
     const { jobControl, setJobSuspended } = useJobSuspend();
+    const { layerStates, triggerLayerJobs, suspendLayerJobs } = useLayerJobControl();
 
     const domainNames = useMemo(() => {
         const seen = new Set<string>();
@@ -107,6 +109,9 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                             {dataLayers.map((layer, layerIdx) => {
                                 const layerStatus = getStatusConfig(layer.status);
                                 const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
+                                const layerState = layerStates[layer.name];
+                                const isLayerLoading = layerState?.isLoading;
+                                const layerAction = layerState?.action;
 
                                 return (
                                     <TableHead key={layer.name} colSpan={2} className={`bg-white ${groupBorder}`}>
@@ -124,31 +129,88 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                                                     {layer.status.toUpperCase()}
                                                 </span>
                                             </div>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    {normalizeAzurePortalUrl(layer.portalUrl) ? (
-                                                        <a
-                                                            href={normalizeAzurePortalUrl(layer.portalUrl)}
-                                                            target="_blank"
-                                                            rel="noreferrer"
-                                                            className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
-                                                            aria-label={`Open ${layer.name} container`}
+                                            <div className="flex items-center gap-1">
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void suspendLayerJobs(layer, true)}
+                                                            disabled={isLayerLoading}
+                                                            className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-amber-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+                                                            aria-label={`Suspend all ${layer.name} jobs`}
                                                         >
-                                                            <Database className="h-4 w-4" />
-                                                        </a>
-                                                    ) : (
-                                                        <span
-                                                            className="p-1.5 text-slate-300 rounded cursor-not-allowed"
-                                                            aria-label={`No container link for ${layer.name}`}
+                                                            {isLayerLoading && layerAction === 'suspend' ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <CirclePause className="h-4 w-4" />
+                                                            )}
+                                                        </button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="bottom">Suspend all jobs</TooltipContent>
+                                                </Tooltip>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void suspendLayerJobs(layer, false)}
+                                                            disabled={isLayerLoading}
+                                                            className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+                                                            aria-label={`Resume all ${layer.name} jobs`}
                                                         >
-                                                            <Database className="h-4 w-4" />
-                                                        </span>
-                                                    )}
-                                                </TooltipTrigger>
-                                                <TooltipContent side="bottom">
-                                                    {normalizeAzurePortalUrl(layer.portalUrl) ? 'Open container' : 'Container link not configured'}
-                                                </TooltipContent>
-                                            </Tooltip>
+                                                            {isLayerLoading && layerAction === 'resume' ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <CirclePlay className="h-4 w-4" />
+                                                            )}
+                                                        </button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="bottom">Resume all jobs</TooltipContent>
+                                                </Tooltip>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void triggerLayerJobs(layer)}
+                                                            disabled={isLayerLoading}
+                                                            className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+                                                            aria-label={`Trigger all ${layer.name} jobs`}
+                                                        >
+                                                            {isLayerLoading && layerAction === 'trigger' ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <Play className="h-4 w-4" />
+                                                            )}
+                                                        </button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="bottom">Trigger all jobs</TooltipContent>
+                                                </Tooltip>
+                                                <div className="h-4 w-[1px] bg-slate-200 mx-1" />
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        {normalizeAzurePortalUrl(layer.portalUrl) ? (
+                                                            <a
+                                                                href={normalizeAzurePortalUrl(layer.portalUrl)}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
+                                                                aria-label={`Open ${layer.name} container`}
+                                                            >
+                                                                <Database className="h-4 w-4" />
+                                                            </a>
+                                                        ) : (
+                                                            <span
+                                                                className="p-1.5 text-slate-300 rounded cursor-not-allowed"
+                                                                aria-label={`No container link for ${layer.name}`}
+                                                            >
+                                                                <Database className="h-4 w-4" />
+                                                            </span>
+                                                        )}
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="bottom">
+                                                        {normalizeAzurePortalUrl(layer.portalUrl) ? 'Open container' : 'Container link not configured'}
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </div>
                                         </div>
                                     </TableHead>
                                 );
@@ -290,8 +352,8 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                                                                         </Tooltip>
                                                                     )}
 
-                                                                        <Tooltip>
-                                                                            <TooltipTrigger asChild>
+                                                                    <Tooltip>
+                                                                        <TooltipTrigger asChild>
                                                                             {normalizeAzurePortalUrl(domain.jobUrl) ? (
                                                                                 <a
                                                                                     href={normalizeAzurePortalUrl(domain.jobUrl)}
@@ -318,14 +380,14 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                                                                                 </span>
                                                                             )}
                                                                         </TooltipTrigger>
-                                                                            <TooltipContent side="bottom">
+                                                                        <TooltipContent side="bottom">
                                                                             {jobName
                                                                                 ? run
                                                                                     ? `Job • ${run.status.toUpperCase()} • ${formatTimeAgo(run.startTime)} ago`
                                                                                     : 'Job • NO RECENT RUN'
                                                                                 : 'Job not configured'}
-                                                                            </TooltipContent>
-                                                                        </Tooltip>
+                                                                        </TooltipContent>
+                                                                    </Tooltip>
                                                                 </>
                                                             );
                                                         })()}
