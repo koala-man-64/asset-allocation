@@ -8,12 +8,15 @@ export default defineConfig(({ mode }) => {
   // Load env from parent directory (../.env)
   const env = loadEnv(mode, path.resolve(__dirname, '..'), '')
 
-  const portStr = env.VITE_PORT
+  const portStr = env.VITE_PORT || process.env.VITE_PORT
   if (!portStr) {
-    throw new Error("VITE_PORT is required in .env file")
+    throw new Error('VITE_PORT is required in .env file or environment variables')
   }
-
-  const serverPort = Number(portStr)
+  const parsedPort = Number(portStr)
+  if (!Number.isFinite(parsedPort)) {
+    throw new Error(`VITE_PORT must be a number (received: ${portStr})`)
+  }
+  const serverPort = parsedPort
 
   return {
     test: {

@@ -54,6 +54,7 @@ env:
   AZURE_CONTAINER_TARGETS: price-target-data
   AZURE_CONTAINER_RANKING: ranking-data
   AZURE_CONTAINER_COMMON: common
+  VITE_PORT: ${{ vars.VITE_PORT }}
 
 jobs:
   tests:
@@ -85,6 +86,7 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          VITE_PORT: ${{ vars.VITE_PORT }}
         run: |
           set -euo pipefail
 
@@ -108,6 +110,7 @@ jobs:
           require_secret NASDAQ_API_KEY
           require_secret POSTGRES_DSN
           require_secret POSTGRES_DSN
+          require_secret VITE_PORT
 
           python3 - <<'PY'
           import os
@@ -460,10 +463,10 @@ jobs:
           cd ui
           
           # 1. Build immutable SHA tag
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
+          docker build . --build-arg VITE_PORT=${{ env.VITE_PORT }} -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
           
           # 2. Build branch tag
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
+          docker build . --build-arg VITE_PORT=${{ env.VITE_PORT }} -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
           
           # 3. Push SHA tag and Branch tag
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}

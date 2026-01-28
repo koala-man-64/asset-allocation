@@ -6,8 +6,10 @@ WORKDIR /app
 # These are baked into the bundle; runtime overrides should use /config.js.
 ARG VITE_API_BASE_URL=/api
 ARG VITE_BACKTEST_API_BASE_URL=/api
+ARG VITE_PORT
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_BACKTEST_API_BASE_URL=${VITE_BACKTEST_API_BASE_URL}
+ENV VITE_PORT=${VITE_PORT}
 
 # Install pnpm for reproducible builds.
 RUN npm install -g pnpm
