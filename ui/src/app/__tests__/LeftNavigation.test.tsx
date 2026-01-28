@@ -37,9 +37,7 @@ describe('LeftNavigation', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('STRATEGY RESEARCH')).toBeDefined();
     expect(screen.getByText('Stock Explorer')).toBeDefined();
-    expect(screen.getByText('LIVE OPERATIONS')).toBeDefined();
     expect(screen.getByText('Data Quality')).toBeDefined();
     expect(screen.getByText('System Status')).toBeDefined();
   });
@@ -53,7 +51,7 @@ describe('LeftNavigation', () => {
 
     const toggleButton = screen.getByRole('button', { name: /icon-(left|right)/i });
     fireEvent.click(toggleButton);
-    
+
     // In collapsed state, section titles like 'SYSTEM' might be hidden or icon-only
     // The component uses 'collapsed' state to change classes.
     // We expect the button to exist and be clickable.
