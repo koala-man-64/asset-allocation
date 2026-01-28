@@ -3,6 +3,8 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+const serverPort = Number(process.env.VITE_PORT ?? process.env.PORT ?? 5174)
+
 export default defineConfig({
   test: {
     globals: true,
@@ -17,7 +19,7 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
-    port: 5174,
+    port: Number.isFinite(serverPort) ? serverPort : 5174,
     strictPort: true,
     proxy: {
       '/api': {
