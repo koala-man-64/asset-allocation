@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { ExternalLink, Loader2, Play, PlayCircle, ScrollText } from 'lucide-react';
-import { formatDuration, formatRecordCount, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge } from './SystemStatusHelpers';
+import { formatDuration, formatRecordCount, formatTimeAgo, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { JobRun } from '@/types/strategy';
 
@@ -18,6 +18,28 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
     const successJobs = recentJobs.filter(j => j.status === 'success').length;
     const runningJobs = recentJobs.filter(j => j.status === 'running').length;
     const failedJobs = recentJobs.filter(j => j.status === 'failed').length;
+
+    const latestRunByJob = useMemo(() => {
+        const index = new Map<string, JobRun>();
+        for (const job of recentJobs) {
+            if (!job?.jobName) continue;
+            const key = normalizeAzureJobName(job.jobName);
+            if (!key) continue;
+            const existing = index.get(key);
+            if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
+                index.set(key, job);
+            }
+        }
+        return index;
+    }, [recentJobs]);
+
+    const getJobPortalLink = (jobName: string) => {
+        const normalizedName = normalizeAzureJobName(jobName);
+        const rawDirect = jobLinks[jobName];
+        const rawNormalized = normalizedName ? jobLinks[normalizedName] : undefined;
+        const raw = rawDirect || rawNormalized;
+        return normalizeAzurePortalUrl(raw);
+    };
 
     return (
         <Card className="h-full flex flex-col">
@@ -64,11 +86,20 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center gap-2">
                                                 <span className="font-medium text-sm">{job.jobName}</span>
-                                                {jobLinks[job.jobName] && (
+                                                {(() => {
+                                                    const portalLink = getJobPortalLink(job.jobName);
+                                                    const jobKey = normalizeAzureJobName(job.jobName);
+                                                    const latestRun = jobKey ? latestRunByJob.get(jobKey) : undefined;
+                                                    const runStatus = latestRun?.status ? String(latestRun.status).toUpperCase() : 'UNKNOWN';
+                                                    const runTimeAgo = latestRun?.startTime ? `${formatTimeAgo(latestRun.startTime)} ago` : 'UNKNOWN';
+
+                                                    if (!portalLink) return null;
+
+                                                    return (
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
                                                             <a
-                                                                href={jobLinks[job.jobName]}
+                                                                href={portalLink}
                                                                 target="_blank"
                                                                 rel="noreferrer"
                                                                 className="text-muted-foreground hover:text-primary transition-colors"
@@ -77,9 +108,12 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                                                 <ExternalLink className="h-4 w-4" />
                                                             </a>
                                                         </TooltipTrigger>
-                                                        <TooltipContent side="right">Open job</TooltipContent>
+                                                        <TooltipContent side="right">
+                                                            {latestRun ? `Last run: ${runStatus} • ${runTimeAgo}` : 'No recent run info'}
+                                                        </TooltipContent>
                                                     </Tooltip>
-                                                )}
+                                                    );
+                                                })()}
                                             </div>
                                             <span className="text-xs text-muted-foreground">{job.jobType}</span>
                                             <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
@@ -100,7 +134,7 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                     <TableCell className="py-2 text-right">
                                         <div className="flex items-center justify-end gap-1">
                                             {(() => {
-                                                const executionsUrl = getAzureJobExecutionsUrl(jobLinks[job.jobName]);
+                                                const executionsUrl = getAzureJobExecutionsUrl(getJobPortalLink(job.jobName));
                                                 return (
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>

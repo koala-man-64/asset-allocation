@@ -52,6 +52,42 @@ describe('apiClient', () => {
         });
     });
 
+    describe('job control', () => {
+        it('posts suspend job endpoint', async () => {
+            fetchMock.mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    jobName: 'test-job',
+                    action: 'suspend',
+                    runningState: 'Suspended',
+                }),
+            });
+
+            await apiClient.suspendJob('test-job');
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
+            expect(url.pathname).toBe('/api/system/jobs/test-job/suspend');
+        });
+
+        it('posts resume job endpoint', async () => {
+            fetchMock.mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    jobName: 'test-job',
+                    action: 'resume',
+                    runningState: 'Running',
+                }),
+            });
+
+            await apiClient.resumeJob('test-job');
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
+            expect(url.pathname).toBe('/api/system/jobs/test-job/resume');
+        });
+    });
+
     describe('getDomainData', () => {
         it('endpoints are correctly constructed and encoded', async () => {
             fetchMock.mockResolvedValueOnce({

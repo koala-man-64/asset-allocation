@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { QueryProvider } from '@/providers/QueryProvider';
 
@@ -19,8 +19,6 @@ import { Toaster } from '@/app/components/ui/sonner';
 import { StockDetailPage } from '@/app/components/pages/StockDetailPage';
 
 function AppContent() {
-  const navigate = useNavigate();
-
   // Enable real-time updates from backend
 
 

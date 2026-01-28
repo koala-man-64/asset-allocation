@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '../components/pages/DataQualityPage';
 import * as DataQueries from '@/hooks/useDataQueries';
@@ -92,7 +92,7 @@ describe('DataQualityPage', () => {
             data: null,
             isLoading: true,
             error: null,
-        } as any);
+        } as unknown as ReturnType<typeof DataQueries.useSystemHealthQuery>);
 
         renderWithProviders(<DataQualityPage />);
 

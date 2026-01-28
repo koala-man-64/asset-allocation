@@ -81,6 +81,12 @@ export interface JobTriggerResponse {
   executionName?: string | null;
 }
 
+export interface JobControlResponse {
+  jobName: string;
+  action: 'suspend' | 'resume';
+  runningState?: string | null;
+}
+
 export interface JobLogRunResponse {
   executionName?: string | null;
   executionId?: string | null;
@@ -328,6 +334,16 @@ export const apiClient = {
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
     const encoded = encodeURIComponent(jobName);
     return requestJson<JobTriggerResponse>(`/system/jobs/${encoded}/run`, { method: 'POST', signal });
+  },
+
+  async suspendJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
+    const encoded = encodeURIComponent(jobName);
+    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/suspend`, { method: 'POST', signal });
+  },
+
+  async resumeJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
+    const encoded = encodeURIComponent(jobName);
+    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/resume`, { method: 'POST', signal });
   },
 
   async getJobLogs(

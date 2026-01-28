@@ -188,6 +188,7 @@ export interface ResourceHealth {
   lastChecked: string;
   details?: string;
   azureId?: string;
+  runningState?: string;
   signals?: ResourceSignal[];
 }
 

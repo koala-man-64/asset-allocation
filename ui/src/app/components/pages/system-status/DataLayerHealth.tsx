@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { BarChart3, Calendar, Clock, Database, DollarSign, ExternalLink, Folder, PlayCircle, Target, TrendingUp, Zap } from 'lucide-react';
-import { getStatusIcon, getStatusBadge, formatSchedule, formatTimestamp } from './SystemStatusHelpers';
+import { getStatusIcon, getStatusBadge, formatSchedule, formatTimestamp, normalizeAzurePortalUrl } from './SystemStatusHelpers';
 import { DataDomain, DataLayer, JobRun, TradingSignal } from '@/types/strategy';
 
 interface DataLayerHealthProps {
@@ -86,9 +86,9 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                             <div>
                                                 <div className="font-medium flex items-center gap-2 text-base">
                                                     {layer.name}
-                                                    {layer.portalUrl && (
+                                                    {normalizeAzurePortalUrl(layer.portalUrl) && (
                                                         <a
-                                                            href={layer.portalUrl}
+                                                            href={normalizeAzurePortalUrl(layer.portalUrl)}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             className="text-muted-foreground hover:text-primary transition-colors"
@@ -145,9 +145,9 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                                             <div className="flex flex-col gap-1 text-xs text-muted-foreground/80">
                                                                 <div className="flex items-center gap-1.5 min-w-0">
                                                                     <Folder className="h-3.5 w-3.5 flex-shrink-0" />
-                                                                    {domain.portalUrl ? (
+                                                                    {normalizeAzurePortalUrl(domain.portalUrl) ? (
                                                                         <a
-                                                                            href={domain.portalUrl}
+                                                                            href={normalizeAzurePortalUrl(domain.portalUrl)}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
                                                                             className="hover:text-primary transition-colors min-w-0"
@@ -165,9 +165,9 @@ export function DataLayerHealth({ dataLayers, recentJobs, impactsByDomain, signa
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5 min-w-0">
                                                                     <PlayCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                                                                    {domain.jobUrl ? (
+                                                                    {normalizeAzurePortalUrl(domain.jobUrl) ? (
                                                                         <a
-                                                                            href={domain.jobUrl}
+                                                                            href={normalizeAzurePortalUrl(domain.jobUrl)}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
                                                                             className="hover:text-primary transition-colors min-w-0"

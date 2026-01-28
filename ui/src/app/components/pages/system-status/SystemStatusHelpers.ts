@@ -210,15 +210,64 @@ export const formatSchedule = (schedule?: string | null) => {
     return buildCronEnglish(cronExpression) || raw;
 };
 
+export const normalizeAzurePortalUrl = (value?: string | null) => {
+    if (!value) {
+        return '';
+    }
+    const trimmed = String(value).trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    if (/^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+    }
+    if (/^portal\.azure\.com/i.test(trimmed)) {
+        return `https://${trimmed}`;
+    }
+    if (trimmed.startsWith('#')) {
+        return `https://portal.azure.com/${trimmed}`;
+    }
+
+    const resourceId = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+    return `https://portal.azure.com/#resource${resourceId}`;
+};
+
+export const normalizeAzureJobName = (value?: string | null) => {
+    if (!value) {
+        return '';
+    }
+    let trimmed = String(value).trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    // Accept common Azure portal/resource URL shapes and extract the job name segment.
+    const match = trimmed.match(/\/jobs\/([^/?#]+)/);
+    if (match) {
+        try {
+            trimmed = decodeURIComponent(match[1]);
+        } catch {
+            trimmed = match[1];
+        }
+    }
+
+    return trimmed.toLowerCase().replace(/_/g, '-');
+};
+
 export const getAzurePortalUrl = (azureId?: string | null) => {
-    if (!azureId) return '';
-    return `https://portal.azure.com/#resource${azureId}`;
+    return normalizeAzurePortalUrl(azureId);
 };
 
 export const getAzureJobExecutionsUrl = (jobPortalUrl?: string | null) => {
-    if (!jobPortalUrl) return '';
-    const trimmed = String(jobPortalUrl).trim();
-    if (!trimmed) return '';
+    const normalized = normalizeAzurePortalUrl(jobPortalUrl);
+    if (!normalized) {
+        return '';
+    }
+    const trimmed = String(normalized).trim();
+    if (!trimmed) {
+        return '';
+    }
 
     // Container App Job portal URLs are generated as:
     // https://portal.azure.com/#resource/.../providers/Microsoft.App/jobs/<job>/overview

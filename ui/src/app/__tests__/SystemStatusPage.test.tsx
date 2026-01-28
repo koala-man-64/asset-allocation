@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/utils';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
@@ -87,5 +88,17 @@ describe('SystemStatusPage', () => {
 
     // Check for Status Badge (Uppercase)
     expect(screen.getByText('HEALTHY')).toHaveClass('font-mono');
+  });
+
+  it('shows last run status/time on job link hover', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SystemStatusPage />);
+
+    const jobLinks = screen.getAllByLabelText(/open aca-job-market in azure/i);
+    await user.hover(jobLinks[0]);
+
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip).toHaveTextContent(/Last run: SUCCESS/i);
+    expect(tooltip).toHaveTextContent(/\d+(s|m|h|d) ago/i);
   });
 });

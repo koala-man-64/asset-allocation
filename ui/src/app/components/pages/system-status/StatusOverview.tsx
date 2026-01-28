@@ -1,22 +1,25 @@
 import React, { useMemo } from 'react';
 import { DataDomain, DataLayer, JobRun } from '@/types/strategy';
-import { formatTimeAgo, getAzureJobExecutionsUrl, getStatusConfig } from './SystemStatusHelpers';
+import { formatTimeAgo, getAzureJobExecutionsUrl, getStatusConfig, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
 import { StatusTypos, StatusColors } from './StatusTokens';
-import { CalendarDays, Database, FolderOpen, Loader2, Play, ScrollText } from 'lucide-react';
+import { CalendarDays, CirclePause, CirclePlay, Database, FolderOpen, Loader2, Play, ScrollText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
+import { useJobSuspend } from '@/hooks/useJobSuspend';
 
 interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
+    jobStates?: Record<string, string>;
 }
 
-export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {
+export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: StatusOverviewProps) {
     const sysConfig = getStatusConfig(overall);
     const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' : sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
     const { triggeringJob, triggerJob } = useJobTrigger();
+    const { jobControl, setJobSuspended } = useJobSuspend();
 
     const domainNames = useMemo(() => {
         const seen = new Set<string>();
@@ -38,9 +41,11 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
         const index = new Map<string, JobRun>();
         for (const job of recentJobs) {
             if (!job?.jobName) continue;
-            const existing = index.get(job.jobName);
+            const key = normalizeAzureJobName(job.jobName);
+            if (!key) continue;
+            const existing = index.get(key);
             if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
-                index.set(job.jobName, job);
+                index.set(key, job);
             }
         }
         return index;
@@ -121,9 +126,9 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                             </div>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    {layer.portalUrl ? (
+                                                    {normalizeAzurePortalUrl(layer.portalUrl) ? (
                                                         <a
-                                                            href={layer.portalUrl}
+                                                            href={normalizeAzurePortalUrl(layer.portalUrl)}
                                                             target="_blank"
                                                             rel="noreferrer"
                                                             className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-sky-600 rounded"
@@ -141,7 +146,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                     )}
                                                 </TooltipTrigger>
                                                 <TooltipContent side="bottom">
-                                                    {layer.portalUrl ? 'Open container' : 'Container link not configured'}
+                                                    {normalizeAzurePortalUrl(layer.portalUrl) ? 'Open container' : 'Container link not configured'}
                                                 </TooltipContent>
                                             </Tooltip>
                                         </div>
@@ -196,21 +201,36 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                             const pathText = String(domain.path || '').toLowerCase();
                                                             const isByDate = pathText.includes('by-date') || pathText.includes('_by_date');
 
-                                                            const byDateFolderUrl = isByDate ? domain.portalUrl : null;
+                                                            const domainPortalUrl = normalizeAzurePortalUrl(domain.portalUrl);
+                                                            const byDateFolderUrl = isByDate ? domainPortalUrl : null;
                                                             const baseFolderUrl = (() => {
-                                                                if (!domain.portalUrl) return null;
-                                                                if (!isByDate) return domain.portalUrl;
-                                                                const derived = domain.portalUrl
+                                                                if (!domainPortalUrl) return null;
+                                                                if (!isByDate) return domainPortalUrl;
+                                                                const derived = domainPortalUrl
                                                                     .replace(/\/by-date\b/gi, '')
                                                                     .replace(/_by_date\b/gi, '');
-                                                                return derived === domain.portalUrl ? domain.portalUrl : derived;
+                                                                return derived === domainPortalUrl ? domainPortalUrl : derived;
                                                             })();
                                                             const showByDateFolder = Boolean(byDateFolderUrl) && baseFolderUrl !== byDateFolderUrl;
 
                                                             const dataConfig = getStatusConfig(domain.status || 'pending');
 
-                                                            const jobName = String(domain.jobName || '').trim();
-                                                            const run = jobName ? jobIndex.get(jobName) : null;
+                                                            const extractAzureJobName = (jobUrl?: string | null): string | null => {
+                                                                const normalized = normalizeAzurePortalUrl(jobUrl);
+                                                                if (!normalized) return null;
+                                                                const match = normalized.match(/\/jobs\/([^/?#]+)/);
+                                                                if (!match) return null;
+                                                                try {
+                                                                    return decodeURIComponent(match[1]);
+                                                                } catch {
+                                                                    return match[1];
+                                                                }
+                                                            };
+
+                                                            const jobName =
+                                                                String(domain.jobName || '').trim() || extractAzureJobName(domain.jobUrl) || '';
+                                                            const jobKey = normalizeAzureJobName(jobName);
+                                                            const run = jobKey ? jobIndex.get(jobKey) : null;
                                                             const jobConfig = jobName
                                                                 ? getStatusConfig(run?.status || 'pending')
                                                                 : getStatusConfig('unknown');
@@ -270,11 +290,11 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                                         </Tooltip>
                                                                     )}
 
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            {domain.jobUrl ? (
+                                                                        <Tooltip>
+                                                                            <TooltipTrigger asChild>
+                                                                            {normalizeAzurePortalUrl(domain.jobUrl) ? (
                                                                                 <a
-                                                                                    href={domain.jobUrl}
+                                                                                    href={normalizeAzurePortalUrl(domain.jobUrl)}
                                                                                     target="_blank"
                                                                                     rel="noreferrer"
                                                                                     className={iconButtonClass}
@@ -298,14 +318,14 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                                                 </span>
                                                                             )}
                                                                         </TooltipTrigger>
-                                                                        <TooltipContent side="bottom">
+                                                                            <TooltipContent side="bottom">
                                                                             {jobName
                                                                                 ? run
                                                                                     ? `Job • ${run.status.toUpperCase()} • ${formatTimeAgo(run.startTime)} ago`
                                                                                     : 'Job • NO RECENT RUN'
                                                                                 : 'Job not configured'}
-                                                                        </TooltipContent>
-                                                                    </Tooltip>
+                                                                            </TooltipContent>
+                                                                        </Tooltip>
                                                                 </>
                                                             );
                                                         })()}
@@ -319,9 +339,28 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                 {domain ? (
                                                     <div className="inline-flex items-center justify-center gap-0.5">
                                                         {(() => {
-                                                            const jobName = String(domain.jobName || '').trim();
-                                                            const run = jobName ? jobIndex.get(jobName) : null;
-                                                            const isTriggering = Boolean(jobName) && triggeringJob === jobName;
+                                                            const extractAzureJobName = (jobUrl?: string | null): string | null => {
+                                                                const normalized = normalizeAzurePortalUrl(jobUrl);
+                                                                if (!normalized) return null;
+                                                                const match = normalized.match(/\/jobs\/([^/?#]+)/);
+                                                                if (!match) return null;
+                                                                try {
+                                                                    return decodeURIComponent(match[1]);
+                                                                } catch {
+                                                                    return match[1];
+                                                                }
+                                                            };
+
+                                                            const jobName =
+                                                                String(domain.jobName || '').trim() || extractAzureJobName(domain.jobUrl) || '';
+                                                            const jobKey = normalizeAzureJobName(jobName);
+                                                            const run = jobKey ? jobIndex.get(jobKey) : null;
+                                                            const actionJobName = String(run?.jobName || jobName).trim();
+                                                            const isTriggering = Boolean(actionJobName) && triggeringJob === actionJobName;
+                                                            const runningState = jobKey ? jobStates?.[jobKey] : undefined;
+                                                            const isSuspended = String(runningState || '').trim().toLowerCase() === 'suspended';
+                                                            const isControlling = Boolean(actionJobName) && jobControl?.jobName === actionJobName;
+                                                            const isControlDisabled = Boolean(triggeringJob) || Boolean(jobControl);
 
                                                             return (
                                                                 <>
@@ -364,7 +403,46 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                                                                             {jobName ? (
                                                                                 <button
                                                                                     type="button"
-                                                                                    onClick={() => void triggerJob(jobName)}
+                                                                                    onClick={() => void setJobSuspended(actionJobName, !isSuspended)}
+                                                                                    disabled={isControlDisabled}
+                                                                                    className="p-1 hover:bg-slate-100 text-slate-500 hover:text-amber-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+                                                                                    aria-label={`${isSuspended ? 'Resume' : 'Suspend'} ${domainName} job`}
+                                                                                >
+                                                                                    {isControlling ? (
+                                                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                                                    ) : isSuspended ? (
+                                                                                        <CirclePlay className="h-4 w-4" />
+                                                                                    ) : (
+                                                                                        <CirclePause className="h-4 w-4" />
+                                                                                    )}
+                                                                                </button>
+                                                                            ) : (
+                                                                                <span
+                                                                                    className="p-1 text-slate-300 rounded cursor-not-allowed"
+                                                                                    aria-label={`No job name for ${domainName}`}
+                                                                                >
+                                                                                    <CirclePause className="h-4 w-4" />
+                                                                                </span>
+                                                                            )}
+                                                                        </TooltipTrigger>
+                                                                        <TooltipContent side="bottom">
+                                                                            {jobName
+                                                                                ? isControlling
+                                                                                    ? jobControl?.action === 'resume'
+                                                                                        ? 'Resuming job…'
+                                                                                        : 'Suspending job…'
+                                                                                    : isSuspended
+                                                                                        ? 'Resume job'
+                                                                                        : 'Suspend job'
+                                                                                : 'Job suspension not configured'}
+                                                                        </TooltipContent>
+                                                                    </Tooltip>
+                                                                    <Tooltip>
+                                                                        <TooltipTrigger asChild>
+                                                                            {jobName ? (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => void triggerJob(actionJobName)}
                                                                                     disabled={Boolean(triggeringJob)}
                                                                                     className="p-1 hover:bg-slate-100 text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
                                                                                     aria-label={`Trigger ${domainName} job`}

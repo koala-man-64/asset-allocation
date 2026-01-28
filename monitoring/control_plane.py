@@ -75,6 +75,7 @@ class ResourceHealthItem:
     last_checked: str
     details: str
     azure_id: Optional[str] = None
+    running_state: Optional[str] = None
     signals: Tuple[Dict[str, Any], ...] = ()
 
     def to_dict(self, *, include_ids: bool) -> Dict[str, Any]:
@@ -87,6 +88,8 @@ class ResourceHealthItem:
         }
         if include_ids and self.azure_id:
             payload["azureId"] = self.azure_id
+        if self.running_state:
+            payload["runningState"] = self.running_state
         if self.signals:
             payload["signals"] = list(self.signals)
         return payload
@@ -171,6 +174,10 @@ def collect_jobs_and_executions(
 
             resource_id = str(job_payload.get("id") or "") or None
             details = f"provisioningState={state_text}"
+            running_state_raw = str(job_props.get("runningState") or "").strip()
+            running_state = running_state_raw or None
+            if running_state:
+                details += f", runningState={running_state}"
             if resource_health_enabled and resource_id:
                 signal, availability_status = get_current_availability(
                     arm, resource_id=resource_id, api_version=resource_health_api_version
@@ -186,6 +193,7 @@ def collect_jobs_and_executions(
                     last_checked=last_checked_iso,
                     details=details,
                     azure_id=resource_id,
+                    running_state=running_state,
                 )
             )
         except Exception as exc:

@@ -7,7 +7,7 @@ import { AzureResources } from './system-status/AzureResources';
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
 import { JobMonitor } from './system-status/JobMonitor';
 import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
-import { getAzurePortalUrl } from './system-status/SystemStatusHelpers';
+import { getAzurePortalUrl, normalizeAzureJobName, normalizeAzurePortalUrl } from './system-status/SystemStatusHelpers';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
@@ -22,16 +22,43 @@ export function SystemStatusPage() {
         for (const layer of data.dataLayers || []) {
             for (const domain of layer.domains || []) {
                 if (domain.jobName && domain.jobUrl) {
-                    links[domain.jobName] = domain.jobUrl;
+                    const rawName = String(domain.jobName).trim();
+                    const normalizedName = normalizeAzureJobName(rawName);
+                    const url = normalizeAzurePortalUrl(domain.jobUrl);
+                    links[rawName] = url;
+                    if (normalizedName) {
+                        links[normalizedName] = url;
+                    }
                 }
             }
         }
         for (const resource of data.resources || []) {
             if (resource.resourceType === 'Microsoft.App/jobs' && resource.azureId) {
-                links[resource.name] = getAzurePortalUrl(resource.azureId);
+                const rawName = String(resource.name || '').trim();
+                const normalizedName = normalizeAzureJobName(rawName);
+                const url = getAzurePortalUrl(resource.azureId);
+                if (rawName) {
+                    links[rawName] = url;
+                }
+                if (normalizedName) {
+                    links[normalizedName] = url;
+                }
             }
         }
         return links;
+    }, [data]);
+
+    const jobStates = useMemo(() => {
+        const states: Record<string, string> = {};
+        for (const resource of data?.resources || []) {
+            if (resource.resourceType !== 'Microsoft.App/jobs') continue;
+            const jobKey = normalizeAzureJobName(resource.name);
+            const runningState = String(resource.runningState || '').trim();
+            if (jobKey && runningState) {
+                states[jobKey] = runningState;
+            }
+        }
+        return states;
     }, [data]);
 
     useEffect(() => {
@@ -79,6 +106,7 @@ export function SystemStatusPage() {
                 overall={overall}
                 dataLayers={dataLayers}
                 recentJobs={recentJobs}
+                jobStates={jobStates}
             />
 
             {/* Jobs */}
@@ -94,10 +122,6 @@ export function SystemStatusPage() {
                 />
             </div>
 
-            {/* Connectors / Resources */}
-            {resources && resources.length > 0 && (
-                <AzureResources resources={resources} />
-            )}
             {/* Connectors / Resources */}
             {resources && resources.length > 0 && (
                 <AzureResources resources={resources} />

@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/too
 
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import type { DataLayer, JobRun } from '@/types/strategy';
-import { formatSchedule, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge } from './SystemStatusHelpers';
+import { formatSchedule, formatTimeAgo, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
 
 import { CalendarDays, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
 
@@ -28,13 +28,23 @@ interface ScheduledJobMonitorProps {
 export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
 
+  const getJobPortalLink = (jobName: string) => {
+    const normalizedName = normalizeAzureJobName(jobName);
+    const rawDirect = jobLinks[jobName];
+    const rawNormalized = normalizedName ? jobLinks[normalizedName] : undefined;
+    const raw = rawDirect || rawNormalized;
+    return normalizeAzurePortalUrl(raw);
+  };
+
   const jobIndex = useMemo(() => {
     const index = new Map<string, JobRun>();
     for (const job of recentJobs || []) {
       if (!job?.jobName) continue;
-      const existing = index.get(job.jobName);
+      const key = normalizeAzureJobName(job.jobName);
+      if (!key) continue;
+      const existing = index.get(key);
       if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
-        index.set(job.jobName, job);
+        index.set(key, job);
       }
     }
     return index;
@@ -46,6 +56,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
       for (const domain of layer.domains || []) {
         const jobName = String(domain.jobName || '').trim();
         if (!jobName) continue;
+        const jobKey = normalizeAzureJobName(jobName);
 
         const scheduleRaw = domain.cron || domain.frequency || layer.refreshFrequency || '';
         const schedule = String(scheduleRaw || '').trim() || '-';
@@ -55,7 +66,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
           layerName: layer.name,
           domainName: domain.name,
           schedule,
-          jobRun: jobIndex.get(jobName) ?? null,
+          jobRun: (jobKey ? jobIndex.get(jobKey) : null) ?? null,
         });
       }
     }
@@ -102,11 +113,18 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{job.jobName}</span>
-                        {jobLinks[job.jobName] && (
+                        {(() => {
+                          const portalLink = getJobPortalLink(job.jobName);
+                          if (!portalLink) return null;
+
+                          const runStatus = job.jobRun?.status ? String(job.jobRun.status).toUpperCase() : 'UNKNOWN';
+                          const runTimeAgo = job.jobRun?.startTime ? `${formatTimeAgo(job.jobRun.startTime)} ago` : 'UNKNOWN';
+
+                          return (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <a
-                                href={jobLinks[job.jobName]}
+                                href={portalLink}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-muted-foreground hover:text-primary transition-colors"
@@ -115,9 +133,12 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </a>
                             </TooltipTrigger>
-                            <TooltipContent side="right">Open job</TooltipContent>
+                            <TooltipContent side="right">
+                              {job.jobRun ? `Last run: ${runStatus} • ${runTimeAgo}` : 'No recent run info'}
+                            </TooltipContent>
                           </Tooltip>
-                        )}
+                          );
+                        })()}
                       </div>
                       <span className="text-xs text-muted-foreground">
                         {job.layerName} • {job.domainName}
@@ -134,7 +155,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                   <TableCell className="py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
                       {(() => {
-                        const executionsUrl = getAzureJobExecutionsUrl(jobLinks[job.jobName]);
+                        const executionsUrl = getAzureJobExecutionsUrl(getJobPortalLink(job.jobName));
                         return (
                           <Tooltip>
                             <TooltipTrigger asChild>

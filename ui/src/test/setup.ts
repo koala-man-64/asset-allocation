@@ -34,3 +34,11 @@ if (typeof window.ResizeObserver === 'undefined') {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (globalThis as any).ResizeObserver = ResizeObserver;
 }
+
+if (typeof window.PointerEvent === 'undefined') {
+    // Radix UI tooltips rely on PointerEvents; jsdom doesn't always provide them.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).PointerEvent = MouseEvent as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).PointerEvent = MouseEvent as any;
+}
