@@ -77,7 +77,7 @@ def test_runner_invokes_save_rankings(monkeypatch):
 
     monkeypatch.setenv("RANKING_BROKEN_DRAWDOWN_THRESHOLD", "-0.3")
     monkeypatch.setenv("RANKING_MARGIN_DELTA_THRESHOLD", "0.0")
-    monkeypatch.setenv("AZURE_CONTAINER_RANKING", "ranking-data")
+    monkeypatch.setenv("AZURE_FOLDER_RANKING", "ranking-data")
     monkeypatch.setattr(runner, "assemble_strategy_data", lambda *_: data)
     monkeypatch.setattr(runner, "_load_existing_ranking_dates", lambda *_: set())
     monkeypatch.setattr(runner.mdc, "log_environment_diagnostics", lambda: None)
@@ -103,7 +103,7 @@ def test_load_market_data_prefers_by_date_table(monkeypatch):
 
     delta_core.store_delta(
         by_date,
-        container=runner.cfg.AZURE_CONTAINER_MARKET,
+        container=runner.cfg.AZURE_FOLDER_MARKET,
         path="market_by_date",
         mode="overwrite",
     )

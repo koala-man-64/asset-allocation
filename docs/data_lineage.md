@@ -43,7 +43,7 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
 
 ### Platinum (rankings + signals)
 
-- Container: `AZURE_CONTAINER_RANKING`
+- Container: `AZURE_FOLDER_RANKING`
 - Canonical Delta tables live under the `platinum/` prefix in the ranking container:
   - `core.data_contract.CANONICAL_RANKINGS_PATH` → `platinum/rankings`
   - `core.data_contract.CANONICAL_COMPOSITE_SIGNALS_PATH` → `platinum/signals/daily`

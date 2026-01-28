@@ -1,6 +1,5 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$SubscriptionId,
+  [string]$SubscriptionId = "",
 
   [string]$Location = "eastus",
   [string]$ResourceGroup = "AssetAllocationRG",
@@ -15,29 +14,152 @@ param(
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
-  [string]$AzureClientId = ""
+  [string]$AzureClientId = "",
+  [string]$AksClusterName = "",
+  [string]$KubernetesNamespace = "k8s-apps",
+  [string]$ServiceAccountName = "asset-allocation-sa"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-# Load containers from .env if not specified
-if ($StorageContainers.Count -eq 0) {
-    $envPath = "$PSScriptRoot\..\.env"
-    if (Test-Path $envPath) {
-        Write-Host "Reading container names from .env..."
-        $envLines = Get-Content $envPath
-        $containers = @()
-        foreach ($line in $envLines) {
-            if ($line -match "^AZURE_CONTAINER_[^=]+=(.*)$") {
-                $val = $matches[1].Trim('"').Trim("'")
-                Write-Host "Found container: $val" -ForegroundColor Cyan
-                $containers += $val
+$envPath = "$PSScriptRoot\..\.env"
+$envLines = @()
+if (Test-Path $envPath) {
+    $envLines = Get-Content $envPath
+}
+
+function Get-EnvValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Key,
+        [string[]]$Lines = $envLines
+    )
+
+    foreach ($line in $Lines) {
+        $trimmed = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#")) { continue }
+        if ($trimmed -match ("^" + [regex]::Escape($Key) + "=(.*)$")) {
+            $value = $matches[1].Trim()
+            if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+                ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                $value = $value.Substring(1, $value.Length - 2)
             }
+            return $value
         }
-        if ($containers.Count -gt 0) {
-            $StorageContainers = $containers | Select-Object -Unique
+    }
+    return $null
+}
+
+function Get-EnvValueFirst {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Keys
+    )
+    foreach ($key in $Keys) {
+        $value = Get-EnvValue -Key $key
+        if ($value) {
+            return $value
         }
+    }
+    return $null
+}
+
+# Load containers from .env if not specified
+if ($StorageContainers.Count -eq 0 -and $envLines.Count -gt 0) {
+    Write-Host "Reading container names from .env..."
+    $containers = @()
+    foreach ($line in $envLines) {
+        if ($line -match "^AZURE_CONTAINER_[^=]+=(.*)$") {
+            $val = $matches[1].Trim('"').Trim("'")
+            Write-Host "Found container: $val" -ForegroundColor Cyan
+            $containers += $val
+        }
+    }
+    if ($containers.Count -gt 0) {
+        $StorageContainers = $containers | Select-Object -Unique
+    }
+}
+
+if ((-not $PSBoundParameters.ContainsKey("SubscriptionId")) -or [string]::IsNullOrWhiteSpace($SubscriptionId)) {
+    $subscriptionFromEnv = Get-EnvValueFirst -Keys @("AZURE_SUBSCRIPTION_ID", "SUBSCRIPTION_ID")
+    if ($subscriptionFromEnv) {
+        Write-Host "Using AZURE_SUBSCRIPTION_ID from .env: $subscriptionFromEnv"
+        $SubscriptionId = $subscriptionFromEnv
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+    throw "SubscriptionId is required. Provide -SubscriptionId or set AZURE_SUBSCRIPTION_ID in .env."
+}
+
+if (-not $PSBoundParameters.ContainsKey("ResourceGroup")) {
+    $resourceGroupFromEnv = Get-EnvValueFirst -Keys @("RESOURCE_GROUP", "AZURE_RESOURCE_GROUP", "SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+    if ($resourceGroupFromEnv) {
+        Write-Host "Using RESOURCE_GROUP from .env: $resourceGroupFromEnv"
+        $ResourceGroup = $resourceGroupFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("Location")) {
+    $locationFromEnv = Get-EnvValueFirst -Keys @("AZURE_LOCATION", "AZURE_REGION", "LOCATION")
+    if ($locationFromEnv) {
+        Write-Host "Using AZURE_LOCATION from .env: $locationFromEnv"
+        $Location = $locationFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("StorageAccountName")) {
+    $storageFromEnv = Get-EnvValueFirst -Keys @("AZURE_STORAGE_ACCOUNT_NAME")
+    if ($storageFromEnv) {
+        Write-Host "Using AZURE_STORAGE_ACCOUNT_NAME from .env: $storageFromEnv"
+        $StorageAccountName = $storageFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("AcrName")) {
+    $acrFromEnv = Get-EnvValueFirst -Keys @("ACR_NAME", "AZURE_ACR_NAME")
+    if ($acrFromEnv) {
+        Write-Host "Using ACR_NAME from .env: $acrFromEnv"
+        $AcrName = $acrFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("LogAnalyticsWorkspaceName")) {
+    $lawFromEnv = Get-EnvValueFirst -Keys @("LOG_ANALYTICS_WORKSPACE_NAME", "LOG_ANALYTICS_WORKSPACE")
+    if ($lawFromEnv) {
+        Write-Host "Using LOG_ANALYTICS_WORKSPACE_NAME from .env: $lawFromEnv"
+        $LogAnalyticsWorkspaceName = $lawFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("ContainerAppsEnvironmentName")) {
+    $envFromEnv = Get-EnvValueFirst -Keys @("CONTAINER_APPS_ENVIRONMENT_NAME", "CONTAINERAPPS_ENVIRONMENT_NAME", "ACA_ENVIRONMENT_NAME")
+    if ($envFromEnv) {
+        Write-Host "Using CONTAINER_APPS_ENVIRONMENT_NAME from .env: $envFromEnv"
+        $ContainerAppsEnvironmentName = $envFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("ServiceAccountName")) {
+    $serviceAccountFromEnv = Get-EnvValue -Key "SERVICE_ACCOUNT_NAME"
+    if ($serviceAccountFromEnv) {
+        Write-Host "Using SERVICE_ACCOUNT_NAME from .env: $serviceAccountFromEnv"
+        $ServiceAccountName = $serviceAccountFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("KubernetesNamespace")) {
+    $namespaceFromEnv = Get-EnvValue -Key "KUBERNETES_NAMESPACE"
+    if ($namespaceFromEnv) {
+        Write-Host "Using KUBERNETES_NAMESPACE from .env: $namespaceFromEnv"
+        $KubernetesNamespace = $namespaceFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("AksClusterName")) {
+    $aksFromEnv = Get-EnvValue -Key "AKS_CLUSTER_NAME"
+    if ($aksFromEnv) {
+        Write-Host "Using AKS_CLUSTER_NAME from .env: $aksFromEnv"
+        $AksClusterName = $aksFromEnv
     }
 }
 
@@ -55,6 +177,9 @@ function Assert-CommandExists {
 }
 
 Assert-CommandExists -Name "az"
+if ($AksClusterName) {
+    Assert-CommandExists -Name "kubectl"
+}
 
 if ($AzureClientId) {
     Write-Host "Checking for existing Federated Credential 'github-actions-production'..."
@@ -93,7 +218,7 @@ if ($AzureClientId) {
 }
 
 Write-Host "Using subscription: $SubscriptionId"
-az account set --subscription $SubscriptionId | Out-Null
+az account set --subscription $SubscriptionId 1>$null
 
 Write-Host "Ensuring required Azure resource providers are registered..."
 $providers = @(
@@ -104,14 +229,14 @@ $providers = @(
   "Microsoft.App"
 )
 foreach ($p in $providers) {
-  az provider register --namespace $p | Out-Null
+  az provider register --namespace $p 1>$null
 }
 
 Write-Host "Ensuring Azure CLI extensions are installed..."
-az extension add --name containerapp --upgrade --only-show-errors | Out-Null
+az extension add --name containerapp --upgrade --only-show-errors 1>$null
 
 Write-Host "Ensuring resource group exists: $ResourceGroup ($Location)"
-az group create --name $ResourceGroup --location $Location --only-show-errors | Out-Null
+az group create --name $ResourceGroup --location $Location --only-show-errors 1>$null
 
 Write-Host "Ensuring storage account exists: $StorageAccountName"
 $existingStorage = $null
@@ -155,7 +280,7 @@ if ($null -eq $existingStorage) {
     --min-tls-version TLS1_2 `
     --allow-blob-public-access false `
     --hns true `
-    --only-show-errors | Out-Null
+    --only-show-errors 1>$null
 }
 else {
   if (-not [bool]$existingStorage.isHnsEnabled) {
@@ -168,13 +293,13 @@ else {
     --https-only true `
     --min-tls-version TLS1_2 `
     --allow-blob-public-access false `
-    --only-show-errors | Out-Null
+    --only-show-errors 1>$null
 }
 
 Write-Host "Creating blob containers (auth-mode=login)..."
 foreach ($c in $StorageContainers) {
   if (-not $c) { continue }
-  az storage container create --name $c --account-name $StorageAccountName --auth-mode login --only-show-errors | Out-Null
+  az storage container create --name $c --account-name $StorageAccountName --auth-mode login --only-show-errors 1>$null
 }
 
 Write-Host "Ensuring ACR exists: $AcrName"
@@ -185,14 +310,14 @@ az acr create `
   --location $Location `
   --sku Basic `
   --admin-enabled $acrAdmin `
-  --only-show-errors | Out-Null
+  --only-show-errors 1>$null
 
 Write-Host "Ensuring Log Analytics workspace exists: $LogAnalyticsWorkspaceName"
 az monitor log-analytics workspace create `
   --resource-group $ResourceGroup `
   --workspace-name $LogAnalyticsWorkspaceName `
   --location $Location `
-  --only-show-errors | Out-Null
+  --only-show-errors 1>$null
 
 $lawCustomerId = az monitor log-analytics workspace show `
   --resource-group $ResourceGroup `
@@ -211,7 +336,24 @@ az containerapp env create `
   --location $Location `
   --logs-workspace-id $lawCustomerId `
   --logs-workspace-key $lawSharedKey `
-  --only-show-errors | Out-Null
+  --only-show-errors 1>$null
+
+if ($AksClusterName) {
+  Write-Host "Ensuring Kubernetes service account exists: $ServiceAccountName (namespace: $KubernetesNamespace)"
+  az aks get-credentials --resource-group $ResourceGroup --name $AksClusterName --overwrite-existing --only-show-errors 1>$null
+  kubectl get namespace $KubernetesNamespace 1>$null 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    kubectl create namespace $KubernetesNamespace | Out-Null
+  }
+  $serviceAccountYaml = @"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: $ServiceAccountName
+  namespace: $KubernetesNamespace
+"@
+  $serviceAccountYaml | kubectl apply -f - | Out-Null
+}
 
 $storageConnectionString = ""
 if ($EmitSecrets) {
@@ -250,7 +392,7 @@ function Ensure-AcrPullRoleAssignment {
     return $false
   }
 
-  az role assignment create --assignee $PrincipalId --role "AcrPull" --scope $Scope --only-show-errors | Out-Null
+  az role assignment create --assignee $PrincipalId --role "AcrPull" --scope $Scope --only-show-errors 1>$null
   return $true
 }
 
@@ -339,6 +481,8 @@ $outputs = [ordered]@{
   logAnalyticsWorkspaceName    = $LogAnalyticsWorkspaceName
   logAnalyticsCustomerId       = $lawCustomerId
   containerAppsEnvironmentName = $ContainerAppsEnvironmentName
+  kubernetesServiceAccountName = $ServiceAccountName
+  kubernetesNamespace          = $KubernetesNamespace
 }
 
 Write-Host ""

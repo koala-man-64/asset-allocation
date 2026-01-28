@@ -21,6 +21,7 @@ properties:
     - name: backtest-pg-dsn
       value: "${POSTGRES_DSN}"
   template:
+    serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}
       imageType: ContainerImage
@@ -36,16 +37,16 @@ properties:
         value: "${AZURE_CONTAINER_GOLD}"
       - name: AZURE_CONTAINER_PLATINUM
         value: "${AZURE_CONTAINER_PLATINUM}"
-      - name: AZURE_CONTAINER_MARKET
-        value: "${AZURE_CONTAINER_MARKET}"
-      - name: AZURE_CONTAINER_FINANCE
-        value: "${AZURE_CONTAINER_FINANCE}"
-      - name: AZURE_CONTAINER_EARNINGS
-        value: "${AZURE_CONTAINER_EARNINGS}"
-      - name: AZURE_CONTAINER_TARGETS
-        value: "${AZURE_CONTAINER_TARGETS}"
-      - name: AZURE_CONTAINER_RANKING
-        value: "${AZURE_CONTAINER_RANKING}"
+      - name: AZURE_FOLDER_MARKET
+        value: "${AZURE_FOLDER_MARKET}"
+      - name: AZURE_FOLDER_FINANCE
+        value: "${AZURE_FOLDER_FINANCE}"
+      - name: AZURE_FOLDER_EARNINGS
+        value: "${AZURE_FOLDER_EARNINGS}"
+      - name: AZURE_FOLDER_TARGETS
+        value: "${AZURE_FOLDER_TARGETS}"
+      - name: AZURE_FOLDER_RANKING
+        value: "${AZURE_FOLDER_RANKING}"
       - name: AZURE_CONTAINER_COMMON
         value: "${AZURE_CONTAINER_COMMON}"
       - name: API_KEY

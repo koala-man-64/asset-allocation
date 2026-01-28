@@ -16,6 +16,7 @@ properties:
     - server: assetallocationacr.azurecr.io
       identity: system
   template:
+    serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-ui:${IMAGE_TAG}
       imageType: ContainerImage

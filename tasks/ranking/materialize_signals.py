@@ -37,9 +37,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
-    if "AZURE_CONTAINER_RANKING" not in os.environ:
-        raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
-    container = cfg.AZURE_CONTAINER_RANKING
+    if "AZURE_FOLDER_RANKING" not in os.environ:
+        raise ValueError("Missing required environment variable: AZURE_FOLDER_RANKING")
+    container = cfg.AZURE_FOLDER_RANKING
 
     year_months: List[str] = sorted({str(v).strip() for v in args.year_months if str(v).strip()})
     write_line(f"Materializing signals for {len(year_months)} month(s): {', '.join(year_months)}")

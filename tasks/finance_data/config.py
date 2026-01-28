@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from core import config as _cfg
 
-AZURE_CONTAINER_FINANCE = _cfg.AZURE_CONTAINER_FINANCE
+AZURE_FOLDER_FINANCE = _cfg.AZURE_FOLDER_FINANCE
 
 
 def __getattr__(name: str):

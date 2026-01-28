@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from core import config as _cfg
 
-AZURE_CONTAINER_MARKET = _cfg.AZURE_CONTAINER_MARKET
+AZURE_FOLDER_MARKET = _cfg.AZURE_FOLDER_MARKET
 
 
 def __getattr__(name: str):

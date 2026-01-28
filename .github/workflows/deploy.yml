@@ -48,13 +48,14 @@ env:
   AZURE_CONTAINER_SILVER: silver
   AZURE_CONTAINER_GOLD: gold
   AZURE_CONTAINER_PLATINUM: platinum
-  AZURE_CONTAINER_MARKET: market-data
-  AZURE_CONTAINER_FINANCE: finance-data
-  AZURE_CONTAINER_EARNINGS: earnings-data
-  AZURE_CONTAINER_TARGETS: price-target-data
-  AZURE_CONTAINER_RANKING: ranking-data
+  AZURE_FOLDER_MARKET: market-data
+  AZURE_FOLDER_FINANCE: finance-data
+  AZURE_FOLDER_EARNINGS: earnings-data
+  AZURE_FOLDER_TARGETS: price-target-data
+  AZURE_FOLDER_RANKING: ranking-data
   AZURE_CONTAINER_COMMON: common
   VITE_PORT: ${{ vars.VITE_PORT }}
+  SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
 
 jobs:
   tests:
@@ -87,6 +88,7 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           VITE_PORT: ${{ vars.VITE_PORT }}
+          SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
         run: |
           set -euo pipefail
 
@@ -111,6 +113,7 @@ jobs:
           require_secret POSTGRES_DSN
           require_secret POSTGRES_DSN
           require_secret VITE_PORT
+          require_secret SERVICE_ACCOUNT_NAME
 
           python3 - <<'PY'
           import os

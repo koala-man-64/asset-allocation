@@ -4,7 +4,7 @@ import os
 
 from core import config as _cfg
 
-AZURE_CONTAINER_TARGETS = _cfg.AZURE_CONTAINER_TARGETS
+AZURE_FOLDER_TARGETS = _cfg.AZURE_FOLDER_TARGETS
 NASDAQ_API_KEY = os.environ.get("NASDAQ_API_KEY")
 
 

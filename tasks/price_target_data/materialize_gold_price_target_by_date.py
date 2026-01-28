@@ -125,7 +125,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
     if container_raw is None or not str(container_raw).strip():
         # Fallback to TARGETS if GOLD is not set
-        container_raw = os.environ.get("AZURE_CONTAINER_TARGETS")
+        container_raw = os.environ.get("AZURE_FOLDER_TARGETS")
 
     if container_raw is None or not str(container_raw).strip():
         raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or pass --container.")

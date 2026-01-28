@@ -29,8 +29,8 @@ class TestCoreFunctions(unittest.TestCase):
     @patch('tasks.ranking.core.store_delta')
     @patch('tasks.ranking.core.cfg')
     def test_save_rankings(self, mock_cfg, mock_store_delta):
-        mock_cfg.AZURE_CONTAINER_RANKING = 'test-container'
-        os.environ["AZURE_CONTAINER_RANKING"] = "test-container"
+        mock_cfg.AZURE_FOLDER_RANKING = 'test-container'
+        os.environ["AZURE_FOLDER_RANKING"] = "test-container"
         
         rankings = [
             RankingResult(date=date(2023, 1, 1), strategy="S", symbol="A", rank=1, score=10.0),
@@ -50,7 +50,7 @@ class TestCoreFunctions(unittest.TestCase):
 
     @patch('tasks.ranking.core.load_delta')
     def test_get_rankings(self, mock_load_delta):
-        os.environ["AZURE_CONTAINER_RANKING"] = "test-container"
+        os.environ["AZURE_FOLDER_RANKING"] = "test-container"
         # Mock dataframe return
         data = {
             'strategy': ['A', 'A', 'B'],

@@ -44,9 +44,9 @@ def save_rankings(rankings: List[RankingResult], container: str = None):
         return
 
     if not container:
-        if "AZURE_CONTAINER_RANKING" not in os.environ:
-            raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
-        container = cfg.AZURE_CONTAINER_RANKING
+        if "AZURE_FOLDER_RANKING" not in os.environ:
+            raise ValueError("Missing required environment variable: AZURE_FOLDER_RANKING")
+        container = cfg.AZURE_FOLDER_RANKING
 
     # Convert to DataFrame
     data = [r.to_dict() for r in rankings]
@@ -77,9 +77,9 @@ def get_rankings(strategy: str, date_val: Optional[date] = None, container: str 
     Retrieves rankings for a specific strategy and optionally a date.
     """
     if not container:
-        if "AZURE_CONTAINER_RANKING" not in os.environ:
-            raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
-        container = cfg.AZURE_CONTAINER_RANKING
+        if "AZURE_FOLDER_RANKING" not in os.environ:
+            raise ValueError("Missing required environment variable: AZURE_FOLDER_RANKING")
+        container = cfg.AZURE_FOLDER_RANKING
     table_path = CANONICAL_RANKINGS_PATH
     
     df = load_delta(container, table_path)

@@ -175,7 +175,7 @@ def get_stock_screener(
     if not dsn:
         raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN or POSTGRES_DSN).")
 
-    gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or os.environ.get("AZURE_CONTAINER_MARKET") or ""
+    gold_container = os.environ.get("AZURE_CONTAINER_GOLD") or os.environ.get("AZURE_FOLDER_MARKET") or ""
     silver_container = os.environ.get("AZURE_CONTAINER_SILVER") or ""
     gold_container = gold_container.strip()
     silver_container = silver_container.strip()

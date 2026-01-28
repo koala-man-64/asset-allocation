@@ -29,9 +29,9 @@ def resolve_container(layer: str, domain: str = None) -> str:
         # it might be market. But API always has domain.
         # If domain is None/empty, we can trigger resolve_gold_container with "market" or raise.
         # Given generic "market" is common default:
-        return cfg.AZURE_CONTAINER_MARKET
+        return cfg.AZURE_FOLDER_MARKET
     elif layer == "platinum":
-        return cfg.AZURE_CONTAINER_RANKING
+        return cfg.AZURE_FOLDER_RANKING
     
     raise ValueError(f"Unknown layer: {layer}")
 
@@ -41,13 +41,13 @@ def resolve_gold_container(domain: str) -> str:
     """
     domain = domain.lower()
     if domain == "market":
-        return cfg.AZURE_CONTAINER_MARKET
+        return cfg.AZURE_FOLDER_MARKET
     elif domain == "finance":
-        return cfg.AZURE_CONTAINER_FINANCE
+        return cfg.AZURE_FOLDER_FINANCE
     elif domain == "earnings":
-        return cfg.AZURE_CONTAINER_EARNINGS
+        return cfg.AZURE_FOLDER_EARNINGS
     elif domain == "price-target":
-        return cfg.AZURE_CONTAINER_TARGETS
+        return cfg.AZURE_FOLDER_TARGETS
     else:
         # Fallback or specific
         return cfg.AZURE_CONTAINER_COMMON
