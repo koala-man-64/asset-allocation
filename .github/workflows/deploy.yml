@@ -420,8 +420,7 @@ jobs:
             -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
             -ResourceGroup "${{ secrets.AZURE_RESOURCE_GROUP }}" `
             -Location "${{ secrets.AZURE_LOCATION }}" `
-            -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}" `
-            -AppSubnetId "${{ needs.provision_infra.outputs.APP_SUBNET_ID }}"
+            -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
           
           # Parse JSON output and set output variables
             echo "POSTGRES_FQDN=$($outputs.fqdn)" >> $env:GITHUB_OUTPUT
@@ -429,7 +428,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/apply_postgres_migrations.ps1 `
-             -PostgresFqdn "${{ needs.provision_postgres.outputs.POSTGRES_FQDN }}" `
+             -PostgresFqdn "${{ steps.provision_postgres.outputs.POSTGRES_FQDN }}" `
              -AdminPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}"
       - name: Apply Federated Credential
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
