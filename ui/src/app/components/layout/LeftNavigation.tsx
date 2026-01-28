@@ -19,7 +19,8 @@ import {
   ScanSearch,
   Pin,
   PinOff,
-  Globe
+  Globe,
+  Database
 } from 'lucide-react';
 import Cookies from 'js-cookie';
 
@@ -51,6 +52,7 @@ const navSections: NavSection[] = [
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alerts', icon: Bell },
       { path: '/system-status', label: 'System Status', icon: Activity },
+      { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database },
     ]
   }
 ];

@@ -12,11 +12,11 @@ interface WindowWithConfig extends Window {
 const runtimeConfig = (window as WindowWithConfig).__API_UI_CONFIG__ || {};
 const API_BASE_URL = runtimeConfig.apiBaseUrl || '/api';
 
-interface RequestConfig extends RequestInit {
+export interface RequestConfig extends RequestInit {
     params?: Record<string, string | number | boolean | undefined>;
 }
 
-async function request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
+export async function request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
     const { params, headers, ...customConfig } = config;
 
     let url = `${API_BASE_URL}${endpoint}`;

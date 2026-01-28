@@ -62,6 +62,9 @@ class AppSettings(BaseSettings):
     AZURE_CONTAINER_GOLD: str = "gold"
     AZURE_CONTAINER_PLATINUM: Optional[str] = "platinum"
 
+    # API Configuration
+    API_PORT: int
+
     # Optional data source credentials (varies by workflow).
     YAHOO_USERNAME: Optional[str] = None
     YAHOO_PASSWORD: Optional[str] = None

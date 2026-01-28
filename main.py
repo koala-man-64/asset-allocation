@@ -16,7 +16,7 @@ def main():
     # Serve command
     serve_parser = subparsers.add_parser("serve", help="Start the FastAPI server")
     serve_parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
-    serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to")
+    serve_parser.add_argument("--port", type=int, default=settings.API_PORT, help="Port to bind the server to")
     serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
     serve_parser.add_argument("--ui-dir", help="Path to UI dist directory (default: ui/dist)")
 
