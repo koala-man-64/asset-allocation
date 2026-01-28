@@ -27,11 +27,6 @@ from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
 
 
-def collect_resource_health_signals(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
-    """Compatibility shim for tests expecting this helper."""
-    return []
-
-
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -427,66 +422,9 @@ def collect_system_health_snapshot(
     storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip()
 
     for spec in _default_layer_specs():
-        container_value = getattr(spec, "container_name", "")
-        container = container_value() if callable(container_value) else str(container_value).strip()
-
-        # Legacy probe shape (tests expect this)
-        if not isinstance(spec, LayerProbeSpec):
-            blob_prefix = str(getattr(spec, "blob_prefix", "")).strip()
-            max_age_seconds = int(getattr(spec, "freshness_threshold", 0) or 0)
-            layer_name = str(getattr(spec, "layer", "layer")).strip() or "layer"
-
-            domain_items: List[Dict[str, Any]] = []
-            try:
-                lm = store.get_container_last_modified(container=container, prefix=blob_prefix)
-                status = _compute_layer_status(now, lm, max_age_seconds=max_age_seconds, had_error=False)
-            except Exception:
-                logger.warning(
-                    "Legacy layer probe failed: layer=%s container=%s prefix=%s",
-                    layer_name,
-                    container,
-                    blob_prefix,
-                    exc_info=True,
-                )
-                lm = None
-                status = "error"
-
-            domain_items.append(
-                {
-                    "name": blob_prefix,
-                    "description": "",
-                    "type": "blob",
-                    "path": blob_prefix,
-                    "maxAgeSeconds": max_age_seconds,
-                    "cron": "",
-                    "frequency": "",
-                    "lastUpdated": _iso(lm),
-                    "status": status,
-                    "portalUrl": None,
-                    "jobUrl": None,
-                    "jobName": None,
-                }
-            )
-
-            layer_status = status
-            statuses.append(layer_status)
-            layers.append(
-                {
-                    "name": layer_name,
-                    "description": "",
-                    "lastUpdated": _iso(lm),
-                    "status": layer_status,
-                    "maxAgeSeconds": max_age_seconds,
-                    "refreshFrequency": "",
-                    "portalUrl": None,
-                    "domains": domain_items,
-                }
-            )
-            alerts.extend(_layer_alerts(now, layer_name=layer_name, status=layer_status, last_updated=lm, error=None))
-            continue
-
         layer_last_updated: Optional[datetime] = None
         had_layer_error = False
+        container = spec.container_name()
         domain_items: List[Dict[str, Any]] = []
 
         # Collect markers (CSV/Blobs)

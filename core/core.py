@@ -550,12 +550,7 @@ def get_symbols_from_db():
             
         with connect(dsn) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT symbol, name, description, sector, industry, industry_2, country, is_optionable
-                    FROM core.symbols
-                    """
-                )
+                cur.execute("SELECT * FROM symbols")
                 if cur.description is None:
                      return pd.DataFrame()
                 columns = [desc[0] for desc in cur.description]
@@ -574,7 +569,7 @@ def get_symbols_from_db():
                 'sector': 'Sector',
                 'industry': 'Industry', 
                 'industry_2': 'Industry_2',
-                'is_optionable': 'Optionable',
+                'optionable': 'Optionable',
                 'country': 'Country'
             }
             df.rename(columns=rename_map, inplace=True)
@@ -606,7 +601,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
         'Sector': 'sector',
         'Industry': 'industry',
         'Industry_2': 'industry_2',
-        'Optionable': 'is_optionable',
+        'Optionable': 'optionable',
         'Country': 'country'
     }
     
@@ -622,7 +617,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
         with connect(dsn) as conn:
             with conn.cursor() as cur:
                 # 1. Fetch existing symbols to avoid duplicates
-                cur.execute("SELECT symbol FROM core.symbols")
+                cur.execute("SELECT symbol FROM symbols")
                 existing_symbols = set(row[0] for row in cur.fetchall())
                 
                 # 2. Filter out existing
@@ -640,7 +635,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
                 # 3. Insert using copy_rows
                 copy_rows(
                     cur,
-                    table="core.symbols",
+                    table="symbols",
                     columns=db_cols,
                     rows=df_new.itertuples(index=False, name=None)
                 )

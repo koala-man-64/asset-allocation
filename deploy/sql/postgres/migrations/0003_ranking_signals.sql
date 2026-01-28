@@ -52,13 +52,6 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ranking.composite_signal_daily TO ranking_writer;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ranking.signal_sync_state TO ranking_writer;
   END IF;
-
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_service') THEN
-    GRANT USAGE ON SCHEMA ranking TO api_service;
-    GRANT SELECT ON TABLE ranking.ranking_signal TO api_service;
-    GRANT SELECT ON TABLE ranking.composite_signal_daily TO api_service;
-    GRANT SELECT ON TABLE ranking.signal_sync_state TO api_service;
-  END IF;
 END $$;
 
 COMMIT;

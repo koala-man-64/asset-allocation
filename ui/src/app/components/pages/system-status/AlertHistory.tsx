@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { AlertCircle, CheckCircle2, Clock, Check, BellOff, XCircle } from 'lucide-react';
 import { getSeverityIcon, formatTimestamp } from './SystemStatusHelpers';
 import { SystemAlert } from '@/types/strategy';
-import { ApiError, apiClient } from '@/services/apiClient';
+import { ApiError, backtestApi } from '@/services/backtestApi';
 
 interface AlertHistoryProps {
     alerts: SystemAlert[];
@@ -95,7 +95,7 @@ export function AlertHistory({ alerts }: AlertHistoryProps) {
                                             disabled={!alert.id || alert.acknowledged}
                                             onClick={() =>
                                                 alert.id
-                                                    ? mutate('Acknowledged', () => apiClient.acknowledgeAlert(alert.id!))
+                                                    ? mutate('Acknowledged', () => backtestApi.acknowledgeAlert(alert.id!))
                                                     : Promise.resolve()
                                             }
                                         >
@@ -109,7 +109,7 @@ export function AlertHistory({ alerts }: AlertHistoryProps) {
                                             disabled={!alert.id}
                                             onClick={() =>
                                                 alert.id
-                                                    ? mutate('Snoozed (30m)', () => apiClient.snoozeAlert(alert.id!, { minutes: 30 }))
+                                                    ? mutate('Snoozed (30m)', () => backtestApi.snoozeAlert(alert.id!, { minutes: 30 }))
                                                     : Promise.resolve()
                                             }
                                         >
@@ -123,7 +123,7 @@ export function AlertHistory({ alerts }: AlertHistoryProps) {
                                             disabled={!alert.id || Boolean(alert.resolvedAt)}
                                             onClick={() =>
                                                 alert.id
-                                                    ? mutate('Resolved', () => apiClient.resolveAlert(alert.id!))
+                                                    ? mutate('Resolved', () => backtestApi.resolveAlert(alert.id!))
                                                     : Promise.resolve()
                                             }
                                         >

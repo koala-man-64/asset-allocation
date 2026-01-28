@@ -1,4 +1,4 @@
-// Core data types for the Strategy & Analytics Dashboard
+// Core data types for the Strategy & Backtest Evaluation Dashboard
 
 export interface StrategyRun {
   id: string;
@@ -155,7 +155,7 @@ export interface DataLayer {
 
 export interface JobRun {
   jobName: string;
-  jobType: 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
+  jobType: 'backtest' | 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
   status: 'success' | 'failed' | 'running' | 'pending';
   startTime: string;
   duration?: number; // seconds

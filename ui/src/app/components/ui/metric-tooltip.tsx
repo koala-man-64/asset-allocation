@@ -89,7 +89,7 @@ const metricExplanations: Record<string, { title: string; description: string; f
     },
     'commission': {
         title: 'Commission Costs',
-        description: 'Brokerage fees per trade. Important to include for realistic performance.',
+        description: 'Brokerage fees per trade. Important to include in backtest for realistic performance.',
     },
 
     // Exposure Metrics

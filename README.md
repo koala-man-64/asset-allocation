@@ -1,6 +1,6 @@
 # AssetAllocation
 
-Python project for market/finance data pipelines, ranking signals, and strategy analytics.
+Python project for market/finance data pipelines, ranking signals, and a backtest framework.
 
 ## Quickstart
 

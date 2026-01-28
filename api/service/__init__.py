@@ -1,2 +1,2 @@
-"""Asset Allocation service (FastAPI) for data, ranking, and system endpoints."""
+"""Backtest service (FastAPI) for async backtest execution and artifact access."""
 

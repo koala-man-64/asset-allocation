@@ -15,8 +15,10 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 COPY pyproject.toml README.md ./
 COPY core/ core/
 COPY tasks/ tasks/
+COPY services/ services/
 COPY alpaca/ alpaca/
 COPY api/ api/
+COPY backtest/ backtest/
 COPY monitoring/ monitoring/
 # scripts/ is optional and not required for the API image; keep it in this job image if present.
 COPY scripts/ scripts/

@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { Input } from '@/app/components/ui/input';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
-import type { StockScreenerRow } from '@/services/apiClient';
+import type { StockScreenerRow } from '@/services/backtestApi';
 import { DataService } from '@/services/DataService';
 import { cn } from '@/app/components/ui/utils';
 

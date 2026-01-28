@@ -25,13 +25,18 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 COPY pyproject.toml README.md ./
 COPY core/ core/
 COPY tasks/ tasks/
+COPY services/ services/
 COPY alpaca/ alpaca/
 COPY api/ api/
+COPY backtest/ backtest/
 COPY monitoring/ monitoring/
 RUN pip install --no-cache-dir .
 
+# Default API runtime config for local/container use.
+ENV BACKTEST_OUTPUT_DIR=/app/backtest_results
+ENV BACKTEST_DB_PATH=/app/backtest_results/runs.sqlite3
 # When set, FastAPI serves the built UI from this directory.
-ENV UI_DIST_DIR=/app/ui-dist
+ENV BACKTEST_UI_DIST_DIR=/app/ui-dist
 
 # Copy the built UI assets into the API image (single-container hosting).
 COPY --from=ui-builder /ui/dist /app/ui-dist

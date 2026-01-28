@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ApiError, apiClient } from '@/services/apiClient';
+import { ApiError, backtestApi } from '@/services/backtestApi';
 
 export function useJobTrigger() {
     const queryClient = useQueryClient();
@@ -10,7 +10,7 @@ export function useJobTrigger() {
     const triggerJob = async (jobName: string, queryKey: string[] = ['systemHealth']) => {
         setTriggeringJob(jobName);
         try {
-            await apiClient.triggerJob(jobName);
+            await backtestApi.triggerJob(jobName);
             toast.success(`Triggered ${jobName}`);
             void queryClient.invalidateQueries({ queryKey });
         } catch (err: unknown) {

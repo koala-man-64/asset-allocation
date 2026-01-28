@@ -9,28 +9,29 @@ import type {
   RiskMetrics,
 } from '@/types/data';
 import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
-import type { JobLogsResponse, StockScreenerResponse } from '@/services/apiClient';
-import { apiClient } from '@/services/apiClient';
+import type { JobLogsResponse } from '@/services/apiService';
+import type { StockScreenerResponse } from '@/services/apiService';
+import { apiService } from '@/services/apiService';
 
 export type { FinanceData, MarketData };
 
 export const DataService = {
   getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
-    return apiClient.getMarketData(ticker, layer);
+    return apiService.getMarketData(ticker, layer);
   },
 
   getFinanceData(ticker: string, subDomain: string, layer: 'silver' | 'gold' = 'silver'): Promise<FinanceData[]> {
-    return apiClient.getFinanceData(ticker, subDomain, layer);
+    return apiService.getFinanceData(ticker, subDomain, layer);
   },
 
   getStrategies(): Promise<StrategyRun[]> {
-    return apiClient.getStrategies();
+    return apiService.getStrategies();
   },
 
   async getSystemHealth(): Promise<SystemHealth> {
     console.info('[DataService] getSystemHealth');
     try {
-      const data = await apiClient.getSystemHealth();
+      const data = await apiService.getSystemHealth();
       console.info('[DataService] getSystemHealth success', {
         overall: data?.overall,
         layers: data?.dataLayers?.length ?? 0,
@@ -44,15 +45,15 @@ export const DataService = {
   },
 
   getLineage(): Promise<unknown> {
-    return apiClient.getLineage();
+    return apiService.getLineage();
   },
 
   getSignals(params: { date?: string; limit?: number } = {}): Promise<TradingSignal[]> {
-    return apiClient.getSignals(params);
+    return apiService.getSignals(params);
   },
 
   getStressEvents(): Promise<StressEvent[]> {
-    return apiClient.getStressEvents();
+    return apiService.getStressEvents();
   },
 
   async getPositions(_strategyId?: string): Promise<Position[]> {
@@ -84,13 +85,22 @@ export const DataService = {
     params: { runs?: number } = {},
     signal?: AbortSignal,
   ): Promise<JobLogsResponse> {
-    return apiClient.getJobLogs(jobName, params, signal);
+    return apiService.getJobLogs(jobName, params, signal);
   },
 
   getStockScreener(
     params: { q?: string; limit?: number; offset?: number; asOf?: string; sort?: string; direction?: 'asc' | 'desc' } = {},
     signal?: AbortSignal,
   ): Promise<StockScreenerResponse> {
-    return apiClient.getStockScreener(params, signal);
+    return apiService.getStockScreener(params, signal);
+  },
+
+  getGenericData(
+    layer: 'silver' | 'gold',
+    domain: string,
+    ticker?: string,
+    limit?: number
+  ): Promise<Record<string, unknown>[]> {
+    return apiService.getGenericData(layer, domain, ticker, limit);
   },
 };

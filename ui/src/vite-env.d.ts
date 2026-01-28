@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
 interface Window {
-    __API_UI_CONFIG__?: {
-        apiBaseUrl?: string;
+    __BACKTEST_UI_CONFIG__?: {
+        backtestApiBaseUrl?: string;
         authMode?: string;
         oidcClientId?: string;
         oidcAuthority?: string;

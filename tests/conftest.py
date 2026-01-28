@@ -31,6 +31,18 @@ os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", "5.0")
 os.environ.setdefault("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", "15")
 os.environ.setdefault("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "3")
 
+os.environ.setdefault("BACKTEST_OUTPUT_DIR", "/tmp/backtest_results")
+os.environ.setdefault("BACKTEST_DB_PATH", "/tmp/backtest_results/runs.sqlite3")
+os.environ.setdefault("BACKTEST_MAX_CONCURRENT", "1")
+os.environ.setdefault("BACKTEST_API_KEY_HEADER", "X-API-Key")
+os.environ.setdefault("BACKTEST_AUTH_MODE", "none")
+os.environ.setdefault("BACKTEST_ALLOW_LOCAL_DATA", "false")
+os.environ.setdefault(
+    "BACKTEST_ADLS_CONTAINER_ALLOWLIST",
+    "bronze,silver,gold,platinum,ranking-data,common,test-container",
+)
+os.environ.setdefault("BACKTEST_RUN_STORE_MODE", "sqlite")
+os.environ.setdefault("BACKTEST_CSP", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 # Container Mocks
 containers = [
