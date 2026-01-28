@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/utils';
@@ -81,10 +81,12 @@ describe('SystemStatusPage', () => {
     expect(screen.getByText('DOMAIN')).toBeInTheDocument();
 
     // Check for Layer Name in Matrix
-    expect(screen.getByText('Bronze')).toBeInTheDocument();
+    const matrixTable = screen.getByText('DOMAIN').closest('table');
+    expect(matrixTable).not.toBeNull();
+    expect(within(matrixTable as HTMLElement).getByText('Bronze')).toBeInTheDocument();
 
     // Check for Domain Name in Matrix
-    expect(screen.getByText('market')).toBeInTheDocument();
+    expect(within(matrixTable as HTMLElement).getByText('market')).toBeInTheDocument();
 
     // Check for Status Badge (Uppercase)
     expect(screen.getByText('HEALTHY')).toHaveClass('font-mono');
