@@ -3,6 +3,9 @@ FROM node:20-bookworm-slim AS ui-builder
 
 WORKDIR /ui
 
+ARG VITE_PORT
+ENV VITE_PORT=${VITE_PORT}
+
 COPY ui/package.json ui/pnpm-lock.yaml ./
 COPY ui/index.html ui/postcss.config.mjs ui/tsconfig.json ui/vite.config.ts ./
 COPY ui/public ./public

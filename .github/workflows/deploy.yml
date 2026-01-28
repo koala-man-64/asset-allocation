@@ -405,10 +405,10 @@ jobs:
           BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
           
           # 1. Build immutable SHA tag
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker build . --build-arg VITE_PORT=${{ env.VITE_PORT }} -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           
           # 2. Build branch tag
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
+          docker build . --build-arg VITE_PORT=${{ env.VITE_PORT }} -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
           
           # 3. Push SHA tag and Branch tag
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
