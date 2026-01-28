@@ -41,7 +41,6 @@ os.environ.setdefault(
     "bronze,silver,gold,platinum,ranking-data,common,test-container",
 )
 os.environ.setdefault("BACKTEST_RUN_STORE_MODE", "sqlite")
-os.environ.setdefault("BACKTEST_CSP", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 # Container Mocks
 containers = [

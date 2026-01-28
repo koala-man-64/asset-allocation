@@ -59,7 +59,6 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `POSTGRES_DSN`
 - **Backtest API security (deploy):**
   - `BACKTEST_API_KEY`
-  - `BACKTEST_CSP`
 - **Backtest API OIDC config (deploy; required when OIDC is enabled):**
   - `BACKTEST_OIDC_ISSUER`
   - `BACKTEST_OIDC_AUDIENCE`

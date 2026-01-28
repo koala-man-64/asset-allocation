@@ -70,9 +70,6 @@ export BACKTEST_OIDC_JWKS_URL="https://login.microsoftonline.com/<tenant-id>/dis
 export BACKTEST_OIDC_REQUIRED_SCOPES="backtests.read,backtests.write"
 export BACKTEST_OIDC_REQUIRED_ROLES=""
 
-# Required: Content-Security-Policy header (override as needed)
-export BACKTEST_CSP="default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
-
 # Required: system-health cache TTL (used by /api/system/* endpoints)
 export SYSTEM_HEALTH_TTL_SECONDS=30
 

@@ -90,7 +90,6 @@ jobs:
           BACKTEST_API_KEY: ${{ secrets.BACKTEST_API_KEY }}
           BACKTEST_OIDC_ISSUER: ${{ secrets.BACKTEST_OIDC_ISSUER }}
           BACKTEST_OIDC_AUDIENCE: ${{ secrets.BACKTEST_OIDC_AUDIENCE }}
-          BACKTEST_CSP: ${{ secrets.BACKTEST_CSP }}
         run: |
           set -euo pipefail
 
@@ -114,7 +113,6 @@ jobs:
           require_secret NASDAQ_API_KEY
           require_secret POSTGRES_DSN
           require_secret POSTGRES_DSN
-          require_secret BACKTEST_CSP
 
           python3 - <<'PY'
           import os
