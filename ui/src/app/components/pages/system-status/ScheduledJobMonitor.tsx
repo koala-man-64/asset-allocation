@@ -430,7 +430,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                                   <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
                                     Console + System Logs · last 50 lines
                                   </div>
-                                  <div className="max-h-64 overflow-auto break-words px-3 py-2 text-xs font-mono leading-relaxed">
+                                  <div className="max-h-64 overflow-auto overflow-x-hidden break-words px-3 py-2 text-xs font-mono leading-relaxed">
                                     {logState?.loading && (
                                       <div className="text-muted-foreground">Loading logs…</div>
                                     )}
@@ -442,8 +442,13 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                                     )}
                                     {!logState?.loading && !logState?.error && (logState?.lines?.length ?? 0) > 0 && (
                                       <div className="space-y-1">
-                                        {logState?.lines.map((line, index) => (
-                                          <div key={`${job.jobName}-log-${index}`} className="whitespace-pre-wrap text-foreground/90">
+                                        {(logState?.lines ?? []).slice(-50).map((line, index) => (
+                                          <div
+                                            key={`${job.jobName}-log-${index}`}
+                                            className={`whitespace-pre-wrap break-words text-foreground/90 px-2 py-1 max-w-full ${
+                                              index % 2 === 0 ? 'bg-muted/30' : 'bg-transparent'
+                                            }`}
+                                          >
                                             {line}
                                           </div>
                                         ))}
