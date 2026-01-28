@@ -5,7 +5,7 @@ from typing import List, Callable, Optional, Iterable
 
 from core import core as mdc
 from core.core import write_line
-from core.delta_core import load_delta, store_delta
+from core import delta_core
 
 
 def load_ticker_universe() -> List[str]:
@@ -63,7 +63,7 @@ def materialize_by_date(
         
         # Optimization: verify exists? check_blob_exists? 
         # load_delta usually handles missing gracefully if we catch or it returns None
-        df = load_delta(container, src_path)
+        df = delta_core.load_delta(container, src_path)
         
         if df is None or df.empty:
             continue
@@ -115,7 +115,7 @@ def materialize_by_date(
     
     predicate = f"year_month = '{year_month}'"
 
-    store_delta(
+    delta_core.store_delta(
         out,
         container=container,
         path=output_path,

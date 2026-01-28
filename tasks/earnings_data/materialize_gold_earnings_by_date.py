@@ -1,17 +1,21 @@
 """
 Materialize a cross-sectional (by-date) Delta table from per-ticker Gold earnings feature tables.
+
+Partitioned by year_month and date.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional, Tuple
 
-from core.core import write_line
+import pandas as pd
+
+from core.core import write_line, write_warning
+from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
-from tasks.common.materialization import materialize_by_date
 
 
 @dataclass(frozen=True)
@@ -19,19 +23,96 @@ class MaterializeConfig:
     container: str
     year_month: str
     output_path: str
+    max_tickers: Optional[int]
+
+
+def _parse_year_month_bounds(year_month: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    try:
+        start = pd.Timestamp(f"{year_month}-01")
+    except Exception as exc:
+        raise ValueError(f"Invalid year_month '{year_month}'. Expected YYYY-MM.") from exc
+    end = start + pd.offsets.MonthBegin(1)
+    return start, end
+
+
+def _load_ticker_universe() -> List[str]:
+    from core import core as mdc
+
+    df_symbols = mdc.get_symbols()
+    df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
+
+    tickers: List[str] = []
+    for symbol in df_symbols["Symbol"].astype(str).tolist():
+        if "." in symbol:
+            continue
+        tickers.append(symbol.replace(".", "-"))
+
+    return list(dict.fromkeys(tickers))
+
+
+def _extract_tickers_from_delta_tables(blob_names: Iterable[str], root_prefix: str) -> List[str]:
+    root_prefix = root_prefix.strip("/")
+    tickers: set[str] = set()
+    for blob_name in blob_names:
+        parts = str(blob_name).strip("/").split("/")
+        if len(parts) < 4:
+            continue
+        if parts[0] != root_prefix:
+            continue
+
+        ticker = parts[1].strip()
+        if not ticker:
+            continue
+
+        if parts[2] != "_delta_log":
+            continue
+
+        log_file = parts[3]
+        if log_file.endswith(".json") or log_file.endswith(".checkpoint.parquet"):
+            tickers.add(ticker)
+
+    return sorted(tickers)
+
+
+def _try_load_tickers_from_container(container: str, root_prefix: str) -> Optional[List[str]]:
+    from core import core as mdc
+
+    client = mdc.get_storage_client(container)
+    if client is None:
+        return None
+
+    prefix = root_prefix.strip("/") + "/"
+    try:
+        blobs = client.container_client.list_blobs(name_starts_with=prefix)
+        return _extract_tickers_from_delta_tables((b.name for b in blobs), root_prefix=root_prefix)
+    except Exception as exc:
+        write_warning(
+            f"Unable to list per-ticker tables under {prefix} in container={container}: {exc}. "
+            "Falling back to symbol universe."
+        )
+        return None
 
 
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
+    parser = argparse.ArgumentParser(
+        description="Materialize gold earnings features into a cross-sectional Delta table (partitioned by date)."
+    )
+    parser.add_argument("--container", help="Earnings features container (default: AZURE_CONTAINER_GOLD).")
+    parser.add_argument("--year-month", required=True, help="Year-month partition to materialize (YYYY-MM).")
+    parser.add_argument(
+        "--output-path",
+        default=DataPaths.get_gold_earnings_by_date_path(),
+        help="Output Delta table path within the container.",
+    )
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
     args = parser.parse_args(argv)
 
     container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
     if container_raw is None or not str(container_raw).strip():
-        # Fallback to EARNINGS if GOLD is not set, though GOLD is expected
         container_raw = os.environ.get("AZURE_CONTAINER_EARNINGS")
 
     if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or pass --container.")
+        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_CONTAINER_EARNINGS or pass --container.")
     container = str(container_raw).strip()
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
@@ -79,7 +160,7 @@ def materialize_earnings_by_date(cfg: MaterializeConfig) -> int:
         )
         if df is None or df.empty:
             continue
-            
+
         if "symbol" not in df.columns and "Symbol" not in df.columns:
             df["symbol"] = ticker
 

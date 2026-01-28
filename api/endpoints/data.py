@@ -329,10 +329,12 @@ def get_data_generic(
     """
     # Validation
     validate_auth(request)
-    if layer not in ["silver", "gold", "bronze"]:
-        raise HTTPException(status_code=400, detail="Layer must be 'silver', 'gold', or 'bronze'. Use /ranking for platinum.")
+    if layer not in ["silver", "gold"]:
+        raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'. Use /ranking for platinum.")
     
     try:
+        if limit is None:
+            return DataService.get_data(layer, domain, ticker)
         return DataService.get_data(layer, domain, ticker, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -353,10 +355,12 @@ def get_finance_data(
     Specialized endpoint for Finance data.
     """
     validate_auth(request)
-    if layer not in ["silver", "gold", "bronze"]:
-         raise HTTPException(status_code=400, detail="Layer must be 'silver', 'gold', or 'bronze'")
+    if layer not in ["silver", "gold"]:
+         raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'")
 
     try:
+        if limit is None:
+            return DataService.get_finance_data(layer, sub_domain, ticker)
         return DataService.get_finance_data(layer, sub_domain, ticker, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
