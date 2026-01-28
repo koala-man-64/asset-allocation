@@ -8,6 +8,8 @@ param(
 
   [string[]]$StorageContainers = @(),
   [string]$AcrName = "assetallocationacr",
+  # User-assigned managed identity used by Container Apps/Jobs to pull from ACR on first create.
+  [string]$AcrPullIdentityName = "asset-allocation-acr-pull-mi",
   [switch]$EnableAcrAdmin,
   [switch]$EmitSecrets,
   [switch]$GrantAcrPullToAcaResources,
@@ -366,6 +368,53 @@ if ($EmitSecrets) {
 $acrLoginServer = az acr show --name $AcrName --resource-group $ResourceGroup --query loginServer -o tsv
 $acrId = az acr show --name $AcrName --resource-group $ResourceGroup --query id -o tsv --only-show-errors
 
+Write-Host "Ensuring user-assigned managed identity exists (for ACR pull): $AcrPullIdentityName"
+$acrPullIdentity = $null
+try {
+  $acrPullIdentity = az identity show --name $AcrPullIdentityName --resource-group $ResourceGroup --only-show-errors -o json 2>$null | ConvertFrom-Json
+}
+catch {
+  $acrPullIdentity = $null
+}
+
+if ($null -eq $acrPullIdentity) {
+  $acrPullIdentity = az identity create --name $AcrPullIdentityName --resource-group $ResourceGroup --location $Location --only-show-errors -o json | ConvertFrom-Json
+}
+
+$acrPullIdentityId = $acrPullIdentity.id
+$acrPullIdentityClientId = $acrPullIdentity.clientId
+$acrPullIdentityPrincipalId = $acrPullIdentity.principalId
+
+if (-not $acrPullIdentityId -or -not $acrPullIdentityPrincipalId) {
+  throw "Failed to resolve AcrPull identity details for '$AcrPullIdentityName'."
+}
+
+Write-Host "Ensuring AcrPull role assignment exists for identity on ACR..."
+$acrPullExisting = "0"
+try {
+  $acrPullExisting = az role assignment list `
+    --assignee-object-id $acrPullIdentityPrincipalId `
+    --scope $acrId `
+    --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv --only-show-errors 2>$null
+  if (-not $acrPullExisting) { $acrPullExisting = "0" }
+}
+catch {
+  $acrPullExisting = "0"
+}
+
+if ([int]$acrPullExisting -eq 0) {
+  az role assignment create `
+    --assignee-object-id $acrPullIdentityPrincipalId `
+    --assignee-principal-type ServicePrincipal `
+    --role "AcrPull" `
+    --scope $acrId `
+    --only-show-errors 1>$null
+  Write-Host "  AcrPull granted to $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
+}
+else {
+  Write-Host "  AcrPull already present for $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
+}
+
 function Ensure-AcrPullRoleAssignment {
   param(
     [Parameter(Mandatory = $true)][string]$PrincipalId,
@@ -476,6 +525,10 @@ $outputs = [ordered]@{
   acrLoginServer               = $acrLoginServer
   acrAdminEnabled              = [bool]$EnableAcrAdmin
   acrPullAuthMode              = "managedIdentity"
+  acrPullUserAssignedIdentityName       = $AcrPullIdentityName
+  acrPullUserAssignedIdentityId         = $acrPullIdentityId
+  acrPullUserAssignedIdentityClientId   = $acrPullIdentityClientId
+  acrPullUserAssignedIdentityPrincipalId = $acrPullIdentityPrincipalId
   acrPullAssignmentsCreated    = $acrPullAssignmentsCreated
   acrPullAssignmentsSkipped    = $acrPullAssignmentsSkipped
   logAnalyticsWorkspaceName    = $LogAnalyticsWorkspaceName

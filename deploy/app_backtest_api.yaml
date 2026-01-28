@@ -2,7 +2,9 @@ location: East US
 name: asset-allocation-api
 type: Microsoft.App/containerApps
 identity:
-  type: SystemAssigned
+  type: UserAssigned
+  userAssignedIdentities:
+    "${ACR_PULL_IDENTITY_RESOURCE_ID}": {}
 properties:
   managedEnvironmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   configuration:
@@ -14,7 +16,7 @@ properties:
       allowInsecure: false
     registries:
     - server: assetallocationacr.azurecr.io
-      identity: system
+      identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
     - name: api-key
       value: "${API_KEY}"
