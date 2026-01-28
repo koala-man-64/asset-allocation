@@ -118,4 +118,16 @@ export const apiService = {
             signal
         });
     },
+
+    getGenericData(
+        layer: 'silver' | 'gold',
+        domain: string,
+        ticker?: string,
+        limit?: number
+    ): Promise<Record<string, unknown>[]> {
+        const endpoint = `/data/${layer}/${domain}`;
+        return request<Record<string, unknown>[]>(endpoint, {
+            params: { ticker, limit }
+        });
+    },
 };

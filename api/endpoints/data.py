@@ -321,17 +321,19 @@ def get_data_generic(
     domain: str,
     request: Request,
     ticker: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1, le=10000, description="Max rows to return"),
 ):
     """
     Generic endpoint for retrieving data from Silver/Gold layers.
     Delegates to DataService for logic.
     """
+    # Validation
     validate_auth(request)
-    if layer not in ["silver", "gold"]:
-        raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'. Use /ranking for platinum.")
+    if layer not in ["silver", "gold", "bronze"]:
+        raise HTTPException(status_code=400, detail="Layer must be 'silver', 'gold', or 'bronze'. Use /ranking for platinum.")
     
     try:
-        return DataService.get_data(layer, domain, ticker)
+        return DataService.get_data(layer, domain, ticker, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:
@@ -345,16 +347,17 @@ def get_finance_data(
     sub_domain: str,
     request: Request,
     ticker: str = Query(..., description="Ticker is required for finance reports"),
+    limit: Optional[int] = Query(default=None, ge=1, le=10000, description="Max rows to return"),
 ):
     """
     Specialized endpoint for Finance data.
     """
     validate_auth(request)
-    if layer not in ["silver", "gold"]:
-         raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'")
+    if layer not in ["silver", "gold", "bronze"]:
+         raise HTTPException(status_code=400, detail="Layer must be 'silver', 'gold', or 'bronze'")
 
     try:
-        return DataService.get_finance_data(layer, sub_domain, ticker)
+        return DataService.get_finance_data(layer, sub_domain, ticker, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:

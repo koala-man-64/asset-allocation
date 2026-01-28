@@ -94,4 +94,13 @@ export const DataService = {
   ): Promise<StockScreenerResponse> {
     return apiService.getStockScreener(params, signal);
   },
+
+  getGenericData(
+    layer: 'silver' | 'gold',
+    domain: string,
+    ticker?: string,
+    limit?: number
+  ): Promise<Record<string, unknown>[]> {
+    return apiService.getGenericData(layer, domain, ticker, limit);
+  },
 };
