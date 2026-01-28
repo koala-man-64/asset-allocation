@@ -17,6 +17,7 @@ import { StockExplorerPage } from '@/app/components/pages/StockExplorerPage';
 import { Toaster } from '@/app/components/ui/sonner';
 
 import { StockDetailPage } from '@/app/components/pages/StockDetailPage';
+import { PostgresExplorerPage } from '@/app/components/pages/PostgresExplorerPage';
 
 function AppContent() {
   // Enable real-time updates from backend
@@ -38,6 +39,7 @@ function AppContent() {
               <Route path="/data-quality" element={<DataQualityPage />} />
               <Route path="/system-status" element={<SystemStatusPage />} />
               <Route path="/stock-explorer" element={<StockExplorerPage />} />
+              <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
               <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
