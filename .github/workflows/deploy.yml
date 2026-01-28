@@ -343,7 +343,7 @@ jobs:
               - "services/**"
               - "core/**"
               - "Dockerfile.asset_allocation_api"
-              - "deploy/app_backtest_api.yaml"
+              - "deploy/app_api.yaml"
               - "pyproject.toml"
               - "requirements.txt"
               - "requirements.lock.txt"
@@ -514,7 +514,7 @@ jobs:
           fi
 
           echo "Deploying Backtest API (App) from YAML..."
-          envsubst < deploy/app_backtest_api.yaml > deploy/app_backtest_api.tmp.yaml
+          envsubst < deploy/app_api.yaml > deploy/app_api.tmp.yaml
 
           if ! az containerapp show --name ${{ env.API_IMAGE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
              echo "App ${{ env.API_IMAGE_NAME }} not found. Creating..."
@@ -522,18 +522,18 @@ jobs:
                --name ${{ env.API_IMAGE_NAME }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
                --environment asset-allocation-env \
-               --yaml "deploy/app_backtest_api.tmp.yaml"
+               --yaml "deploy/app_api.tmp.yaml"
           else
              echo "App ${{ env.API_IMAGE_NAME }} found. Updating..."
              az containerapp update \
                --name ${{ env.API_IMAGE_NAME }} \
                --resource-group ${{ env.RESOURCE_GROUP }} \
-               --yaml "deploy/app_backtest_api.tmp.yaml"
+               --yaml "deploy/app_api.tmp.yaml"
           fi
 
           bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.API_IMAGE_NAME }}"
           
-          rm deploy/app_backtest_api.tmp.yaml
+          rm deploy/app_api.tmp.yaml
 
       - name: Verify Backtest API Image
         if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.API_IMAGE_NAME_check.outputs.app_exists == 'false'

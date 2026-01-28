@@ -8,7 +8,7 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 
 - **DEC-001 Backtest scaling model:** *Single replica* while runs execute in-process.
   - Rationale: the backtest API currently executes jobs in-process; scaling replicas can corrupt run state and create duplicate execution.
-  - Enforcement: `deploy/app_backtest_api.yaml` sets `maxReplicas: 1`.
+  - Enforcement: `deploy/app_api.yaml` sets `maxReplicas: 1`.
 - **DEC-002 Postgres networking model:** *Public endpoint + firewall rules + TLS-required DSNs* (cost-min baseline).
   - Rationale: fastest path to an operational DB; private endpoint/VNet integration can be added later.
 
@@ -21,7 +21,7 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 - **Migration runner:** `deploy/apply_postgres_migrations.ps1` (supports local `psql` or Dockerized `psql`)
 - **Deploy wiring (secrets only; unused until later phases):**
   - Ranking job: `deploy/job_platinum_ranking.yaml` → `POSTGRES_DSN` secret ref
-  - Backtest API: `deploy/app_backtest_api.yaml` → `POSTGRES_DSN` secret ref
+  - Backtest API: `deploy/app_api.yaml` → `POSTGRES_DSN` secret ref
   - GitHub deploy workflow: `.github/workflows/deploy.yml` passes the secrets to `envsubst`
 
 ## Required GitHub Secrets (for deploy workflow)
