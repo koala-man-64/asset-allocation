@@ -96,7 +96,7 @@ export const DataService = {
   },
 
   getGenericData(
-    layer: 'silver' | 'gold',
+    layer: 'bronze' | 'silver' | 'gold',
     domain: string,
     ticker?: string,
     limit?: number

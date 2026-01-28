@@ -770,6 +770,7 @@ def collect_system_health_snapshot(
                         last_checked=item.last_checked,
                         details=details,
                         azure_id=item.azure_id,
+                        running_state=item.running_state,
                         signals=tuple(signals),
                     )
 

@@ -92,7 +92,11 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
             alert_id = str(alert.get("id") or "").strip()
             if alert_id:
                 alert_ids.append(alert_id)
-        states = alert_store.get_states(alert_ids)
+        try:
+            states = alert_store.get_states(alert_ids)
+        except Exception as exc:
+            logger.exception("Failed to load alert lifecycle states; returning stateless alerts.")
+            states = {}
 
         for alert in payload["alerts"]:
             if not isinstance(alert, dict):

@@ -111,7 +111,7 @@ export function LeftNavigation() {
                 to={item.path}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-3 px-3 py-2 rounded-md transition-colors w-full',
+                    'flex flex-row flex-nowrap items-center gap-3 px-3 py-2 rounded-md transition-colors w-full',
                     'hover:bg-accent/50 group-hover:pr-9', // Make space for pin button on hover
                     isActive
                       ? 'bg-accent text-accent-foreground font-medium'

@@ -63,7 +63,7 @@ describe('backtestApi', () => {
                 }),
             });
 
-            await apiClient.suspendJob('test-job');
+            await backtestApi.suspendJob('test-job');
 
             expect(fetchMock).toHaveBeenCalledTimes(1);
             const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
@@ -80,7 +80,7 @@ describe('backtestApi', () => {
                 }),
             });
 
-            await apiClient.resumeJob('test-job');
+            await backtestApi.resumeJob('test-job');
 
             expect(fetchMock).toHaveBeenCalledTimes(1);
             const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');

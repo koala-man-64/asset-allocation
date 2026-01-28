@@ -16,10 +16,7 @@ export const DataExplorerPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            // Cast layer to any to satisfy strict typing if the service interface hasn't been updated yet, 
-            // or assume service will accept it (which it will via string, though TS might complain if strict).
-            // Let's assume generic string or updated type. For now, we cast if needed.
-            const result = await DataService.getGenericData(layer as any, domain, ticker || undefined, limit);
+            const result = await DataService.getGenericData(layer, domain, ticker || undefined, limit);
             setData(result);
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));

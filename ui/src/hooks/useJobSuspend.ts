@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ApiError, apiClient } from '@/services/apiClient';
+import { ApiError, backtestApi } from '@/services/backtestApi';
 
 type JobControlAction = 'suspend' | 'resume';
 
@@ -14,10 +14,10 @@ export function useJobSuspend() {
     setJobControl({ jobName, action });
     try {
       if (suspended) {
-        await apiClient.suspendJob(jobName);
+        await backtestApi.suspendJob(jobName);
         toast.success(`Suspended ${jobName}`);
       } else {
-        await apiClient.resumeJob(jobName);
+        await backtestApi.resumeJob(jobName);
         toast.success(`Resumed ${jobName}`);
       }
       void queryClient.invalidateQueries({ queryKey });
@@ -39,4 +39,3 @@ export function useJobSuspend() {
     setJobSuspended,
   };
 }
-
