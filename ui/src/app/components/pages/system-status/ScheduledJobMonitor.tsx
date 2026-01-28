@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/too
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import type { DataLayer, JobRun } from '@/types/strategy';
 import { formatSchedule, formatTimeAgo, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
+import { apiService } from '@/services/apiService';
 
 import { CalendarDays, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
 
@@ -27,6 +28,10 @@ interface ScheduledJobMonitorProps {
 
 export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
+  const [logJobName, setLogJobName] = useState<string | null>(null);
 
   const getJobPortalLink = (jobName: string) => {
     const normalizedName = normalizeAzureJobName(jobName);
@@ -81,6 +86,46 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
 
     return rows;
   }, [dataLayers, jobIndex]);
+
+  const latestRun = useMemo(() => {
+    if (!recentJobs?.length) return null;
+    return recentJobs.reduce<JobRun | null>((latest, job) => {
+      if (!job?.startTime) return latest;
+      if (!latest?.startTime) return job;
+      return new Date(job.startTime).getTime() > new Date(latest.startTime).getTime() ? job : latest;
+    }, null);
+  }, [recentJobs]);
+
+  useEffect(() => {
+    if (!latestRun?.jobName) {
+      setLogLines([]);
+      setLogLoading(false);
+      setLogError(null);
+      setLogJobName(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLogLoading(true);
+    setLogError(null);
+    setLogJobName(latestRun.jobName);
+
+    apiService
+      .getJobLogs(latestRun.jobName, { runs: 1 }, controller.signal)
+      .then((response) => {
+        const logs = Array.isArray(response?.logs) ? response.logs : [];
+        setLogLines(logs.slice(-50));
+        setLogLoading(false);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLogLines([]);
+        setLogLoading(false);
+        setLogError(error instanceof Error ? error.message : String(error));
+      });
+
+    return () => controller.abort();
+  }, [latestRun?.jobName]);
 
   return (
     <Card className="h-full flex flex-col">
@@ -222,6 +267,61 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
               )}
             </TableBody>
           </Table>
+        </div>
+
+        <div className="mt-6 space-y-4">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between text-sm font-semibold">
+              <span>Most Recent Job Run</span>
+              {latestRun?.startTime && (
+                <span className="text-xs text-muted-foreground">
+                  {formatTimeAgo(latestRun.startTime)} ago
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {latestRun?.jobName ? `${latestRun.jobName} • console log (last 50 lines)` : 'No recent job runs available'}
+            </div>
+          </div>
+
+          {latestRun && (
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</div>
+                <div className="mt-2 flex items-center gap-2 text-sm">{getStatusBadge(latestRun.status)}</div>
+              </div>
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Started</div>
+                <div className="mt-2 text-sm font-mono">{formatTimestamp(latestRun.startTime)}</div>
+              </div>
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Triggered By</div>
+                <div className="mt-2 text-sm">{latestRun.triggeredBy || 'Schedule'}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-md border bg-background">
+            <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">Console Log</div>
+            <div className="max-h-64 overflow-auto px-3 py-2 text-xs font-mono leading-relaxed">
+              {logLoading && <div className="text-muted-foreground">Loading logs…</div>}
+              {!logLoading && logError && (
+                <div className="text-destructive">Failed to load logs{logJobName ? ` for ${logJobName}` : ''}: {logError}</div>
+              )}
+              {!logLoading && !logError && logLines.length === 0 && (
+                <div className="text-muted-foreground">No log output available.</div>
+              )}
+              {!logLoading && !logError && logLines.length > 0 && (
+                <div className="space-y-1">
+                  {logLines.map((line, index) => (
+                    <div key={`${logJobName ?? 'log'}-${index}`} className="whitespace-pre-wrap text-foreground/90">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>

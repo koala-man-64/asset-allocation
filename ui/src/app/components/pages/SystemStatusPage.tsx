@@ -5,7 +5,6 @@ import { StatusOverview } from './system-status/StatusOverview';
 import { AzureResources } from './system-status/AzureResources';
 // JobMonitor and DataLayerHealth are redundant with the new dense StatusOverview or can be re-added below if needed.
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
-import { JobMonitor } from './system-status/JobMonitor';
 import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
 import { getAzurePortalUrl, normalizeAzureJobName, normalizeAzurePortalUrl } from './system-status/SystemStatusHelpers';
 
@@ -110,17 +109,11 @@ export function SystemStatusPage() {
             />
 
             {/* Jobs */}
-            <div className="grid gap-6 lg:grid-cols-2">
-                <JobMonitor
-                    recentJobs={recentJobs}
-                    jobLinks={jobLinks}
-                />
-                <ScheduledJobMonitor
-                    dataLayers={dataLayers}
-                    recentJobs={recentJobs}
-                    jobLinks={jobLinks}
-                />
-            </div>
+            <ScheduledJobMonitor
+                dataLayers={dataLayers}
+                recentJobs={recentJobs}
+                jobLinks={jobLinks}
+            />
 
             {/* Connectors / Resources */}
             {resources && resources.length > 0 && (
