@@ -18,7 +18,6 @@ COPY tasks/ tasks/
 COPY services/ services/
 COPY alpaca/ alpaca/
 COPY api/ api/
-COPY backtest/ backtest/
 COPY monitoring/ monitoring/
 # scripts/ is optional and not required for the API image; keep it in this job image if present.
 COPY scripts/ scripts/

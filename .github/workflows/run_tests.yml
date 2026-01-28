@@ -101,7 +101,7 @@ jobs:
         BACKTEST_DB_PATH: "/tmp/backtest_results/runs.sqlite3"
         BACKTEST_MAX_CONCURRENT: "1"
         BACKTEST_API_KEY_HEADER: "X-API-Key"
-        BACKTEST_AUTH_MODE: "none"
+        API_AUTH_MODE: "none"
         BACKTEST_ALLOW_LOCAL_DATA: "false"
         BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,ranking-data,common"
         BACKTEST_RUN_STORE_MODE: "sqlite"

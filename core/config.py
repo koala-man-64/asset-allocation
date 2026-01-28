@@ -63,7 +63,7 @@ class AppSettings(BaseSettings):
     AZURE_CONTAINER_PLATINUM: Optional[str] = "platinum"
 
     # API Configuration
-    API_PORT: int
+    API_PORT: int = 8000
 
     # Optional data source credentials (varies by workflow).
     YAHOO_USERNAME: Optional[str] = None

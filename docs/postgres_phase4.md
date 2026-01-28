@@ -22,7 +22,7 @@ Phase 4 adds **optional** support for reading **platinum composite signals** fro
 
 - **DEC-401 Canonical truth remains Delta:** Postgres is a **serving cache** and is always optional.
 - **DEC-402 Reader is opt-in:** Backtests default to current behavior unless explicitly configured.
-- **DEC-403 Keep merge-conflict surface low:** Avoid changes to `services/backtest_api/app.py` for Phase 4.
+- **DEC-403 Keep merge-conflict surface low:** Avoid changes to `services/api/app.py` for Phase 4.
 
 ## Implementation steps
 
@@ -91,9 +91,9 @@ The local `ag-ui-wiring` copy introduces API and UI changes that are likely to c
   - `backtest/config.py`
   - `backtest/data_access/loader.py`
 - Account for UI contract drift:
-  - `ag-ui-wiring` UI calls `/api/system/health` via `ui/src/services/backtestApi.ts` (when `BACKTEST_UI_API_BASE_URL=/api`).
+  - `ag-ui-wiring` UI calls `/api/system/health` via `ui/src/services/backtestApi.ts` (when `UI_API_BASE_URL=/api`).
   - `ag-ui-wiring` UI also uses different “live” market/finance endpoints (`/market/...`, `/finance/...`) than the current backend API (`/data/...`).
-- When merging later, reconcile `services/backtest_api/app.py` carefully:
+- When merging later, reconcile `services/api/app.py` carefully:
   - `ag-ui-wiring` adds `/api/system/health` and a monitoring package.
   - Postgres Phase 3 adds Postgres run-store readiness (`/readyz` pings the configured store).
 

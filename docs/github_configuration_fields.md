@@ -58,19 +58,19 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `POSTGRES_DSN`
   - `POSTGRES_DSN`
 - **Backtest API security (deploy):**
-  - `BACKTEST_API_KEY`
+  - `API_KEY`
 - **Backtest API OIDC config (deploy; required when OIDC is enabled):**
-  - `BACKTEST_OIDC_ISSUER`
-  - `BACKTEST_OIDC_AUDIENCE`
-  - `BACKTEST_OIDC_JWKS_URL`
-  - `BACKTEST_OIDC_REQUIRED_SCOPES`
-  - `BACKTEST_OIDC_REQUIRED_ROLES`
+  - `API_OIDC_ISSUER`
+  - `API_OIDC_AUDIENCE`
+  - `API_OIDC_JWKS_URL`
+  - `API_OIDC_REQUIRED_SCOPES`
+  - `API_OIDC_REQUIRED_ROLES`
 - **UI runtime auth config served by backtest-api (deploy; optional):**
-  - `BACKTEST_UI_AUTH_MODE`
-  - `BACKTEST_UI_OIDC_CLIENT_ID`
-  - `BACKTEST_UI_OIDC_AUTHORITY`
-  - `BACKTEST_UI_OIDC_SCOPES`
-  - `BACKTEST_UI_API_BASE_URL`
+  - `UI_AUTH_MODE`
+  - `UI_OIDC_CLIENT_ID`
+  - `UI_OIDC_AUTHORITY`
+  - `UI_OIDC_SCOPES`
+  - `UI_API_BASE_URL`
 
 ### 4.2 GitHub-managed fields recommended to persist “Run job” + job log tails across redeploys
 These are required/used by the Backtest API and/or system health collection logic; ensure they are set in GitHub-managed config so deploy templates can render them.
@@ -104,7 +104,7 @@ These are required/used by the Backtest API and/or system health collection logi
   - `.github/workflows/trigger_all_jobs.yml`
   - `deploy/app_backtest_api.yaml`
   - `deploy/job_*.yaml`
-  - `services/backtest_api/app.py`
+  - `services/api/app.py`
   - `api/service/settings.py`
   - `monitoring/system_health.py`
   - `.env.template`

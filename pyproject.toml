@@ -44,7 +44,6 @@ where = ["."]
 include = [
     "alpaca*",
     "api*",
-    "backtest*",
     "core*",
     "monitoring*",
     "services*",

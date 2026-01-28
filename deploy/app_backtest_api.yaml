@@ -17,7 +17,7 @@ properties:
       identity: system
     secrets:
     - name: api-key
-      value: "${BACKTEST_API_KEY}"
+      value: "${API_KEY}"
     - name: backtest-pg-dsn
       value: "${POSTGRES_DSN}"
   template:

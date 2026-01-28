@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from typing import Any, Dict, List, Optional
 
@@ -21,7 +22,7 @@ class QueryRequest(BaseModel):
 def _resolve_postgres_dsn(request: Request) -> Optional[str]:
     """
     Resolves the Postgres DSN from environment variables or settings.
-    Normalizes SQLAlchemy-style DSNs (postgresql+asyncpg://) to psycopg-friendly (postgresql://).
+    Normalizes SQLAlchemy-style DSNs (postgresql+asyncpg://) and prefers an installed sync driver.
     """
     raw = os.environ.get("POSTGRES_DSN")
     # Helper to strip whitespace or return None
@@ -30,6 +31,43 @@ def _resolve_postgres_dsn(request: Request) -> Optional[str]:
             return None
         t = str(value).strip()
         return t or None
+
+    def _has_module(name: str) -> bool:
+        return importlib.util.find_spec(name) is not None
+
+    def _normalize_sync_driver(value: str) -> str:
+        has_psycopg = _has_module("psycopg")
+        has_psycopg2 = _has_module("psycopg2")
+
+        if value.startswith("postgresql+psycopg2://"):
+            if has_psycopg2:
+                return value
+            if has_psycopg:
+                return "postgresql+psycopg://" + value.removeprefix("postgresql+psycopg2://")
+            return value
+
+        if value.startswith("postgresql+psycopg://"):
+            if has_psycopg:
+                return value
+            if has_psycopg2:
+                return "postgresql+psycopg2://" + value.removeprefix("postgresql+psycopg://")
+            return value
+
+        if value.startswith("postgresql://"):
+            if has_psycopg2:
+                return value
+            if has_psycopg:
+                return "postgresql+psycopg://" + value.removeprefix("postgresql://")
+            return value
+
+        if value.startswith("postgres://"):
+            if has_psycopg2:
+                return value
+            if has_psycopg:
+                return "postgresql+psycopg://" + value.removeprefix("postgres://")
+            return value
+
+        return value
 
     dsn = _strip_or_none(raw) or _strip_or_none(get_settings(request).postgres_dsn)
     
@@ -40,8 +78,9 @@ def _resolve_postgres_dsn(request: Request) -> Optional[str]:
     # If the app uses asyncpg elsewhere, we might need to strictly ensure we use the right driver.
     # For introspection/pandas, using the standard driver is safest.
     if dsn.startswith("postgresql+asyncpg://"):
-        return "postgresql://" + dsn.removeprefix("postgresql+asyncpg://")
-    return dsn
+        dsn = "postgresql://" + dsn.removeprefix("postgresql+asyncpg://")
+
+    return _normalize_sync_driver(dsn)
 
 
 @router.get("/schemas")
