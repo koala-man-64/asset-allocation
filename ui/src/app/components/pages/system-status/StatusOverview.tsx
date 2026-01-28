@@ -67,6 +67,53 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
         return index;
     }, [dataLayers]);
 
+    const medallionMetrics = useMemo(() => {
+        return dataLayers.map((layer) => {
+            let total = 0;
+            let running = 0;
+            let failed = 0;
+            let success = 0;
+
+            for (const domain of layer.domains || []) {
+                if (!domain?.jobName) continue;
+                total += 1;
+                const key = normalizeAzureJobName(domain.jobName);
+                const job = key ? jobIndex.get(key) : undefined;
+                if (job?.status === 'running') running += 1;
+                if (job?.status === 'failed') failed += 1;
+                if (job?.status === 'success') success += 1;
+            }
+
+            return {
+                layer: layer.name,
+                total,
+                running,
+                failed,
+                success,
+            };
+        });
+    }, [dataLayers, jobIndex]);
+
+    const jobCount = useMemo(() => {
+        let count = 0;
+        for (const layer of dataLayers) {
+            for (const domain of layer.domains || []) {
+                if (domain?.jobName) count += 1;
+            }
+        }
+        return count;
+    }, [dataLayers]);
+
+    const jobStatusCounts = useMemo(() => {
+        const counts = { running: 0, failed: 0, success: 0 };
+        for (const job of recentJobs || []) {
+            if (job.status === 'running') counts.running += 1;
+            if (job.status === 'failed') counts.failed += 1;
+            if (job.status === 'success') counts.success += 1;
+        }
+        return counts;
+    }, [recentJobs]);
+
     return (
         <div className="grid gap-4 font-sans">
             {/* System Header - Manual inline styles for specific 'Industrial' theming overrides */}
@@ -87,10 +134,45 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                         </div>
                     </div>
                 </div>
-                <div className="text-right">
-                    <div className={StatusTypos.HEADER}>UPTIME CLOCK</div>
-                    <div className={`${StatusTypos.MONO} text-xl text-slate-500`}>
-                        {new Date().toISOString().split('T')[1].split('.')[0]} UTC
+                <div className="flex items-center gap-4 w-full">
+                    <div className="hidden md:flex items-center gap-4 border-l border-slate-200 pl-4">
+                        <div className="flex flex-col items-start">
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-slate-500`}>LAYERS</span>
+                            <span className={`${StatusTypos.MONO} text-sm text-slate-600`}>{dataLayers.length}</span>
+                        </div>
+                        <div className="flex flex-col items-start">
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-slate-500`}>DOMAINS</span>
+                            <span className={`${StatusTypos.MONO} text-sm text-slate-600`}>{domainNames.length}</span>
+                        </div>
+                        <div className="flex flex-col items-start">
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-slate-500`}>JOBS</span>
+                            <span className={`${StatusTypos.MONO} text-sm text-slate-600`}>{jobCount}</span>
+                        </div>
+                        <div className="flex flex-col items-start">
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-slate-500`}>RUNNING</span>
+                            <span className={`${StatusTypos.MONO} text-sm text-sky-600`}>{jobStatusCounts.running}</span>
+                        </div>
+                        <div className="flex flex-col items-start">
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-slate-500`}>FAILED</span>
+                            <span className={`${StatusTypos.MONO} text-sm text-rose-600`}>{jobStatusCounts.failed}</span>
+                        </div>
+                    </div>
+                    <div className="hidden lg:flex flex-wrap items-center gap-2">
+                        {medallionMetrics.map((metric) => (
+                            <div key={metric.layer} className="flex items-center gap-2 rounded-sm border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                <span className="text-slate-700">{metric.layer}</span>
+                                <span className="text-slate-300">•</span>
+                                <span className={`${StatusTypos.MONO} text-[10px] text-slate-600`}>jobs {metric.total}</span>
+                                <span className={`${StatusTypos.MONO} text-[10px] text-sky-600`}>run {metric.running}</span>
+                                <span className={`${StatusTypos.MONO} text-[10px] text-rose-600`}>fail {metric.failed}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="ml-auto text-right">
+                        <div className={StatusTypos.HEADER}>UPTIME CLOCK</div>
+                        <div className={`${StatusTypos.MONO} text-xl text-slate-500`}>
+                            {new Date().toISOString().split('T')[1].split('.')[0]} UTC
+                        </div>
                     </div>
                 </div>
             </div>
