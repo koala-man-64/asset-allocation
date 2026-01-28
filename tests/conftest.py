@@ -35,7 +35,6 @@ os.environ.setdefault("BACKTEST_OUTPUT_DIR", "/tmp/backtest_results")
 os.environ.setdefault("BACKTEST_DB_PATH", "/tmp/backtest_results/runs.sqlite3")
 os.environ.setdefault("BACKTEST_MAX_CONCURRENT", "1")
 os.environ.setdefault("BACKTEST_API_KEY_HEADER", "X-API-Key")
-os.environ.setdefault("BACKTEST_AUTH_MODE", "none")
 os.environ.setdefault("BACKTEST_ALLOW_LOCAL_DATA", "false")
 os.environ.setdefault(
     "BACKTEST_ADLS_CONTAINER_ALLOWLIST",

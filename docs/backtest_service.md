@@ -62,7 +62,6 @@ export BACKTEST_API_KEY_HEADER="X-API-Key"
 # Optional: browser-safe auth via OIDC/JWT
 # If BACKTEST_OIDC_ISSUER + BACKTEST_OIDC_AUDIENCE are set, the service will accept bearer tokens.
 # When both API key + OIDC are configured, the default mode becomes api_key_or_oidc.
-export BACKTEST_AUTH_MODE="api_key_or_oidc"   # none|api_key|oidc|api_key_or_oidc
 export BACKTEST_OIDC_ISSUER="https://login.microsoftonline.com/<tenant-id>/v2.0"
 export BACKTEST_OIDC_AUDIENCE="api://<api-client-id>"
 # Optional override; otherwise discovered via the issuer's OIDC discovery document:
@@ -137,10 +136,6 @@ The service uploads to:
 
 - Local filesystem reads via `data.price_source=local` are blocked unless explicitly enabled + allowlisted.
 - Auth modes:
-  - `BACKTEST_AUTH_MODE=api_key` requires `BACKTEST_API_KEY`.
-  - `BACKTEST_AUTH_MODE=oidc` requires bearer tokens (`Authorization: Bearer ...`).
-  - `BACKTEST_AUTH_MODE=api_key_or_oidc` allows either (recommended for “UI + automation”).
-  - `BACKTEST_AUTH_MODE=none` disables auth (recommended only for internal/dev).
 
 ## UI Auth (Phase 5)
 

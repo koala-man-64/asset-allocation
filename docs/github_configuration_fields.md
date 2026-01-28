@@ -15,13 +15,6 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
 
 ### 3.1 Critical (Must Fix)
 
-- **Deploy fails fast if `BACKTEST_AUTH_MODE` is unset (resolved)**
-  - **Evidence:** `.github/workflows/deploy.yml` now validates `BACKTEST_AUTH_MODE` and required companion settings before deploying.
-  - **Why it matters:** A missing/empty value can produce a container that fails to start after redeploy.
-  - **Recommendation:** Keep preflight validation aligned with `api/service/settings.py` requirements.
-  - **Acceptance Criteria:** Deploy workflow fails fast if missing/invalid; Backtest API starts after redeploy.
-  - **Owner Suggestion:** DevOps Agent / Delivery Engineer Agent
-
 ### 3.2 Major
 - **Job-trigger + ARM health config must be GitHub-managed to survive redeploys**
   - **Evidence:** Backtest API uses ARM/job configuration for job triggers and health reporting; deployment manifests should be the single source of truth (see `deploy/app_backtest_api.yaml` env vars).
@@ -65,10 +58,9 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `POSTGRES_DSN`
   - `POSTGRES_DSN`
 - **Backtest API security (deploy):**
-  - `BACKTEST_API_KEY` (required for `BACKTEST_AUTH_MODE=api_key|api_key_or_oidc`)
+  - `BACKTEST_API_KEY`
   - `BACKTEST_CSP`
-  - `BACKTEST_AUTH_MODE`
-- **Backtest API OIDC config (deploy; required when `BACKTEST_AUTH_MODE` enables OIDC):**
+- **Backtest API OIDC config (deploy; required when OIDC is enabled):**
   - `BACKTEST_OIDC_ISSUER`
   - `BACKTEST_OIDC_AUDIENCE`
   - `BACKTEST_OIDC_JWKS_URL`
@@ -104,7 +96,6 @@ These are required/used by the Backtest API and/or system health collection logi
 - Ensure the `backtest-api` managed identity has RBAC to start Container Apps Jobs (`Microsoft.App/jobs/start/action`); otherwise `/api/system/jobs/{job}/run` will return errors even if configuration is present.
 
 ## 6. Refactoring Examples (Targeted)
-- Add missing deploy preflight validation for `BACKTEST_AUTH_MODE` in `.github/workflows/deploy.yml` alongside existing secret checks.
 - Add `SYSTEM_HEALTH_ARM_*` fields to `deploy/app_backtest_api.yaml` and source them from GitHub-managed config.
 
 ## 7. Evidence & Telemetry

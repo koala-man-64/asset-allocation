@@ -54,7 +54,6 @@ Secrets are stored in GitHub Actions and passed to Azure resources during deploy
 | `BACKTEST_API_KEY` | ACA `secretRef` | API Backend Authentication | ✅ **Secure** (Injected as Secret) |
 | `YAHOO_USERNAME` | ACA `secretRef` | External Data Provider Creds | ✅ **Secure** (Injected as Secret) |
 | `YAHOO_PASSWORD` | ACA `secretRef` | External Data Provider Creds | ✅ **Secure** (Injected as Secret) |
-| `BACKTEST_AUTH_MODE` | Env Var | Auth toggle (oidc/api_key) | ℹ️ Config (Non-sensitive) |
 | `BACKTEST_OIDC_*` | Env Vars | OIDC Configuration (Issuer, Audience) | ℹ️ Config (Non-sensitive) |
 
 ---
@@ -69,7 +68,7 @@ Secrets are stored in GitHub Actions and passed to Azure resources during deploy
 
 ### 4.2 Traffic Flow (Low Risk)
 *   **Finding**: The `backtest-api` is exposed publicly (`external: true` implied by UI needs).
-*   **Recommendation**: Ensure `BACKTEST_AUTH_MODE` is strictly enforced. The OIDC configuration seems robust, but verify `BACKTEST_ALLOW_LOCAL_DATA` is `false` in production (Manifest confirms it is set to `false`).
+*   **Recommendation**: Ensure auth configuration is strictly enforced. The OIDC configuration seems robust, but verify `BACKTEST_ALLOW_LOCAL_DATA` is `false` in production (Manifest confirms it is set to `false`).
 
 ### 4.3 Container Security
 *   **Finding**: Images use `latest` tag in some definitions or dynamic `${IMAGE_TAG}` in others.
