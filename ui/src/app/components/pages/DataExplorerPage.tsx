@@ -12,12 +12,12 @@ export const DataExplorerPage: React.FC = () => {
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
-    const tickerRequired = layer === 'bronze' || domain.startsWith('finance/');
+    const tickerRequired = domain.startsWith('finance/') && layer !== 'bronze';
 
     const fetchData = useCallback(async () => {
         const normalizedTicker = ticker.trim().toUpperCase();
         if (tickerRequired && !normalizedTicker) {
-            setError("Ticker is required for Bronze and Finance domains.");
+            setError("Ticker is required for Finance domains.");
             setData([]);
             return;
         }
@@ -125,7 +125,13 @@ export const DataExplorerPage: React.FC = () => {
 
             {tickerRequired && !ticker.trim() && (
                 <div className="text-xs text-gray-500 font-mono">
-                    Enter a ticker to query Bronze or Finance data.
+                    Enter a ticker to query Finance data.
+                </div>
+            )}
+
+            {layer === 'bronze' && !tickerRequired && !ticker.trim() && (
+                <div className="text-xs text-gray-500 font-mono">
+                    Bronze ticker is optional. Leaving it blank returns the first matching file found for the selected domain.
                 </div>
             )}
 

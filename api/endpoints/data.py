@@ -351,7 +351,7 @@ def get_finance_data(
     layer: str,
     sub_domain: str,
     request: Request,
-    ticker: str = Query(..., description="Ticker is required for finance reports"),
+    ticker: Optional[str] = Query(default=None, description="Ticker (required for Silver/Gold; optional for Bronze)"),
     limit: Optional[int] = Query(default=None, ge=1, le=10000, description="Max rows to return"),
 ):
     """

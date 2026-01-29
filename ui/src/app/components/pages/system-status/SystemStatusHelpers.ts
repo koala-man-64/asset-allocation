@@ -22,6 +22,7 @@ export const getStatusConfig = (status: string): StatusConfig => {
     switch (status?.toLowerCase()) {
         case 'healthy':
         case 'success':
+        case 'succeeded':
             return { ...StatusColors.HEALTHY, icon: CheckSquare };
         case 'degraded':
         case 'warning':
@@ -31,6 +32,7 @@ export const getStatusConfig = (status: string): StatusConfig => {
         case 'critical':
         case 'error':
         case 'failed':
+        case 'failure':
             return { ...StatusColors.CRITICAL, icon: AlertOctagon };
         case 'running':
             // Use Loader2 + Spin for active running states

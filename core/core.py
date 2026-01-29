@@ -25,6 +25,16 @@ from core.postgres import connect, PostgresError, copy_rows
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.
 
+def _is_truthy(raw: Optional[str]) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _is_test_environment() -> bool:
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return True
+    return _is_truthy(os.environ.get("TEST_MODE"))
+
+
 def _has_storage_config() -> bool:
     val = bool(
         os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
@@ -38,7 +48,7 @@ def _has_storage_config() -> bool:
 
 def _init_storage_client(container_name: str, error_context: str, error_types) -> Optional[BlobStorageClient]:
     # In tests we avoid creating real Azure clients to prevent network calls and auth flakiness.
-    if "PYTEST_CURRENT_TEST" in os.environ or "TEST_MODE" in os.environ:
+    if _is_test_environment():
         return None
     if not _has_storage_config():
         return None
@@ -56,7 +66,7 @@ logger = logging.getLogger(__name__)
 # We keep this initialization here to be shared. 
 # If different modules need different containers, this might need refactoring to a factory pattern.
 
-if "PYTEST_CURRENT_TEST" in os.environ or "TEST_MODE" in os.environ:
+if _is_test_environment():
     common_storage_client = None
     logger.info("Test environment detected (PYTEST_CURRENT_TEST or TEST_MODE). Skipping global common_storage_client initialization to prevent network calls.")
 else:
