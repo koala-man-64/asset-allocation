@@ -49,6 +49,8 @@ properties:
         value: INFO
       - name: DISABLE_DOTENV
         value: "true"
+      - name: DEBUG_SYMBOLS
+        value: "${DEBUG_SYMBOLS}"
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_STORAGE_ACCOUNT_NAME

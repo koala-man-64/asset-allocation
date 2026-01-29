@@ -55,6 +55,7 @@ env:
   AZURE_FOLDER_RANKING: ranking-data
   AZURE_CONTAINER_COMMON: common
   SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
+  DEBUG_SYMBOLS: ${{ vars.DEBUG_SYMBOLS || '' }}
 
 jobs:
   tests:
