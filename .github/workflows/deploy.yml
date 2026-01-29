@@ -410,7 +410,8 @@ jobs:
           principal_id="$(az identity show --ids "$identity_id" --query principalId -o tsv --only-show-errors | tr -d '\r')"
 
           # Ensure AcrPull on ACR for the UAMI used by Container Apps/Jobs.
-          existing="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query \"[?roleDefinitionName=='AcrPull'] | length(@)\" -o tsv --only-show-errors 2>/dev/null | tr -d '\r' || true)"
+          query='[?roleDefinitionName=="AcrPull"] | length(@)'
+          existing="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query "$query" -o tsv --only-show-errors 2>/dev/null | tr -d '\r' || true)"
           existing="${existing:-0}"
           if [ "$existing" = "0" ]; then
             echo "Granting AcrPull on ACR to identity principalId=$principal_id..."
