@@ -466,8 +466,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Market Job from YAML..."
-          envsubst < deploy/job_bronze_market_data.yaml > deploy/job_bronze_market_data.tmp.yaml
-          cat deploy/job_bronze_market_data.tmp.yaml
+          tmp="deploy/job_bronze_market_data.tmp.yaml"
+          envsubst < deploy/job_bronze_market_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_MARKET_JOB }} not found. Creating..."
@@ -522,8 +523,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Market Job from YAML..."
-          envsubst < deploy/job_silver_market_data.yaml > deploy/job_silver_market_data.tmp.yaml
-          cat deploy/job_silver_market_data.tmp.yaml
+          tmp="deploy/job_silver_market_data.tmp.yaml"
+          envsubst < deploy/job_silver_market_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_MARKET_JOB }} not found. Creating..."
@@ -579,8 +581,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Market Job from YAML..."
-          envsubst < deploy/job_gold_market_data.yaml > deploy/job_gold_market_data.tmp.yaml
-          cat deploy/job_gold_market_data.tmp.yaml
+          tmp="deploy/job_gold_market_data.tmp.yaml"
+          envsubst < deploy/job_gold_market_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_MARKET_JOB }} not found. Creating..."
@@ -636,8 +639,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Finance Job from YAML..."
-          envsubst < deploy/job_bronze_finance_data.yaml > deploy/job_bronze_finance_data.tmp.yaml
-          cat deploy/job_bronze_finance_data.tmp.yaml
+          tmp="deploy/job_bronze_finance_data.tmp.yaml"
+          envsubst < deploy/job_bronze_finance_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_FINANCE_JOB }} not found. Creating..."
@@ -692,8 +696,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Finance Job from YAML..."
-          envsubst < deploy/job_silver_finance_data.yaml > deploy/job_silver_finance_data.tmp.yaml
-          cat deploy/job_silver_finance_data.tmp.yaml
+          tmp="deploy/job_silver_finance_data.tmp.yaml"
+          envsubst < deploy/job_silver_finance_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_FINANCE_JOB }} not found. Creating..."
@@ -749,8 +754,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Finance Job from YAML..."
-          envsubst < deploy/job_gold_finance_data.yaml > deploy/job_gold_finance_data.tmp.yaml
-          cat deploy/job_gold_finance_data.tmp.yaml
+          tmp="deploy/job_gold_finance_data.tmp.yaml"
+          envsubst < deploy/job_gold_finance_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_FINANCE_JOB }} not found. Creating..."
@@ -807,8 +813,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Price Target Job from YAML..."
-          envsubst < deploy/job_bronze_price_target_data.yaml > deploy/job_bronze_price_target_data.tmp.yaml
-          cat deploy/job_bronze_price_target_data.tmp.yaml
+          tmp="deploy/job_bronze_price_target_data.tmp.yaml"
+          envsubst < deploy/job_bronze_price_target_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Creating..."
@@ -863,8 +870,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Price Target Job from YAML..."
-          envsubst < deploy/job_silver_price_target_data.yaml > deploy/job_silver_price_target_data.tmp.yaml
-          cat deploy/job_silver_price_target_data.tmp.yaml
+          tmp="deploy/job_silver_price_target_data.tmp.yaml"
+          envsubst < deploy/job_silver_price_target_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Creating..."
@@ -920,8 +928,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Price Target Job from YAML..."
-          envsubst < deploy/job_gold_price_target_data.yaml > deploy/job_gold_price_target_data.tmp.yaml
-          cat deploy/job_gold_price_target_data.tmp.yaml
+          tmp="deploy/job_gold_price_target_data.tmp.yaml"
+          envsubst < deploy/job_gold_price_target_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Creating..."
@@ -977,8 +986,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Earnings Job from YAML..."
-          envsubst < deploy/job_bronze_earnings_data.yaml > deploy/job_bronze_earnings_data.tmp.yaml
-          cat deploy/job_bronze_earnings_data.tmp.yaml
+          tmp="deploy/job_bronze_earnings_data.tmp.yaml"
+          envsubst < deploy/job_bronze_earnings_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Creating..."
@@ -1033,8 +1043,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Earnings Job from YAML..."
-          envsubst < deploy/job_silver_earnings_data.yaml > deploy/job_silver_earnings_data.tmp.yaml
-          cat deploy/job_silver_earnings_data.tmp.yaml
+          tmp="deploy/job_silver_earnings_data.tmp.yaml"
+          envsubst < deploy/job_silver_earnings_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_EARNINGS_JOB }} not found. Creating..."
@@ -1090,8 +1101,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Earnings Job from YAML..."
-          envsubst < deploy/job_gold_earnings_data.yaml > deploy/job_gold_earnings_data.tmp.yaml
-          cat deploy/job_gold_earnings_data.tmp.yaml
+          tmp="deploy/job_gold_earnings_data.tmp.yaml"
+          envsubst < deploy/job_gold_earnings_data.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_EARNINGS_JOB }} not found. Creating..."
@@ -1148,8 +1160,9 @@ jobs:
           : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Platinum Ranking Job from YAML..."
-          envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml
-          cat deploy/job_platinum_ranking.tmp.yaml
+          tmp="deploy/job_platinum_ranking.tmp.yaml"
+          envsubst < deploy/job_platinum_ranking.yaml > "$tmp"
+          cat "$tmp"
           
           if ! az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PLATINUM_RANKING_JOB }} not found. Creating..."
