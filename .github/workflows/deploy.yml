@@ -27,7 +27,6 @@ env:
   # User-assigned managed identity used by Container Apps/Jobs to pull from ACR on first create.
   ACR_PULL_IDENTITY_NAME: asset-allocation-acr-pull-mi
   IMAGE_NAME: asset-allocation-scraper
-  JOB_IMAGE: ${{ format('{0}.azurecr.io/{1}:{2}', env.ACR_NAME, env.IMAGE_NAME, github.sha) }}
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -416,6 +415,10 @@ jobs:
             docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
             docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
           fi
+
+      - name: Set JOB_IMAGE env
+        run: |
+          echo "JOB_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
 
       - name: Ensure Storage Containers Exist
         run: |
