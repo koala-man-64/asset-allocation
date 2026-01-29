@@ -354,6 +354,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Ensure Container Apps CLI Extension
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --only-show-errors
+          az extension show --name containerapp --query version -o tsv
+
       - name: Ensure ACR Pull Identity Exists (User-Assigned MI)
         run: |
           set -euo pipefail
@@ -449,8 +455,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Bronze Market Job from YAML..."
-          envsubst < deploy/job_bronze_market_data.yaml > deploy/job_bronze_market_data.tmp.yaml
+          tmp="deploy/job_bronze_market_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_bronze_market_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_MARKET_JOB }} not found. Creating..."
@@ -458,15 +470,25 @@ jobs:
               --name ${{ env.BRONZE_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_bronze_market_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.BRONZE_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_bronze_market_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_bronze_market_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.BRONZE_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.BRONZE_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -488,8 +510,14 @@ jobs:
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Silver Market Job from YAML..."
-          envsubst < deploy/job_silver_market_data.yaml > deploy/job_silver_market_data.tmp.yaml
+          tmp="deploy/job_silver_market_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_silver_market_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_MARKET_JOB }} not found. Creating..."
@@ -497,21 +525,27 @@ jobs:
               --name ${{ env.SILVER_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_silver_market_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.SILVER_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_silver_market_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_silver_market_data.tmp.yaml
-          az containerapp job start \
+          az containerapp job identity assign \
             --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.SILVER_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
 
           az containerapp job start \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
+            --name ${{ env.SILVER_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Market Gold Job Exists
@@ -532,8 +566,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Gold Market Job from YAML..."
-          envsubst < deploy/job_gold_market_data.yaml > deploy/job_gold_market_data.tmp.yaml
+          tmp="deploy/job_gold_market_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_gold_market_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_MARKET_JOB }} not found. Creating..."
@@ -541,15 +581,25 @@ jobs:
               --name ${{ env.GOLD_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_gold_market_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.GOLD_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_gold_market_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_gold_market_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.GOLD_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.GOLD_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.GOLD_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -572,8 +622,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Bronze Finance Job from YAML..."
-          envsubst < deploy/job_bronze_finance_data.yaml > deploy/job_bronze_finance_data.tmp.yaml
+          tmp="deploy/job_bronze_finance_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_bronze_finance_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_FINANCE_JOB }} not found. Creating..."
@@ -581,15 +637,25 @@ jobs:
               --name ${{ env.BRONZE_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_bronze_finance_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.BRONZE_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_bronze_finance_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_bronze_finance_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.BRONZE_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.BRONZE_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -611,8 +677,14 @@ jobs:
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Silver Finance Job from YAML..."
-          envsubst < deploy/job_silver_finance_data.yaml > deploy/job_silver_finance_data.tmp.yaml
+          tmp="deploy/job_silver_finance_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_silver_finance_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_FINANCE_JOB }} not found. Creating..."
@@ -620,15 +692,25 @@ jobs:
               --name ${{ env.SILVER_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_silver_finance_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.SILVER_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_silver_finance_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_silver_finance_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.SILVER_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.SILVER_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -651,8 +733,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Gold Finance Job from YAML..."
-          envsubst < deploy/job_gold_finance_data.yaml > deploy/job_gold_finance_data.tmp.yaml
+          tmp="deploy/job_gold_finance_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_gold_finance_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_FINANCE_JOB }} not found. Creating..."
@@ -660,15 +748,25 @@ jobs:
               --name ${{ env.GOLD_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_gold_finance_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.GOLD_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_gold_finance_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_gold_finance_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.GOLD_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.GOLD_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -692,8 +790,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Bronze Price Target Job from YAML..."
-          envsubst < deploy/job_bronze_price_target_data.yaml > deploy/job_bronze_price_target_data.tmp.yaml
+          tmp="deploy/job_bronze_price_target_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_bronze_price_target_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Creating..."
@@ -701,15 +805,25 @@ jobs:
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_bronze_price_target_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_bronze_price_target_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_bronze_price_target_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -731,8 +845,14 @@ jobs:
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Silver Price Target Job from YAML..."
-          envsubst < deploy/job_silver_price_target_data.yaml > deploy/job_silver_price_target_data.tmp.yaml
+          tmp="deploy/job_silver_price_target_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_silver_price_target_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Creating..."
@@ -740,15 +860,25 @@ jobs:
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_silver_price_target_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_silver_price_target_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_silver_price_target_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -771,8 +901,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Gold Price Target Job from YAML..."
-          envsubst < deploy/job_gold_price_target_data.yaml > deploy/job_gold_price_target_data.tmp.yaml
+          tmp="deploy/job_gold_price_target_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_gold_price_target_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Creating..."
@@ -780,15 +916,25 @@ jobs:
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_gold_price_target_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_gold_price_target_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_gold_price_target_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -811,8 +957,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Bronze Earnings Job from YAML..."
-          envsubst < deploy/job_bronze_earnings_data.yaml > deploy/job_bronze_earnings_data.tmp.yaml
+          tmp="deploy/job_bronze_earnings_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_bronze_earnings_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Creating..."
@@ -820,15 +972,25 @@ jobs:
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_bronze_earnings_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_bronze_earnings_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_bronze_earnings_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.BRONZE_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.BRONZE_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -850,8 +1012,14 @@ jobs:
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Silver Earnings Job from YAML..."
-          envsubst < deploy/job_silver_earnings_data.yaml > deploy/job_silver_earnings_data.tmp.yaml
+          tmp="deploy/job_silver_earnings_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_silver_earnings_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_EARNINGS_JOB }} not found. Creating..."
@@ -859,15 +1027,25 @@ jobs:
               --name ${{ env.SILVER_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_silver_earnings_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.SILVER_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_silver_earnings_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_silver_earnings_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.SILVER_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.SILVER_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -890,8 +1068,14 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Gold Earnings Job from YAML..."
-          envsubst < deploy/job_gold_earnings_data.yaml > deploy/job_gold_earnings_data.tmp.yaml
+          tmp="deploy/job_gold_earnings_data.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_gold_earnings_data.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_EARNINGS_JOB }} not found. Creating..."
@@ -899,15 +1083,25 @@ jobs:
               --name ${{ env.GOLD_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_gold_earnings_data.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.GOLD_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_gold_earnings_data.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_gold_earnings_data.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.GOLD_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.GOLD_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -931,8 +1125,14 @@ jobs:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
         run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
           echo "Deploying Platinum Ranking Job from YAML..."
-          envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml
+          tmp="deploy/job_platinum_ranking.tmp.yaml"
+          trap 'rm -f "$tmp"' EXIT
+          envsubst < deploy/job_platinum_ranking.yaml > "$tmp"
           
           if ! az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PLATINUM_RANKING_JOB }} not found. Creating..."
@@ -940,15 +1140,25 @@ jobs:
               --name ${{ env.PLATINUM_RANKING_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
-              --yaml "deploy/job_platinum_ranking.tmp.yaml"
+              --yaml "$tmp"
           else
             az containerapp job update \
               --name ${{ env.PLATINUM_RANKING_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "deploy/job_platinum_ranking.tmp.yaml"
+              --yaml "$tmp"
           fi
           
-          rm deploy/job_platinum_ranking.tmp.yaml
+          az containerapp job identity assign \
+            --name ${{ env.PLATINUM_RANKING_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
+          az containerapp job registry set \
+            --name ${{ env.PLATINUM_RANKING_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server "${{ env.ACR_NAME }}.azurecr.io" \
+            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
+
           az containerapp job start \
             --name ${{ env.PLATINUM_RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}

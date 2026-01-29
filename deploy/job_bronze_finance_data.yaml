@@ -1,10 +1,6 @@
 location: East US
 name: bronze-finance-job
 type: Microsoft.App/jobs
-identity:
-  type: UserAssigned
-  userAssignedIdentities:
-    "${ACR_PULL_IDENTITY_RESOURCE_ID}": {}
 properties:
   configuration:
     triggerType: Schedule
@@ -12,9 +8,6 @@ properties:
       cronExpression: "0 22 * * *"
       parallelism: 1
       replicaCompletionCount: 1
-    registries:
-    - server: assetallocationacr.azurecr.io
-      identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     replicaRetryLimit: 2
     replicaTimeout: 1800
     secrets:
