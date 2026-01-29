@@ -19,7 +19,8 @@ param(
   [string]$AzureClientId = "",
   [string]$AksClusterName = "",
   [string]$KubernetesNamespace = "k8se-apps",
-  [string]$ServiceAccountName = "asset-allocation-sa"
+  [string]$ServiceAccountName = "asset-allocation-sa",
+  [string]$EnvFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,11 +28,21 @@ Set-StrictMode -Version Latest
 
 $githubSpObjectId = $null
 
-$envPath = "$PSScriptRoot\..\.env"
+$envPath = $EnvFile
+if ([string]::IsNullOrWhiteSpace($envPath)) {
+    $envPath = Join-Path (Join-Path $PSScriptRoot "..") ".env.web"
+}
+$envLabel = Split-Path -Leaf $envPath
+
 $envLines = @()
 if (Test-Path $envPath) {
     $envLines = Get-Content $envPath
 }
+else {
+    throw "Env file not found at '$envPath'. Provide -EnvFile or create '$envLabel'."
+}
+
+Write-Host "Loaded configuration from $envLabel" -ForegroundColor Cyan
 
 function Get-EnvValue {
     param(
@@ -67,9 +78,26 @@ function Get-EnvValueFirst {
     return $null
 }
 
-# Load containers from .env if not specified
+function Get-EnvBool {
+    param(
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    $raw = Get-EnvValue -Key $Key
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    $v = $raw.Trim().ToLowerInvariant()
+    if ($v -in @("1", "true", "yes", "y", "on")) { return $true }
+    if ($v -in @("0", "false", "no", "n", "off")) { return $false }
+
+    throw "Invalid boolean value for $Key in ${envLabel}: '$raw'. Expected true/false."
+}
+
+# Load containers from .env.web if not specified
 if ($StorageContainers.Count -eq 0 -and $envLines.Count -gt 0) {
-    Write-Host "Reading container names from .env..."
+    Write-Host "Reading container names from $envLabel..."
     $containers = @()
     foreach ($line in $envLines) {
         if ($line -match "^AZURE_CONTAINER_[^=]+=(.*)$") {
@@ -86,90 +114,130 @@ if ($StorageContainers.Count -eq 0 -and $envLines.Count -gt 0) {
 if ((-not $PSBoundParameters.ContainsKey("SubscriptionId")) -or [string]::IsNullOrWhiteSpace($SubscriptionId)) {
     $subscriptionFromEnv = Get-EnvValueFirst -Keys @("AZURE_SUBSCRIPTION_ID", "SUBSCRIPTION_ID")
     if ($subscriptionFromEnv) {
-        Write-Host "Using AZURE_SUBSCRIPTION_ID from .env: $subscriptionFromEnv"
+        Write-Host "Using AZURE_SUBSCRIPTION_ID from ${envLabel}: $subscriptionFromEnv"
         $SubscriptionId = $subscriptionFromEnv
     }
 }
 
 if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
-    throw "SubscriptionId is required. Provide -SubscriptionId or set AZURE_SUBSCRIPTION_ID in .env."
+    throw "SubscriptionId is required. Provide -SubscriptionId or set AZURE_SUBSCRIPTION_ID in $envLabel."
 }
 
-if (-not $PSBoundParameters.ContainsKey("ResourceGroup")) {
+if ((-not $PSBoundParameters.ContainsKey("ResourceGroup")) -or [string]::IsNullOrWhiteSpace($ResourceGroup)) {
     $resourceGroupFromEnv = Get-EnvValueFirst -Keys @("RESOURCE_GROUP", "AZURE_RESOURCE_GROUP", "SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
     if ($resourceGroupFromEnv) {
-        Write-Host "Using RESOURCE_GROUP from .env: $resourceGroupFromEnv"
+        Write-Host "Using RESOURCE_GROUP from ${envLabel}: $resourceGroupFromEnv"
         $ResourceGroup = $resourceGroupFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("Location")) {
+if ((-not $PSBoundParameters.ContainsKey("Location")) -or [string]::IsNullOrWhiteSpace($Location)) {
     $locationFromEnv = Get-EnvValueFirst -Keys @("AZURE_LOCATION", "AZURE_REGION", "LOCATION")
     if ($locationFromEnv) {
-        Write-Host "Using AZURE_LOCATION from .env: $locationFromEnv"
+        Write-Host "Using AZURE_LOCATION from ${envLabel}: $locationFromEnv"
         $Location = $locationFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("StorageAccountName")) {
+if ((-not $PSBoundParameters.ContainsKey("StorageAccountName")) -or [string]::IsNullOrWhiteSpace($StorageAccountName)) {
     $storageFromEnv = Get-EnvValueFirst -Keys @("AZURE_STORAGE_ACCOUNT_NAME")
     if ($storageFromEnv) {
-        Write-Host "Using AZURE_STORAGE_ACCOUNT_NAME from .env: $storageFromEnv"
+        Write-Host "Using AZURE_STORAGE_ACCOUNT_NAME from ${envLabel}: $storageFromEnv"
         $StorageAccountName = $storageFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("AcrName")) {
+if ((-not $PSBoundParameters.ContainsKey("AcrName")) -or [string]::IsNullOrWhiteSpace($AcrName)) {
     $acrFromEnv = Get-EnvValueFirst -Keys @("ACR_NAME", "AZURE_ACR_NAME")
     if ($acrFromEnv) {
-        Write-Host "Using ACR_NAME from .env: $acrFromEnv"
+        Write-Host "Using ACR_NAME from ${envLabel}: $acrFromEnv"
         $AcrName = $acrFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("LogAnalyticsWorkspaceName")) {
+if ((-not $PSBoundParameters.ContainsKey("AzureClientId")) -or [string]::IsNullOrWhiteSpace($AzureClientId)) {
+    $azureClientIdFromEnv = Get-EnvValueFirst -Keys @("AZURE_CLIENT_ID", "CLIENT_ID")
+    if ($azureClientIdFromEnv) {
+        Write-Host "Using AZURE_CLIENT_ID from ${envLabel}: $azureClientIdFromEnv"
+        $AzureClientId = $azureClientIdFromEnv
+    }
+}
+
+if ((-not $PSBoundParameters.ContainsKey("AcrPullIdentityName")) -or [string]::IsNullOrWhiteSpace($AcrPullIdentityName)) {
+    $acrPullIdentityNameFromEnv = Get-EnvValueFirst -Keys @("ACR_PULL_IDENTITY_NAME", "ACR_PULL_USER_ASSIGNED_IDENTITY_NAME")
+    if ($acrPullIdentityNameFromEnv) {
+        Write-Host "Using ACR_PULL_IDENTITY_NAME from ${envLabel}: $acrPullIdentityNameFromEnv"
+        $AcrPullIdentityName = $acrPullIdentityNameFromEnv
+    }
+}
+
+if ((-not $PSBoundParameters.ContainsKey("LogAnalyticsWorkspaceName")) -or [string]::IsNullOrWhiteSpace($LogAnalyticsWorkspaceName)) {
     $lawFromEnv = Get-EnvValueFirst -Keys @("LOG_ANALYTICS_WORKSPACE_NAME", "LOG_ANALYTICS_WORKSPACE")
     if ($lawFromEnv) {
-        Write-Host "Using LOG_ANALYTICS_WORKSPACE_NAME from .env: $lawFromEnv"
+        Write-Host "Using LOG_ANALYTICS_WORKSPACE_NAME from ${envLabel}: $lawFromEnv"
         $LogAnalyticsWorkspaceName = $lawFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("ContainerAppsEnvironmentName")) {
+if ((-not $PSBoundParameters.ContainsKey("ContainerAppsEnvironmentName")) -or [string]::IsNullOrWhiteSpace($ContainerAppsEnvironmentName)) {
     $envFromEnv = Get-EnvValueFirst -Keys @("CONTAINER_APPS_ENVIRONMENT_NAME", "CONTAINERAPPS_ENVIRONMENT_NAME", "ACA_ENVIRONMENT_NAME")
     if ($envFromEnv) {
-        Write-Host "Using CONTAINER_APPS_ENVIRONMENT_NAME from .env: $envFromEnv"
+        Write-Host "Using CONTAINER_APPS_ENVIRONMENT_NAME from ${envLabel}: $envFromEnv"
         $ContainerAppsEnvironmentName = $envFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("ServiceAccountName")) {
+if ((-not $PSBoundParameters.ContainsKey("ServiceAccountName")) -or [string]::IsNullOrWhiteSpace($ServiceAccountName)) {
     $serviceAccountFromEnv = Get-EnvValue -Key "SERVICE_ACCOUNT_NAME"
     if ($serviceAccountFromEnv) {
-        Write-Host "Using SERVICE_ACCOUNT_NAME from .env: $serviceAccountFromEnv"
+        Write-Host "Using SERVICE_ACCOUNT_NAME from ${envLabel}: $serviceAccountFromEnv"
         $ServiceAccountName = $serviceAccountFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("KubernetesNamespace")) {
+if ((-not $PSBoundParameters.ContainsKey("KubernetesNamespace")) -or [string]::IsNullOrWhiteSpace($KubernetesNamespace)) {
     $namespaceFromEnv = Get-EnvValue -Key "KUBERNETES_NAMESPACE"
     if ($namespaceFromEnv) {
-        Write-Host "Using KUBERNETES_NAMESPACE from .env: $namespaceFromEnv"
+        Write-Host "Using KUBERNETES_NAMESPACE from ${envLabel}: $namespaceFromEnv"
         $KubernetesNamespace = $namespaceFromEnv
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("AksClusterName")) {
+if ((-not $PSBoundParameters.ContainsKey("AksClusterName")) -or [string]::IsNullOrWhiteSpace($AksClusterName)) {
     $aksFromEnv = Get-EnvValue -Key "AKS_CLUSTER_NAME"
     if ($aksFromEnv) {
-        Write-Host "Using AKS_CLUSTER_NAME from .env: $aksFromEnv"
+        Write-Host "Using AKS_CLUSTER_NAME from ${envLabel}: $aksFromEnv"
         $AksClusterName = $aksFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("EnableAcrAdmin")) {
+    $enableAcrAdminFromEnv = Get-EnvBool -Key "ENABLE_ACR_ADMIN"
+    if ($enableAcrAdminFromEnv -ne $null) {
+        Write-Host "Using ENABLE_ACR_ADMIN from ${envLabel}: $enableAcrAdminFromEnv"
+        $EnableAcrAdmin = $enableAcrAdminFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("EmitSecrets")) {
+    $emitSecretsFromEnv = Get-EnvBool -Key "EMIT_SECRETS"
+    if ($emitSecretsFromEnv -ne $null) {
+        Write-Host "Using EMIT_SECRETS from ${envLabel}: $emitSecretsFromEnv"
+        $EmitSecrets = $emitSecretsFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources")) {
+    $grantAcrPullFromEnv = Get-EnvBool -Key "GRANT_ACR_PULL_TO_ACA_RESOURCES"
+    if ($grantAcrPullFromEnv -ne $null) {
+        Write-Host "Using GRANT_ACR_PULL_TO_ACA_RESOURCES from ${envLabel}: $grantAcrPullFromEnv"
+        $GrantAcrPullToAcaResources = $grantAcrPullFromEnv
     }
 }
 
 # If still empty, fall back to defaults (or error? original script had defaults)
 if ($StorageContainers.Count -eq 0) {
-    Write-Warning "No containers found in .env and none provided. Using defaults."
+    Write-Warning "No containers found in $envLabel and none provided. Using defaults."
     $StorageContainers = @("bronze", "silver", "gold", "platinum", "common")
 }
 
