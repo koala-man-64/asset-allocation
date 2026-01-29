@@ -118,7 +118,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
         <div className="grid gap-4 font-sans">
             {/* System Header - Manual inline styles for specific 'Industrial' theming overrides */}
             <div
-                className="flex items-center justify-between p-4 border rounded-none border-l-4"
+                className="flex items-center justify-between px-4 py-6 border rounded-none border-l-4"
                 style={{
                     backgroundColor: StatusColors.PANEL_BG,
                     borderColor: StatusColors.PANEL_BORDER,
@@ -129,7 +129,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                     <sysConfig.icon className={`h-10 w-10 ${apiAnim}`} style={{ color: sysConfig.text }} />
                     <div>
                         <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
-                        <div className="text-2xl font-black tracking-tighter uppercase" style={{ color: sysConfig.text }}>
+                        <div className="text-2xl font-black tracking-tighter uppercase pr-6" style={{ color: sysConfig.text }}>
                             {overall}
                         </div>
                     </div>

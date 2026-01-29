@@ -7,7 +7,7 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
 
 ## 2. System Map (High-Level)
 - **CI/CD workflows:** `.github/workflows/deploy.yml`, `.github/workflows/run_tests.yml`, `.github/workflows/trigger_all_jobs.yml`
-- **Deploy mechanism:** `envsubst`-rendered ACA YAML templates (e.g., `deploy/app_backtest_api.yaml`, `deploy/job_*.yaml`) applied via `az containerapp ... --yaml ...`
+- **Deploy mechanism:** `envsubst`-rendered ACA YAML templates (e.g., `deploy/app_api.yaml`, `deploy/job_*.yaml`) applied via `az containerapp ... --yaml ...`
 - **Runtime config path:** GitHub Secrets → workflow `env:` → `envsubst` → Azure Container Apps env vars/secrets
 - **Job triggering feature:** Backtest API endpoint reads ARM/job env vars (see `api/endpoints/system.py` `POST /api/system/jobs/{job_name}/run`)
 
@@ -17,7 +17,7 @@ GitHub Actions workflows in this repo depend on a set of GitHub Secrets for Azur
 
 ### 3.2 Major
 - **Job-trigger + ARM health config must be GitHub-managed to survive redeploys**
-  - **Evidence:** Backtest API uses ARM/job configuration for job triggers and health reporting; deployment manifests should be the single source of truth (see `deploy/app_backtest_api.yaml` env vars).
+  - **Evidence:** Backtest API uses ARM/job configuration for job triggers and health reporting; deployment manifests should be the single source of truth (see `deploy/app_api.yaml` env vars).
   - **Why it matters:** Manually set Azure env vars can be overwritten by future redeploys.
   - **Recommendation:** Keep `SYSTEM_HEALTH_ARM_*` fields sourced from GitHub-managed config (Secrets/Variables) and rendered into the deploy template.
   - **Acceptance Criteria:** After redeploy, `/api/system/jobs/{job}/run` still works and job executions still show up in `/api/system/health`.
@@ -95,14 +95,14 @@ These are required/used by the Backtest API and/or system health collection logi
 - Ensure the `backtest-api` managed identity has RBAC to start Container Apps Jobs (`Microsoft.App/jobs/start/action`); otherwise `/api/system/jobs/{job}/run` will return errors even if configuration is present.
 
 ## 6. Refactoring Examples (Targeted)
-- Add `SYSTEM_HEALTH_ARM_*` fields to `deploy/app_backtest_api.yaml` and source them from GitHub-managed config.
+- Add `SYSTEM_HEALTH_ARM_*` fields to `deploy/app_api.yaml` and source them from GitHub-managed config.
 
 ## 7. Evidence & Telemetry
 - Files reviewed:
   - `.github/workflows/deploy.yml`
   - `.github/workflows/run_tests.yml`
   - `.github/workflows/trigger_all_jobs.yml`
-  - `deploy/app_backtest_api.yaml`
+  - `deploy/app_api.yaml`
   - `deploy/job_*.yaml`
   - `services/api/app.py`
   - `api/service/settings.py`

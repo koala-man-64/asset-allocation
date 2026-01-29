@@ -16,17 +16,25 @@ from typing import Any, Coroutine, Dict, List, Literal, Optional, Tuple, Union
 
 import pandas as pd
 import pytz
+
+
+def _is_truthy(raw: Optional[str]) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+_IS_TEST_ENVIRONMENT = "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
+
 try:
     from bs4 import BeautifulSoup
 except ModuleNotFoundError:
-    if not ("PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TEST_MODE")):
+    if not _IS_TEST_ENVIRONMENT:
         raise
     BeautifulSoup = None  # type: ignore[assignment]
 
 try:
     from filelock import FileLock
 except ModuleNotFoundError:
-    if not ("PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TEST_MODE")):
+    if not _IS_TEST_ENVIRONMENT:
         raise
     FileLock = None  # type: ignore[assignment]
 
@@ -64,7 +72,7 @@ try:
 except ModuleNotFoundError:
     _PLAYWRIGHT_AVAILABLE = False
 
-    if not ("PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TEST_MODE")):
+    if not _IS_TEST_ENVIRONMENT:
         raise
 
     # Lightweight fallbacks for test environments that patch Playwright calls.

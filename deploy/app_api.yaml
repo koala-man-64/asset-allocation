@@ -21,7 +21,6 @@ properties:
     - name: api-key
       value: "${API_KEY}"
     - name: backtest-pg-dsn
-      value: "${POSTGRES_DSN}"
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:

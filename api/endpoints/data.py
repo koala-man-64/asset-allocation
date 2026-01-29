@@ -324,13 +324,16 @@ def get_data_generic(
     limit: Optional[int] = Query(default=None, ge=1, le=10000, description="Max rows to return"),
 ):
     """
-    Generic endpoint for retrieving data from Silver/Gold layers.
+    Generic endpoint for retrieving data from Bronze/Silver/Gold layers.
     Delegates to DataService for logic.
     """
     # Validation
     validate_auth(request)
-    if layer not in ["silver", "gold"]:
-        raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'. Use /ranking for platinum.")
+    if layer not in ["bronze", "silver", "gold"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Layer must be 'bronze', 'silver', or 'gold'. Use /ranking for platinum.",
+        )
     
     try:
         if limit is None:
@@ -348,15 +351,15 @@ def get_finance_data(
     layer: str,
     sub_domain: str,
     request: Request,
-    ticker: str = Query(..., description="Ticker is required for finance reports"),
+    ticker: Optional[str] = Query(default=None, description="Ticker (required for Silver/Gold; optional for Bronze)"),
     limit: Optional[int] = Query(default=None, ge=1, le=10000, description="Max rows to return"),
 ):
     """
     Specialized endpoint for Finance data.
     """
     validate_auth(request)
-    if layer not in ["silver", "gold"]:
-         raise HTTPException(status_code=400, detail="Layer must be 'silver' or 'gold'")
+    if layer not in ["bronze", "silver", "gold"]:
+        raise HTTPException(status_code=400, detail="Layer must be 'bronze', 'silver', or 'gold'")
 
     try:
         if limit is None:
