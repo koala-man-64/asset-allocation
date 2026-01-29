@@ -354,11 +354,22 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Ensure Container Apps CLI Extension
+      - name: Ensure Azure Container Apps CLI (prefer built-in)
         run: |
           set -euo pipefail
-          az extension add --name containerapp --upgrade --only-show-errors
-          az extension show --name containerapp --query version -o tsv
+
+          # Prefer the built-in `az containerapp ...` commands when available. The `containerapp`
+          # extension can override built-in behavior (and has caused identity/YAML issues in the
+          # past), so remove it first. If this runner's Azure CLI is too old, fall back to
+          # installing the extension.
+          az extension remove --name containerapp --only-show-errors > /dev/null 2>&1 || true
+
+          if ! az containerapp -h > /dev/null 2>&1; then
+            az extension add --name containerapp --upgrade --only-show-errors
+          fi
+
+          az version --query "azure-cli" -o tsv
+          az extension show --name containerapp --query version -o tsv 2>/dev/null || echo "containerapp extension: not installed"
 
       - name: Ensure ACR Pull Identity Exists (User-Assigned MI)
         run: |
