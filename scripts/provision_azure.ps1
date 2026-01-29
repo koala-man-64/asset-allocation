@@ -18,7 +18,7 @@ param(
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
   [string]$AzureClientId = "",
   [string]$AksClusterName = "",
-  [string]$KubernetesNamespace = "k8s-apps",
+  [string]$KubernetesNamespace = "k8se-apps",
   [string]$ServiceAccountName = "asset-allocation-sa"
 )
 
@@ -357,6 +357,34 @@ metadata:
   namespace: $KubernetesNamespace
 "@
   $serviceAccountYaml | kubectl apply -f - | Out-Null
+
+  $deployDir = Join-Path $PSScriptRoot "..\deploy"
+  if (Test-Path $deployDir) {
+    $jobServiceAccounts = @()
+    Get-ChildItem -Path $deployDir -Filter "job_*.yaml" | ForEach-Object {
+      $nameLine = Select-String -Path $_.FullName -Pattern '^name:\s*(.+)$' | Select-Object -First 1
+      if ($nameLine) {
+        $jobName = $nameLine.Matches[0].Groups[1].Value.Trim()
+        if ($jobName) {
+          $jobServiceAccounts += "job-$jobName"
+        }
+      }
+    }
+    $jobServiceAccounts = $jobServiceAccounts | Sort-Object -Unique
+    if ($jobServiceAccounts.Count -gt 0) {
+      Write-Host "Ensuring job service accounts exist in $KubernetesNamespace..."
+      foreach ($saName in $jobServiceAccounts) {
+        $jobSaYaml = @"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: $saName
+  namespace: $KubernetesNamespace
+"@
+        $jobSaYaml | kubectl apply -f - | Out-Null
+      }
+    }
+  }
 }
 
 $storageConnectionString = ""
