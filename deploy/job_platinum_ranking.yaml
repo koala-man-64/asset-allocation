@@ -26,7 +26,7 @@ properties:
       value: ${AZURE_STORAGE_CONNECTION_STRING}
     - name: pg-dsn
       value: ${POSTGRES_DSN}
-  environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  environmentId: ${CONTAINER_APPS_ENVIRONMENT_ID}
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:

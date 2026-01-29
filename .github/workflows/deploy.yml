@@ -377,9 +377,12 @@ jobs:
           if [ "$existing" = "0" ]; then
             echo "::error::AcrPull is not assigned for principalId=$principal_id. Run scripts/provision_azure.ps1 (with Owner or User Access Administrator) to grant AcrPull on the ACR."
             exit 1
-          else
             echo "AcrPull already assigned for principalId=$principal_id."
           fi
+
+      - name: Set Deployment Variables
+        run: |
+           echo "CONTAINER_APPS_ENVIRONMENT_ID=/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.App/managedEnvironments/asset-allocation-env" >> "$GITHUB_ENV"
 
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
@@ -445,12 +448,14 @@ jobs:
       - name: Update and Start Market Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.bronze_market == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Bronze Market Job from YAML..."
           envsubst < deploy/job_bronze_market_data.yaml > deploy/job_bronze_market_data.tmp.yaml
+          cat deploy/job_bronze_market_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_MARKET_JOB }} not found. Creating..."
@@ -487,9 +492,12 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.silver_market == 'true' || steps.market_silver_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Silver Market Job from YAML..."
           envsubst < deploy/job_silver_market_data.yaml > deploy/job_silver_market_data.tmp.yaml
+          cat deploy/job_silver_market_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_MARKET_JOB }} not found. Creating..."
@@ -528,12 +536,14 @@ jobs:
       - name: Update and Start Market Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.gold_market == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Gold Market Job from YAML..."
           envsubst < deploy/job_gold_market_data.yaml > deploy/job_gold_market_data.tmp.yaml
+          cat deploy/job_gold_market_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_MARKET_JOB }} not found. Creating..."
@@ -567,13 +577,14 @@ jobs:
       - name: Update and Start Finance Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.bronze_finance == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         env:
-          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Bronze Finance Job from YAML..."
           envsubst < deploy/job_bronze_finance_data.yaml > deploy/job_bronze_finance_data.tmp.yaml
+          cat deploy/job_bronze_finance_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_FINANCE_JOB }} not found. Creating..."
@@ -610,9 +621,12 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.silver_finance == 'true' || steps.finance_silver_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Silver Finance Job from YAML..."
           envsubst < deploy/job_silver_finance_data.yaml > deploy/job_silver_finance_data.tmp.yaml
+          cat deploy/job_silver_finance_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_FINANCE_JOB }} not found. Creating..."
@@ -647,12 +661,14 @@ jobs:
       - name: Update and Start Finance Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.gold_finance == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Gold Finance Job from YAML..."
           envsubst < deploy/job_gold_finance_data.yaml > deploy/job_gold_finance_data.tmp.yaml
+          cat deploy/job_gold_finance_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_FINANCE_JOB }} not found. Creating..."
@@ -687,13 +703,14 @@ jobs:
       - name: Update and Start Price Target Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.bronze_price_target == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         env:
-          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Bronze Price Target Job from YAML..."
           envsubst < deploy/job_bronze_price_target_data.yaml > deploy/job_bronze_price_target_data.tmp.yaml
+          cat deploy/job_bronze_price_target_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Creating..."
@@ -730,9 +747,12 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.silver_price_target == 'true' || steps.price_target_silver_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Silver Price Target Job from YAML..."
           envsubst < deploy/job_silver_price_target_data.yaml > deploy/job_silver_price_target_data.tmp.yaml
+          cat deploy/job_silver_price_target_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Creating..."
@@ -767,12 +787,14 @@ jobs:
       - name: Update and Start Price Target Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.gold_price_target == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Gold Price Target Job from YAML..."
           envsubst < deploy/job_gold_price_target_data.yaml > deploy/job_gold_price_target_data.tmp.yaml
+          cat deploy/job_gold_price_target_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Creating..."
@@ -807,12 +829,14 @@ jobs:
       - name: Update and Start Earnings Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.bronze_earnings == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Bronze Earnings Job from YAML..."
           envsubst < deploy/job_bronze_earnings_data.yaml > deploy/job_bronze_earnings_data.tmp.yaml
+          cat deploy/job_bronze_earnings_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Creating..."
@@ -849,9 +873,12 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.silver_earnings == 'true' || steps.earnings_silver_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Silver Earnings Job from YAML..."
           envsubst < deploy/job_silver_earnings_data.yaml > deploy/job_silver_earnings_data.tmp.yaml
+          cat deploy/job_silver_earnings_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_EARNINGS_JOB }} not found. Creating..."
@@ -886,12 +913,14 @@ jobs:
       - name: Update and Start Earnings Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.gold_earnings == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Gold Earnings Job from YAML..."
           envsubst < deploy/job_gold_earnings_data.yaml > deploy/job_gold_earnings_data.tmp.yaml
+          cat deploy/job_gold_earnings_data.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_EARNINGS_JOB }} not found. Creating..."
@@ -926,13 +955,15 @@ jobs:
       - name: Update and Start Ranking Job
         if: env.FORCE_REDEPLOY == 'true' || steps.ranking_changes.outputs.PLATINUM_RANKING_JOB == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           echo "Deploying Platinum Ranking Job from YAML..."
           envsubst < deploy/job_platinum_ranking.yaml > deploy/job_platinum_ranking.tmp.yaml
+          cat deploy/job_platinum_ranking.tmp.yaml
           
           if ! az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PLATINUM_RANKING_JOB }} not found. Creating..."
