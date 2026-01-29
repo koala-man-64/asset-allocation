@@ -383,6 +383,7 @@ jobs:
           if [ "$existing" = "0" ]; then
             echo "::error::AcrPull is not assigned for principalId=$principal_id. Run scripts/provision_azure.ps1 (with Owner or User Access Administrator) to grant AcrPull on the ACR."
             exit 1
+          else
             echo "AcrPull already assigned for principalId=$principal_id."
           fi
 
@@ -454,6 +455,7 @@ jobs:
       - name: Update and Start Market Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.bronze_market == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -566,6 +568,7 @@ jobs:
       - name: Update and Start Market Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.gold_market == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -621,6 +624,8 @@ jobs:
       - name: Update and Start Finance Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.bronze_finance == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -733,6 +738,7 @@ jobs:
       - name: Update and Start Finance Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.gold_finance == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -789,6 +795,8 @@ jobs:
       - name: Update and Start Price Target Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.bronze_price_target == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -901,6 +909,7 @@ jobs:
       - name: Update and Start Price Target Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.gold_price_target == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -957,6 +966,7 @@ jobs:
       - name: Update and Start Earnings Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.bronze_earnings == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -1069,6 +1079,7 @@ jobs:
       - name: Update and Start Earnings Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.gold_earnings == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
@@ -1125,6 +1136,7 @@ jobs:
       - name: Update and Start Ranking Job
         if: env.FORCE_REDEPLOY == 'true' || steps.ranking_changes.outputs.PLATINUM_RANKING_JOB == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
         env:
+          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
