@@ -388,14 +388,48 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Resolve ACR Pull Identity Resource ID
+      - name: Ensure ACR Pull Identity Exists (User-Assigned MI)
         run: |
           set -euo pipefail
+
           identity_id="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${{ env.ACR_PULL_IDENTITY_NAME }}"
           echo "ACR_PULL_IDENTITY_RESOURCE_ID=$identity_id" >> "$GITHUB_ENV"
+          echo "Using ACR pull identity: $identity_id"
 
-          # Fail fast if the identity hasn't been provisioned yet.
-          az identity show --ids "$identity_id" --only-show-errors > /dev/null
+          if ! az identity show --ids "$identity_id" --only-show-errors > /dev/null 2>&1; then
+            rg_location="$(az group show --name "${{ env.RESOURCE_GROUP }}" --query location -o tsv --only-show-errors | tr -d '\r')"
+            echo "ACR pull identity not found; creating '${{ env.ACR_PULL_IDENTITY_NAME }}' in $rg_location..."
+            az identity create \
+              --name "${{ env.ACR_PULL_IDENTITY_NAME }}" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --location "$rg_location" \
+              --only-show-errors > /dev/null
+          fi
+
+          acr_id="$(az acr show --name "${{ env.ACR_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query id -o tsv --only-show-errors | tr -d '\r')"
+          principal_id="$(az identity show --ids "$identity_id" --query principalId -o tsv --only-show-errors | tr -d '\r')"
+
+          # Ensure AcrPull on ACR for the UAMI used by Container Apps/Jobs.
+          existing="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query \"[?roleDefinitionName=='AcrPull'] | length(@)\" -o tsv --only-show-errors 2>/dev/null | tr -d '\r' || true)"
+          existing="${existing:-0}"
+          if [ "$existing" = "0" ]; then
+            echo "Granting AcrPull on ACR to identity principalId=$principal_id..."
+            set +e
+            out="$(az role assignment create --assignee-object-id "$principal_id" --assignee-principal-type ServicePrincipal --role AcrPull --scope "$acr_id" --only-show-errors 2>&1)"
+            rc=$?
+            set -e
+            if [ $rc -ne 0 ]; then
+              if echo "$out" | grep -qi "RoleAssignmentExists"; then
+                echo "AcrPull role assignment already exists."
+              else
+                echo "$out" >&2
+                echo "::error::Failed to grant AcrPull to the user-assigned identity. Ensure the GitHub Actions identity has RBAC to create role assignments, or run scripts/provision_azure.ps1 with sufficient permissions." >&2
+                exit $rc
+              fi
+            fi
+          else
+            echo "AcrPull already assigned for principalId=$principal_id."
+          fi
 
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
