@@ -22,7 +22,7 @@ properties:
       value: ${YAHOO_USERNAME}
     - name: yahoo-password
       value: ${YAHOO_PASSWORD}
-    - name: az-cs
+    - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
     - name: pg-dsn
       value: ${POSTGRES_DSN}
@@ -46,7 +46,7 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
-        secretRef: az-cs
+        secretRef: azure-storage-connection-string
       - name: AZURE_FOLDER_MARKET
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_CONTAINER_COMMON

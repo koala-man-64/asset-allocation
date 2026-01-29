@@ -24,7 +24,7 @@ properties:
       value: ${YAHOO_USERNAME}
     - name: yahoo-password
       value: ${YAHOO_PASSWORD}
-    - name: az-cs
+    - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
   environmentId: ${CONTAINER_APPS_ENVIRONMENT_ID}
   template:
@@ -52,7 +52,7 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
-        secretRef: az-cs
+        secretRef: azure-storage-connection-string
       - name: AZURE_FOLDER_FINANCE
         value: ${AZURE_FOLDER_FINANCE}
       - name: AZURE_CONTAINER_COMMON

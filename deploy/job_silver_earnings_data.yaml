@@ -18,7 +18,7 @@ properties:
     - server: assetallocationacr.azurecr.io
       identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
-    - name: az-cs
+    - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
   environmentId: ${CONTAINER_APPS_ENVIRONMENT_ID}
   template:
@@ -44,7 +44,7 @@ properties:
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
-        secretRef: az-cs
+        secretRef: azure-storage-connection-string
       - name: AZURE_CONTAINER_BRONZE
         value: ${AZURE_CONTAINER_BRONZE}
       - name: AZURE_CONTAINER_SILVER
