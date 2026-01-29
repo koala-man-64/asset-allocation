@@ -585,7 +585,7 @@ def get_job_logs(
     executions.sort(key=lambda e: float(e.get("_start_ts") or 0.0), reverse=True)
     selected = executions[: max(0, int(runs))]
 
-    tail_lines = 3
+    tail_lines = 10
 
     out_runs: List[Dict[str, Any]] = []
     with AzureLogAnalyticsClient(timeout_seconds=log_timeout_seconds) as log_client:
