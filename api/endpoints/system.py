@@ -612,7 +612,7 @@ let execName = '{exec_kql}';
 union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs, ContainerAppSystemLogs_CL, ContainerAppSystemLogs
 | extend job = tostring(column_ifexists('ContainerAppJobName_s', column_ifexists('JobName_s', '')))
 | extend exec = tostring(column_ifexists('ContainerAppJobExecutionName_s', column_ifexists('ExecutionName_s', '')))
-| extend msg = tostring(column_ifexists('Log_s', column_ifexists('LogMessage_s', column_ifexists('Message', column_ifexists('message', '')))))
+| extend msg = tostring(column_ifexists('Log_s', column_ifexists('Log', column_ifexists('LogMessage_s', column_ifexists('Message', column_ifexists('message', ''))))))
 | where job == jobName and (execName == '' or exec == execName)
 | project TimeGenerated, msg
 | order by TimeGenerated desc
