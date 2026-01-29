@@ -372,16 +372,23 @@ metadata:
     }
     $jobServiceAccounts = $jobServiceAccounts | Sort-Object -Unique
     if ($jobServiceAccounts.Count -gt 0) {
-      Write-Host "Ensuring job service accounts exist in $KubernetesNamespace..."
-      foreach ($saName in $jobServiceAccounts) {
-        $jobSaYaml = @"
+      $namespaces = @($KubernetesNamespace)
+      if ($KubernetesNamespace -ne "k8se-apps") {
+        $namespaces += "k8se-apps"
+      }
+      $namespaces = $namespaces | Sort-Object -Unique
+      foreach ($ns in $namespaces) {
+        Write-Host "Ensuring job service accounts exist in $ns..."
+        foreach ($saName in $jobServiceAccounts) {
+          $jobSaYaml = @"
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: $saName
-  namespace: $KubernetesNamespace
+  namespace: $ns
 "@
-        $jobSaYaml | kubectl apply -f - | Out-Null
+          $jobSaYaml | kubectl apply -f - | Out-Null
+        }
       }
     }
   }

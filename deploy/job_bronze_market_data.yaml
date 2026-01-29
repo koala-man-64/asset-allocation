@@ -67,7 +67,7 @@ properties:
         value: "/tmp/downloads"
       - name: PLAYWRIGHT_USER_DATA_DIR
         value: "/tmp/playwright_userdata"
-      image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
+      image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: bronze-market-job
       command: ["python", "-m", "tasks.market_data.bronze_market_data"]

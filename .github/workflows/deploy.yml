@@ -27,6 +27,7 @@ env:
   # User-assigned managed identity used by Container Apps/Jobs to pull from ACR on first create.
   ACR_PULL_IDENTITY_NAME: asset-allocation-acr-pull-mi
   IMAGE_NAME: asset-allocation-scraper
+  JOB_IMAGE: ${{ format('{0}.azurecr.io/{1}:{2}', env.ACR_NAME, env.IMAGE_NAME, github.sha) }}
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -463,11 +464,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_market_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -507,11 +503,6 @@ jobs:
           fi
           
           rm deploy/job_silver_market_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.SILVER_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -556,11 +547,6 @@ jobs:
           fi
           
           rm deploy/job_gold_market_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -601,11 +587,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_finance_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -645,11 +626,6 @@ jobs:
           fi
           
           rm deploy/job_silver_finance_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -690,11 +666,6 @@ jobs:
           fi
           
           rm deploy/job_gold_finance_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -736,11 +707,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_price_target_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -780,11 +746,6 @@ jobs:
           fi
           
           rm deploy/job_silver_price_target_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -825,11 +786,6 @@ jobs:
           fi
           
           rm deploy/job_gold_price_target_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -870,11 +826,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_earnings_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -914,11 +865,6 @@ jobs:
           fi
           
           rm deploy/job_silver_earnings_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -959,11 +905,6 @@ jobs:
           fi
           
           rm deploy/job_gold_earnings_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1005,11 +946,6 @@ jobs:
           fi
           
           rm deploy/job_platinum_ranking.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.PLATINUM_RANKING_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           az containerapp job start \
             --name ${{ env.PLATINUM_RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}

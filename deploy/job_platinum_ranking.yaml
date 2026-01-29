@@ -83,7 +83,7 @@ properties:
         value: "-0.3"
       - name: RANKING_MARGIN_DELTA_THRESHOLD
         value: "0.0"
-      image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
+      image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: platinum-ranking-job
       command: ["python", "-m", "tasks.ranking.runner"]

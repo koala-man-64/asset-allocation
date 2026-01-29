@@ -63,7 +63,7 @@ properties:
         secretRef: yahoo-password
       - name: HEADLESS_MODE
         value: 'True'
-      image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
+      image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: gold-finance-job
       command: ["python", "-m", "tasks.finance_data.gold_finance_data"]
