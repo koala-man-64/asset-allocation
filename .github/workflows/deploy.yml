@@ -484,17 +484,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -541,17 +530,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.SILVER_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -599,17 +577,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.GOLD_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.GOLD_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.GOLD_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -657,17 +624,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -714,17 +670,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.SILVER_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.SILVER_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -772,17 +717,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.GOLD_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.GOLD_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -831,17 +765,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -888,17 +811,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -946,17 +858,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1004,17 +905,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1061,17 +951,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.SILVER_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.SILVER_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1119,17 +998,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.GOLD_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.GOLD_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1178,17 +1046,6 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job identity assign \
-            --name ${{ env.PLATINUM_RANKING_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
-          az containerapp job registry set \
-            --name ${{ env.PLATINUM_RANKING_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --server "${{ env.ACR_NAME }}.azurecr.io" \
-            --identity "$ACR_PULL_IDENTITY_RESOURCE_ID"
-
           az containerapp job start \
             --name ${{ env.PLATINUM_RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
