@@ -26,6 +26,8 @@ properties:
       value: ${YAHOO_PASSWORD}
     - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
+    - name: pg-dsn
+      value: ${POSTGRES_DSN}
   environmentId: ${CONTAINER_APPS_ENVIRONMENT_ID}
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
@@ -65,6 +67,8 @@ properties:
         secretRef: yahoo-username
       - name: YAHOO_PASSWORD
         secretRef: yahoo-password
+      - name: POSTGRES_DSN
+        secretRef: pg-dsn
       - name: HEADLESS_MODE
         value: 'True'
       - name: DOWNLOADS_PATH

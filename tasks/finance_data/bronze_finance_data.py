@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 from datetime import timezone
 
+import pandas as pd
+
 from core import core as mdc
 from core import playwright_lib as pl
 from tasks.finance_data import config as cfg

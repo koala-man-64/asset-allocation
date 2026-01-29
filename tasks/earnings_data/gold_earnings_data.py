@@ -199,11 +199,11 @@ def _build_job_config() -> FeatureJobConfig:
     df_symbols = mdc.get_symbols()
     df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
 
-    if hasattr(common_cfg, "DEBUG_SYMBOLS") and common_cfg.DEBUG_SYMBOLS:
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
         mdc.write_line(
-            f"DEBUG MODE: Restricting execution to {len(common_cfg.DEBUG_SYMBOLS)} symbols: {common_cfg.DEBUG_SYMBOLS}"
+            f"DEBUG MODE: Restricting execution to {len(cfg.DEBUG_SYMBOLS)} symbols: {cfg.DEBUG_SYMBOLS}"
         )
-        df_symbols = df_symbols[df_symbols["Symbol"].isin(common_cfg.DEBUG_SYMBOLS)]
+        df_symbols = df_symbols[df_symbols["Symbol"].isin(cfg.DEBUG_SYMBOLS)]
 
     tickers: List[str] = []
     for symbol in df_symbols["Symbol"].astype(str).tolist():

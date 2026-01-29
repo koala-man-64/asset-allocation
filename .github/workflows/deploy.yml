@@ -673,6 +673,7 @@ jobs:
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -738,7 +739,9 @@ jobs:
       - name: Update and Start Finance Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.silver_finance == 'true' || steps.finance_silver_job_check.outputs.job_exists == 'false'
         env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -803,9 +806,9 @@ jobs:
       - name: Update and Start Finance Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.gold_finance == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -871,9 +874,8 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.bronze_price_target == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -939,7 +941,9 @@ jobs:
       - name: Update and Start Price Target Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.silver_price_target == 'true' || steps.price_target_silver_job_check.outputs.job_exists == 'false'
         env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1004,9 +1008,9 @@ jobs:
       - name: Update and Start Price Target Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.gold_price_target == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1074,6 +1078,8 @@ jobs:
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1140,6 +1146,8 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.silver_earnings == 'true' || steps.earnings_silver_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1204,9 +1212,9 @@ jobs:
       - name: Update and Start Earnings Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.gold_earnings == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |

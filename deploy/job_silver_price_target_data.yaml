@@ -20,6 +20,10 @@ properties:
     secrets:
     - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
+    - name: nasdaq-api-key
+      value: ${NASDAQ_API_KEY}
+    - name: pg-dsn
+      value: ${POSTGRES_DSN}
   environmentId: ${CONTAINER_APPS_ENVIRONMENT_ID}
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
@@ -45,6 +49,10 @@ properties:
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
+      - name: NASDAQ_API_KEY
+        secretRef: nasdaq-api-key
+      - name: POSTGRES_DSN
+        secretRef: pg-dsn
       - name: AZURE_CONTAINER_BRONZE
         value: ${AZURE_CONTAINER_BRONZE}
       - name: AZURE_CONTAINER_SILVER
@@ -52,7 +60,7 @@ properties:
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_FOLDER_TARGETS
-        value: ${AZURE_FOLDER_TARGETS}
+        value: ${AZURE_CONTAINER_SILVER}
       - name: AZURE_CONTAINER_COMMON
         value: ${AZURE_CONTAINER_COMMON}
       image: ${JOB_IMAGE}
