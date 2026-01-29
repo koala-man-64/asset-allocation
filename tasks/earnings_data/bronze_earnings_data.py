@@ -21,7 +21,7 @@ list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX)
 
 def _validate_environment() -> None:
     required = [
-        "AZURE_CONTAINER_EARNINGS", # Wait, environment uses this specific var? 
+        "AZURE_FOLDER_EARNINGS", # Wait, environment uses this specific var? 
         "DOWNLOADS_PATH", 
         "PLAYWRIGHT_USER_DATA_DIR",
         "YAHOO_USERNAME",

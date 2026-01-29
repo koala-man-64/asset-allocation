@@ -267,7 +267,7 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
         LayerProbeSpec(
             name="Platinum",
             description="Platinum rankings + derived signals",
-            container_env="AZURE_CONTAINER_RANKING",
+            container_env="AZURE_FOLDER_RANKING",
             max_age_seconds=max_age_ranking,
             delta_tables=(
                 DomainSpec(CANONICAL_RANKINGS_PATH, CRON_PLATINUM_RANKING),

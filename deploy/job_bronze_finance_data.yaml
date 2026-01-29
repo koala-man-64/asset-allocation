@@ -2,7 +2,9 @@ location: East US
 name: bronze-finance-job
 type: Microsoft.App/jobs
 identity:
-  type: SystemAssigned
+  type: UserAssigned
+  userAssignedIdentities:
+    "${ACR_PULL_IDENTITY_RESOURCE_ID}": {}
 properties:
   configuration:
     triggerType: Schedule
@@ -12,7 +14,7 @@ properties:
       replicaCompletionCount: 1
     registries:
     - server: assetallocationacr.azurecr.io
-      identity: system
+      identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     replicaRetryLimit: 2
     replicaTimeout: 1800
     secrets:
@@ -26,16 +28,17 @@ properties:
       value: ${AZURE_STORAGE_CONNECTION_STRING}
   environmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   template:
+    serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
     - env:
-      - name: AZURE_CONTAINER_MARKET
+      - name: AZURE_FOLDER_MARKET
         value: ${AZURE_CONTAINER_GOLD}
-      - name: AZURE_CONTAINER_EARNINGS
+      - name: AZURE_FOLDER_EARNINGS
         value: ${AZURE_CONTAINER_GOLD}
-      - name: AZURE_CONTAINER_TARGETS
+      - name: AZURE_FOLDER_TARGETS
         value: ${AZURE_CONTAINER_GOLD}
-      - name: AZURE_CONTAINER_RANKING
-        value: ${AZURE_CONTAINER_RANKING}
+      - name: AZURE_FOLDER_RANKING
+        value: ${AZURE_FOLDER_RANKING}
       - name: AZURE_CONTAINER_SILVER
         value: ${AZURE_CONTAINER_SILVER}
       - name: LOG_FORMAT
@@ -50,8 +53,8 @@ properties:
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: az-cs
-      - name: AZURE_CONTAINER_FINANCE
-        value: ${AZURE_CONTAINER_FINANCE}
+      - name: AZURE_FOLDER_FINANCE
+        value: ${AZURE_FOLDER_FINANCE}
       - name: AZURE_CONTAINER_COMMON
         value: ${AZURE_CONTAINER_COMMON}
       - name: AZURE_CONTAINER_BRONZE
@@ -68,7 +71,7 @@ properties:
         value: "/tmp/downloads"
       - name: PLAYWRIGHT_USER_DATA_DIR
         value: "/tmp/playwright_userdata"
-      image: assetallocationacr.azurecr.io/asset-allocation-scraper:latest
+      image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: bronze-finance-job
       command: ["python", "-m", "tasks.finance_data.bronze_finance_data"]

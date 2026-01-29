@@ -109,10 +109,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
 
     container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
     if container_raw is None or not str(container_raw).strip():
-        container_raw = os.environ.get("AZURE_CONTAINER_EARNINGS")
+        container_raw = os.environ.get("AZURE_FOLDER_EARNINGS")
 
     if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_CONTAINER_EARNINGS or pass --container.")
+        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_FOLDER_EARNINGS or pass --container.")
     container = str(container_raw).strip()
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None

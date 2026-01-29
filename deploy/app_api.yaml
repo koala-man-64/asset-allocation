@@ -2,7 +2,9 @@ location: East US
 name: asset-allocation-api
 type: Microsoft.App/containerApps
 identity:
-  type: SystemAssigned
+  type: UserAssigned
+  userAssignedIdentities:
+    "${ACR_PULL_IDENTITY_RESOURCE_ID}": {}
 properties:
   managedEnvironmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
   configuration:
@@ -14,12 +16,13 @@ properties:
       allowInsecure: false
     registries:
     - server: assetallocationacr.azurecr.io
-      identity: system
+      identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
     - name: api-key
       value: "${API_KEY}"
     - name: backtest-pg-dsn
   template:
+    serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}
       imageType: ContainerImage
@@ -35,16 +38,16 @@ properties:
         value: "${AZURE_CONTAINER_GOLD}"
       - name: AZURE_CONTAINER_PLATINUM
         value: "${AZURE_CONTAINER_PLATINUM}"
-      - name: AZURE_CONTAINER_MARKET
-        value: "${AZURE_CONTAINER_MARKET}"
-      - name: AZURE_CONTAINER_FINANCE
-        value: "${AZURE_CONTAINER_FINANCE}"
-      - name: AZURE_CONTAINER_EARNINGS
-        value: "${AZURE_CONTAINER_EARNINGS}"
-      - name: AZURE_CONTAINER_TARGETS
-        value: "${AZURE_CONTAINER_TARGETS}"
-      - name: AZURE_CONTAINER_RANKING
-        value: "${AZURE_CONTAINER_RANKING}"
+      - name: AZURE_FOLDER_MARKET
+        value: "${AZURE_FOLDER_MARKET}"
+      - name: AZURE_FOLDER_FINANCE
+        value: "${AZURE_FOLDER_FINANCE}"
+      - name: AZURE_FOLDER_EARNINGS
+        value: "${AZURE_FOLDER_EARNINGS}"
+      - name: AZURE_FOLDER_TARGETS
+        value: "${AZURE_FOLDER_TARGETS}"
+      - name: AZURE_FOLDER_RANKING
+        value: "${AZURE_FOLDER_RANKING}"
       - name: AZURE_CONTAINER_COMMON
         value: "${AZURE_CONTAINER_COMMON}"
       - name: API_KEY

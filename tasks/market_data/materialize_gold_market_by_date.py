@@ -116,7 +116,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
         description="Materialize market features into a cross-sectional Delta table (partitioned by date)."
     )
-    parser.add_argument("--container", help="Market features container (default: AZURE_CONTAINER_MARKET).")
+    parser.add_argument("--container", help="Market features container (default: AZURE_FOLDER_MARKET).")
     parser.add_argument("--year-month", required=True, help="Year-month partition to materialize (YYYY-MM).")
     parser.add_argument(
         "--output-path",
@@ -126,9 +126,9 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
     args = parser.parse_args(argv)
 
-    container_raw = args.container or os.environ.get("AZURE_CONTAINER_MARKET")
+    container_raw = args.container or os.environ.get("AZURE_FOLDER_MARKET")
     if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing market container. Set AZURE_CONTAINER_MARKET or pass --container.")
+        raise ValueError("Missing market container. Set AZURE_FOLDER_MARKET or pass --container.")
     container = str(container_raw).strip()
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None

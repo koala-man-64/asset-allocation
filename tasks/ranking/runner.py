@@ -31,21 +31,21 @@ WhitelistSource = Tuple[str, Optional[str]]
 DELTA_SOURCES: List[DeltaSource] = [
     {
         "name": "finance",
-        "container": cfg.AZURE_CONTAINER_FINANCE,
+        "container": cfg.AZURE_FOLDER_FINANCE,
         "path_env": "RANKING_FINANCE_DELTA_PATH",
         "per_symbol": True,
         "whitelist_prefix": "finance_data",
     },
     {
         "name": "price_targets",
-        "container": cfg.AZURE_CONTAINER_TARGETS,
+        "container": cfg.AZURE_FOLDER_TARGETS,
         "path_env": "RANKING_PRICE_DELTA_PATH",
         "per_symbol": True,
         "whitelist_prefix": "price_target_data",
     },
     {
         "name": "earnings",
-        "container": cfg.AZURE_CONTAINER_EARNINGS,
+        "container": cfg.AZURE_FOLDER_EARNINGS,
         "path_env": "RANKING_EARNINGS_DELTA_PATH",
         "per_symbol": True,
         "whitelist_prefix": "earnings_data",
@@ -134,7 +134,7 @@ def _get_market_feature_tickers(
     # Resolve available market features, then apply whitelist if present.
     write_line(
         "Listing market feature blobs from "
-        f"{cfg.AZURE_CONTAINER_MARKET}/market/<ticker>..."
+        f"{cfg.AZURE_FOLDER_MARKET}/market/<ticker>..."
     )
     try:
         blobs = client.list_files(name_starts_with="market/")
@@ -161,7 +161,7 @@ def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
     by_date_path_raw = os.environ.get("RANKING_MARKET_BY_DATE_DELTA_PATH")
     by_date_path = by_date_path_raw.strip().lstrip("/") if by_date_path_raw else None
     if by_date_path:
-        by_date = load_delta(cfg.AZURE_CONTAINER_MARKET, by_date_path)
+        by_date = load_delta(cfg.AZURE_FOLDER_MARKET, by_date_path)
         if by_date is not None and not by_date.empty:
             by_date = _normalize_symbol_column(by_date)
             if whitelist:
@@ -169,13 +169,13 @@ def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
             if by_date.empty:
                 return pd.DataFrame()
             write_line(
-                f"Loaded market features from by-date table {cfg.AZURE_CONTAINER_MARKET}/{by_date_path} "
+                f"Loaded market features from by-date table {cfg.AZURE_FOLDER_MARKET}/{by_date_path} "
                 f"(rows={len(by_date)})"
             )
             return by_date.reset_index(drop=True)
 
     # Fallback: load per-ticker market features from the market container.
-    client = _build_blob_client(cfg.AZURE_CONTAINER_MARKET, label="market container")
+    client = _build_blob_client(cfg.AZURE_FOLDER_MARKET, label="market container")
 
     tickers = _get_market_feature_tickers(client, whitelist)
     if not tickers:
@@ -184,14 +184,14 @@ def _load_market_data(whitelist: Optional[Set[str]]) -> pd.DataFrame:
 
     write_line(
         f"Loading market features for {len(tickers)} ticker(s) from "
-        f"{cfg.AZURE_CONTAINER_MARKET}/gold/<ticker>..."
+        f"{cfg.AZURE_FOLDER_MARKET}/gold/<ticker>..."
     )
 
     frames = []
     for ticker in tickers:
         # Each ticker's market features live under gold/<ticker>.
         path = DataPaths.get_gold_features_path(ticker)
-        df = load_delta(cfg.AZURE_CONTAINER_MARKET, path)
+        df = load_delta(cfg.AZURE_FOLDER_MARKET, path)
         if df is None or df.empty:
             continue
         frames.append(_normalize_symbol_column(df))
@@ -272,7 +272,7 @@ def _merge_source(
 
 
 def _get_whitelist_sources_for_strategy(strategy: AbstractStrategy) -> List[WhitelistSource]:
-    sources: List[WhitelistSource] = [("market_data", cfg.AZURE_CONTAINER_MARKET)]
+    sources: List[WhitelistSource] = [("market_data", cfg.AZURE_FOLDER_MARKET)]
     for source_name in strategy.sources_used:
         source = SOURCE_LOOKUP.get(source_name)
         if not source:
@@ -291,7 +291,7 @@ def _format_value(value: Optional[str]) -> str:
 
 def _log_strategy_configuration(strategy: AbstractStrategy, ranking_container: str) -> None:
     source_specs = []
-    whitelist_specs = [f"market_data@{_format_value(cfg.AZURE_CONTAINER_MARKET)}"]
+    whitelist_specs = [f"market_data@{_format_value(cfg.AZURE_FOLDER_MARKET)}"]
 
     for source_name in strategy.sources_used:
         source = SOURCE_LOOKUP.get(source_name, {})
@@ -306,7 +306,7 @@ def _log_strategy_configuration(strategy: AbstractStrategy, ranking_container: s
             whitelist_specs.append(f"{whitelist_prefix}@{_format_value(container)}")
 
     containers_line = (
-        f"market={_format_value(cfg.AZURE_CONTAINER_MARKET)}, "
+        f"market={_format_value(cfg.AZURE_FOLDER_MARKET)}, "
         f"ranking_out={_format_value(ranking_container)}"
     )
     if strategy.sources_used:
@@ -399,9 +399,9 @@ def main():
     strategies = _instantiate_strategies()
     write_line(f"Running {len(strategies)} ranking strategies.")
 
-    if "AZURE_CONTAINER_RANKING" not in os.environ:
-        raise ValueError("Missing required environment variable: AZURE_CONTAINER_RANKING")
-    ranking_container = cfg.AZURE_CONTAINER_RANKING
+    if "AZURE_FOLDER_RANKING" not in os.environ:
+        raise ValueError("Missing required environment variable: AZURE_FOLDER_RANKING")
+    ranking_container = cfg.AZURE_FOLDER_RANKING
 
     touched_year_months: Set[str] = set()
 

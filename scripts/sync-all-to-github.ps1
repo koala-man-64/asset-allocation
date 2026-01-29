@@ -33,6 +33,10 @@ $ConfigPatterns = @(
     "^DISABLE_DOTENV$",
     "^LOG_",
     "^TEST_MODE$",
+    "^VITE_PORT$",
+    "^SERVICE_ACCOUNT_NAME$",
+    "^KUBERNETES_NAMESPACE$",
+    "^AKS_CLUSTER_NAME$",
     "^API_AUTH_MODE$",
     "^API_CSP$",
     "^API_OIDC_",
@@ -119,10 +123,15 @@ if ($secretsToDelete.Count -gt 0) {
     if ($DryRun) {
         Write-Host "[DRY RUN] Would delete these secrets." -ForegroundColor Cyan
     } else {
-        foreach ($s in $secretsToDelete) {
-            Write-Host "Deleting secret: $s..." -NoNewline
-            gh secret delete "$s"
-            Write-Host " [OK]" -ForegroundColor Green
+        $confirm = Read-Host "Delete these secrets? Type 'yes' to confirm"
+        if ($confirm -eq "yes") {
+            foreach ($s in $secretsToDelete) {
+                Write-Host "Deleting secret: $s..." -NoNewline
+                gh secret delete "$s"
+                Write-Host " [OK]" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "Skipping secret deletions." -ForegroundColor Yellow
         }
     }
 } else {
@@ -149,10 +158,15 @@ if ($varsToDelete.Count -gt 0) {
     if ($DryRun) {
         Write-Host "[DRY RUN] Would delete these variables." -ForegroundColor Cyan
     } else {
-        foreach ($v in $varsToDelete) {
-            Write-Host "Deleting variable: $v..." -NoNewline
-            gh variable delete "$v"
-            Write-Host " [OK]" -ForegroundColor Green
+        $confirm = Read-Host "Delete these variables? Type 'yes' to confirm"
+        if ($confirm -eq "yes") {
+            foreach ($v in $varsToDelete) {
+                Write-Host "Deleting variable: $v..." -NoNewline
+                gh variable delete "$v"
+                Write-Host " [OK]" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "Skipping variable deletions." -ForegroundColor Yellow
         }
     }
 } else {

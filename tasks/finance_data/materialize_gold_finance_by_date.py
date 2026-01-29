@@ -129,10 +129,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
     if container_raw is None or not str(container_raw).strip():
         # Fallback to FINANCE if GOLD is not set, as per some configs
-        container_raw = os.environ.get("AZURE_CONTAINER_FINANCE")
+        container_raw = os.environ.get("AZURE_FOLDER_FINANCE")
 
     if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_CONTAINER_FINANCE or pass --container.")
+        raise ValueError("Missing container. Set AZURE_CONTAINER_GOLD or AZURE_FOLDER_FINANCE or pass --container.")
     container = str(container_raw).strip()
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None

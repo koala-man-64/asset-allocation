@@ -13,12 +13,12 @@ def check_env_vars():
     """Validates that all required configuration variables are loaded."""
     logger.info("Checking configuration...")
     required_containers = [
-        ("AZURE_CONTAINER_MARKET", cfg.AZURE_CONTAINER_MARKET),
-        ("AZURE_CONTAINER_FINANCE", cfg.AZURE_CONTAINER_FINANCE),
-        ("AZURE_CONTAINER_EARNINGS", cfg.AZURE_CONTAINER_EARNINGS),
-        ("AZURE_CONTAINER_TARGETS", cfg.AZURE_CONTAINER_TARGETS),
+        ("AZURE_FOLDER_MARKET", cfg.AZURE_FOLDER_MARKET),
+        ("AZURE_FOLDER_FINANCE", cfg.AZURE_FOLDER_FINANCE),
+        ("AZURE_FOLDER_EARNINGS", cfg.AZURE_FOLDER_EARNINGS),
+        ("AZURE_FOLDER_TARGETS", cfg.AZURE_FOLDER_TARGETS),
         ("AZURE_CONTAINER_COMMON", cfg.AZURE_CONTAINER_COMMON),
-        ("AZURE_CONTAINER_RANKING", cfg.AZURE_CONTAINER_RANKING),
+        ("AZURE_FOLDER_RANKING", cfg.AZURE_FOLDER_RANKING),
     ]
     
     missing = []

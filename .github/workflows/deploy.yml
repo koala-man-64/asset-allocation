@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: Build and Deploy Tasks
 
 on:
   push:
@@ -24,9 +24,9 @@ env:
   FORCE_REDEPLOY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true' }}
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
+  # User-assigned managed identity used by Container Apps/Jobs to pull from ACR on first create.
+  ACR_PULL_IDENTITY_NAME: asset-allocation-acr-pull-mi
   IMAGE_NAME: asset-allocation-scraper
-  API_IMAGE_NAME: asset-allocation-api
-  UI_IMAGE_NAME: asset-allocation-ui
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -48,13 +48,13 @@ env:
   AZURE_CONTAINER_SILVER: silver
   AZURE_CONTAINER_GOLD: gold
   AZURE_CONTAINER_PLATINUM: platinum
-  AZURE_CONTAINER_MARKET: market-data
-  AZURE_CONTAINER_FINANCE: finance-data
-  AZURE_CONTAINER_EARNINGS: earnings-data
-  AZURE_CONTAINER_TARGETS: price-target-data
-  AZURE_CONTAINER_RANKING: ranking-data
+  AZURE_FOLDER_MARKET: market-data
+  AZURE_FOLDER_FINANCE: finance-data
+  AZURE_FOLDER_EARNINGS: earnings-data
+  AZURE_FOLDER_TARGETS: price-target-data
+  AZURE_FOLDER_RANKING: ranking-data
   AZURE_CONTAINER_COMMON: common
-  VITE_PORT: ${{ vars.VITE_PORT }}
+  SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
 
 jobs:
   tests:
@@ -86,7 +86,7 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          VITE_PORT: ${{ vars.VITE_PORT }}
+          SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
         run: |
           set -euo pipefail
 
@@ -109,8 +109,7 @@ jobs:
           require_secret YAHOO_PASSWORD
           require_secret NASDAQ_API_KEY
           require_secret POSTGRES_DSN
-          require_secret POSTGRES_DSN
-          require_secret VITE_PORT
+          require_secret SERVICE_ACCOUNT_NAME
 
           python3 - <<'PY'
           import os
@@ -333,32 +332,6 @@ jobs:
               - "deploy/job_platinum_ranking.yaml"
               - ".github/workflows/deploy.yml"
 
-      - name: Detect API Changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: api_changes
-        with:
-          filters: |
-            api:
-              - "api/**"
-              - "services/**"
-              - "core/**"
-              - "Dockerfile.asset_allocation_api"
-              - "deploy/app_api.yaml"
-              - "pyproject.toml"
-              - "requirements.txt"
-              - "requirements.lock.txt"
-              - ".github/workflows/deploy.yml"
-
-      - name: Detect UI Changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: ui_changes
-        with:
-          filters: |
-            ui:
-              - "ui/**"
-              - "deploy/app_ui.yaml"
-              - ".github/workflows/deploy.yml"
-
       - name: Log change detection outputs
         run: |
           echo "bronze_market=${{ steps.market_changes.outputs.bronze_market }}"
@@ -374,14 +347,39 @@ jobs:
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
           echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
-          echo "api=${{ steps.api_changes.outputs.api }}"
-          echo "ui=${{ steps.ui_changes.outputs.ui }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure ACR Pull Identity Exists (User-Assigned MI)
+        run: |
+          set -euo pipefail
+
+          identity_id="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${{ env.ACR_PULL_IDENTITY_NAME }}"
+          echo "ACR_PULL_IDENTITY_RESOURCE_ID=$identity_id" >> "$GITHUB_ENV"
+          echo "Using ACR pull identity: $identity_id"
+
+          if ! az identity show --ids "$identity_id" --only-show-errors > /dev/null 2>&1; then
+            echo "::error::ACR pull identity '${{ env.ACR_PULL_IDENTITY_NAME }}' not found in '${{ env.RESOURCE_GROUP }}'. Run scripts/provision_azure.ps1 (with Owner or User Access Administrator) to create it and grant AcrPull."
+            exit 1
+          fi
+
+          acr_id="$(az acr show --name "${{ env.ACR_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query id -o tsv --only-show-errors | tr -d '\r')"
+          principal_id="$(az identity show --ids "$identity_id" --query principalId -o tsv --only-show-errors | tr -d '\r')"
+
+          # Ensure AcrPull on ACR for the UAMI used by Container Apps/Jobs.
+          query="length([?roleDefinitionName=='AcrPull'])"
+          existing="$(az role assignment list --assignee-object-id "$principal_id" --scope "$acr_id" --query "$query" -o tsv --only-show-errors 2>/dev/null | tr -d '\r' || true)"
+          existing="${existing:-0}"
+          if [ "$existing" = "0" ]; then
+            echo "::error::AcrPull is not assigned for principalId=$principal_id. Run scripts/provision_azure.ps1 (with Owner or User Access Administrator) to grant AcrPull on the ACR."
+            exit 1
+          else
+            echo "AcrPull already assigned for principalId=$principal_id."
+          fi
 
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
@@ -397,7 +395,7 @@ jobs:
           SANITIZED=$(echo "$SANITIZED" | sed 's/^-*//;s/-*$//')
           echo "tag=$SANITIZED" >> "$GITHUB_OUTPUT"
 
-      - name: Build and Push Docker Image
+      - name: Build and Push Tasks Image
         run: |
           BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
           
@@ -418,51 +416,9 @@ jobs:
             docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
           fi
 
-      - name: Build and Push Backtest API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true'
+      - name: Set JOB_IMAGE env
         run: |
-          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
-          
-          # 1. Build immutable SHA tag
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
-          
-          # 2. Build branch tag
-          docker build . -f Dockerfile.asset_allocation_api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:$BRANCH_TAG
-          
-          # 3. Push SHA tag and Branch tag
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:$BRANCH_TAG
-          
-          # 4. Handle 'latest' tag (Only on main branch)
-          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "Pushing latest tag..."
-            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:latest
-            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:latest
-          fi
-
-      - name: Build and Push UI Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true'
-        run: |
-          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
-          cd ui
-          
-          # 1. Build immutable SHA tag
-          docker build . --build-arg VITE_PORT=${{ env.VITE_PORT }} -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
-          
-          # 2. Build branch tag
-          docker build . --build-arg VITE_PORT=${{ env.VITE_PORT }} -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
-          
-          # 3. Push SHA tag and Branch tag
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:$BRANCH_TAG
-          
-          # 4. Handle 'latest' tag (Only on main branch)
-          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "Pushing latest tag..."
-            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
-            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:latest
-          fi
-          cd ..
+          echo "JOB_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
 
       - name: Ensure Storage Containers Exist
         run: |
@@ -473,128 +429,6 @@ jobs:
               --account-name assetallocstorage001 \
               --auth-mode login
           done
-
-      - name: Check Backtest API App Exists
-        id: API_IMAGE_NAME_check
-        run: |
-          if az containerapp show --name ${{ env.API_IMAGE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "app_exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "app_exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Deploy Backtest API App
-        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.API_IMAGE_NAME_check.outputs.app_exists == 'false'
-        env:
-          API_KEY: ${{ secrets.API_KEY }}
-          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          API_AUTH_MODE: ${{ secrets.API_AUTH_MODE }}
-          API_OIDC_ISSUER: ${{ secrets.API_OIDC_ISSUER }}
-          API_OIDC_AUDIENCE: ${{ secrets.API_OIDC_AUDIENCE }}
-          API_OIDC_JWKS_URL: ${{ secrets.API_OIDC_JWKS_URL }}
-          API_OIDC_REQUIRED_SCOPES: ${{ secrets.API_OIDC_REQUIRED_SCOPES }}
-          API_OIDC_REQUIRED_ROLES: ${{ secrets.API_OIDC_REQUIRED_ROLES }}
-          UI_AUTH_MODE: ${{ secrets.UI_AUTH_MODE }}
-          UI_OIDC_CLIENT_ID: ${{ secrets.UI_OIDC_CLIENT_ID }}
-          UI_OIDC_AUTHORITY: ${{ secrets.UI_OIDC_AUTHORITY }}
-          UI_OIDC_SCOPES: ${{ secrets.UI_OIDC_SCOPES }}
-          UI_API_BASE_URL: ${{ secrets.UI_API_BASE_URL }}
-        run: |
-          set -euo pipefail
-          export IMAGE_TAG="${{ github.sha }}"
-          
-          export INGRESS_EXTERNAL="true"
-          auth_mode="$(echo "${API_AUTH_MODE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
-          if [ "$auth_mode" = "none" ]; then
-            echo "WARNING: API_AUTH_MODE=none. Forcing internal ingress."
-            export INGRESS_EXTERNAL="false"
-          elif [ -z "${API_KEY:-}" ] && { [ -z "${API_OIDC_ISSUER:-}" ] || [ -z "${API_OIDC_AUDIENCE:-}" ]; }; then
-            echo "WARNING: No API_KEY and no OIDC issuer/audience configured. Deploying with internal ingress."
-            export INGRESS_EXTERNAL="false"
-          fi
-
-          echo "Deploying Backtest API (App) from YAML..."
-          envsubst < deploy/app_api.yaml > deploy/app_api.tmp.yaml
-
-          if ! az containerapp show --name ${{ env.API_IMAGE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-             echo "App ${{ env.API_IMAGE_NAME }} not found. Creating..."
-             az containerapp create \
-               --name ${{ env.API_IMAGE_NAME }} \
-               --resource-group ${{ env.RESOURCE_GROUP }} \
-               --environment asset-allocation-env \
-               --yaml "deploy/app_api.tmp.yaml"
-          else
-             echo "App ${{ env.API_IMAGE_NAME }} found. Updating..."
-             az containerapp update \
-               --name ${{ env.API_IMAGE_NAME }} \
-               --resource-group ${{ env.RESOURCE_GROUP }} \
-               --yaml "deploy/app_api.tmp.yaml"
-          fi
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.API_IMAGE_NAME }}"
-          
-          rm deploy/app_api.tmp.yaml
-
-      - name: Verify Backtest API Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.api_changes.outputs.api == 'true' || steps.API_IMAGE_NAME_check.outputs.app_exists == 'false'
-        run: |
-          set -euo pipefail
-          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
-          actual_image=$(az containerapp show --name "${{ env.API_IMAGE_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
-          if [ "$actual_image" != "$expected_image" ]; then
-            echo "Image mismatch for ${{ env.API_IMAGE_NAME }}: expected $expected_image, got $actual_image"
-            exit 1
-          fi
-          echo "Verified ${{ env.API_IMAGE_NAME }} image $actual_image"
-
-      - name: Check UI App Exists
-        id: UI_IMAGE_NAME_check
-        run: |
-          if az containerapp show --name ${{ env.UI_IMAGE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "app_exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "app_exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Deploy UI App
-        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true' || steps.UI_IMAGE_NAME_check.outputs.app_exists == 'false'
-        run: |
-          set -euo pipefail
-          export IMAGE_TAG="${{ github.sha }}"
-
-          echo "Deploying UI App from YAML..."
-          envsubst < deploy/app_ui.yaml > deploy/app_ui.tmp.yaml
-
-          if ! az containerapp show --name ${{ env.UI_IMAGE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-             echo "App ${{ env.UI_IMAGE_NAME }} not found. Creating..."
-             az containerapp create \
-               --name ${{ env.UI_IMAGE_NAME }} \
-               --resource-group ${{ env.RESOURCE_GROUP }} \
-               --environment asset-allocation-env \
-               --yaml "deploy/app_ui.tmp.yaml"
-          else
-             echo "App ${{ env.UI_IMAGE_NAME }} found. Updating..."
-             az containerapp update \
-               --name ${{ env.UI_IMAGE_NAME }} \
-               --resource-group ${{ env.RESOURCE_GROUP }} \
-               --yaml "deploy/app_ui.tmp.yaml"
-          fi
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" app "${{ env.UI_IMAGE_NAME }}"
-          
-          rm deploy/app_ui.tmp.yaml
-
-      - name: Verify UI Image
-        if: env.FORCE_REDEPLOY == 'true' || steps.ui_changes.outputs.ui == 'true' || steps.UI_IMAGE_NAME_check.outputs.app_exists == 'false'
-        run: |
-          set -euo pipefail
-          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}"
-          actual_image=$(az containerapp show --name "${{ env.UI_IMAGE_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
-          if [ "$actual_image" != "$expected_image" ]; then
-            echo "Image mismatch for ${{ env.UI_IMAGE_NAME }}: expected $expected_image, got $actual_image"
-            exit 1
-          fi
-          echo "Verified ${{ env.UI_IMAGE_NAME }} image $actual_image"
 
       - name: Check Market Bronze Job Exists
         id: market_data_job_check
@@ -633,13 +467,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_market_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -679,18 +506,10 @@ jobs:
           fi
           
           rm deploy/job_silver_market_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
 
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -731,13 +550,6 @@ jobs:
           fi
           
           rm deploy/job_gold_market_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_MARKET_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_MARKET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -778,13 +590,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_finance_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -824,13 +629,6 @@ jobs:
           fi
           
           rm deploy/job_silver_finance_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -871,13 +669,6 @@ jobs:
           fi
           
           rm deploy/job_gold_finance_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_FINANCE_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_FINANCE_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -919,13 +710,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_price_target_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -965,13 +749,6 @@ jobs:
           fi
           
           rm deploy/job_silver_price_target_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1012,13 +789,6 @@ jobs:
           fi
           
           rm deploy/job_gold_price_target_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_PRICE_TARGET_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1059,13 +829,6 @@ jobs:
           fi
           
           rm deploy/job_bronze_earnings_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.BRONZE_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1105,13 +868,6 @@ jobs:
           fi
           
           rm deploy/job_silver_earnings_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.SILVER_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.SILVER_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.SILVER_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1152,13 +908,6 @@ jobs:
           fi
           
           rm deploy/job_gold_earnings_data.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.GOLD_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.GOLD_EARNINGS_JOB }}"
           az containerapp job start \
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
@@ -1200,36 +949,9 @@ jobs:
           fi
           
           rm deploy/job_platinum_ranking.tmp.yaml
-          
-          az containerapp job update \
-            --name ${{ env.PLATINUM_RANKING_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-          bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "${{ env.PLATINUM_RANKING_JOB }}"
           az containerapp job start \
             --name ${{ env.PLATINUM_RANKING_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
-
-      - name: Ensure ACR Pull for All Jobs
-        run: |
-          set -euo pipefail
-
-          mapfile -t jobs < <(
-            az containerapp job list \
-              --resource-group "${{ env.RESOURCE_GROUP }}" \
-              --query "[?contains(name, '-by-date-job')==\`false\`].name" \
-              -o tsv
-          )
-
-          if [ "${#jobs[@]}" -eq 0 ]; then
-            echo "No jobs discovered for AcrPull enforcement."
-            exit 0
-          fi
-
-          for job_name in "${jobs[@]}"; do
-            bash scripts/ensure_acr_pull.sh "${{ env.RESOURCE_GROUP }}" "${{ env.ACR_NAME }}" job "$job_name"
-          done
 
       - name: Delete Deprecated By-Date Jobs
         run: |
