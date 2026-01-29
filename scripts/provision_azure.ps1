@@ -415,6 +415,11 @@ else {
   Write-Host "  AcrPull already present for $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
 }
 
+Write-Host ""
+Write-Host "ACR Pull identity resource ID:"
+Write-Host "  $acrPullIdentityId"
+Write-Host "Set ACR_PULL_IDENTITY_NAME to '$AcrPullIdentityName' (workflow default) or supply the resource ID as ACR_PULL_IDENTITY_RESOURCE_ID for deployments."
+
 function Ensure-AcrPullRoleAssignment {
   param(
     [Parameter(Mandatory = $true)][string]$PrincipalId,
@@ -527,6 +532,7 @@ $outputs = [ordered]@{
   acrPullAuthMode              = "managedIdentity"
   acrPullUserAssignedIdentityName       = $AcrPullIdentityName
   acrPullUserAssignedIdentityId         = $acrPullIdentityId
+  acrPullUserAssignedIdentityResourceId = $acrPullIdentityId
   acrPullUserAssignedIdentityClientId   = $acrPullIdentityClientId
   acrPullUserAssignedIdentityPrincipalId = $acrPullIdentityPrincipalId
   acrPullAssignmentsCreated    = $acrPullAssignmentsCreated
