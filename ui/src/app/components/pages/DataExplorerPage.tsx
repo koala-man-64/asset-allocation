@@ -12,18 +12,27 @@ export const DataExplorerPage: React.FC = () => {
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
+    const tickerRequired = layer === 'bronze' || domain.startsWith('finance/');
+
     const fetchData = useCallback(async () => {
+        const normalizedTicker = ticker.trim().toUpperCase();
+        if (tickerRequired && !normalizedTicker) {
+            setError("Ticker is required for Bronze and Finance domains.");
+            setData([]);
+            return;
+        }
+
         setLoading(true);
         setError(null);
         try {
-            const result = await DataService.getGenericData(layer, domain, ticker || undefined, limit);
+            const result = await DataService.getGenericData(layer, domain, normalizedTicker || undefined, limit);
             setData(result);
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }
-    }, [layer, domain, ticker, limit]);
+    }, [layer, domain, ticker, limit, tickerRequired]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
@@ -77,7 +86,9 @@ export const DataExplorerPage: React.FC = () => {
 
                 {/* Ticker Input */}
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs font-bold text-gray-600 font-mono uppercase">Ticker (Opt)</label>
+                    <label className="text-xs font-bold text-gray-600 font-mono uppercase">
+                        Ticker ({tickerRequired ? 'Req' : 'Opt'})
+                    </label>
                     <input
                         type="text"
                         value={ticker}
@@ -105,12 +116,18 @@ export const DataExplorerPage: React.FC = () => {
                 {/* Fetch Button */}
                 <button
                     onClick={fetchData}
-                    disabled={loading}
+                    disabled={loading || (tickerRequired && !ticker.trim())}
                     className="bg-gray-800 text-white px-6 py-2 text-sm font-bold font-mono tracking-wide hover:bg-black disabled:bg-gray-400 transition-colors shadow-sm ml-auto"
                 >
                     {loading ? 'LOADING...' : 'FETCH DATA'}
                 </button>
             </div>
+
+            {tickerRequired && !ticker.trim() && (
+                <div className="text-xs text-gray-500 font-mono">
+                    Enter a ticker to query Bronze or Finance data.
+                </div>
+            )}
 
             {error && (
                 <div className="p-4 border-l-4 border-red-500 bg-red-50 text-red-700 font-mono text-sm">

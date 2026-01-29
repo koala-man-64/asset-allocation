@@ -23,7 +23,14 @@ def test_data_endpoint_calls_service(monkeypatch):
 
 def test_data_endpoint_rejects_unknown_layer():
     with TestClient(app) as client:
-        resp = client.get("/api/data/bronze/market?ticker=AAPL")
+        resp = client.get("/api/data/platinum/market?ticker=AAPL")
+
+    assert resp.status_code == 400
+
+
+def test_bronze_endpoint_requires_ticker_for_generic_domains():
+    with TestClient(app) as client:
+        resp = client.get("/api/data/bronze/market")
 
     assert resp.status_code == 400
 
