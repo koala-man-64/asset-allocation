@@ -25,6 +25,8 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$githubSpObjectId = $null
+
 $envPath = "$PSScriptRoot\..\.env"
 $envLines = @()
 if (Test-Path $envPath) {
@@ -415,6 +417,48 @@ else {
   Write-Host "  AcrPull already present for $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
 }
 
+if ($AzureClientId) {
+  Write-Host ""
+  Write-Host "Ensuring GitHub Actions principal can assign the ACR pull identity..."
+  $githubSpObjectId = $null
+  try {
+    $githubSpObjectId = az ad sp show --id $AzureClientId --query id -o tsv --only-show-errors 2>$null
+  }
+  catch {
+    $githubSpObjectId = $null
+  }
+
+  if ($githubSpObjectId) {
+    $miOperatorExisting = "0"
+    try {
+      $miOperatorExisting = az role assignment list `
+        --assignee-object-id $githubSpObjectId `
+        --scope $acrPullIdentityId `
+        --query "[?roleDefinitionName=='Managed Identity Operator'] | length(@)" -o tsv --only-show-errors 2>$null
+      if (-not $miOperatorExisting) { $miOperatorExisting = "0" }
+    }
+    catch {
+      $miOperatorExisting = "0"
+    }
+
+    if ([int]$miOperatorExisting -eq 0) {
+      az role assignment create `
+        --assignee-object-id $githubSpObjectId `
+        --assignee-principal-type ServicePrincipal `
+        --role "Managed Identity Operator" `
+        --scope $acrPullIdentityId `
+        --only-show-errors 1>$null
+      Write-Host "  Managed Identity Operator granted to $AzureClientId on $AcrPullIdentityName."
+    }
+    else {
+      Write-Host "  Managed Identity Operator already assigned to $AzureClientId on $AcrPullIdentityName."
+    }
+  }
+  else {
+    Write-Warning "Could not resolve service principal for AzureClientId '$AzureClientId'. Skipping Managed Identity Operator grant."
+  }
+}
+
 Write-Host ""
 Write-Host "ACR Pull identity resource ID:"
 Write-Host "  $acrPullIdentityId"
@@ -535,6 +579,7 @@ $outputs = [ordered]@{
   acrPullUserAssignedIdentityResourceId = $acrPullIdentityId
   acrPullUserAssignedIdentityClientId   = $acrPullIdentityClientId
   acrPullUserAssignedIdentityPrincipalId = $acrPullIdentityPrincipalId
+  acrPullIdentityOperatorAssigneeObjectId = $githubSpObjectId
   acrPullAssignmentsCreated    = $acrPullAssignmentsCreated
   acrPullAssignmentsSkipped    = $acrPullAssignmentsSkipped
   logAnalyticsWorkspaceName    = $LogAnalyticsWorkspaceName
