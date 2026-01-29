@@ -368,7 +368,7 @@ jobs:
             az extension add --name containerapp --upgrade --only-show-errors
           fi
 
-          az version --query "azure-cli" -o tsv
+          az version --query '"azure-cli"' -o tsv
           az extension show --name containerapp --query version -o tsv 2>/dev/null || echo "containerapp extension: not installed"
 
       - name: Ensure ACR Pull Identity Exists (User-Assigned MI)
