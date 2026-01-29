@@ -56,7 +56,6 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `NASDAQ_API_KEY`
 - **Databases (deploy/jobs):**
   - `POSTGRES_DSN`
-  - `POSTGRES_DSN`
 - **Backtest API security (deploy):**
   - `API_KEY`
 - **Backtest API OIDC config (deploy; required when OIDC is enabled):**

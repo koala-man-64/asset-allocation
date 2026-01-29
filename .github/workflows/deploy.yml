@@ -466,9 +466,11 @@ jobs:
       - name: Update and Start Market Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.bronze_market == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -479,7 +481,18 @@ jobs:
           echo "Deploying Bronze Market Job from YAML..."
           tmp="deploy/job_bronze_market_data.tmp.yaml"
           envsubst < deploy/job_bronze_market_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_MARKET_JOB }} not found. Creating..."
@@ -523,7 +536,9 @@ jobs:
       - name: Update and Start Market Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.silver_market == 'true' || steps.market_silver_job_check.outputs.job_exists == 'false'
         env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -534,7 +549,18 @@ jobs:
           echo "Deploying Silver Market Job from YAML..."
           tmp="deploy/job_silver_market_data.tmp.yaml"
           envsubst < deploy/job_silver_market_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_MARKET_JOB }} not found. Creating..."
@@ -577,9 +603,9 @@ jobs:
       - name: Update and Start Market Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.gold_market == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -590,7 +616,18 @@ jobs:
           echo "Deploying Gold Market Job from YAML..."
           tmp="deploy/job_gold_market_data.tmp.yaml"
           envsubst < deploy/job_gold_market_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_MARKET_JOB }} not found. Creating..."
@@ -646,7 +683,18 @@ jobs:
           echo "Deploying Bronze Finance Job from YAML..."
           tmp="deploy/job_bronze_finance_data.tmp.yaml"
           envsubst < deploy/job_bronze_finance_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_FINANCE_JOB }} not found. Creating..."
@@ -701,7 +749,18 @@ jobs:
           echo "Deploying Silver Finance Job from YAML..."
           tmp="deploy/job_silver_finance_data.tmp.yaml"
           envsubst < deploy/job_silver_finance_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_FINANCE_JOB }} not found. Creating..."
@@ -757,7 +816,18 @@ jobs:
           echo "Deploying Gold Finance Job from YAML..."
           tmp="deploy/job_gold_finance_data.tmp.yaml"
           envsubst < deploy/job_gold_finance_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_FINANCE_JOB }} not found. Creating..."
@@ -814,7 +884,18 @@ jobs:
           echo "Deploying Bronze Price Target Job from YAML..."
           tmp="deploy/job_bronze_price_target_data.tmp.yaml"
           envsubst < deploy/job_bronze_price_target_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Creating..."
@@ -869,7 +950,18 @@ jobs:
           echo "Deploying Silver Price Target Job from YAML..."
           tmp="deploy/job_silver_price_target_data.tmp.yaml"
           envsubst < deploy/job_silver_price_target_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Creating..."
@@ -925,7 +1017,18 @@ jobs:
           echo "Deploying Gold Price Target Job from YAML..."
           tmp="deploy/job_gold_price_target_data.tmp.yaml"
           envsubst < deploy/job_gold_price_target_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Creating..."
@@ -981,7 +1084,18 @@ jobs:
           echo "Deploying Bronze Earnings Job from YAML..."
           tmp="deploy/job_bronze_earnings_data.tmp.yaml"
           envsubst < deploy/job_bronze_earnings_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Creating..."
@@ -1036,7 +1150,18 @@ jobs:
           echo "Deploying Silver Earnings Job from YAML..."
           tmp="deploy/job_silver_earnings_data.tmp.yaml"
           envsubst < deploy/job_silver_earnings_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.SILVER_EARNINGS_JOB }} not found. Creating..."
@@ -1092,7 +1217,18 @@ jobs:
           echo "Deploying Gold Earnings Job from YAML..."
           tmp="deploy/job_gold_earnings_data.tmp.yaml"
           envsubst < deploy/job_gold_earnings_data.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.GOLD_EARNINGS_JOB }} not found. Creating..."
@@ -1149,7 +1285,18 @@ jobs:
           echo "Deploying Platinum Ranking Job from YAML..."
           tmp="deploy/job_platinum_ranking.tmp.yaml"
           envsubst < deploy/job_platinum_ranking.yaml > "$tmp"
-          cat "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "Job ${{ env.PLATINUM_RANKING_JOB }} not found. Creating..."
