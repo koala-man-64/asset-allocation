@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -34,7 +35,10 @@ def require_env_bool(name: str) -> bool:
 
 
 class AppSettings(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore")
+    # NOTE: We disable env value decoding so list-like settings (e.g. DEBUG_SYMBOLS)
+    # can be provided as a simple comma-separated string (AAPL,MSFT) without requiring
+    # JSON array syntax. This also avoids failures when the env var is present but empty.
+    model_config = SettingsConfigDict(extra="ignore", enable_decoding=False)
 
     # Basic runtime metadata.
     domain: str = "asset_allocation"
@@ -91,7 +95,23 @@ class AppSettings(BaseSettings):
         if value is None:
             return []
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            raw = value.strip()
+            if not raw:
+                return []
+
+            # Accept either JSON array syntax or a comma-separated string.
+            if raw.startswith("["):
+                try:
+                    decoded = json.loads(raw)
+                except Exception:
+                    decoded = None
+                else:
+                    if isinstance(decoded, list):
+                        return [str(item).strip() for item in decoded if str(item).strip()]
+
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
         return value
 
     @model_validator(mode="after")
