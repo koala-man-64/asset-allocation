@@ -489,6 +489,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.BRONZE_MARKET_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.BRONZE_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -535,6 +544,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.SILVER_MARKET_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.SILVER_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -582,6 +600,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.GOLD_MARKET_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.GOLD_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -629,6 +656,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.BRONZE_FINANCE_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.BRONZE_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -675,6 +711,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.SILVER_FINANCE_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.SILVER_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -722,6 +767,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.GOLD_FINANCE_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.GOLD_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -770,6 +824,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -816,6 +879,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -863,6 +935,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -910,6 +991,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.BRONZE_EARNINGS_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -956,6 +1046,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.SILVER_EARNINGS_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.SILVER_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1003,6 +1102,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.GOLD_EARNINGS_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.GOLD_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1051,6 +1159,15 @@ jobs:
               --environment asset-allocation-env \
               --yaml "$tmp"
           else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.PLATINUM_RANKING_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
             az containerapp job update \
               --name ${{ env.PLATINUM_RANKING_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
