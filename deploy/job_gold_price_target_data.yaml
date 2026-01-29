@@ -1,6 +1,10 @@
 location: East US
 name: gold-price-target-job
 type: Microsoft.App/jobs
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    "${ACR_PULL_IDENTITY_RESOURCE_ID}": {}
 properties:
   configuration:
     triggerType: Schedule
@@ -10,6 +14,9 @@ properties:
       replicaCompletionCount: 1
     replicaRetryLimit: 2
     replicaTimeout: 7200
+    registries:
+    - server: assetallocationacr.azurecr.io
+      identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
     - name: yahoo-username
       value: ${YAHOO_USERNAME}
