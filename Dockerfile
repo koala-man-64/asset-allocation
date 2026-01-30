@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 # Copy application code required by jobs.
 COPY pyproject.toml README.md ./
 COPY core/ core/
+COPY monitoring/ monitoring/
 COPY tasks/ tasks/
 RUN pip install --no-cache-dir .
 
