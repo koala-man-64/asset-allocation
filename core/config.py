@@ -64,9 +64,9 @@ class AppSettings(BaseSettings):
     AZURE_CONTAINER_SILVER: str = "silver"
     AZURE_CONTAINER_GOLD: str = "gold"
     AZURE_CONTAINER_PLATINUM: Optional[str] = "platinum"
-
+    
     # API Configuration
-    API_PORT: int = 8000
+    API_PORT: int = os.environ.get("API_PORT", 8000)
 
     # Optional data source credentials (varies by workflow).
     YAHOO_USERNAME: Optional[str] = None
