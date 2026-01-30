@@ -243,6 +243,18 @@ def get_delta_table_uri(container: str, path: str, account_name: Optional[str] =
     # using object_store.
     return f"abfss://{container}@{acc}.dfs.core.windows.net/{path}"
 
+def get_delta_schema_columns(container: str, path: str) -> Optional[List[str]]:
+    """
+    Returns the column names for an existing Delta table, or None if unavailable.
+    """
+    try:
+        uri = get_delta_table_uri(container, path)
+        opts = get_delta_storage_options(container)
+        return _get_existing_delta_schema_columns(uri, opts)
+    except Exception as exc:
+        logger.warning(f"Failed to resolve Delta schema for {path}: {exc}")
+        return None
+
 def store_delta(
     df: pd.DataFrame, 
     container: str, 

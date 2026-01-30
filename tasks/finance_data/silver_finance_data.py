@@ -90,6 +90,21 @@ def _try_get_delta_max_date(container: str, path: str) -> Optional[pd.Timestamp]
     return pd.Timestamp(dates.max()).normalize()
 
 
+def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
+    existing_cols = delta_core.get_delta_schema_columns(container, path)
+    if not existing_cols:
+        return df.reset_index(drop=True)
+
+    out = df.copy()
+    for col in existing_cols:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    ordered_cols = list(existing_cols) + [col for col in out.columns if col not in existing_cols]
+    out = out[ordered_cols]
+    return out.reset_index(drop=True)
+
+
 def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = None) -> BlobProcessResult:
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
@@ -172,7 +187,14 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
         # I'll check store_delta signature in next turn if needed.
         # Assuming overwrite for the partition/table is safest for now to avoid specific duplicates.
         
-        delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
+        df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
+        delta_core.store_delta(
+            df_clean,
+            cfg.AZURE_CONTAINER_SILVER,
+            silver_path,
+            mode="overwrite",
+            schema_mode="merge",
+        )
         mdc.write_line(f"Updated Silver {silver_path}")
         if watermarks is not None and signature:
             signature["updated_at"] = datetime.utcnow().isoformat()
