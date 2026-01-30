@@ -17,9 +17,34 @@ warnings.filterwarnings('ignore')
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
-def process_file(blob_name):
-    ticker = blob_name.replace('market-data/', '').replace('.csv', '')
+def process_file(blob_name: str) -> bool:
+    """
+    Backwards-compatible wrapper (tests/local tooling) that processes a blob by name.
+
+    Production uses `process_blob()` with `last_modified` metadata for freshness checks.
+    """
+    return process_blob({"name": blob_name})
+
+def process_blob(blob: dict) -> bool:
+    blob_name = blob["name"]  # market-data/{ticker}.csv
+    if not blob_name.endswith(".csv"):
+        return True
+
+    ticker = blob_name.replace("market-data/", "").replace(".csv", "")
     mdc.write_line(f"Processing {ticker} from {blob_name}...")
+
+    silver_path = DataPaths.get_market_data_path(ticker.replace(".", "-"))
+
+    bronze_lm = blob.get("last_modified")
+    if bronze_lm is not None:
+        try:
+            bronze_ts = bronze_lm.timestamp()
+        except Exception:
+            bronze_ts = None
+        else:
+            silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
+            if silver_lm and (silver_lm > bronze_ts):
+                return True
     
     # 1. Read Raw from Bronze
     try:
@@ -35,13 +60,18 @@ def process_file(blob_name):
         df_new = df_new.drop('Adj Close', axis=1)
     
     if 'Date' in df_new.columns:
-        df_new['Date'] = pd.to_datetime(df_new['Date'])
+        df_new['Date'] = pd.to_datetime(df_new['Date'], errors="coerce")
+        df_new = df_new.dropna(subset=["Date"])
+
+    # Only process the most recent date; earlier dates should already be present/cleaned in Silver.
+    if "Date" in df_new.columns and not df_new.empty:
+        latest_date = df_new["Date"].max()
+        df_new = df_new[df_new["Date"] == latest_date].copy()
     
     df_new['Symbol'] = ticker
     
     # 3. Load Existing Silver (History)
-    ticker_file_path = DataPaths.get_market_data_path(ticker.replace('.', '-'))
-    df_history = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
+    df_history = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, silver_path)
     
     # 4. Merge
     if df_history is None or df_history.empty:
@@ -54,7 +84,7 @@ def process_file(blob_name):
     
     # 5. Deduplicate and Sort
     df_merged = df_merged.sort_values(by=['Date', 'Symbol', 'Volume'], ascending=[True, True, False])
-    df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='first')
+    df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
     
     # 6. Type Casting & Formatting
     df_merged = df_merged.astype({
@@ -71,7 +101,7 @@ def process_file(blob_name):
 
     # 7. Write to Silver
     try:
-        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, ticker_file_path)
+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path)
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
         return False
@@ -88,22 +118,22 @@ def main():
     # azure.storage.blob.ContainerClient.list_blobs
     
     mdc.write_line("Listing Bronze files...")
-    blobs = bronze_client.list_files(name_starts_with="market-data/")
-    
+    blobs = bronze_client.list_blob_infos(name_starts_with="market-data/")
+
     # Convert to list to enable progress tracking/filtering
-    blob_list = [b for b in blobs if b.endswith('.csv')]
+    blob_list = [b for b in blobs if b["name"].endswith(".csv")]
     
     # Debug Filter
     if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG MODE: Filtering for {cfg.DEBUG_SYMBOLS}")
-        blob_list = [b for b in blob_list if any(s in b for s in cfg.DEBUG_SYMBOLS)]
+        blob_list = [b for b in blob_list if any(s in b["name"] for s in cfg.DEBUG_SYMBOLS)]
 
     mdc.write_line(f"Found {len(blob_list)} files to process.")
 
     processed = 0
     failed = 0
-    for blob_name in blob_list:
-        if process_file(blob_name):
+    for blob in blob_list:
+        if process_blob(blob):
             processed += 1
         else:
             failed += 1
@@ -114,12 +144,14 @@ def main():
 if __name__ == "__main__":
     from core.by_date_pipeline import run_partner_then_by_date
     from tasks.market_data.materialize_silver_market_by_date import main as by_date_main
+    from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = "silver-market-job"
-    raise SystemExit(
-        run_partner_then_by_date(
-            job_name=job_name,
-            partner_main=main,
-            by_date_main=by_date_main,
-        )
+    exit_code = run_partner_then_by_date(
+        job_name=job_name,
+        partner_main=main,
+        by_date_main=by_date_main,
     )
+    if exit_code == 0:
+        trigger_next_job_from_env()
+    raise SystemExit(exit_code)

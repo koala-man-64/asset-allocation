@@ -126,12 +126,14 @@ def main():
 if __name__ == "__main__":
     from core.by_date_pipeline import run_partner_then_by_date
     from tasks.price_target_data.materialize_silver_price_target_by_date import main as by_date_main
+    from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = "silver-price-target-job"
-    raise SystemExit(
-        run_partner_then_by_date(
-            job_name=job_name,
-            partner_main=main,
-            by_date_main=by_date_main,
-        )
+    exit_code = run_partner_then_by_date(
+        job_name=job_name,
+        partner_main=main,
+        by_date_main=by_date_main,
     )
+    if exit_code == 0:
+        trigger_next_job_from_env()
+    raise SystemExit(exit_code)

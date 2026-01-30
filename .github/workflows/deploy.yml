@@ -472,6 +472,7 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -534,12 +535,13 @@ jobs:
         run: |
           echo "market_silver_job_exists=${{ steps.market_silver_job_check.outputs.job_exists }}"
 
-      - name: Update and Start Market Silver Job
+      - name: Update Market Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.silver_market == 'true' || steps.market_silver_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -585,10 +587,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Market Gold Job Exists
         id: market_feature_job_check
@@ -601,7 +599,7 @@ jobs:
       - name: Log Market Gold Job check
         run: |
           echo "market_feature_job_exists=${{ steps.market_feature_job_check.outputs.job_exists }}"
-      - name: Update and Start Market Gold Job
+      - name: Update Market Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.gold_market == 'true' || steps.market_feature_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
@@ -652,10 +650,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.GOLD_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
       - name: Check Finance Bronze Job Exists
         id: finance_data_job_check
         run: |
@@ -675,6 +669,7 @@ jobs:
           YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -737,12 +732,13 @@ jobs:
         run: |
           echo "finance_silver_job_exists=${{ steps.finance_silver_job_check.outputs.job_exists }}"
 
-      - name: Update and Start Finance Silver Job
+      - name: Update Finance Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.silver_finance == 'true' || steps.finance_silver_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -788,10 +784,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.SILVER_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Finance Gold Job Exists
         id: finance_feature_job_check
@@ -804,7 +796,7 @@ jobs:
       - name: Log Finance Gold Job check
         run: |
           echo "finance_feature_job_exists=${{ steps.finance_feature_job_check.outputs.job_exists }}"
-      - name: Update and Start Finance Gold Job
+      - name: Update Finance Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.gold_finance == 'true' || steps.finance_feature_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
@@ -855,10 +847,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.GOLD_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
       
       - name: Check Price Target Job Exists
         id: price_target_job_check
@@ -877,6 +865,7 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -939,12 +928,13 @@ jobs:
         run: |
           echo "price_target_silver_job_exists=${{ steps.price_target_silver_job_check.outputs.job_exists }}"
 
-      - name: Update and Start Price Target Silver Job
+      - name: Update Price Target Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.silver_price_target == 'true' || steps.price_target_silver_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -990,10 +980,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Price Target Gold Job Exists
         id: price_target_feature_job_check
@@ -1006,7 +992,7 @@ jobs:
       - name: Log Price Target Gold Job check
         run: |
           echo "price_target_feature_job_exists=${{ steps.price_target_feature_job_check.outputs.job_exists }}"
-      - name: Update and Start Price Target Gold Job
+      - name: Update Price Target Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.gold_price_target == 'true' || steps.price_target_feature_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
@@ -1057,10 +1043,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
       
       - name: Check Earnings Bronze Job Exists
         id: earnings_data_job_check
@@ -1081,6 +1063,7 @@ jobs:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1143,12 +1126,13 @@ jobs:
         run: |
           echo "earnings_silver_job_exists=${{ steps.earnings_silver_job_check.outputs.job_exists }}"
 
-      - name: Update and Start Earnings Silver Job
+      - name: Update Earnings Silver Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.silver_earnings == 'true' || steps.earnings_silver_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1194,10 +1178,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.SILVER_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Check Earnings Gold Job Exists
         id: earnings_feature_job_check
@@ -1210,7 +1190,7 @@ jobs:
       - name: Log Earnings Gold Job check
         run: |
           echo "earnings_feature_job_exists=${{ steps.earnings_feature_job_check.outputs.job_exists }}"
-      - name: Update and Start Earnings Gold Job
+      - name: Update Earnings Gold Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.gold_earnings == 'true' || steps.earnings_feature_job_check.outputs.job_exists == 'false'
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
@@ -1261,10 +1241,6 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-          
-          az containerapp job start \
-            --name ${{ env.GOLD_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
       
       - name: Check Ranking Job Exists
         id: ranking_job_check

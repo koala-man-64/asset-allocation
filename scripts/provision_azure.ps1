@@ -13,6 +13,7 @@ param(
   [switch]$EnableAcrAdmin,
   [switch]$EmitSecrets,
   [switch]$GrantAcrPullToAcaResources,
+  [switch]$GrantJobStartToAcaResources,
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
@@ -232,6 +233,14 @@ if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources")) {
     if ($grantAcrPullFromEnv -ne $null) {
         Write-Host "Using GRANT_ACR_PULL_TO_ACA_RESOURCES from ${envLabel}: $grantAcrPullFromEnv"
         $GrantAcrPullToAcaResources = $grantAcrPullFromEnv
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey("GrantJobStartToAcaResources")) {
+    $grantJobStartFromEnv = Get-EnvBool -Key "GRANT_JOB_START_TO_ACA_RESOURCES"
+    if ($grantJobStartFromEnv -ne $null) {
+        Write-Host "Using GRANT_JOB_START_TO_ACA_RESOURCES from ${envLabel}: $grantJobStartFromEnv"
+        $GrantJobStartToAcaResources = $grantJobStartFromEnv
     }
 }
 
@@ -599,6 +608,8 @@ function Ensure-AcrPullRoleAssignment {
 
 $acrPullAssignmentsCreated = 0
 $acrPullAssignmentsSkipped = 0
+$jobStartAssignmentsCreated = 0
+$jobStartAssignmentsSkipped = 0
 
 if ($GrantAcrPullToAcaResources) {
   Write-Host ""
@@ -665,6 +676,66 @@ else {
   Write-Host "To grant pull permissions, re-run this script after deployment with -GrantAcrPullToAcaResources (requires RBAC permissions to create role assignments)."
 }
 
+if ($GrantJobStartToAcaResources) {
+  Write-Host ""
+  Write-Host "Granting Silver/Gold job start permissions to the ACR pull identity (best-effort)..."
+  Write-Host "  Assignee: $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
+  Write-Host "  Scope: Silver jobs in $ResourceGroup"
+  Write-Host "  Role: Contributor (job resource scope)"
+
+  $jobNamesForStart = @()
+  try {
+    $jobNamesForStart = @(az containerapp job list --resource-group $ResourceGroup --query "[].name" -o tsv --only-show-errors)
+  }
+  catch {
+    Write-Warning "Could not list Container App Jobs in RG '$ResourceGroup'."
+  }
+
+  foreach ($name in $jobNamesForStart) {
+    if (-not $name) { continue }
+    if (($name -notlike "silver-*") -and ($name -notlike "gold-*")) { continue }
+
+    $jobScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.App/jobs/$name"
+    $existing = "0"
+    try {
+      $existing = az role assignment list `
+        --assignee-object-id $acrPullIdentityPrincipalId `
+        --scope $jobScope `
+        --query "[?roleDefinitionName=='Contributor'] | length(@)" -o tsv --only-show-errors 2>$null
+      if (-not $existing) { $existing = "0" }
+    }
+    catch {
+      $existing = "0"
+    }
+
+    if ([int]$existing -eq 0) {
+      try {
+        az role assignment create `
+          --assignee-object-id $acrPullIdentityPrincipalId `
+          --assignee-principal-type ServicePrincipal `
+          --role "Contributor" `
+          --scope $jobScope `
+          --only-show-errors 1>$null
+        $jobStartAssignmentsCreated += 1
+        Write-Host "  Job start role granted: $name" -ForegroundColor Cyan
+      }
+      catch {
+        Write-Warning "Failed to grant job start role for '$name': $($_.Exception.Message)"
+      }
+    }
+    else {
+      $jobStartAssignmentsSkipped += 1
+    }
+  }
+
+  Write-Host "Job start role assignment summary: created=$jobStartAssignmentsCreated skipped=$jobStartAssignmentsSkipped"
+}
+else {
+  Write-Host ""
+  Write-Host "NOTE: Bronze jobs now attempt to trigger Silver jobs via ARM when they complete."
+  Write-Host "To grant the required permissions, re-run this script after deployment with -GrantJobStartToAcaResources."
+}
+
 $outputs = [ordered]@{
   subscriptionId               = $SubscriptionId
   location                     = $Location
@@ -685,6 +756,8 @@ $outputs = [ordered]@{
   acrPullIdentityOperatorAssigneeObjectId = $githubSpObjectId
   acrPullAssignmentsCreated    = $acrPullAssignmentsCreated
   acrPullAssignmentsSkipped    = $acrPullAssignmentsSkipped
+  jobStartAssignmentsCreated   = $jobStartAssignmentsCreated
+  jobStartAssignmentsSkipped   = $jobStartAssignmentsSkipped
   logAnalyticsWorkspaceName    = $LogAnalyticsWorkspaceName
   logAnalyticsCustomerId       = $lawCustomerId
   containerAppsEnvironmentName = $ContainerAppsEnvironmentName

@@ -126,6 +126,9 @@ async def main_async():
     mdc.write_line("Bronze Ingestion Complete.")
 
 if __name__ == "__main__":
+    from tasks.common.job_trigger import trigger_next_job_from_env
+
     job_name = 'bronze-price-target-job'
     with mdc.JobLock(job_name):
         asyncio.run(main_async())
+        trigger_next_job_from_env()
