@@ -13,7 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Activity,
-  Zap,
   TrendingUp,
   Bell,
   ScanSearch,
@@ -46,7 +45,6 @@ const navSections: NavSection[] = [
   {
     title: 'LIVE OPERATIONS',
     items: [
-      { path: '/signal-monitor', label: 'Signal Monitor', icon: Zap },
       { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
       { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },

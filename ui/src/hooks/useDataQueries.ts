@@ -8,18 +8,6 @@ export const queryKeys = {
     // System & Data Health
     systemHealth: () => ['systemHealth'] as const,
     lineage: () => ['lineage'] as const,
-
-    // High-level Strategy & Signals
-    strategies: () => ['strategies'] as const,
-    signals: () => ['signals'] as const,
-
-    // Strategy Specific Details
-    positions: (strategyId?: string) => ['positions', strategyId] as const,
-    orders: (strategyId?: string) => ['orders', strategyId] as const,
-    alerts: () => ['alerts'] as const,
-    riskMetrics: (strategyId: string) => ['riskMetrics', strategyId] as const,
-    executionMetrics: (strategyId: string) => ['executionMetrics', strategyId] as const,
-    stressEvents: () => ['stressEvents'] as const,
 };
 
 /**
@@ -79,60 +67,5 @@ export function useLineageQuery() {
                 error: err instanceof Error ? err.message : String(err),
             });
         },
-    });
-}
-
-/**
- * Strategy & Signal Queries
- */
-
-export function useStrategiesQuery() {
-    return useQuery({
-        queryKey: queryKeys.strategies(),
-        queryFn: () => DataService.getStrategies(),
-    });
-}
-
-export function useSignalsQuery() {
-    return useQuery({
-        queryKey: queryKeys.signals(),
-        queryFn: async () => {
-            console.info('[Query] signals fetch');
-            return DataService.getSignals();
-        },
-        refetchInterval: 10000,
-        onSuccess: (data) => {
-            console.info('[Query] signals success', { count: data.length });
-        },
-        onError: (err) => {
-            console.error('[Query] signals error', {
-                error: err instanceof Error ? err.message : String(err),
-            });
-        },
-    });
-}
-
-/**
- * Strategy Detail Queries
- */
-
-export function usePositionsQuery(strategyId?: string) {
-    return useQuery({
-        queryKey: queryKeys.positions(strategyId),
-        queryFn: () => DataService.getPositions(strategyId),
-    });
-}
-
-export function useRiskMetricsQuery(strategyId: string) {
-    return useQuery({
-        queryKey: queryKeys.riskMetrics(strategyId),
-        queryFn: () => DataService.getRiskMetrics(strategyId),
-    });
-}
-
-export function useExecutionMetricsQuery(strategyId: string) {
-    return useQuery({
-        queryKey: queryKeys.executionMetrics(strategyId),
-        queryFn: () => DataService.getExecutionMetrics(strategyId),
     });
 }

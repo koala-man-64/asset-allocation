@@ -12,7 +12,6 @@ jobs=(
   "gold-finance-job"
   "gold-price-target-job"
   "gold-earnings-job"
-  "platinum-ranking-job"
 )
 
 "/mnt/c/Users/rdpro/Projects/AssetAllocation - AG/asset-allocation/scripts/ensure_acr_pull.sh" AssetAllocationRG assetallocationacr app backtest-api

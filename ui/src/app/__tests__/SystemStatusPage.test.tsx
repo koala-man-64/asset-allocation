@@ -59,11 +59,6 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
       isLoading: false,
       error: null,
     }),
-    useSignalsQuery: () => ({
-      data: [],
-      isLoading: false,
-      error: null,
-    }),
   };
 });
 

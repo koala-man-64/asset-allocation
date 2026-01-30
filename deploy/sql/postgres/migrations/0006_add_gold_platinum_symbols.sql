@@ -92,22 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_gold_targets_symbol ON gold.price_target_data (sy
 -- Permissions
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ranking_writer') THEN
-    -- Core
-    GRANT SELECT ON TABLE core.symbols TO ranking_writer;
-    
-    -- Gold Usage
-    GRANT USAGE ON SCHEMA gold TO ranking_writer;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA gold TO ranking_writer;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ranking_writer;
-
-    -- Platinum Usage
-    GRANT USAGE ON SCHEMA platinum TO ranking_writer;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platinum TO ranking_writer;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA platinum GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ranking_writer;
-  END IF;
-
-    -- Backtest service (read-only on gold generally, but potentially writable in future? sticking to explicit needs)
+  -- Backtest service (read-only on gold generally, but potentially writable in future? sticking to explicit needs)
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backtest_service') THEN
     GRANT USAGE ON SCHEMA gold TO backtest_service;
     GRANT SELECT ON ALL TABLES IN SCHEMA gold TO backtest_service;

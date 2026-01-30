@@ -129,7 +129,7 @@ def log_environment_diagnostics():
         "AZURE_FOLDER_MARKET",
         "AZURE_FOLDER_EARNINGS",
         "AZURE_FOLDER_TARGETS",
-        "AZURE_FOLDER_RANKING",
+        "AZURE_CONTAINER_PLATINUM",
         # Job behavior toggles
         "LOG_FORMAT",
         "HEADLESS_MODE",

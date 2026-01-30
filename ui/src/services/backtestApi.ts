@@ -1,6 +1,6 @@
 /* global RequestInit */
 import type { FinanceData, MarketData } from '@/types/data';
-import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
+import type { SystemHealth } from '@/types/strategy';
 import { config } from '@/config';
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -418,16 +418,6 @@ export const backtestApi = {
     return requestJson<unknown>('/system/lineage', { signal });
   },
 
-  async getSignals(
-    params: { date?: string; limit?: number } = {},
-    signal?: AbortSignal,
-  ): Promise<TradingSignal[]> {
-    const query = buildQuery({
-      date: params.date,
-      limit: params.limit ?? 500,
-    });
-    return requestJson<TradingSignal[]>(`/ranking/signals${query}`, { signal });
-  },
 
   async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
     const encoded = encodeURIComponent(alertId);
@@ -453,9 +443,6 @@ export const backtestApi = {
     return requestJson<unknown>(`/system/alerts/${encoded}/resolve`, { method: 'POST', signal });
   },
 
-  async getStrategies(signal?: AbortSignal): Promise<StrategyRun[]> {
-    return requestJson<StrategyRun[]>('/ranking/strategies', { signal });
-  },
 
   async getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver', signal?: AbortSignal): Promise<MarketData[]> {
     const query = buildQuery({ ticker });
@@ -506,9 +493,7 @@ export const backtestApi = {
     return requestJson<FinanceData[]>(`/data/${layer}/finance/${encodedSub}${query}`, { signal });
   },
 
-  async getStressEvents(_signal?: AbortSignal): Promise<StressEvent[]> {
-    return [];
-  },
+
 
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
     const encoded = encodeURIComponent(jobName);

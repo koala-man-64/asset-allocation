@@ -24,12 +24,6 @@ API Root
     │       ├── /{job_name}/resume [POST] (system.resume_job) - Resumes an Azure Container App Job :: api/endpoints/system.py <== ui/src/hooks/useJobSuspend.ts
     │       └── /{job_name}/logs [GET] (system.get_job_logs) - Returns log tail for last N Job runs :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/JobLogDrawer.tsx
 
-    # Strategy & Signals (Matches ui/src/hooks/useDataQueries.ts)
-    ├── /ranking
-    │   ├── /strategies [GET] (ranking.get_strategies) - Lists all available strategies and their latest status :: api/endpoints/ranking.py <== ui/src/services/DataService.ts
-    │   ├── /signals [GET] (ranking.get_signals) - Returns daily trading signals across all strategies :: api/endpoints/ranking.py <== ui/src/services/DataService.ts
-    │   └── /{strategy_id} [GET] (ranking.get_strategy_details) - Returns detailed config and sub-models for a strategy :: api/endpoints/ranking.py <== ui/src/services/DataService.ts
-
     # Backtest Data & Execution (Matches ui/src/services/backtestHooks.ts)
     ├── /backtests [GET] (backtests.list_backtests) - Lists historical backtest runs with filtering :: api/endpoints/backtests.py <== ui/src/services/backtestHooks.ts
     ├── /backtests [POST] (backtests.submit_backtest) - Submits a new backtest job :: api/endpoints/backtests.py (UI submit not wired)

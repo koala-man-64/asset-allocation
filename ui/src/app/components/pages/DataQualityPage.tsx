@@ -152,11 +152,9 @@ function normalizeLayerName(layerName: string): 'silver' | 'gold' | 'platinum' |
   return null;
 }
 
-function normalizeDomainName(domainName: string): 'market' | 'finance' | 'earnings' | 'price-target' | 'signals' | 'rankings' | string {
+function normalizeDomainName(domainName: string): 'market' | 'finance' | 'earnings' | 'price-target' | string {
   const key = String(domainName || '').trim().toLowerCase();
   if (key === 'price-target' || key === 'price_target') return 'price-target';
-  if (key === 'signals') return 'signals';
-  if (key === 'rankings') return 'rankings';
   return key;
 }
 
@@ -324,20 +322,6 @@ export function DataQualityPage() {
         return;
       }
 
-      if (layer === 'platinum' && domain === 'signals') {
-        const id = `probe:platinum:signals`;
-        await runProbe(id, 'Signals (platinum)', async () => {
-          const data = await backtestApi.getSignals({ limit: 1 });
-          const count = Array.isArray(data) ? data.length : 0;
-          return {
-            ok: true,
-            detail: `Signals returned: ${count}`,
-            meta: { count },
-          };
-        });
-        return;
-      }
-
       setProbeResults((prev) => ({
         ...prev,
         [`row:${domainKey(row)}`]: {
@@ -355,7 +339,6 @@ export function DataQualityPage() {
     const supported = rows.filter((row) => {
       const layer = normalizeLayerName(row.layerName);
       const domain = normalizeDomainName(row.domain.name);
-      if (layer === 'platinum' && domain === 'signals') return true;
       if (layer === 'silver' || layer === 'gold') {
         return ['market', 'finance', 'earnings', 'price-target'].includes(domain);
       }
@@ -633,7 +616,6 @@ export function DataQualityPage() {
                     if (layerKey === 'gold' && domainName === 'earnings') return `probe:gold:earnings`;
                     if (layerKey === 'silver' && domainName === 'price-target') return `probe:silver:price-target`;
                     if (layerKey === 'gold' && domainName === 'price-target') return `probe:gold:price-target`;
-                    if (layerKey === 'platinum' && domainName === 'signals') return `probe:platinum:signals`;
                     return null;
                   })();
 

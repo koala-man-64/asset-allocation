@@ -8,7 +8,7 @@ import type {
   Position,
   RiskMetrics,
 } from '@/types/data';
-import type { StrategyRun, StressEvent, SystemHealth, TradingSignal } from '@/types/strategy';
+import type { SystemHealth } from '@/types/strategy';
 import type { JobLogsResponse } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
@@ -22,10 +22,6 @@ export const DataService = {
 
   getFinanceData(ticker: string, subDomain: string, layer: 'silver' | 'gold' = 'silver'): Promise<FinanceData[]> {
     return apiService.getFinanceData(ticker, subDomain, layer);
-  },
-
-  getStrategies(): Promise<StrategyRun[]> {
-    return apiService.getStrategies();
   },
 
   async getSystemHealth(): Promise<SystemHealth> {
@@ -46,14 +42,6 @@ export const DataService = {
 
   getLineage(): Promise<unknown> {
     return apiService.getLineage();
-  },
-
-  getSignals(params: { date?: string; limit?: number } = {}): Promise<TradingSignal[]> {
-    return apiService.getSignals(params);
-  },
-
-  getStressEvents(): Promise<StressEvent[]> {
-    return apiService.getStressEvents();
   },
 
   async getPositions(_strategyId?: string): Promise<Position[]> {

@@ -27,7 +27,7 @@ $ExpectedVars = @()
 # Anything NOT matching these patterns is treated as a SECRET.
 $ConfigPatterns = @(
     "^AZURE_CONTAINER_",
-    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET|RANKING)_JOB$",
+    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
     "^SYSTEM_HEALTH_",
     "^HEADLESS_MODE$",
     "^DISABLE_DOTENV$",

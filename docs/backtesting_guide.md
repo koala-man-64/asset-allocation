@@ -29,8 +29,6 @@ data:
   price_source: "ADLS"       # or "local"
   price_path: "silver/market-data/{symbol}"
   # Optional: Delta signals table (container/path) used by signal-driven strategies.
-  # Ranking composite signals (canonical): "ranking-data/platinum/signals/daily"
-  signal_path: "ranking-data/platinum/signals/daily"
   frequency: "Daily"
 
 strategy:
@@ -79,11 +77,11 @@ strategy:
     filters: []
     require_columns: ["symbol", "date", "open", "close"]
   signals:
-    provider: platinum_signals_daily
-    columns: ["composite_percentile"]
+    provider: delta_signals_daily
+    columns: ["signal_score"]
   scoring:
     type: column
-    column: composite_percentile
+    column: signal_score
     fillna: drop
   selection:
     type: topn
@@ -146,7 +144,7 @@ Composite run artifacts (written for each decision date where the composite emit
 
 ### Key Parameters
 *   **`data.signal_path`**: Optional signals input table (Delta `container/path` or local file path when `price_source: local`).
-    *   If using ranking-derived signals, set `signal_path: "ranking-data/platinum/signals/daily"` and use `signal_column: "composite_percentile"` in your strategy.
+    *   Use this when your strategy consumes an external signals table (e.g., curated signals in Platinum).
 *   **`strategy.parameters.rebalance`**: Controls trading frequency.
     *   `daily`: Checks every bar (default).
     *   `weekly`: First trading day of the week.

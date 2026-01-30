@@ -35,11 +35,6 @@ CREATE INDEX IF NOT EXISTS idx_alert_state_resolved_at
 
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ranking_writer') THEN
-    GRANT USAGE ON SCHEMA monitoring TO ranking_writer;
-    GRANT SELECT ON TABLE monitoring.alert_state TO ranking_writer;
-  END IF;
-
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backtest_service') THEN
     GRANT USAGE ON SCHEMA monitoring TO backtest_service;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE monitoring.alert_state TO backtest_service;

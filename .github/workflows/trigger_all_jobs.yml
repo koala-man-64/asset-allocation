@@ -29,8 +29,6 @@ env:
   GOLD_FINANCE_JOB: gold-finance-job
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
   GOLD_EARNINGS_JOB: gold-earnings-job
-  # Platinum
-  PLATINUM_RANKING_JOB: platinum-ranking-job
 
 jobs:
   trigger-jobs:
@@ -97,7 +95,3 @@ jobs:
         if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_earnings' || github.event.inputs.job == 'gold_earnings_by_date' }}
         run: az containerapp job start --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
-      # --- Platinum ---
-      - name: Trigger Ranking Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'platinum_ranking' || github.event.inputs.job == 'ranking' }}
-        run: az containerapp job start --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}

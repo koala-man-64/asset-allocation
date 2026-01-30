@@ -14,8 +14,7 @@ $jobs = @(
   "gold-market-job",
   "gold-finance-job",
   "gold-price-target-job",
-  "gold-earnings-job",
-  "platinum-ranking-job"
+  "gold-earnings-job"
 )
 
 Write-Host "Deleting jobs in Resource Group: $ResourceGroup"

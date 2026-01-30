@@ -332,7 +332,7 @@ def get_data_generic(
     if layer not in ["bronze", "silver", "gold"]:
         raise HTTPException(
             status_code=400,
-            detail="Layer must be 'bronze', 'silver', or 'gold'. Use /ranking for platinum.",
+            detail="Layer must be 'bronze', 'silver', or 'gold'.",
         )
     
     try:

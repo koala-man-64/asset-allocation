@@ -16,7 +16,6 @@ os.environ.setdefault("HEADLESS_MODE", "True")
 os.environ.setdefault("TEST_MODE", "True")
 os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "10")
 os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")
-os.environ.setdefault("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS", "259200")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_API_VERSION", "2023-05-01")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5.0")
 os.environ["SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED"] = "false"
@@ -38,7 +37,7 @@ os.environ.setdefault("BACKTEST_API_KEY_HEADER", "X-API-Key")
 os.environ.setdefault("BACKTEST_ALLOW_LOCAL_DATA", "false")
 os.environ.setdefault(
     "BACKTEST_ADLS_CONTAINER_ALLOWLIST",
-    "bronze,silver,gold,platinum,ranking-data,common,test-container",
+    "bronze,silver,gold,platinum,common,test-container",
 )
 os.environ.setdefault("BACKTEST_RUN_STORE_MODE", "sqlite")
 
@@ -47,10 +46,10 @@ containers = [
     "AZURE_FOLDER_MARKET", "AZURE_FOLDER_FINANCE", 
     "AZURE_FOLDER_EARNINGS", "AZURE_FOLDER_TARGETS", 
     "AZURE_CONTAINER_COMMON",
-    "AZURE_FOLDER_RANKING",
     "AZURE_CONTAINER_BRONZE",
     "AZURE_CONTAINER_SILVER",
     "AZURE_CONTAINER_GOLD",
+    "AZURE_CONTAINER_PLATINUM",
 ]
 for container in containers:
     os.environ.setdefault(container, "test-container")

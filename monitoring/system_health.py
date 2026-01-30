@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
-from core.data_contract import CANONICAL_COMPOSITE_SIGNALS_PATH, CANONICAL_RANKINGS_PATH
 from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.control_plane import ResourceHealthItem, collect_container_apps, collect_jobs_and_executions
@@ -33,7 +32,7 @@ def _utc_now() -> datetime:
 
 def _iso(dt: Optional[datetime]) -> str:
     if not dt:
-        return "1970-01-01T00:00:00+00:00"
+        return ""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc).isoformat()
     return dt.astimezone(timezone.utc).isoformat()
@@ -99,8 +98,8 @@ def _split_csv(raw: Optional[str]) -> List[str]:
 
 
 def _worse_resource_status(primary: str, secondary: str) -> str:
-    ranking = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
-    return secondary if ranking.get(secondary, 0) > ranking.get(primary, 0) else primary
+    status_order = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
+    return secondary if status_order.get(secondary, 0) > status_order.get(primary, 0) else primary
 
 
 def _append_signal_details(details: str, signals: Sequence[Dict[str, Any]]) -> str:
@@ -207,7 +206,6 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
 
 def _default_layer_specs() -> List[LayerProbeSpec]:
     max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
-    max_age_ranking = _require_int("SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS")
 
     # Deployed job schedules (see deploy/job_*.yaml)
     CRON_BRONZE_MARKET = "0 14-22 * * *"
@@ -224,8 +222,7 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
     CRON_GOLD_FINANCE = "30 22 * * *"
     CRON_GOLD_EARNINGS = "30 23 * * *"
     CRON_GOLD_PRICE_TARGET = "30 12 * * *"
-
-    CRON_PLATINUM_RANKING = "0 5 * * *"
+    CRON_PLATINUM = "0 0 * * *"
 
     return [
         LayerProbeSpec(
@@ -266,13 +263,10 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
         ),
         LayerProbeSpec(
             name="Platinum",
-            description="Platinum rankings + derived signals",
-            container_env="AZURE_FOLDER_RANKING",
-            max_age_seconds=max_age_ranking,
-            delta_tables=(
-                DomainSpec(CANONICAL_RANKINGS_PATH, CRON_PLATINUM_RANKING),
-                DomainSpec(CANONICAL_COMPOSITE_SIGNALS_PATH, CRON_PLATINUM_RANKING),
-            ),
+            description="Curated/derived datasets (reserved)",
+            container_env="AZURE_CONTAINER_PLATINUM",
+            max_age_seconds=max_age_default,
+            marker_blobs=(DomainSpec("platinum/", CRON_PLATINUM),),
         ),
     ]
 
@@ -332,11 +326,6 @@ def _get_domain_description(layer_name: str, name: str) -> str:
         if "silver" in l_name: return "Standardized consensus targets"
         if "gold" in l_name: return "Consensus upside/downside metrics"
         return "Analyst price targets"
-
-    if "ranking" in n:
-        return "Composite scores for universe selection"
-    if "signal" in n or "daily" in n:
-        return "Daily trade signals and portfolio adjustments"
     
     return ""  # Fallback empty
 
@@ -367,7 +356,9 @@ def _derive_job_name(layer_name: str, domain_clean: str) -> str:
     
     # Special cases
     if l_name == "platinum":
-        return "platinum-ranking-job"
+        # Platinum is reserved for curated/derived datasets. Jobs vary by dataset and are
+        # intentionally not derived automatically.
+        return ""
     
     return f"{l_name}-{d_name}-job"
 
@@ -532,7 +523,10 @@ def collect_system_health_snapshot(
             
             try:
                 lm = store.get_container_last_modified(container=container, prefix=search_prefix)
-                status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
+                if spec.name.lower() == "platinum" and lm is None:
+                    status = "healthy"
+                else:
+                    status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
                 domain_items.append({
                     "name": name_clean,
                     "description": _get_domain_description(spec.name, name_clean),
@@ -643,6 +637,14 @@ def collect_system_health_snapshot(
             layer_status = "error"
         elif "stale" in layer_statuses:
             layer_status = "stale"
+        elif (
+            spec.name.lower() == "platinum"
+            and not had_layer_error
+            and domain_items
+            and layer_last_updated is None
+            and all(str(d.get("status") or "").lower() == "healthy" for d in domain_items)
+        ):
+            layer_status = "healthy"
         else:
             layer_status = _compute_layer_status(now, layer_last_updated, max_age_seconds=spec.max_age_seconds, had_error=had_layer_error)
 

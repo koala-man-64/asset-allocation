@@ -94,10 +94,10 @@ jobs:
         AZURE_FOLDER_EARNINGS: "earnings-data"
         AZURE_FOLDER_TARGETS: "price-target-data"
         AZURE_CONTAINER_COMMON: "common"
-        AZURE_FOLDER_RANKING: "ranking-data"
         AZURE_CONTAINER_BRONZE: "bronze"
         AZURE_CONTAINER_SILVER: "silver"
         AZURE_CONTAINER_GOLD: "gold"
+        AZURE_CONTAINER_PLATINUM: "platinum"
 
         # Backtest service defaults for CI
         BACKTEST_OUTPUT_DIR: "/tmp/backtest_results"
@@ -106,14 +106,13 @@ jobs:
         BACKTEST_API_KEY_HEADER: "X-API-Key"
         API_AUTH_MODE: "none"
         BACKTEST_ALLOW_LOCAL_DATA: "false"
-        BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,ranking-data,common"
+        BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,common"
         BACKTEST_RUN_STORE_MODE: "sqlite"
         BACKTEST_CSP: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
 
         # System health config (required by monitoring/system_health.py)
         SYSTEM_HEALTH_TTL_SECONDS: "30"
         SYSTEM_HEALTH_MAX_AGE_SECONDS: "129600"
-        SYSTEM_HEALTH_RANKING_MAX_AGE_SECONDS: "259200"
       run: |
         python -m pytest --cov=alpaca --cov=api --cov=backtest --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing
         echo "::group::Coverage Summary"
