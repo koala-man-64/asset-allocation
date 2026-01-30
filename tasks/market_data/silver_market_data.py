@@ -100,6 +100,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     # 5. Deduplicate and Sort
     df_merged = df_merged.sort_values(by=['Date', 'Symbol', 'Volume'], ascending=[True, True, False])
     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
+    df_merged = df_merged.reset_index(drop=True)
     
     # 6. Type Casting & Formatting
     df_merged = df_merged.astype({

@@ -105,6 +105,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     
     # Dedup: Keep LAST (Newest information for that Earnings Date)
     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
+    df_merged = df_merged.reset_index(drop=True)
     
     # 5. Write to Silver
     try:
