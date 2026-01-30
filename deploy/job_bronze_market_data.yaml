@@ -58,7 +58,7 @@ properties:
       - name: TRIGGER_NEXT_JOB_NAME
         value: ${SILVER_MARKET_JOB}
       - name: TRIGGER_NEXT_JOB_REQUIRED
-        value: "false"
+        value: "true"
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_STORAGE_ACCOUNT_NAME
