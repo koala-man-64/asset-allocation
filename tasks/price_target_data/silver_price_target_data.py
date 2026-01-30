@@ -10,6 +10,7 @@ from core import core as mdc
 from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
+from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 
 warnings.filterwarnings('ignore')
 
@@ -17,22 +18,28 @@ warnings.filterwarnings('ignore')
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
-def process_blob(blob):
+def process_blob(blob, *, watermarks: dict | None = None) -> str:
     blob_name = blob['name'] # price-target-data/{symbol}.parquet
     if not blob_name.endswith('.parquet'):
-        return True
+        return "skipped_non_parquet"
         
     ticker = blob_name.replace('price-target-data/', '').replace('.parquet', '')
     
     # Silver Path
     silver_path = DataPaths.get_price_target_path(ticker)
     
-    # Freshness Check
-    bronze_lm = blob['last_modified'].timestamp()
-    silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
-    
-    if silver_lm and (silver_lm > bronze_lm):
-        return True
+    if watermarks is not None:
+        unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+        if unchanged:
+            return "skipped_unchanged"
+    else:
+        signature = {}
+        bronze_lm = blob.get('last_modified')
+        if bronze_lm:
+            bronze_ts = bronze_lm.timestamp()
+            silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
+            if silver_lm and (silver_lm > bronze_ts):
+                return "skipped_fresh"
 
     mdc.write_line(f"Processing {ticker}...")
     
@@ -49,7 +56,7 @@ def process_blob(blob):
         
         # Transform
         if df_new.empty:
-            return
+            return "skipped_empty"
 
         df_new['obs_date'] = pd.to_datetime(df_new['obs_date'])
         df_new = df_new.sort_values(by='obs_date')
@@ -97,30 +104,51 @@ def process_blob(blob):
         df_merged = df_merged.sort_values(by=['obs_date', 'symbol'])
         
         # Write
-        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path)
+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         mdc.write_line(f"Updated Silver {ticker}")
-        return True
+        if watermarks is not None and signature:
+            signature["updated_at"] = datetime.utcnow().isoformat()
+            watermarks[blob_name] = signature
+        return "ok"
     except Exception as e:
         mdc.write_error(f"Failed to process {ticker}: {e}")
-        return False
+        return "failed"
 
 def main():
     mdc.log_environment_diagnostics()
     mdc.write_line("Listing Bronze Price Target files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
+    watermarks = load_watermarks("bronze_price_target_data")
+    watermarks_dirty = False
     
     blob_list = list(blobs)
     mdc.write_line(f"Found {len(blob_list)} blobs. Processing...")
     
     ok_or_skipped = 0
     failed = 0
+    skipped_unchanged = 0
+    skipped_other = 0
     for blob in blob_list:
-        if process_blob(blob):
+        status = process_blob(blob, watermarks=watermarks)
+        if status == "ok":
+            ok_or_skipped += 1
+            if watermarks is not None:
+                watermarks_dirty = True
+        elif status == "skipped_unchanged":
+            skipped_unchanged += 1
+            ok_or_skipped += 1
+        elif status.startswith("skipped"):
+            skipped_other += 1
             ok_or_skipped += 1
         else:
             failed += 1
 
-    mdc.write_line(f"Silver price target job complete: ok_or_skipped={ok_or_skipped} failed={failed}")
+    mdc.write_line(
+        "Silver price target job complete: "
+        f"ok_or_skipped={ok_or_skipped} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} failed={failed}"
+    )
+    if watermarks is not None and watermarks_dirty:
+        save_watermarks("bronze_price_target_data", watermarks)
     return 0 if failed == 0 else 1
 
 if __name__ == "__main__":

@@ -78,7 +78,12 @@ class BlobStorageClient:
         try:
             blobs = self.container_client.list_blobs(name_starts_with=name_starts_with)
             return [
-                {"name": b.name, "last_modified": b.last_modified, "size": b.size}
+                {
+                    "name": b.name,
+                    "last_modified": b.last_modified,
+                    "size": b.size,
+                    "etag": getattr(b, "etag", None),
+                }
                 for b in blobs
             ]
         except Exception as e:

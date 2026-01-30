@@ -14,23 +14,43 @@ class _ByDateMain(Protocol):
 PartnerReturn = TypeVar("PartnerReturn", bound=Union[None, int])
 
 
-def _get_materialize_year_month(now: Optional[datetime] = None) -> str:
+def _get_materialize_year_months(now: Optional[datetime] = None) -> list[str]:
     """
-    Compute the target year-month partition for by-date materialization.
+    Compute target year-month partitions for by-date materialization.
 
     Behavior mirrors the deployed by-date jobs:
-      - If MATERIALIZE_YEAR_MONTH is set, use it.
-      - Otherwise default to yesterday's year-month in UTC.
+      - If MATERIALIZE_YEAR_MONTH is set, use it (single partition).
+      - Otherwise default to yesterday's year-month in UTC, expanded by
+        MATERIALIZE_WINDOW_MONTHS (default 1).
     """
 
     override_raw = os.environ.get("MATERIALIZE_YEAR_MONTH")
     if override_raw:
         override = override_raw.strip()
         if override:
-            return override
+            return [override]
+
+    window_raw = os.environ.get("MATERIALIZE_WINDOW_MONTHS")
+    try:
+        window = int(window_raw) if window_raw else 1
+    except ValueError:
+        window = 1
+
+    if window <= 0:
+        return []
 
     now_utc = now or datetime.now(timezone.utc)
-    return (now_utc - timedelta(days=1)).strftime("%Y-%m")
+    anchor = now_utc - timedelta(days=1)
+    year = anchor.year
+    month = anchor.month
+    months: list[str] = []
+    for _ in range(window):
+        months.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month <= 0:
+            month = 12
+            year -= 1
+    return months
 
 
 def _get_by_date_run_at_utc_hour() -> Optional[int]:
@@ -91,6 +111,17 @@ def run_partner_then_by_date(
             )
             return 0
 
-        year_month = _get_materialize_year_month()
-        mdc.write_line(f"Running by-date materialization for job={job_name} year_month={year_month}...")
-        return by_date_main(["--year-month", year_month])
+        year_months = _get_materialize_year_months()
+        if not year_months:
+            mdc.write_line(
+                f"Skipping by-date materialization for job={job_name} "
+                "(MATERIALIZE_WINDOW_MONTHS<=0)."
+            )
+            return 0
+
+        for year_month in year_months:
+            mdc.write_line(f"Running by-date materialization for job={job_name} year_month={year_month}...")
+            rc = by_date_main(["--year-month", year_month])
+            if isinstance(rc, int) and rc != 0:
+                return rc
+        return 0

@@ -1,6 +1,7 @@
 import os
 import re
 import multiprocessing as mp
+from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Dict, Any, List, Optional
@@ -8,6 +9,7 @@ from typing import Sequence, Tuple, Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
 
+from tasks.common.watermarks import load_watermarks, save_watermarks
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
@@ -552,17 +554,39 @@ def _build_job_config() -> FeatureJobConfig:
 def main() -> int:
     from core import core as mdc
     from core.pipeline import DataPaths
+    from core import delta_core
 
     mdc.log_environment_diagnostics()
     job_cfg = _build_job_config()
 
+    watermarks = load_watermarks("gold_finance_features")
+    watermarks_dirty = False
+
     tasks = []
+    commit_map: Dict[str, float | None] = {}
+    skipped_unchanged = 0
     for ticker in job_cfg.tickers:
         income_path = DataPaths.get_finance_path("Income Statement", ticker, "quarterly_financials")
         balance_path = DataPaths.get_finance_path("Balance Sheet", ticker, "quarterly_balance-sheet")
         cashflow_path = DataPaths.get_finance_path("Cash Flow", ticker, "quarterly_cash-flow")
         valuation_path = DataPaths.get_finance_path("Valuation", ticker, "quarterly_valuation_measures")
         gold_path = DataPaths.get_gold_finance_path(ticker)
+
+        commits = [
+            delta_core.get_delta_last_commit(job_cfg.silver_container, income_path),
+            delta_core.get_delta_last_commit(job_cfg.silver_container, balance_path),
+            delta_core.get_delta_last_commit(job_cfg.silver_container, cashflow_path),
+            delta_core.get_delta_last_commit(job_cfg.silver_container, valuation_path),
+        ]
+        silver_commit = max([c for c in commits if c is not None], default=None)
+        commit_map[ticker] = silver_commit
+
+        if watermarks is not None and silver_commit is not None:
+            prior = watermarks.get(ticker, {})
+            if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
+                skipped_unchanged += 1
+                continue
+
         tasks.append(
             (
                 ticker,
@@ -601,7 +625,27 @@ def main() -> int:
     ok = sum(1 for r in results if r.get("status") == "ok")
     skipped = sum(1 for r in results if r.get("status") == "skipped_no_data")
     failed = len(results) - ok - skipped
-    mdc.write_line(f"Finance feature engineering complete: ok={ok}, skipped={skipped}, failed={failed}")
+    mdc.write_line(
+        f"Finance feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
+        f"skipped_unchanged={skipped_unchanged}, failed={failed}"
+    )
+    if watermarks is not None:
+        for result in results:
+            if result.get("status") != "ok":
+                continue
+            ticker = result.get("ticker")
+            if not ticker:
+                continue
+            silver_commit = commit_map.get(ticker)
+            if silver_commit is None:
+                continue
+            watermarks[ticker] = {
+                "silver_last_commit": silver_commit,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            watermarks_dirty = True
+        if watermarks_dirty:
+            save_watermarks("gold_finance_features", watermarks)
     return 0 if failed == 0 else 1
 
 

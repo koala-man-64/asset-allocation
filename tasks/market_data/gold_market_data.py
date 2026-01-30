@@ -1,6 +1,7 @@
 import os
 import re
 import multiprocessing as mp
+from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Dict, Any, List
@@ -8,6 +9,7 @@ from typing import Sequence, Tuple, Dict, Any, List
 import numpy as np
 import pandas as pd
 
+from tasks.common.watermarks import load_watermarks, save_watermarks
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
@@ -243,14 +245,29 @@ def _build_job_config() -> FeatureJobConfig:
 def main() -> int:
     from core import core as mdc
     from core.pipeline import DataPaths
+    from core import delta_core
 
     mdc.log_environment_diagnostics()
     job_cfg = _build_job_config()
 
+    watermarks = load_watermarks("gold_market_features")
+    watermarks_dirty = False
+
     tasks = []
+    commit_map: Dict[str, float | None] = {}
+    skipped_unchanged = 0
     for ticker in job_cfg.tickers:
         raw_path = DataPaths.get_market_data_path(ticker)
         gold_path = DataPaths.get_gold_features_path(ticker)
+        silver_commit = delta_core.get_delta_last_commit(job_cfg.silver_container, raw_path)
+        commit_map[ticker] = silver_commit
+
+        if watermarks is not None and silver_commit is not None:
+            prior = watermarks.get(ticker, {})
+            if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
+                skipped_unchanged += 1
+                continue
+
         tasks.append((ticker, raw_path, gold_path, job_cfg.silver_container, job_cfg.gold_container))
 
     mp_context = mp.get_context("spawn")
@@ -278,7 +295,27 @@ def main() -> int:
     ok = sum(1 for r in results if r.get("status") == "ok")
     skipped = sum(1 for r in results if r.get("status") == "skipped_no_data")
     failed = len(results) - ok - skipped
-    mdc.write_line(f"Feature engineering complete: ok={ok}, skipped={skipped}, failed={failed}")
+    mdc.write_line(
+        f"Feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
+        f"skipped_unchanged={skipped_unchanged}, failed={failed}"
+    )
+    if watermarks is not None:
+        for result in results:
+            if result.get("status") != "ok":
+                continue
+            ticker = result.get("ticker")
+            if not ticker:
+                continue
+            silver_commit = commit_map.get(ticker)
+            if silver_commit is None:
+                continue
+            watermarks[ticker] = {
+                "silver_last_commit": silver_commit,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            watermarks_dirty = True
+        if watermarks_dirty:
+            save_watermarks("gold_market_features", watermarks)
     return 0 if failed == 0 else 1
 
 

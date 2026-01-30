@@ -10,6 +10,7 @@ from core import core as mdc
 from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
+from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 
 warnings.filterwarnings('ignore')
 
@@ -89,7 +90,7 @@ def _try_get_delta_max_date(container: str, path: str) -> Optional[pd.Timestamp]
     return pd.Timestamp(dates.max()).normalize()
 
 
-def process_blob(blob, *, desired_end: pd.Timestamp) -> BlobProcessResult:
+def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = None) -> BlobProcessResult:
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
     # e.g. finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.csv
@@ -133,16 +134,20 @@ def process_blob(blob, *, desired_end: pd.Timestamp) -> BlobProcessResult:
     # DataPaths.get_finance_path(folder_name, ticker, suffix)
     silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
     
-    # Check freshness
-    # Bronze blob last_modified
-    bronze_lm = blob['last_modified'].timestamp()
-    
-    silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
-    
-    if silver_lm and (silver_lm > bronze_lm):
-        max_date = _try_get_delta_max_date(cfg.AZURE_CONTAINER_SILVER, silver_path)
-        if max_date is not None and max_date >= desired_end:
+    if watermarks is not None:
+        unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+        if unchanged:
             return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
+    else:
+        signature = {}
+        bronze_lm = blob.get("last_modified")
+        if bronze_lm is not None:
+            bronze_ts = bronze_lm.timestamp()
+            silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
+            if silver_lm and (silver_lm > bronze_ts):
+                max_date = _try_get_delta_max_date(cfg.AZURE_CONTAINER_SILVER, silver_path)
+                if max_date is not None and max_date >= desired_end:
+                    return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
     
@@ -167,8 +172,11 @@ def process_blob(blob, *, desired_end: pd.Timestamp) -> BlobProcessResult:
         # I'll check store_delta signature in next turn if needed.
         # Assuming overwrite for the partition/table is safest for now to avoid specific duplicates.
         
-        delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
+        delta_core.store_delta(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         mdc.write_line(f"Updated Silver {silver_path}")
+        if watermarks is not None and signature:
+            signature["updated_at"] = datetime.utcnow().isoformat()
+            watermarks[blob_name] = signature
         return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="ok")
         
     except Exception as e:
@@ -182,17 +190,25 @@ def main() -> int:
     mdc.write_line("Listing Bronze Finance files...")
     # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
     blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
+
+    watermarks = load_watermarks("bronze_finance_data")
+    watermarks_dirty = False
     
     desired_end = _utc_today()
 
     results: list[BlobProcessResult] = []
     for blob in blobs:
-        results.append(process_blob(blob, desired_end=desired_end))
+        result = process_blob(blob, desired_end=desired_end, watermarks=watermarks)
+        if result.status == "ok" and watermarks is not None:
+            watermarks_dirty = True
+        results.append(result)
         
     processed = sum(1 for r in results if r.status == "ok")
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
     mdc.write_line(f"Silver finance ingest complete: processed={processed}, skipped={skipped}, failed={failed}")
+    if watermarks is not None and watermarks_dirty:
+        save_watermarks("bronze_finance_data", watermarks)
     return 0 if failed == 0 else 1
 
 if __name__ == "__main__":

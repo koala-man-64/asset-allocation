@@ -9,6 +9,8 @@ from tasks.market_data import config as cfg
 from core import core as mdc
 from core import delta_core
 from core.pipeline import DataPaths
+from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest_only_flag
+from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -23,28 +25,34 @@ def process_file(blob_name: str) -> bool:
 
     Production uses `process_blob()` with `last_modified` metadata for freshness checks.
     """
-    return process_blob({"name": blob_name})
+    return process_blob({"name": blob_name}) != "failed"
 
-def process_blob(blob: dict) -> bool:
+def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     blob_name = blob["name"]  # market-data/{ticker}.csv
     if not blob_name.endswith(".csv"):
-        return True
+        return "skipped_non_csv"
 
     ticker = blob_name.replace("market-data/", "").replace(".csv", "")
     mdc.write_line(f"Processing {ticker} from {blob_name}...")
 
     silver_path = DataPaths.get_market_data_path(ticker.replace(".", "-"))
 
-    bronze_lm = blob.get("last_modified")
-    if bronze_lm is not None:
-        try:
-            bronze_ts = bronze_lm.timestamp()
-        except Exception:
-            bronze_ts = None
-        else:
-            silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
-            if silver_lm and (silver_lm > bronze_ts):
-                return True
+    if watermarks is not None:
+        unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+        if unchanged:
+            return "skipped_unchanged"
+    else:
+        signature = {}
+        bronze_lm = blob.get("last_modified")
+        if bronze_lm is not None:
+            try:
+                bronze_ts = bronze_lm.timestamp()
+            except Exception:
+                bronze_ts = None
+            else:
+                silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
+                if silver_lm and (silver_lm > bronze_ts):
+                    return "skipped_fresh"
     
     # 1. Read Raw from Bronze
     try:
@@ -53,7 +61,7 @@ def process_blob(blob: dict) -> bool:
         df_new = pd.read_csv(BytesIO(raw_bytes))
     except Exception as e:
         mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
-        return False
+        return "failed"
 
     # 2. Clean/Normalize
     if "Adj Close" in df_new.columns:
@@ -63,8 +71,15 @@ def process_blob(blob: dict) -> bool:
         df_new['Date'] = pd.to_datetime(df_new['Date'], errors="coerce")
         df_new = df_new.dropna(subset=["Date"])
 
-    # Only process the most recent date; earlier dates should already be present/cleaned in Silver.
-    if "Date" in df_new.columns and not df_new.empty:
+    backfill_start, backfill_end = get_backfill_range()
+    if backfill_start or backfill_end:
+        df_new = filter_by_date(df_new, "Date", backfill_start, backfill_end)
+        latest_only = False
+    else:
+        latest_only = get_latest_only_flag("MARKET", default=True)
+
+    # Only process the most recent date unless backfill or latest_only disabled.
+    if latest_only and "Date" in df_new.columns and not df_new.empty:
         latest_date = df_new["Date"].max()
         df_new = df_new[df_new["Date"] == latest_date].copy()
     
@@ -101,13 +116,16 @@ def process_blob(blob: dict) -> bool:
 
     # 7. Write to Silver
     try:
-        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path)
+        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
-        return False
+        return "failed"
 
     mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
-    return True
+    if watermarks is not None and signature:
+        signature["updated_at"] = datetime.utcnow().isoformat()
+        watermarks[blob_name] = signature
+    return "ok"
 
 def main():
     mdc.log_environment_diagnostics()
@@ -119,6 +137,8 @@ def main():
     
     mdc.write_line("Listing Bronze files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="market-data/")
+    watermarks = load_watermarks("bronze_market_data")
+    watermarks_dirty = False
 
     # Convert to list to enable progress tracking/filtering
     blob_list = [b for b in blobs if b["name"].endswith(".csv")]
@@ -132,13 +152,27 @@ def main():
 
     processed = 0
     failed = 0
+    skipped_unchanged = 0
+    skipped_other = 0
     for blob in blob_list:
-        if process_blob(blob):
+        status = process_blob(blob, watermarks=watermarks)
+        if status == "ok":
             processed += 1
+            if watermarks is not None:
+                watermarks_dirty = True
+        elif status == "skipped_unchanged":
+            skipped_unchanged += 1
+        elif status.startswith("skipped"):
+            skipped_other += 1
         else:
             failed += 1
 
-    mdc.write_line(f"Silver market job complete: processed={processed} failed={failed}")
+    mdc.write_line(
+        "Silver market job complete: "
+        f"processed={processed} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} failed={failed}"
+    )
+    if watermarks is not None and watermarks_dirty:
+        save_watermarks("bronze_market_data", watermarks)
     return 0 if failed == 0 else 1
 
 if __name__ == "__main__":

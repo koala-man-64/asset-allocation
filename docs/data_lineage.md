@@ -50,3 +50,25 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
 
 The System Status UI consumes `GET /api/system/lineage` to display domain impacts. This repo currently reports no trading-signal impacts.
 
+## Refresh Behavior & Controls
+
+### Silver ingestion
+- Silver jobs skip unchanged Bronze blobs using watermarks stored in the `common` container:
+  - Path: `system/watermarks/bronze_*` (JSON map keyed by blob name).
+- If the common container is unavailable (e.g., local tests), Silver falls back to legacy freshness checks.
+- Market/Earnings default to **latest-only** ingestion:
+  - `SILVER_LATEST_ONLY` (global)
+  - `SILVER_MARKET_LATEST_ONLY`, `SILVER_EARNINGS_LATEST_ONLY` (domain overrides)
+- Optional backfill range filters:
+  - `BACKFILL_START_DATE`, `BACKFILL_END_DATE` (YYYY-MM-DD)
+
+### Gold feature engineering
+- Gold jobs skip unchanged tickers using Silver commit watermarks:
+  - Path: `system/watermarks/gold_*` (JSON map keyed by ticker).
+- If watermarks are unavailable, Gold falls back to full recompute per ticker.
+
+### By-date materialization
+- Default runs yesterday’s month.
+- `MATERIALIZE_WINDOW_MONTHS` expands to the last N months (e.g., `3` → current + prior 2).
+- `MATERIALIZE_YEAR_MONTH` overrides with a single partition when set.
+
