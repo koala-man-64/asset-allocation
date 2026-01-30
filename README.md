@@ -42,4 +42,5 @@ Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under
 
 ## Docs
 - `api/API_ENDPOINTS.md`
+- `docs/strategy_pipeline_layer_domain_bindings.md`
 
