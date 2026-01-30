@@ -198,7 +198,7 @@ Layer/domain selection works via bindings.
   - binding resolution
   - universe filtering correctness
   - missing policy behavior
-  - ranking tie-break determinism
+  - ordering tie-break determinism
 
 ### Phase 2 — Constraints + Rebalance/Turnover + Full Diagnostics
 
@@ -336,4 +336,3 @@ Without that, as soon as you mix `silver/gold/platinum`, you’ll lose time debu
 ## Source
 
 This doc is a cleaned reference of a design note supplied in chat (includes examples and a phased delivery plan).
-

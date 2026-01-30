@@ -3,7 +3,7 @@ Materialize a cross-sectional (by-date) Delta table from per-ticker market featu
 
 Why:
 - Per-ticker tables are convenient for symbol backtests.
-- Ranking/analytics need cross-sectional slices (all symbols for a given date).
+- Downstream analytics need cross-sectional slices (all symbols for a given date).
 
 This script builds a single Delta table partitioned by year_month and date.
 """

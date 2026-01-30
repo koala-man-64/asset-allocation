@@ -38,7 +38,7 @@ The project uses a **Serverless Container Architecture** on Azure Container Apps
 | **Bronze** | `market`, `finance`, `price-target`, `earnings` | Cron (Daily) |
 | **Silver** | `market`, `finance`, `price-target`, `earnings` | Manual / Event |
 | **Gold** | `market`, `finance`, `price-target`, `earnings` | Manual / Event |
-| **Platinum** | `platinum-ranking-job` | Manual |
+| **Platinum** | *(reserved)* | — |
 
 ---
 

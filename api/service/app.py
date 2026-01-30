@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from api.endpoints import data, ranking, system, postgres
+from api.endpoints import data, system, postgres
 from api.service.auth import AuthManager
 from api.service.dependencies import get_settings
 from api.service.settings import ServiceSettings
@@ -111,7 +111,6 @@ def create_app() -> FastAPI:
 
     # Include API Routers with /api prefix
     app.include_router(data.router, prefix="/api/data", tags=["Data"])
-    app.include_router(ranking.router, prefix="/api/ranking", tags=["Ranking"])
     app.include_router(system.router, prefix="/api/system", tags=["System"])
     app.include_router(postgres.router, prefix="/api/system/postgres", tags=["Postgres"])
 

@@ -8,7 +8,6 @@ import { useUIStore } from '@/stores/useUIStore';
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
 
 import { DataExplorerPage } from '@/app/components/pages/DataExplorerPage';
-import { SignalMonitorPage } from '@/app/components/pages/SignalMonitorPage';
 import { LiveTradingPage } from '@/app/components/pages/LiveTradingPage';
 import { AlertsPage } from '@/app/components/pages/AlertsPage';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
@@ -33,7 +32,6 @@ function AppContent() {
             <Routes>
               <Route path="/" element={<Navigate to="/system-status" replace />} />
               <Route path="/data-explorer" element={<DataExplorerPage />} />
-              <Route path="/signal-monitor" element={<SignalMonitorPage />} />
               <Route path="/live-trading" element={<LiveTradingPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/data-quality" element={<DataQualityPage />} />

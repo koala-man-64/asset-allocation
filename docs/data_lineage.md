@@ -8,7 +8,6 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
 - **Finance**: financial statements + ratios (`tasks/finance_data/*`)
 - **Earnings**: earnings calendar + surprise metrics (`tasks/earnings_data/*`)
 - **Price Target**: analyst targets + dispersion metrics (`tasks/price_target_data/*`)
-- **Rankings / Signals (Platinum)**: strategy ranks and daily signals (`tasks/ranking/*`)
 
 ## Storage Layers and Canonical Paths
 
@@ -41,34 +40,13 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
   - Earnings features: `tasks/earnings_data/gold_earnings_data.py` → `earnings/<ticker>` and `earnings_by_date`
   - Price target features: `tasks/price_target_data/gold_price_target_data.py` → `targets/<ticker>` and `targets_by_date`
 
-### Platinum (rankings + signals)
+### Platinum (reserved)
 
-- Container: `AZURE_FOLDER_RANKING`
-- Canonical Delta tables live under the `platinum/` prefix in the ranking container:
-  - `core.data_contract.CANONICAL_RANKINGS_PATH` → `platinum/rankings`
-  - `core.data_contract.CANONICAL_COMPOSITE_SIGNALS_PATH` → `platinum/signals/daily`
-  - `core.data_contract.CANONICAL_RANKING_SIGNALS_PATH` → `platinum/signals/ranking_signals`
-- Produced by:
-  - `tasks/ranking/runner.py` (writes canonical rankings)
-  - `tasks/ranking/signals.py` (materializes canonical signals)
-- Replicated to Postgres (for APIs/UI):
-  - Writer: `tasks/ranking/postgres_signals.py`
-  - Tables: `deploy/sql/postgres/migrations/0003_ranking_signals.sql` (`ranking.ranking_signal`, `ranking.composite_signal_daily`)
+- Container: `AZURE_CONTAINER_PLATINUM`
+- Reserved for curated/derived datasets that sit above Gold.
+- No Platinum pipelines are currently defined in this repo.
 
-## Downstream Impact (Which signals depend on which domains)
+## Downstream Impact
 
-Ranking strategies declare non-market dependencies via `sources_used` in `tasks/ranking/strategies.py`:
-
-- **Market** is implicit for all strategies (always required)
-- `Value_PE` depends on: `finance`
-- `BrokenGrowthWithImprovingInternals` depends on: `finance`, `price_targets`
-
-Operationally, this means:
-
-- If **Market** is stale → all ranking-based signals should be considered impacted.
-- If **Finance** is stale → at least `Value_PE` and `BrokenGrowthWithImprovingInternals` are impacted.
-- If **Price Target** is stale → `BrokenGrowthWithImprovingInternals` is impacted.
-- If **Earnings** is stale → currently no strategy declares it in `sources_used`, but it is available for future strategies.
-
-The System Status UI consumes `GET /system/lineage` to display this impact per domain and correlate it with current `BUY` signals from `GET /signals`.
+The System Status UI consumes `GET /api/system/lineage` to display domain impacts. This repo currently reports no trading-signal impacts.
 

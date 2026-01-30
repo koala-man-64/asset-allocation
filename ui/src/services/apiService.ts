@@ -4,7 +4,7 @@ import {
     FinanceData,
     MarketData,
 } from '@/types/data';
-import { StrategyRun, SystemHealth, TradingSignal, StressEvent } from '@/types/strategy';
+import { SystemHealth } from '@/types/strategy';
 
 interface WindowWithConfig extends Window {
     __API_UI_CONFIG__?: { apiBaseUrl?: string };
@@ -78,26 +78,12 @@ export const apiService = {
         return request<FinanceData[]>(`/data/finance/${ticker}/${subDomain}`, { params: { layer } });
     },
 
-    // --- Ranking/Strategy Endpoints ---
-
-    getStrategies(): Promise<StrategyRun[]> {
-        return request<StrategyRun[]>('/ranking/strategies');
-    },
-
     getSystemHealth(): Promise<SystemHealth> {
         return request<SystemHealth>('/system/health');
     },
 
     getLineage(): Promise<unknown> {
         return request<unknown>('/system/lineage');
-    },
-
-    getSignals(params: { date?: string; limit?: number } = {}): Promise<TradingSignal[]> {
-        return request<TradingSignal[]>('/ranking/signals', { params });
-    },
-
-    getStressEvents(): Promise<StressEvent[]> {
-        return request<StressEvent[]>('/ranking/stress-events');
     },
 
     getJobLogs(

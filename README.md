@@ -1,6 +1,6 @@
 # AssetAllocation
 
-Python project for market/finance data pipelines, ranking signals, and a backtest framework.
+Python project for market/finance data pipelines, system monitoring, and a backtest framework.
 
 ## Quickstart
 
@@ -28,7 +28,6 @@ The UI calls the FastAPI service under `/api/*` (see `api/API_ENDPOINTS.md`). Co
 
 - `GET /api/data/{layer}/market?ticker={ticker}` (layer: `silver|gold`)
 - `GET /api/data/{layer}/finance/{sub_domain}?ticker={ticker}` (layer: `silver|gold`)
-- `GET /api/ranking/strategies`
 - `GET /api/system/health`
 - `WS /api/ws/updates`
 

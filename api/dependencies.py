@@ -31,7 +31,9 @@ def resolve_container(layer: str, domain: str = None) -> str:
         # Given generic "market" is common default:
         return cfg.AZURE_FOLDER_MARKET
     elif layer == "platinum":
-        return cfg.AZURE_FOLDER_RANKING
+        if not cfg.AZURE_CONTAINER_PLATINUM:
+            raise ValueError("AZURE_CONTAINER_PLATINUM is not configured.")
+        return cfg.AZURE_CONTAINER_PLATINUM
     
     raise ValueError(f"Unknown layer: {layer}")
 

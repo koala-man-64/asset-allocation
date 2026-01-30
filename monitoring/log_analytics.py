@@ -80,8 +80,8 @@ def _status_for_value(value: Optional[float], *, warn_above: Optional[float], er
 
 
 def _worse_status(primary: str, secondary: str) -> str:
-    ranking = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
-    return secondary if ranking.get(secondary, 0) > ranking.get(primary, 0) else primary
+    status_order = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
+    return secondary if status_order.get(secondary, 0) > status_order.get(primary, 0) else primary
 
 
 def _escape_kql_literal(value: str) -> str:

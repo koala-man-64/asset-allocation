@@ -14,13 +14,12 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 
 ## What Phase 1 adds
 
-- **Provisioning script:** `deploy/provision_azure_postgres.ps1`
+- **Provisioning script:** `scripts/provision_azure_postgres.ps1`
 - **Migrations baseline:**
   - `deploy/sql/postgres/migrations/0001_schema_migrations.sql`
   - `deploy/sql/postgres/migrations/0002_init_schemas.sql`
-- **Migration runner:** `deploy/apply_postgres_migrations.ps1` (supports local `psql` or Dockerized `psql`)
+- **Migration runner:** `scripts/apply_postgres_migrations.ps1` (supports local `psql` or Dockerized `psql`)
 - **Deploy wiring (secrets only; unused until later phases):**
-  - Ranking job: `deploy/job_platinum_ranking.yaml` → `POSTGRES_DSN` secret ref
   - Backtest API: `deploy/app_api.yaml` → `POSTGRES_DSN` secret ref
   - GitHub deploy workflow: `.github/workflows/deploy.yml` passes the secrets to `envsubst`
 
@@ -28,14 +27,12 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 
 Add these secrets in your GitHub repo settings:
 
-- `POSTGRES_DSN` — DSN for the ranking job (future Phase 2 writer).
-- `POSTGRES_DSN` — DSN for the backtest API (future Phase 3 run store).
+- `POSTGRES_DSN` — DSN for the API/backtest service role.
 
 **Single Postgres server + database**
 
-This repo assumes **one Postgres server** and **one database** (with multiple schemas like `ranking` and `backtest`).
-`POSTGRES_DSN` and `POSTGRES_DSN` should therefore point to the **same host/port/database** and typically
-only differ by **username/password** (separate least-privileged roles).
+This repo assumes **one Postgres server** and **one database** (with multiple schemas like `core` and `backtest`).
+Schemas are managed via repo migrations (e.g., `core`, `backtest`, `monitoring`, `gold`, `platinum`).
 
 Recommended DSN format:
 
@@ -46,7 +43,7 @@ Recommended DSN format:
 Run (PowerShell):
 
 ```powershell
-pwsh deploy/provision_azure_postgres.ps1 `
+pwsh scripts/provision_azure_postgres.ps1 `
   -SubscriptionId "<SUBSCRIPTION_ID>" `
   -Location "eastus2" `
   -SkuName "standard_b1ms" `
@@ -65,7 +62,7 @@ Notes:
   - Quick check: `az postgres flexible-server list-skus -l <region> --query "[0].reason" -o tsv` (empty output means “allowed”).
 - The provisioning script retries server creation in `-LocationFallback` regions if the first location is restricted.
 - If you see a `ResourceNotFound` for the database during `db show`, the script will create the database and continue (expected for first-time setup when the server exists but the database does not).
-- If you re-run with `-CreateAppUsers`, the script will set (rotate) the app role passwords to the `-RankingWriterPassword/-BacktestServicePassword` values (or newly generated values if omitted).
+- If you re-run with `-CreateAppUsers`, the script will set (rotate) the app role password to the `-BacktestServicePassword` value (or a newly generated value if omitted).
 - `-AllowAzureServices` adds a firewall rule `0.0.0.0` (Azure-internal access). For tighter rules, use `-AllowIpRangeStart/-AllowIpRangeEnd`.
 - Without `-EmitSecrets`, outputs redact the admin password and connection strings.
 
@@ -76,13 +73,13 @@ You need a DSN with sufficient privileges (typically the admin DSN).
 Using Dockerized `psql` (recommended if `psql` is not installed locally):
 
 ```powershell
-pwsh deploy/apply_postgres_migrations.ps1 -Dsn "<ADMIN_DSN>" -UseDockerPsql
+pwsh scripts/apply_postgres_migrations.ps1 -Dsn "<ADMIN_DSN>" -UseDockerPsql
 ```
 
 Using local `psql`:
 
 ```powershell
-pwsh deploy/apply_postgres_migrations.ps1 -Dsn "<ADMIN_DSN>"
+pwsh scripts/apply_postgres_migrations.ps1 -Dsn "<ADMIN_DSN>"
 ```
 
 ## Deploy notes
@@ -92,6 +89,4 @@ pwsh deploy/apply_postgres_migrations.ps1 -Dsn "<ADMIN_DSN>"
 
 ## Next phases (high level)
 
-- **Phase 2:** Dual-write signals into Postgres (Delta remains canonical), add ingestion watermark.
-- **Phase 3:** Move backtest run-state to Postgres (plus correctness under the single-replica model, or add leases for multi-instance).
-- **Phase 4:** Optional Postgres signal reads + hardening/observability.
+- **Phase 2:** Harden the backtest run store and operational guardrails.

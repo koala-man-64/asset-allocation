@@ -36,8 +36,6 @@ env:
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
   GOLD_EARNINGS_JOB: gold-earnings-job
 
-  PLATINUM_RANKING_JOB: platinum-ranking-job
-
   SILVER_MARKET_JOB: silver-market-job
   SILVER_FINANCE_JOB: silver-finance-job
   SILVER_PRICE_TARGET_JOB: silver-price-target-job
@@ -52,7 +50,6 @@ env:
   AZURE_FOLDER_FINANCE: finance-data
   AZURE_FOLDER_EARNINGS: earnings-data
   AZURE_FOLDER_TARGETS: price-target-data
-  AZURE_FOLDER_RANKING: ranking-data
   AZURE_CONTAINER_COMMON: common
   SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
 
@@ -315,23 +312,6 @@ jobs:
               - "deploy/job_gold_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
 
-      - name: Detect Ranking Changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        id: ranking_changes
-        with:
-          filters: |
-            PLATINUM_RANKING_JOB:
-              - "Dockerfile"
-              - "pyproject.toml"
-              - "requirements.lock.txt"
-              - "core/**"
-              - "services/**"
-              - "alpaca/**"
-              - "tasks/common/**"
-              - "tasks/ranking/**"
-              - "deploy/job_platinum_ranking.yaml"
-              - ".github/workflows/deploy.yml"
-
       - name: Log change detection outputs
         run: |
           echo "bronze_market=${{ steps.market_changes.outputs.bronze_market }}"
@@ -346,7 +326,6 @@ jobs:
           echo "bronze_price_target=${{ steps.price_target_changes.outputs.bronze_price_target }}"
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
-          echo "PLATINUM_RANKING_JOB=${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
@@ -1257,74 +1236,6 @@ jobs:
             --name ${{ env.GOLD_EARNINGS_JOB }} \
             --resource-group ${{ env.RESOURCE_GROUP }}
       
-      - name: Check Ranking Job Exists
-        id: ranking_job_check
-        run: |
-          if az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "job_exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "job_exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Log Ranking job check
-        run: |
-          echo "ranking_job_exists=${{ steps.ranking_job_check.outputs.job_exists }}"
-      - name: Update and Start Ranking Job
-        if: env.FORCE_REDEPLOY == 'true' || steps.ranking_changes.outputs.PLATINUM_RANKING_JOB == 'true' || steps.ranking_job_check.outputs.job_exists == 'false'
-        env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
-          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
-          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
-        run: |
-          set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
-
-          echo "Deploying Platinum Ranking Job from YAML..."
-          tmp="deploy/job_platinum_ranking.tmp.yaml"
-          envsubst < deploy/job_platinum_ranking.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.PLATINUM_RANKING_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.PLATINUM_RANKING_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
-              --yaml "$tmp"
-          else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.PLATINUM_RANKING_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.PLATINUM_RANKING_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            az containerapp job update \
-              --name ${{ env.PLATINUM_RANKING_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
-          fi
-          
-          az containerapp job start \
-            --name ${{ env.PLATINUM_RANKING_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
-
       - name: Delete Deprecated By-Date Jobs
         run: |
           set -euo pipefail
@@ -1399,9 +1310,6 @@ jobs:
           fi
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.gold_earnings }}" = "true" ] || [ "${{ steps.earnings_feature_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.GOLD_EARNINGS_JOB }}"
-          fi
-          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.ranking_changes.outputs.PLATINUM_RANKING_JOB }}" = "true" ] || [ "${{ steps.ranking_job_check.outputs.job_exists }}" = "false" ]; then
-            check_job "${{ env.PLATINUM_RANKING_JOB }}"
           fi
 
       - name: Update and Start Feature Jobs Post-Deploy
