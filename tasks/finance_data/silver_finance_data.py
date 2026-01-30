@@ -5,6 +5,7 @@ from typing import Optional
 import pandas as pd
 import warnings
 from io import BytesIO
+import re
 
 from core import core as mdc
 from core import delta_core
@@ -31,6 +32,13 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     to (Dates in Rows, Metrics in Columns).
     """
     if 'name' in df.columns:
+        df['name'] = df['name'].astype(str).str.strip()
+    elif 'breakdown' in df.columns:
+        df['breakdown'] = df['breakdown'].astype(str).str.strip()
+
+    df = _rename_ttm_columns(df)
+
+    if 'name' in df.columns:
         df = df.set_index('name')
     elif 'breakdown' in df.columns:
         df = df.set_index('breakdown')
@@ -43,6 +51,44 @@ def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     df_t.columns.name = None
     df_t['Symbol'] = ticker
     return df_t
+
+
+def _infer_date_format(columns: list[str]) -> str:
+    for raw in columns:
+        value = str(raw).strip()
+        if not value:
+            continue
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return "%Y-%m-%d"
+        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", value):
+            return "%m/%d/%Y"
+        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2}", value):
+            return "%m/%d/%y"
+        if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", value):
+            return "%Y/%m/%d"
+    return "%m/%d/%Y"
+
+
+def _rename_ttm_columns(df: pd.DataFrame) -> pd.DataFrame:
+    ttm_cols = [col for col in df.columns if str(col).strip().lower() == "ttm"]
+    if not ttm_cols:
+        return df
+
+    date_candidates = [
+        col
+        for col in df.columns
+        if col not in ttm_cols and str(col).strip().lower() not in {"name", "breakdown"}
+    ]
+    date_format = _infer_date_format([str(c) for c in date_candidates])
+    today_str = datetime.now(timezone.utc).date().strftime(date_format)
+
+    out = df.copy()
+    for col in ttm_cols:
+        if today_str in out.columns:
+            out = out.drop(columns=[col])
+        else:
+            out = out.rename(columns={col: today_str})
+    return out
 
 def _utc_today() -> pd.Timestamp:
     return pd.Timestamp(datetime.now(timezone.utc).date())

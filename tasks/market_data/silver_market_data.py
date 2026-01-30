@@ -66,10 +66,35 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     # 2. Clean/Normalize
     if "Adj Close" in df_new.columns:
         df_new = df_new.drop('Adj Close', axis=1)
+
+    # Normalize common column casing if needed (defensive for non-standard CSVs)
+    canonical_map = {
+        "date": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    }
+    rename_map = {src: dest for src, dest in canonical_map.items() if src in df_new.columns and dest not in df_new.columns}
+    if rename_map:
+        df_new = df_new.rename(columns=rename_map)
     
     if 'Date' in df_new.columns:
         df_new['Date'] = pd.to_datetime(df_new['Date'], errors="coerce")
         df_new = df_new.dropna(subset=["Date"])
+    else:
+        mdc.write_error(f"Missing Date column in {blob_name}; skipping.")
+        return "failed"
+
+    required_cols = ["Open", "High", "Low", "Close"]
+    missing_cols = [col for col in required_cols if col not in df_new.columns]
+    if missing_cols:
+        mdc.write_error(f"Missing required columns in {blob_name}: {missing_cols}")
+        return "failed"
+
+    if "Volume" not in df_new.columns:
+        df_new["Volume"] = 0.0
 
     backfill_start, backfill_end = get_backfill_range()
     if backfill_start or backfill_end:
