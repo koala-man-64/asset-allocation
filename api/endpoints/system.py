@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -20,6 +20,7 @@ from monitoring.lineage import get_lineage_snapshot
 from monitoring.log_analytics import AzureLogAnalyticsClient
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
+from core.blob_storage import BlobStorageClient
 
 logger = logging.getLogger("asset-allocation.api.system")
 
@@ -237,6 +238,197 @@ def system_lineage(request: Request) -> JSONResponse:
         len((payload.get("impactsByDomain") or {}).keys()),
     )
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+class PurgeRequest(BaseModel):
+    scope: Literal["layer-domain", "layer", "domain"]
+    layer: Optional[str] = None
+    domain: Optional[str] = None
+    confirm: bool = False
+
+
+def _normalize_layer(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return str(value).strip().lower()
+
+
+def _normalize_domain(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = str(value).strip().lower().replace("_", "-").replace(" ", "-")
+    if cleaned == "targets":
+        return "price-target"
+    return cleaned
+
+
+_LAYER_CONTAINER_ENV = {
+    "bronze": "AZURE_CONTAINER_BRONZE",
+    "silver": "AZURE_CONTAINER_SILVER",
+    "gold": "AZURE_CONTAINER_GOLD",
+    "platinum": "AZURE_CONTAINER_PLATINUM",
+}
+
+_DOMAIN_PREFIXES: Dict[str, Dict[str, List[str]]] = {
+    "bronze": {
+        "market": ["market-data/"],
+        "finance": ["finance-data/"],
+        "earnings": ["earnings-data/"],
+        "price-target": ["price-target-data/"],
+    },
+    "silver": {
+        "market": ["market-data/", "market-data-by-date"],
+        "finance": ["finance-data/", "finance-data-by-date"],
+        "earnings": ["earnings-data/", "earnings-data-by-date"],
+        "price-target": ["price-target-data/", "price-target-data-by-date"],
+    },
+    "gold": {
+        "market": ["market/", "market_by_date"],
+        "finance": ["finance/", "finance_by_date"],
+        "earnings": ["earnings/", "earnings_by_date"],
+        "price-target": ["targets/", "targets_by_date"],
+    },
+    "platinum": {
+        "platinum": ["platinum/"],
+    },
+}
+
+
+def _resolve_container(layer: str) -> str:
+    env_key = _LAYER_CONTAINER_ENV.get(layer)
+    if not env_key:
+        raise HTTPException(status_code=400, detail=f"Unknown layer '{layer}'.")
+    container = os.environ.get(env_key, "").strip()
+    if not container:
+        raise HTTPException(status_code=503, detail=f"Missing {env_key} for purge.")
+    return container
+
+
+def _targets_for_layer_domain(layer: str, domain: str) -> List[Tuple[str, str]]:
+    prefixes = _DOMAIN_PREFIXES.get(layer, {}).get(domain, [])
+    if not prefixes:
+        raise HTTPException(status_code=400, detail=f"Unknown domain '{domain}' for layer '{layer}'.")
+    container = _resolve_container(layer)
+    return [(container, prefix) for prefix in prefixes]
+
+
+def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[str]) -> List[Dict[str, Optional[str]]]:
+    scope = scope.strip().lower()
+    layer_norm = _normalize_layer(layer)
+    domain_norm = _normalize_domain(domain)
+
+    targets: List[Dict[str, Optional[str]]] = []
+
+    if scope == "layer-domain":
+        if not layer_norm or not domain_norm:
+            raise HTTPException(status_code=400, detail="layer and domain are required for scope 'layer-domain'.")
+        for container, prefix in _targets_for_layer_domain(layer_norm, domain_norm):
+            targets.append({"layer": layer_norm, "domain": domain_norm, "container": container, "prefix": prefix})
+    elif scope == "layer":
+        if not layer_norm:
+            raise HTTPException(status_code=400, detail="layer is required for scope 'layer'.")
+        container = _resolve_container(layer_norm)
+        targets.append({"layer": layer_norm, "domain": None, "container": container, "prefix": None})
+    elif scope == "domain":
+        if not domain_norm:
+            raise HTTPException(status_code=400, detail="domain is required for scope 'domain'.")
+        for layer_name in _DOMAIN_PREFIXES.keys():
+            if domain_norm not in _DOMAIN_PREFIXES.get(layer_name, {}):
+                continue
+            for container, prefix in _targets_for_layer_domain(layer_name, domain_norm):
+                targets.append({"layer": layer_name, "domain": domain_norm, "container": container, "prefix": prefix})
+        if not targets:
+            raise HTTPException(status_code=400, detail=f"No targets found for domain '{domain_norm}'.")
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown scope '{scope}'.")
+
+    return targets
+
+
+@router.post("/purge")
+def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to purge data.")
+
+    targets = _resolve_purge_targets(payload.scope, payload.layer, payload.domain)
+
+    planned: List[Tuple[BlobStorageClient, Dict[str, Optional[str]]]] = []
+    any_data = False
+    for target in targets:
+        container = str(target["container"] or "")
+        prefix = target.get("prefix")
+        try:
+            client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+            has_data = client.has_blobs(prefix)
+        except Exception as exc:
+            logger.exception(
+                "Purge preflight failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
+                container,
+                prefix,
+                payload.scope,
+                target.get("layer"),
+                target.get("domain"),
+            )
+            raise HTTPException(status_code=502, detail=f"Purge preflight failed for {container}:{prefix}: {exc}") from exc
+
+        planned.append((client, target))
+        any_data = any_data or has_data
+        target["hasData"] = bool(has_data)
+
+    if not any_data:
+        raise HTTPException(status_code=409, detail="Nothing to purge for the selected scope.")
+
+    results: List[Dict[str, Any]] = []
+    total_deleted = 0
+
+    for client, target in planned:
+        if not target.get("hasData"):
+            continue
+        container = str(target["container"] or "")
+        prefix = target.get("prefix")
+        try:
+            deleted = client.delete_prefix(prefix)
+        except Exception as exc:
+            logger.exception(
+                "Purge failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
+                container,
+                prefix,
+                payload.scope,
+                target.get("layer"),
+                target.get("domain"),
+            )
+            raise HTTPException(status_code=502, detail=f"Purge failed for {container}:{prefix}: {exc}") from exc
+
+        results.append(
+            {
+                "container": container,
+                "prefix": prefix,
+                "layer": target.get("layer"),
+                "domain": target.get("domain"),
+                "deleted": deleted,
+            }
+        )
+        total_deleted += int(deleted or 0)
+
+    logger.warning(
+        "Purge completed: scope=%s layer=%s domain=%s targets=%s deleted=%s",
+        payload.scope,
+        payload.layer,
+        payload.domain,
+        len(results),
+        total_deleted,
+    )
+
+    return JSONResponse(
+        {
+            "scope": payload.scope,
+            "layer": payload.layer,
+            "domain": payload.domain,
+            "totalDeleted": total_deleted,
+            "targets": results,
+        }
+    )
 
 
 @router.post("/jobs/{job_name}/run")

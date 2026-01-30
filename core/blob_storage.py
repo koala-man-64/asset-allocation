@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azure.identity import DefaultAzureCredential
 import logging
+from typing import Optional
 from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
@@ -106,6 +107,44 @@ class BlobStorageClient:
                 logger.warning(f"Attempted to delete non-existent blob: {remote_path}")
         except Exception as e:
             logger.error(f"Error deleting file {remote_path}: {e}")
+            raise
+
+    def delete_prefix(self, prefix: Optional[str] = None) -> int:
+        """
+        Deletes all blobs under a prefix. If prefix is None/empty, deletes all blobs in the container.
+        Returns the number of blobs deleted.
+        """
+        try:
+            normalized = prefix or None
+            deleted = 0
+            blobs = self.container_client.list_blobs(name_starts_with=normalized)
+            for blob in blobs:
+                try:
+                    self.container_client.delete_blob(blob.name)
+                    deleted += 1
+                except Exception as exc:
+                    logger.warning(f"Failed to delete blob {blob.name}: {exc}")
+            if normalized:
+                logger.info(f"Deleted {deleted} blob(s) under prefix '{normalized}' in {self.container_name}.")
+            else:
+                logger.info(f"Deleted {deleted} blob(s) in container {self.container_name}.")
+            return deleted
+        except Exception as e:
+            logger.error(f"Error deleting blobs for prefix '{prefix}': {e}")
+            raise
+
+    def has_blobs(self, prefix: Optional[str] = None) -> bool:
+        """
+        Returns True if any blobs exist under the prefix (or in the container if prefix is None/empty).
+        """
+        try:
+            normalized = prefix or None
+            blobs = self.container_client.list_blobs(name_starts_with=normalized)
+            for _ in blobs:
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error checking blobs for prefix '{prefix}': {e}")
             raise
 
     def read_csv(self, remote_path: str) -> pd.DataFrame:

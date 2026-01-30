@@ -9,7 +9,7 @@ import type {
   RiskMetrics,
 } from '@/types/data';
 import type { SystemHealth } from '@/types/strategy';
-import type { JobLogsResponse } from '@/services/apiService';
+import type { JobLogsResponse, PurgeRequest, PurgeResponse } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
 
@@ -90,5 +90,9 @@ export const DataService = {
     limit?: number
   ): Promise<Record<string, unknown>[]> {
     return apiService.getGenericData(layer, domain, ticker, limit);
+  },
+
+  purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
+    return apiService.purgeData(payload);
   },
 };

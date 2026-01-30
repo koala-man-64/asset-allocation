@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
-import { Button } from '@/app/components/ui/button';
 import { StatusOverview } from './system-status/StatusOverview';
 
 import { AzureResources } from './system-status/AzureResources';
@@ -118,24 +116,15 @@ export function SystemStatusPage() {
 
     return (
         <div className="space-y-8 pb-10">
-            <div className="flex items-center justify-end">
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className="font-mono text-xs uppercase tracking-widest"
-                    onClick={() => void handleRefresh()}
-                    disabled={isFetching || isRefreshing}
-                >
-                    <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
-                    Refresh now
-                </Button>
-            </div>
             {/* Status Matrix - The Hero Component */}
             <StatusOverview
                 overall={overall}
                 dataLayers={dataLayers}
                 recentJobs={recentJobs}
                 jobStates={jobStates}
+                onRefresh={handleRefresh}
+                isRefreshing={isRefreshing}
+                isFetching={isFetching}
             />
 
             {/* Jobs */}

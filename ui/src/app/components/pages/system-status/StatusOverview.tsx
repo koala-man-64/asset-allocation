@@ -2,21 +2,26 @@ import React, { useMemo } from 'react';
 import { DataDomain, DataLayer, JobRun } from '@/types/strategy';
 import { formatTimeAgo, getAzureJobExecutionsUrl, getStatusConfig, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
 import { StatusTypos, StatusColors } from './StatusTokens';
-import { CalendarDays, CirclePause, CirclePlay, Database, FolderOpen, Loader2, Play, ScrollText } from 'lucide-react';
+import { CalendarDays, CirclePause, CirclePlay, Database, FolderOpen, Loader2, Play, RefreshCw, ScrollText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useLayerJobControl } from '@/hooks/useLayerJobControl';
+import { Button } from '@/app/components/ui/button';
+import { PurgeActionIcon, normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 
 interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
     jobStates?: Record<string, string>;
+    onRefresh?: () => void;
+    isRefreshing?: boolean;
+    isFetching?: boolean;
 }
 
-export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: StatusOverviewProps) {
+export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onRefresh, isRefreshing, isFetching }: StatusOverviewProps) {
     const sysConfig = getStatusConfig(overall);
     const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' : sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
     const { triggeringJob, triggerJob } = useJobTrigger();
@@ -168,11 +173,23 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                             </div>
                         ))}
                     </div>
-                    <div className="ml-auto text-right">
-                        <div className={StatusTypos.HEADER}>UPTIME CLOCK</div>
-                        <div className={`${StatusTypos.MONO} text-xl text-slate-500`}>
-                            {new Date().toISOString().split('T')[1].split('.')[0]} UTC
+                    <div className="ml-auto flex items-center gap-3">
+                        <div className="text-right">
+                            <div className={StatusTypos.HEADER}>UPTIME CLOCK</div>
+                            <div className={`${StatusTypos.MONO} text-xl text-slate-500`}>
+                                {new Date().toISOString().split('T')[1].split('.')[0]} UTC
+                            </div>
                         </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="font-mono text-xs uppercase tracking-widest"
+                            onClick={onRefresh}
+                            disabled={!onRefresh || isFetching || isRefreshing}
+                        >
+                            <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
+                            Refresh now
+                        </Button>
                     </div>
                 </div>
             </div>
@@ -190,6 +207,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                             </TableHead>
                             {dataLayers.map((layer, layerIdx) => {
                                 const layerStatus = getStatusConfig(layer.status);
+                                const layerKey = normalizeLayerKey(layer.name);
                                 const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
                                 const layerState = layerStates[layer.name];
                                 const isLayerLoading = layerState?.isLoading;
@@ -292,6 +310,15 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                                                         {normalizeAzurePortalUrl(layer.portalUrl) ? 'Open container' : 'Container link not configured'}
                                                     </TooltipContent>
                                                 </Tooltip>
+                                                <PurgeActionIcon
+                                                    scope="layer"
+                                                    layer={layerKey}
+                                                    displayLayer={layer.name}
+                                                    tooltip={`Purge ${layer.name} data`}
+                                                    className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-rose-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+                                                    iconClassName="h-4 w-4"
+                                                    disabled={isLayerLoading}
+                                                />
                                             </div>
                                         </div>
                                     </TableHead>
@@ -322,16 +349,31 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                     </TableHeader>
 
                     <TableBody>
-                        {domainNames.map((domainName) => (
-                            <TableRow key={domainName} className="group border-slate-200 even:bg-slate-50/30 hover:bg-slate-50">
-                                <TableCell className="text-sm font-semibold text-slate-900">{domainName}</TableCell>
+                        {domainNames.map((domainName) => {
+                            const domainKey = normalizeDomainKey(domainName);
+                            return (
+                                <TableRow key={domainName} className="group border-slate-200 even:bg-slate-50/30 hover:bg-slate-50">
+                                    <TableCell className="text-sm font-semibold text-slate-900">
+                                        <div className="flex items-center gap-2">
+                                            <span>{domainName}</span>
+                                            <PurgeActionIcon
+                                                scope="domain"
+                                                domain={domainKey}
+                                                displayDomain={domainName}
+                                                tooltip={`Purge all ${domainName} data`}
+                                                className="p-1 hover:bg-slate-100 text-slate-500 hover:text-rose-600 rounded"
+                                                iconClassName="h-4 w-4"
+                                            />
+                                        </div>
+                                    </TableCell>
 
-                                {dataLayers.map((layer, layerIdx) => {
-                                    const domain = domainsByLayer.get(layer.name)?.get(domainName);
-                                    const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
+                                    {dataLayers.map((layer, layerIdx) => {
+                                        const domain = domainsByLayer.get(layer.name)?.get(domainName);
+                                        const layerKey = normalizeLayerKey(layer.name);
+                                        const groupBorder = layerIdx === 0 ? '' : 'border-l border-slate-200';
 
-                                    return (
-                                        <React.Fragment key={layer.name}>
+                                        return (
+                                            <React.Fragment key={layer.name}>
                                             <TableCell className={`text-center ${groupBorder}`}>
                                                 {domain ? (
                                                     <div className="inline-flex items-center justify-center gap-1 whitespace-nowrap">
@@ -610,6 +652,17 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                                                                             {jobName ? (isTriggering ? 'Triggering job…' : 'Trigger job') : 'Job triggering not configured'}
                                                                         </TooltipContent>
                                                                     </Tooltip>
+                                                                    <span className="mx-1 h-4 w-px bg-slate-200" />
+                                                                    <PurgeActionIcon
+                                                                        scope="layer-domain"
+                                                                        layer={layerKey}
+                                                                        domain={domainKey}
+                                                                        displayLayer={layer.name}
+                                                                        displayDomain={domainName}
+                                                                        tooltip={`Purge ${layer.name} ${domainName} data`}
+                                                                        className="p-1 hover:bg-slate-100 text-slate-500 hover:text-rose-600 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+                                                                        iconClassName="h-4 w-4"
+                                                                    />
                                                                 </>
                                                             );
                                                         })()}
@@ -618,11 +671,12 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates }: S
                                                     <span className="text-slate-300">—</span>
                                                 )}
                                             </TableCell>
-                                        </React.Fragment>
-                                    );
-                                })}
-                            </TableRow>
-                        ))}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </TableRow>
+                            );
+                        })}
 
                         {domainNames.length === 0 && (
                             <TableRow className="hover:bg-transparent">

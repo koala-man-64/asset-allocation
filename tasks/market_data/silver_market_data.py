@@ -32,6 +32,9 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     if not blob_name.endswith(".csv"):
         return "skipped_non_csv"
 
+    if blob_name.endswith("whitelist.csv") or blob_name.endswith("blacklist.csv"):
+        return "skipped_list"
+
     ticker = blob_name.replace("market-data/", "").replace(".csv", "")
     mdc.write_line(f"Processing {ticker} from {blob_name}...")
 

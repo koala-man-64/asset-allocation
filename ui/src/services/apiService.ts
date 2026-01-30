@@ -68,6 +68,27 @@ export interface StockScreenerResponse {
     limit: number;
 }
 
+export interface PurgeRequest {
+    scope: 'layer-domain' | 'layer' | 'domain';
+    layer?: string;
+    domain?: string;
+    confirm: boolean;
+}
+
+export interface PurgeResponse {
+    scope: string;
+    layer?: string | null;
+    domain?: string | null;
+    totalDeleted: number;
+    targets: Array<{
+        container: string;
+        prefix?: string | null;
+        layer?: string | null;
+        domain?: string | null;
+        deleted: number;
+    }>;
+}
+
 export const apiService = {
     // --- Data Endpoints ---
 
@@ -117,6 +138,13 @@ export const apiService = {
         const endpoint = `/data/${layer}/${domain}`;
         return request<Record<string, unknown>[]>(endpoint, {
             params: { ticker, limit }
+        });
+    },
+
+    purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
+        return request<PurgeResponse>('/system/purge', {
+            method: 'POST',
+            body: JSON.stringify(payload),
         });
     },
 };
