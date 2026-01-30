@@ -366,6 +366,9 @@ jobs:
 
           acr_id="$(az acr show --name "${{ env.ACR_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query id -o tsv --only-show-errors | tr -d '\r')"
           principal_id="$(az identity show --ids "$identity_id" --query principalId -o tsv --only-show-errors | tr -d '\r')"
+          client_id="$(az identity show --ids "$identity_id" --query clientId -o tsv --only-show-errors | tr -d '\r')"
+          echo "ACR_PULL_IDENTITY_CLIENT_ID=$client_id" >> "$GITHUB_ENV"
+          echo "Using ACR pull identity clientId: $client_id"
 
           # Ensure AcrPull on ACR for the UAMI used by Container Apps/Jobs.
           query="length([?roleDefinitionName=='AcrPull'])"

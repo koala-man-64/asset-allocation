@@ -53,6 +53,8 @@ properties:
         value: ${AZURE_SUBSCRIPTION_ID}
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
         value: ${RESOURCE_GROUP}
+      - name: AZURE_CLIENT_ID
+        value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: TRIGGER_NEXT_JOB_NAME
         value: ${SILVER_FINANCE_JOB}
       - name: TRIGGER_NEXT_JOB_REQUIRED

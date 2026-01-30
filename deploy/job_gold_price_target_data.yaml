@@ -44,6 +44,8 @@ properties:
         value: INFO
       - name: DISABLE_DOTENV
         value: "true"
+      - name: AZURE_CLIENT_ID
+        value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING
