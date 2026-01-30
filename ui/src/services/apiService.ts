@@ -79,8 +79,8 @@ export const apiService = {
         return request<FinanceData[]>(`/data/finance/${ticker}/${subDomain}`, { params: { layer } });
     },
 
-    getSystemHealth(): Promise<SystemHealth> {
-        return request<SystemHealth>('/system/health');
+    getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {
+        return request<SystemHealth>('/system/health', { params });
     },
 
     getLineage(): Promise<unknown> {

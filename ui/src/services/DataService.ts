@@ -24,10 +24,10 @@ export const DataService = {
     return apiService.getFinanceData(ticker, subDomain, layer);
   },
 
-  async getSystemHealth(): Promise<SystemHealth> {
+  async getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {
     console.info('[DataService] getSystemHealth');
     try {
-      const data = await apiService.getSystemHealth();
+      const data = await apiService.getSystemHealth(params);
       console.info('[DataService] getSystemHealth success', {
         overall: data?.overall,
         layers: data?.dataLayers?.length ?? 0,

@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useSystemHealthQuery } from '@/hooks/useDataQueries';
+import { useQueryClient } from '@tanstack/react-query';
+import { RefreshCw } from 'lucide-react';
+import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
+import { DataService } from '@/services/DataService';
+import { Button } from '@/app/components/ui/button';
 import { StatusOverview } from './system-status/StatusOverview';
 
 import { AzureResources } from './system-status/AzureResources';
@@ -10,6 +14,8 @@ import { getAzurePortalUrl, normalizeAzureJobName, normalizeAzurePortalUrl } fro
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
+    const queryClient = useQueryClient();
+    const [isRefreshing, setIsRefreshing] = useState(false);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
     const jobLinks = useMemo(() => {
@@ -76,6 +82,18 @@ export function SystemStatusPage() {
         return () => clearInterval(h);
     }, []);
 
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        try {
+            const fresh = await DataService.getSystemHealth({ refresh: true });
+            queryClient.setQueryData(queryKeys.systemHealth(), fresh);
+        } catch (err) {
+            console.error('[SystemStatusPage] refresh failed', err);
+        } finally {
+            setIsRefreshing(false);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-[calc(100vh-100px)]">
@@ -100,6 +118,18 @@ export function SystemStatusPage() {
 
     return (
         <div className="space-y-8 pb-10">
+            <div className="flex items-center justify-end">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="font-mono text-xs uppercase tracking-widest"
+                    onClick={() => void handleRefresh()}
+                    disabled={isFetching || isRefreshing}
+                >
+                    <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
+                    Refresh now
+                </Button>
+            </div>
             {/* Status Matrix - The Hero Component */}
             <StatusOverview
                 overall={overall}
