@@ -26,6 +26,22 @@ class MaterializeConfig:
     max_tickers: Optional[int]
 
 
+def _normalize_object_columns(df: pd.DataFrame, *, exclude: set[str]) -> pd.DataFrame:
+    """
+    Delta/Arrow writes can fail when pandas `object` columns contain a mix of strings + floats
+    (e.g., numeric strings with missing values). Finance tables intentionally keep many values
+    as strings (human-formatted), so normalize object-ish columns to pandas string dtype.
+    """
+    out = df.copy()
+    for col in out.columns:
+        if col in exclude:
+            continue
+        series = out[col]
+        if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
+            out[col] = series.astype("string")
+    return out
+
+
 def _parse_year_month_bounds(year_month: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
     try:
         start = pd.Timestamp(f"{year_month}-01")
@@ -283,6 +299,12 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
         return 0
 
     predicate = f"year_month = '{cfg.year_month}'"
+
+    if "Symbol" in out.columns:
+        out["Symbol"] = out["Symbol"].astype("string")
+    if "symbol" in out.columns:
+        out["symbol"] = out["symbol"].astype("string")
+    out = _normalize_object_columns(out, exclude={date_col, "year_month", "Symbol", "symbol"})
 
     store_delta(
         out,

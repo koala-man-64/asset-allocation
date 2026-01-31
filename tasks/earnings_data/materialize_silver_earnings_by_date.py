@@ -18,6 +18,54 @@ from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
 
 
+def _normalize_mixed_columns(
+    df: pd.DataFrame,
+    *,
+    exclude: set[str],
+    numeric_threshold: float = 0.8,
+) -> pd.DataFrame:
+    """
+    Delta/Arrow writes can fail when a pandas `object` column mixes strings + floats
+    (e.g., "0.37" and 0.42). Normalize those columns to either numeric or string.
+    """
+    out = df.copy()
+    for col in out.columns:
+        if col in exclude:
+            continue
+
+        series = out[col]
+        if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+            continue
+
+        as_str = series.astype("string")
+        cleaned = (
+            as_str.str.replace(",", "", regex=False)
+            .str.replace("%", "", regex=False)
+            .str.replace("(", "-", regex=False)
+            .str.replace(")", "", regex=False)
+            .str.strip()
+        )
+        cleaned = cleaned.replace(
+            {
+                "": pd.NA,
+                "None": pd.NA,
+                "nan": pd.NA,
+                "NaN": pd.NA,
+                "N/A": pd.NA,
+                "null": pd.NA,
+            }
+        )
+
+        numeric = pd.to_numeric(cleaned, errors="coerce")
+        non_null = int(as_str.notna().sum())
+        if non_null and (int(numeric.notna().sum()) / non_null) >= numeric_threshold:
+            out[col] = numeric.astype("float64")
+        else:
+            out[col] = as_str
+
+    return out
+
+
 @dataclass(frozen=True)
 class MaterializeConfig:
     container: str
@@ -186,6 +234,13 @@ def materialize_silver_earnings_by_date(cfg: MaterializeConfig) -> int:
     out = pd.concat(frames, ignore_index=True)
     date_col = "Date" if "Date" in out.columns else "date"
     predicate = f"year_month = '{cfg.year_month}'"
+
+    # Ensure Arrow-friendly column types before writing.
+    if "Symbol" in out.columns:
+        out["Symbol"] = out["Symbol"].astype("string")
+    if "symbol" in out.columns:
+        out["symbol"] = out["symbol"].astype("string")
+    out = _normalize_mixed_columns(out, exclude={date_col, "year_month", "Symbol", "symbol"})
 
     store_delta(
         out,

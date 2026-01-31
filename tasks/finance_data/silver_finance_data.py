@@ -26,6 +26,17 @@ class BlobProcessResult:
     status: str  # ok|skipped|failed
     error: Optional[str] = None
 
+
+def _read_finance_csv(raw_bytes: bytes) -> pd.DataFrame:
+    """
+    Read finance CSVs defensively.
+
+    These Yahoo-derived CSVs commonly include thousands separators and sparse cells.
+    Reading everything as strings (and disabling default NA parsing) avoids mixed
+    object columns like ["1,234", NaN] that later break Arrow/Delta writes.
+    """
+    return pd.read_csv(BytesIO(raw_bytes), dtype=str, keep_default_na=False)
+
 def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
     Transposes Yahoo Finance CSV (Metrics in Rows, Dates in Columns)
@@ -214,14 +225,25 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
     
     try:
         raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_raw = pd.read_csv(BytesIO(raw_bytes))
+        df_raw = _read_finance_csv(raw_bytes)
+
+        # Header-only or otherwise empty inputs occasionally appear in Bronze.
+        if df_raw is None or df_raw.empty or len(df_raw.columns) <= 1:
+            mdc.write_warning(f"Skipping empty finance CSV: {blob_name}")
+            return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
         
         df_clean = transpose_dataframe(df_raw, ticker)
         
         # Resample to daily frequency (forward fill)
         df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
         if df_clean is None or df_clean.empty:
-            raise ValueError("No valid dated rows after cleaning/resample.")
+            mdc.write_warning(f"No valid dated rows after cleaning/resample for {blob_name}; skipping.")
+            return BlobProcessResult(
+                blob_name=blob_name,
+                silver_path=silver_path,
+                status="skipped",
+                error="No valid dated rows after cleaning/resample.",
+            )
         
         # Write to Silver (Overwrite is fine for finance snapshots, or merge? 
         # Typically Finance Sheets are full snapshots. Replacing is safer for consistency, 
