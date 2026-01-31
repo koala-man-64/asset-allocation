@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ApiError, backtestApi } from '@/services/backtestApi';
+import { backtestApi } from '@/services/backtestApi';
 import { DataLayer } from '@/types/strategy';
 import { normalizeAzureJobName, normalizeAzurePortalUrl } from '@/app/components/pages/system-status/SystemStatusHelpers';
 

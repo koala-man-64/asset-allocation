@@ -669,6 +669,24 @@ def _extract_log_lines(payload: Dict[str, Any]) -> List[str]:
 
     msg_idx = name_to_idx.get("msg")
     if msg_idx is None:
+        # Be resilient to schema differences / casing in Log Analytics responses.
+        lowered = {name.lower(): idx for name, idx in name_to_idx.items()}
+        msg_idx = lowered.get("msg")
+
+    if msg_idx is None:
+        for candidate in ("Log_s", "Log", "LogMessage_s", "Message", "message"):
+            if candidate in name_to_idx:
+                msg_idx = name_to_idx[candidate]
+                break
+
+    if msg_idx is None:
+        lowered = {name.lower(): idx for name, idx in name_to_idx.items()}
+        for candidate in ("log_s", "log", "logmessage_s", "message"):
+            if candidate in lowered:
+                msg_idx = lowered[candidate]
+                break
+
+    if msg_idx is None:
         return []
 
     out: List[str] = []
@@ -799,18 +817,21 @@ def get_job_logs(
             job_kql = _escape_kql_literal(resolved)
             exec_kql = _escape_kql_literal(exec_name)
             query = f"""
-let jobName = '{job_kql}';
-let execName = '{exec_kql}';
-union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs, ContainerAppSystemLogs_CL, ContainerAppSystemLogs
-| extend job = tostring(column_ifexists('ContainerAppJobName_s', column_ifexists('JobName_s', '')))
-| extend exec = tostring(column_ifexists('ContainerAppJobExecutionName_s', column_ifexists('ExecutionName_s', '')))
-| extend msg = tostring(column_ifexists('Log_s', column_ifexists('Log', column_ifexists('LogMessage_s', column_ifexists('Message', column_ifexists('message', ''))))))
-| where job == jobName and (execName == '' or exec == execName)
-| project TimeGenerated, msg
-| order by TimeGenerated desc
-| take {tail_lines}
-| order by TimeGenerated asc
-""".strip()
+	let jobName = '{job_kql}';
+	let execName = '{exec_kql}';
+	union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+	| extend job = tostring(column_ifexists('ContainerAppJobName_s', column_ifexists('JobName_s', column_ifexists('ContainerAppName_s', ''))))
+	| extend exec = tostring(column_ifexists('ContainerAppJobExecutionName_s', column_ifexists('ExecutionName_s', column_ifexists('ContainerAppJobExecutionId_g', column_ifexists('ContainerAppJobExecutionId_s', '')))))
+	| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+	| extend msg = tostring(column_ifexists('Log_s', column_ifexists('Log', column_ifexists('LogMessage_s', column_ifexists('Message', column_ifexists('message', ''))))))
+	| extend jobMatch = (job != '' and job contains jobName) or (resource contains jobName)
+	| extend execMatch = execName != '' and ((exec != '' and exec contains execName) or (resource contains execName))
+	| where jobMatch or execMatch
+	| order by execMatch desc, jobMatch desc, TimeGenerated desc
+	| take {tail_lines}
+	| project TimeGenerated, msg
+	| order by TimeGenerated asc
+	""".strip()
 
             try:
                 payload = log_client.query(workspace_id=workspace_id, query=query, timespan=timespan)

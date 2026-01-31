@@ -5,18 +5,18 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "./utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none transition-colors",
+  "inline-flex items-center justify-center rounded-full border-2 px-3 py-1 text-[10px] w-fit whitespace-nowrap shrink-0 font-black uppercase tracking-widest [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none transition-colors",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground hover:bg-primary/90",
+          "border-mcm-walnut bg-mcm-mustard text-mcm-walnut hover:bg-mcm-mustard/90",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-mcm-walnut bg-mcm-cream text-mcm-walnut hover:bg-mcm-paper",
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90",
+          "border-mcm-walnut bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "text-foreground hover:bg-accent hover:text-accent-foreground",
+          "border-mcm-walnut text-mcm-walnut hover:bg-mcm-paper",
       },
     },
     defaultVariants: {

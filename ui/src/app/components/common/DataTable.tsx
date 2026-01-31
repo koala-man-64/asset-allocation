@@ -13,34 +13,34 @@ export const DataTable: React.FC<DataTableProps> = ({ data, className = '' }) =>
 
     if (!data || data.length === 0) {
         return (
-            <div className={`p-4 text-sm text-gray-500 font-mono border border-gray-200 bg-gray-50 ${className}`}>
+            <div className={`mcm-panel p-4 text-xs text-mcm-olive font-body italic ${className}`}>
                 No data available.
             </div>
         );
     }
 
     return (
-        <div className={`overflow-x-auto border border-gray-300 ${className}`}>
-            <table className="min-w-full divide-y divide-gray-300 font-mono text-xs">
-                <thead className="bg-gray-100">
-                    <tr className="divide-x divide-gray-300">
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700 w-12 bg-gray-200">
+        <div className={`overflow-x-auto rounded-2xl border-2 border-mcm-walnut bg-mcm-paper p-2 shadow-[8px_8px_0px_0px_rgba(119,63,26,0.08)] ${className}`}>
+            <table className="min-w-full border-separate border-spacing-y-2 text-xs font-body">
+                <thead>
+                    <tr>
+                        <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70 w-12">
                             #
                         </th>
                         {columns.map((col) => (
                             <th
                                 key={col}
-                                className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap"
+                                className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70 whitespace-nowrap"
                             >
                                 {col}
                             </th>
                         ))}
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
+                <tbody>
                     {data.map((row, idx) => (
-                        <tr key={idx} className="divide-x divide-gray-200 hover:bg-yellow-50 transition-colors">
-                            <td className="px-3 py-1.5 text-gray-500 bg-gray-50 border-r border-gray-200 text-right select-none">
+                        <tr key={idx} className="group transition-colors hover:[&>td]:bg-mcm-cream">
+                            <td className="px-3 py-2 text-mcm-olive bg-mcm-cream border-y-2 border-mcm-walnut/40 border-l-2 border-mcm-walnut/40 rounded-l-2xl text-right select-none text-[11px] font-semibold">
                                 {idx + 1}
                             </td>
                             {columns.map((col) => {
@@ -51,14 +51,14 @@ export const DataTable: React.FC<DataTableProps> = ({ data, className = '' }) =>
                                     if (typeof val === 'object') {
                                         displayVal = JSON.stringify(val);
                                     } else if (typeof val === 'boolean') {
-                                        displayVal = val ? 'TRUE' : 'FALSE';
+                                        displayVal = val ? 'true' : 'false';
                                     } else {
                                         displayVal = String(val);
                                     }
                                 }
 
                                 return (
-                                    <td key={col} className="px-3 py-1.5 text-gray-800 whitespace-nowrap">
+                                    <td key={col} className="px-3 py-2 text-mcm-walnut border-y-2 border-mcm-walnut/40 bg-mcm-paper whitespace-nowrap lowercase last:border-r-2 last:border-mcm-walnut/40 last:rounded-r-2xl">
                                         {displayVal}
                                     </td>
                                 );

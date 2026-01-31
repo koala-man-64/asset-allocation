@@ -1,22 +1,22 @@
 /* Data Quality page — "Forensic QA Dossier" theme scope */
 
 .dq {
-  --dq-accent: #fbbf24; /* amber */
-  --dq-danger: #fb7185; /* rose */
-  --dq-ok: #34d399; /* emerald */
-  --dq-panel: rgba(255, 255, 255, 0.04);
-  --dq-panel-2: rgba(255, 255, 255, 0.06);
-  --dq-border: rgba(255, 255, 255, 0.09);
-  --dq-grid: rgba(255, 255, 255, 0.04);
-  --dq-grid-2: rgba(255, 255, 255, 0.02);
-  --dq-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
-  --dq-radius: 10px;
+  --dq-accent: var(--mcm-mustard);
+  --dq-danger: #b42318;
+  --dq-ok: #1f7a5b;
+  --dq-panel: color-mix(in srgb, var(--mcm-paper) 92%, var(--mcm-cream));
+  --dq-panel-2: color-mix(in srgb, var(--mcm-paper) 88%, var(--mcm-cream));
+  --dq-border: color-mix(in srgb, var(--mcm-walnut) 30%, transparent);
+  --dq-grid: color-mix(in srgb, var(--mcm-walnut) 12%, transparent);
+  --dq-grid-2: color-mix(in srgb, var(--mcm-walnut) 7%, transparent);
+  --dq-shadow: 0 18px 60px rgba(119, 63, 26, 0.18);
+  --dq-radius: 20px;
 
   color: var(--foreground);
   background:
-    radial-gradient(900px circle at 15% 12%, rgba(251, 191, 36, 0.12), transparent 55%),
-    radial-gradient(900px circle at 88% 18%, rgba(56, 189, 248, 0.10), transparent 55%),
-    radial-gradient(900px circle at 50% 100%, rgba(16, 185, 129, 0.08), transparent 50%),
+    radial-gradient(900px circle at 15% 12%, color-mix(in srgb, var(--mcm-mustard) 24%, transparent), transparent 55%),
+    radial-gradient(900px circle at 88% 18%, color-mix(in srgb, var(--mcm-teal) 18%, transparent), transparent 55%),
+    radial-gradient(900px circle at 50% 100%, color-mix(in srgb, var(--mcm-olive) 18%, transparent), transparent 50%),
     repeating-linear-gradient(
       0deg,
       var(--dq-grid),
@@ -79,23 +79,26 @@
 }
 
 .dq-kicker {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 11px;
-  letter-spacing: 0.22em;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--foreground) 55%, transparent);
+  color: var(--mcm-olive);
 }
 
 .dq-title {
+  font-family: var(--font-display);
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0.08em;
   font-size: 2.25rem;
   line-height: 1.05;
+  text-transform: uppercase;
 }
 
 .dq-subtitle {
   color: color-mix(in srgb, var(--foreground) 62%, transparent);
   max-width: 70ch;
+  font-style: italic;
 }
 
 .dq-mono {
@@ -106,26 +109,26 @@
   border: 1px solid var(--dq-border);
   border-radius: 999px;
   padding: 0.35rem 0.75rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 11px;
-  letter-spacing: 0.22em;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--mcm-cream) 85%, transparent);
 }
 
 .dq-stamp[data-status='pass'] {
-  border-color: rgba(52, 211, 153, 0.35);
-  color: rgba(52, 211, 153, 0.95);
+  border-color: color-mix(in srgb, var(--dq-ok) 60%, transparent);
+  color: var(--dq-ok);
 }
 
 .dq-stamp[data-status='warn'] {
-  border-color: rgba(251, 191, 36, 0.35);
-  color: rgba(251, 191, 36, 0.95);
+  border-color: color-mix(in srgb, var(--dq-accent) 60%, transparent);
+  color: var(--dq-accent);
 }
 
 .dq-stamp[data-status='fail'] {
-  border-color: rgba(251, 113, 133, 0.35);
-  color: rgba(251, 113, 133, 0.95);
+  border-color: color-mix(in srgb, var(--dq-danger) 60%, transparent);
+  color: var(--dq-danger);
 }
 
 .dq-scorecard {
@@ -148,7 +151,7 @@
 
 .dq-scorecard-label {
   font-size: 12px;
-  color: color-mix(in srgb, var(--foreground) 55%, transparent);
+  color: var(--mcm-olive);
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -170,14 +173,14 @@
   border: 1px solid var(--dq-border);
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--mcm-cream) 85%, transparent);
 }
 
 .dq-metric-label {
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--foreground) 55%, transparent);
+  color: var(--mcm-olive);
 }
 
 .dq-metric-value {
@@ -195,17 +198,17 @@
 .dq-btn,
 .dq-btn-primary,
 .dq-btn-icon {
-  border-radius: 8px;
+  border-radius: 999px;
 }
 
 .dq-btn-primary {
-  background: rgba(251, 191, 36, 0.14);
-  border: 1px solid rgba(251, 191, 36, 0.34);
-  color: rgba(251, 191, 36, 0.95);
+  background: color-mix(in srgb, var(--mcm-mustard) 22%, transparent);
+  border: 2px solid var(--mcm-walnut);
+  color: var(--mcm-walnut);
 }
 
 .dq-btn-primary:hover {
-  background: rgba(251, 191, 36, 0.18);
+  background: color-mix(in srgb, var(--mcm-mustard) 30%, transparent);
 }
 
 .dq-btn-icon {
@@ -232,62 +235,65 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  letter-spacing: 0.12em;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   padding: 0.5rem 0.75rem;
   border-radius: 999px;
-  border: 1px solid var(--dq-border);
-  background: rgba(255, 255, 255, 0.03);
-  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  border: 2px solid var(--mcm-walnut);
+  background: var(--mcm-cream);
+  color: var(--mcm-walnut);
 }
 
 .dq-toggle-btn-on {
-  border-color: rgba(251, 191, 36, 0.35);
-  color: rgba(251, 191, 36, 0.95);
-  background: rgba(251, 191, 36, 0.10);
+  border-color: var(--mcm-walnut);
+  color: var(--mcm-walnut);
+  background: color-mix(in srgb, var(--mcm-mustard) 25%, transparent);
 }
 
 .dq-field-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  font-family: var(--font-display);
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  color: var(--mcm-olive);
 }
 
 .dq-input {
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.02);
-  border-color: var(--dq-border);
+  border-radius: 12px;
+  background: var(--mcm-cream);
+  border: 2px solid var(--mcm-walnut);
 }
 
 .dq-input:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.20);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mcm-teal) 30%, transparent);
 }
 
 .dq-pill-btn {
   border-radius: 10px;
-  border: 1px solid var(--dq-border);
-  background: rgba(255, 255, 255, 0.02);
+  border: 2px solid var(--mcm-walnut);
+  background: var(--mcm-cream);
   padding: 0.55rem 0.65rem;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
   text-align: left;
-  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  color: var(--mcm-walnut);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .dq-pill-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--mcm-paper);
 }
 
 .dq-pill-btn-on {
-  border-color: rgba(251, 191, 36, 0.35);
-  color: rgba(251, 191, 36, 0.95);
-  background: rgba(251, 191, 36, 0.10);
+  border-color: var(--mcm-walnut);
+  color: var(--mcm-walnut);
+  background: color-mix(in srgb, var(--mcm-mustard) 20%, transparent);
 }
 
 .dq-drift-row {
@@ -295,10 +301,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border: 1px solid var(--dq-border);
+  border: 2px solid var(--mcm-walnut);
   border-radius: 12px;
   padding: 0.7rem 0.8rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--mcm-paper);
 }
 
 .dq-drift-path {
@@ -316,16 +322,16 @@
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  border: 1px dashed var(--dq-border);
+  border: 2px dashed color-mix(in srgb, var(--mcm-walnut) 45%, transparent);
   border-radius: 12px;
   padding: 0.85rem;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--mcm-cream);
 }
 
 .dq-ledger-table {
   overflow: auto;
   border-radius: 12px;
-  border: 1px solid var(--dq-border);
+  border: 2px solid var(--mcm-walnut);
 }
 
 .dq-table {
@@ -333,19 +339,19 @@
 }
 
 .dq-table-head {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--mcm-cream);
 }
 
 .dq-th {
-  font-size: 11px;
-  letter-spacing: 0.18em;
+  font-size: 10px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  font-weight: 700;
-  color: color-mix(in srgb, var(--foreground) 62%, transparent);
+  font-weight: 800;
+  color: var(--mcm-olive);
 }
 
 .dq-tr:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--mcm-cream);
 }
 
 .dq-td {
@@ -380,7 +386,9 @@
 
 .dq-badge {
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
 }
 
 .dq-path {
@@ -392,7 +400,7 @@
 .dq-path-meta {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   font-size: 11px;
-  color: color-mix(in srgb, var(--foreground) 52%, transparent);
+  color: var(--mcm-olive);
 }
 
 .dq-probe-cell {
@@ -416,15 +424,15 @@
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  border: 1px solid var(--dq-border);
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+  border: 2px solid var(--mcm-walnut);
+  background: var(--mcm-cream);
   transition: transform 120ms ease, background 120ms ease;
 }
 
 .dq-link:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--mcm-paper);
 }
 
 .dq-link-muted {
