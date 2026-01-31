@@ -169,8 +169,18 @@ def materialize_silver_targets_by_date(cfg: MaterializeConfig) -> int:
         if df is None or df.empty:
             continue
 
-        date_col = "Date" if "Date" in df.columns else ("date" if "date" in df.columns else None)
-        if not date_col:
+        # Silver price target tables use `obs_date` (Yahoo/Nasdaq convention). Older tables may use `Date`/`date`.
+        if "Date" in df.columns:
+            date_col = "Date"
+        elif "date" in df.columns:
+            date_col = "date"
+        elif "obs_date" in df.columns:
+            # Normalize to a canonical `Date` column for by-date tables (aligns with other Silver domains).
+            df = df.copy()
+            df["Date"] = pd.to_datetime(df["obs_date"], errors="coerce").dt.normalize()
+            df = df.drop(columns=["obs_date"])
+            date_col = "Date"
+        else:
             continue
 
         df = df.copy()

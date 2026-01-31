@@ -168,18 +168,24 @@ def test_materialize_silver_price_target_by_date_prefers_container_listing(monke
 
     def fake_load_delta(container, path, version=None, columns=None, filters=None):
         assert (container, path) == ("targets", "price-target-data/AAPL")
-        return pd.DataFrame({"Date": [pd.Timestamp("2026-01-15")], "feature": [1.0]})
+        return pd.DataFrame({"obs_date": [pd.Timestamp("2026-01-15")], "feature": [1.0]})
 
-    store_calls = {"count": 0}
+    captured: dict = {}
 
-    def fake_store_delta(*_args, **_kwargs):
-        store_calls["count"] += 1
+    def fake_store_delta(df, **kwargs):
+        captured["df"] = df
+        captured.update(kwargs)
 
     monkeypatch.setattr(job, "load_delta", fake_load_delta)
     monkeypatch.setattr(job, "store_delta", fake_store_delta)
 
     assert job.materialize_silver_targets_by_date(cfg) == 0
-    assert store_calls["count"] == 1
+    assert captured["container"] == "targets"
+    assert captured["path"] == "price-target-data-by-date"
+    assert captured["predicate"] == "year_month = '2026-01'"
+    assert captured["partition_by"] == ["year_month", "Date"]
+    assert "year_month" in captured["df"].columns
+    assert "Date" in captured["df"].columns
 
 
 def test_materialize_silver_finance_by_date_prefers_container_listing_and_skips_missing_tables(monkeypatch):

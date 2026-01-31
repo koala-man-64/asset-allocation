@@ -4,7 +4,7 @@ import { Button } from '@/app/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { ExternalLink, Loader2, Play, PlayCircle, ScrollText } from 'lucide-react';
-import { formatDuration, formatRecordCount, formatTimeAgo, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
+import { formatDuration, formatRecordCount, formatTimeAgo, formatTimestamp, getAzureJobExecutionsUrl, getStatusBadge, getStatusIcon, normalizeAzureJobName, normalizeAzurePortalUrl } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { JobRun } from '@/types/strategy';
 
@@ -46,7 +46,7 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
             <CardHeader>
                 <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2">
-                        <PlayCircle className="h-6 w-6" />
+                        <PlayCircle className="h-5 w-5" />
                         Recent Jobs
                     </CardTitle>
                     <div className="flex gap-3 text-sm">
@@ -126,7 +126,10 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                         </div>
                                     </TableCell>
                                     <TableCell className="py-2">
-                                        {getStatusBadge(job.status)}
+                                        <div className="flex items-center gap-2">
+                                            {getStatusIcon(job.status)}
+                                            {getStatusBadge(job.status)}
+                                        </div>
                                     </TableCell>
                                     <TableCell className="py-2 font-mono text-sm">
                                         <div>{formatTimestamp(job.startTime)}</div>
@@ -143,22 +146,22 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                                                     asChild
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-8 w-8"
+                                                                    className="h-7 w-7"
                                                                     aria-label={`Open ${job.jobName} executions in Azure`}
                                                                 >
                                                                     <a href={executionsUrl} target="_blank" rel="noreferrer">
-                                                                        <ScrollText className="h-5 w-5" />
+                                                                        <ScrollText className="h-4 w-4" />
                                                                     </a>
                                                                 </Button>
                                                             ) : (
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-8 w-8"
+                                                                    className="h-7 w-7"
                                                                     disabled
                                                                     aria-label={`No Azure portal link for ${job.jobName}`}
                                                                 >
-                                                                    <ScrollText className="h-5 w-5" />
+                                                                    <ScrollText className="h-4 w-4" />
                                                                 </Button>
                                                             )}
                                                         </TooltipTrigger>
@@ -174,15 +177,15 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="h-8 w-8"
+                                                        className="h-7 w-7"
                                                         disabled={Boolean(triggeringJob)}
                                                         onClick={() => void triggerJob(job.jobName)}
                                                         aria-label={`Run ${job.jobName}`}
                                                     >
                                                         {triggeringJob === job.jobName ? (
-                                                            <Loader2 className="h-5 w-5 animate-spin" />
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
                                                         ) : (
-                                                            <Play className="h-5 w-5" />
+                                                            <Play className="h-4 w-4" />
                                                         )}
                                                     </Button>
                                                 </TooltipTrigger>

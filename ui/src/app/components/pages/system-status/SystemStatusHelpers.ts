@@ -53,10 +53,17 @@ export const getStatusIcon = (status: string) => {
     // Map animation string to tailwind class
     const animClass = config.animation === 'spin' ? 'animate-spin' : '';
 
-    return React.createElement(config.icon, {
+    const icon = React.createElement(config.icon, {
         className: `h-4 w-4 ${animClass}`,
         style: { color: config.text }
     });
+
+    // Wrap in a fixed-width slot so status columns don't "jitter" when icons change.
+    return React.createElement(
+        'span',
+        { className: 'inline-flex w-5 items-center justify-center shrink-0' },
+        icon,
+    );
 };
 
 /**

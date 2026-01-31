@@ -64,20 +64,20 @@ export function AlertHistory({ alerts }: AlertHistoryProps) {
                                     </Badge>
                                     <span className="text-sm text-muted-foreground">{alert.component}</span>
                                     {alert.acknowledged && (
-                                        <Badge variant="outline" className="text-sm">
-                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                                        <Badge variant="outline">
+                                            <CheckCircle2 />
                                             Acknowledged
                                         </Badge>
                                     )}
                                     {alert.snoozedUntil && Date.parse(alert.snoozedUntil) > Date.now() && (
-                                        <Badge variant="outline" className="text-sm">
-                                            <BellOff className="h-3.5 w-3.5 mr-1" />
+                                        <Badge variant="outline">
+                                            <BellOff />
                                             Snoozed
                                         </Badge>
                                     )}
                                     {alert.resolvedAt && (
-                                        <Badge variant="outline" className="text-sm">
-                                            <Check className="h-3.5 w-3.5 mr-1" />
+                                        <Badge variant="outline">
+                                            <Check />
                                             Resolved
                                         </Badge>
                                     )}

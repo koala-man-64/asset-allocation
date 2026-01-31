@@ -16,6 +16,7 @@ import {
   formatTimestamp,
   getAzureJobExecutionsUrl,
   getStatusBadge,
+  getStatusIcon,
   normalizeAzureJobName,
   normalizeAzurePortalUrl,
 } from './SystemStatusHelpers';
@@ -367,7 +368,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                                           className="text-muted-foreground hover:text-primary transition-colors"
                                           aria-label={`Open ${job.jobName} in Azure`}
                                         >
-                                          <ExternalLink className="h-3.5 w-3.5" />
+                                        <ExternalLink className="h-4 w-4" />
                                         </a>
                                       </TooltipTrigger>
                                       <TooltipContent side="right">
@@ -382,7 +383,12 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="py-2">{getStatusBadge(job.jobRun?.status || 'unknown')}</TableCell>
+                          <TableCell className="py-2">
+                            <div className="flex items-center gap-2">
+                              {getStatusIcon(job.jobRun?.status || 'unknown')}
+                              {getStatusBadge(job.jobRun?.status || 'unknown')}
+                            </div>
+                          </TableCell>
                           <TableCell className="py-2 font-mono text-sm">{formatTimestamp(job.jobRun?.startTime || null)}</TableCell>
                           <TableCell className="py-2 font-mono text-sm">
                             <span className="text-slate-700" title={job.schedule}>
@@ -488,7 +494,10 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                                   <div className="rounded-md border bg-muted/20 p-3">
                                     <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</div>
-                                    <div className="mt-2 text-sm">{getStatusBadge(job.jobRun?.status || 'unknown')}</div>
+                                    <div className="mt-2 flex items-center gap-2 text-sm">
+                                      {getStatusIcon(job.jobRun?.status || 'unknown')}
+                                      {getStatusBadge(job.jobRun?.status || 'unknown')}
+                                    </div>
                                   </div>
                                   <div className="rounded-md border bg-muted/20 p-3">
                                     <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Started</div>

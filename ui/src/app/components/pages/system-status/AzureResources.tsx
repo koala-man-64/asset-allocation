@@ -71,7 +71,7 @@ export function AzureResources({ resources }: AzureResourcesProps) {
                                                                     className="text-muted-foreground hover:text-primary transition-colors"
                                                                     aria-label={`Open ${resource.name} in Azure`}
                                                                 >
-                                                                    <ExternalLink className="h-3.5 w-3.5" />
+                                                                    <ExternalLink className="h-4 w-4" />
                                                                 </a>
                                                             </TooltipTrigger>
                                                             <TooltipContent side="right">Open resource</TooltipContent>
