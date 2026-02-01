@@ -19,6 +19,13 @@ export default defineConfig(({ mode }) => {
   const serverPort = parsedPort
 
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
+  const apiRootPrefixRaw = env.API_ROOT_PREFIX || process.env.API_ROOT_PREFIX || ''
+  const apiRootPrefix = (() => {
+    const value = String(apiRootPrefixRaw || '').trim()
+    if (!value || value === '/') return ''
+    const trimmed = value.replace(/^\/+/, '').replace(/\/+$/, '')
+    return trimmed ? `/${trimmed}` : ''
+  })()
 
   return {
     test: {
@@ -46,6 +53,19 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
         },
+        ...(apiRootPrefix
+          ? {
+              [`${apiRootPrefix}/api`]: {
+                target: apiProxyTarget,
+                changeOrigin: true,
+                ws: true,
+              },
+              [`${apiRootPrefix}/config.js`]: {
+                target: apiProxyTarget,
+                changeOrigin: true,
+              },
+            }
+          : {}),
       },
     },
     resolve: {

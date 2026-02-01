@@ -6,12 +6,13 @@ import {
 } from '@/types/data';
 import { DomainMetadata, SystemHealth } from '@/types/strategy';
 import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
+import { config as uiConfig } from '@/config';
 
 interface WindowWithConfig extends Window {
     __API_UI_CONFIG__?: { apiBaseUrl?: string };
 }
 const runtimeConfig = (window as WindowWithConfig).__API_UI_CONFIG__ || {};
-const API_BASE_URL = normalizeApiBaseUrl(runtimeConfig.apiBaseUrl, '/api');
+const API_BASE_URL = normalizeApiBaseUrl(runtimeConfig.apiBaseUrl || uiConfig.apiBaseUrl, '/api');
 
 export interface RequestConfig extends RequestInit {
     params?: Record<string, string | number | boolean | undefined>;

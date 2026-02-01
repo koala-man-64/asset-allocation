@@ -20,6 +20,12 @@ from monitoring.ttl_cache import TtlCache
 
 logger = logging.getLogger("asset-allocation.api")
 
+def _normalize_root_prefix(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw or raw == "/":
+        return ""
+    return "/" + raw.strip("/")
+
 def _request_context(request: Request) -> dict[str, str]:
     return {
         "client": request.client.host if request.client else "unknown",
@@ -109,30 +115,34 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include API Routers with /api prefix
-    app.include_router(data.router, prefix="/api/data", tags=["Data"])
-    app.include_router(system.router, prefix="/api/system", tags=["System"])
-    app.include_router(postgres.router, prefix="/api/system/postgres", tags=["Postgres"])
+    api_root_prefix = _normalize_root_prefix(os.environ.get("API_ROOT_PREFIX"))
+    api_prefixes = ["/api"]
+    if api_root_prefix:
+        api_prefixes.append(f"{api_root_prefix}/api")
 
-    @app.websocket("/api/ws/updates")
+    for api_prefix in api_prefixes:
+        app.include_router(data.router, prefix=f"{api_prefix}/data", tags=["Data"])
+        app.include_router(system.router, prefix=f"{api_prefix}/system", tags=["System"])
+        app.include_router(postgres.router, prefix=f"{api_prefix}/system/postgres", tags=["Postgres"])
+
     async def websocket_endpoint(websocket: WebSocket):
         await realtime_manager.connect(websocket)
         try:
             while True:
                 # Receive generic text (ping/pong) or JSON (subscribe/unsubscribe)
                 data_str = await websocket.receive_text()
-                
+
                 # Health Check Protocol
                 if data_str == "ping":
                     await websocket.send_text("pong")
                     continue
-                
+
                 # Command Protocol
                 try:
                     msg = json.loads(data_str)
                     action = msg.get("action")
                     topics = msg.get("topics", [])
-                    
+
                     if not isinstance(topics, list):
                         continue
 
@@ -143,9 +153,12 @@ def create_app() -> FastAPI:
 
                 except json.JSONDecodeError:
                     pass  # Ignore non-JSON messages (unless it was ping)
-                    
+
         except WebSocketDisconnect:
             realtime_manager.disconnect(websocket)
+
+    for api_prefix in api_prefixes:
+        app.add_api_websocket_route(f"{api_prefix}/ws/updates", websocket_endpoint)
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:
@@ -158,9 +171,14 @@ def create_app() -> FastAPI:
     @app.get("/config.js")
     async def get_ui_config(request: Request):
         settings: ServiceSettings = app.state.settings
+        default_api_base = f"{api_root_prefix}/api" if api_root_prefix else "/api"
+        api_base_url = settings.ui_oidc_config.get("apiBaseUrl") or default_api_base
+
         cfg = {
             "authMode": settings.ui_auth_mode,
-            "apiBaseUrl": settings.ui_oidc_config.get("apiBaseUrl") or "/api",
+            "apiBaseUrl": api_base_url,
+            # Backwards-compatible alias used by the UI runtime config loader.
+            "backtestApiBaseUrl": api_base_url,
             "oidcAuthority": settings.ui_oidc_config.get("authority"),
             "oidcClientId": settings.ui_oidc_config.get("clientId"),
             "oidcScopes": settings.ui_oidc_config.get("scope") or settings.ui_oidc_config.get("scopes"),
@@ -172,7 +190,12 @@ def create_app() -> FastAPI:
             cfg.get("authMode"),
             cfg.get("apiBaseUrl"),
         )
-        content = f"window.__API_UI_CONFIG__ = {json.dumps(cfg)};"
+        content = "\n".join(
+            [
+                f"window.__BACKTEST_UI_CONFIG__ = {json.dumps(cfg)};",
+                f"window.__API_UI_CONFIG__ = {json.dumps(cfg)};",
+            ]
+        )
         return Response(
             content=content,
             media_type="application/javascript",
