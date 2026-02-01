@@ -205,6 +205,9 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
     # Use DataPaths or manual? DataPaths uses folder name.
     # DataPaths.get_finance_path(folder_name, ticker, suffix)
     silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
+
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
+        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
     
     if watermarks is not None:
         unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))

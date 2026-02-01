@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
+import { useDebugSymbolsQuery } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { StatusOverview } from './system-status/StatusOverview';
 
@@ -9,11 +11,15 @@ import { AzureResources } from './system-status/AzureResources';
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
 import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
 import { getAzurePortalUrl, normalizeAzureJobName, normalizeAzurePortalUrl } from './system-status/SystemStatusHelpers';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { Switch } from '@/app/components/ui/switch';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
+    const debugSymbolsQuery = useDebugSymbolsQuery();
     const queryClient = useQueryClient();
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [isTogglingDebug, setIsTogglingDebug] = useState(false);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, setTick] = useState(0);
     const jobLinks = useMemo(() => {
@@ -92,6 +98,29 @@ export function SystemStatusPage() {
         }
     };
 
+    const debugEnabled = Boolean(debugSymbolsQuery.data?.enabled);
+    const debugSymbolsRaw = String(debugSymbolsQuery.data?.symbols || debugSymbolsQuery.data?.presetSymbols || '').trim();
+    const debugSymbolsPreview = (() => {
+        if (!debugSymbolsRaw) return 'Not configured';
+        const parts = debugSymbolsRaw.split(',').map((item) => item.trim()).filter(Boolean);
+        if (parts.length <= 4) return parts.join(', ');
+        return `${parts.slice(0, 4).join(', ')} +${parts.length - 4}`;
+    })();
+
+    const toggleDebugSymbols = async (nextEnabled: boolean) => {
+        setIsTogglingDebug(true);
+        try {
+            await DataService.setDebugSymbols({ enabled: nextEnabled });
+            toast.success(nextEnabled ? 'Debug symbols enabled for pipeline jobs.' : 'Debug symbols disabled for pipeline jobs.');
+            void queryClient.invalidateQueries({ queryKey: queryKeys.debugSymbols() });
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            toast.error(`Failed to update debug symbols: ${message}`);
+        } finally {
+            setIsTogglingDebug(false);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-[calc(100vh-100px)]">
@@ -116,6 +145,30 @@ export function SystemStatusPage() {
 
     return (
         <div className="space-y-8 pb-10">
+            <div className="flex justify-end">
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div className="inline-flex items-center gap-3 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-4 py-2 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                            <div className="flex flex-col items-end leading-tight">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-mcm-olive">Debug symbols</div>
+                                <div className="font-mono text-[10px] text-mcm-walnut/70">{debugSymbolsPreview}</div>
+                            </div>
+                            <Switch
+                                checked={debugEnabled}
+                                onCheckedChange={(checked) => void toggleDebugSymbols(Boolean(checked))}
+                                disabled={debugSymbolsQuery.isLoading || isTogglingDebug || Boolean(debugSymbolsQuery.error)}
+                                aria-label="Toggle debug symbols"
+                            />
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="max-w-[320px]">
+                        {debugSymbolsQuery.error
+                            ? 'Debug-symbol control is unavailable in this deployment.'
+                            : 'When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing to a small ticker set.'}
+                    </TooltipContent>
+                </Tooltip>
+            </div>
+
             {/* Status Matrix - The Hero Component */}
             <StatusOverview
                 overall={overall}

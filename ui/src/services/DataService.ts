@@ -9,7 +9,7 @@ import type {
   RiskMetrics,
 } from '@/types/data';
 import type { SystemHealth } from '@/types/strategy';
-import type { JobLogsResponse, PurgeRequest, PurgeResponse } from '@/services/apiService';
+import type { DebugSymbolsResponse, JobLogsResponse, PurgeRequest, PurgeResponse } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
 
@@ -94,5 +94,13 @@ export const DataService = {
 
   purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
     return apiService.purgeData(payload);
+  },
+
+  getDebugSymbols(): Promise<DebugSymbolsResponse> {
+    return apiService.getDebugSymbols();
+  },
+
+  setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
+    return apiService.setDebugSymbols(payload);
   },
 };

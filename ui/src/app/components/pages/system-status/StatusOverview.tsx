@@ -550,10 +550,12 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                                                                     <TooltipTrigger asChild>
                                                                         <span
                                                                             tabIndex={0}
-                                                                            className="inline-flex flex-col items-center justify-center gap-0.5 rounded-md px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-mcm-teal/30"
+                                                                            className="inline-flex flex-col items-start gap-0.5 rounded-md px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-mcm-teal/30"
                                                                         >
-                                                                            <span className="inline-flex items-center justify-center gap-1">
-                                                                                <CalendarDays className="h-3.5 w-3.5 text-mcm-walnut/60" />
+                                                                            <span className="inline-flex items-center gap-1">
+                                                                                <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
+                                                                                    <CalendarDays className="h-3.5 w-3.5" />
+                                                                                </span>
                                                                                 <span
                                                                                     className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
                                                                                     style={{
@@ -568,8 +570,10 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                                                                                     {updatedAgo}
                                                                                 </span>
                                                                             </span>
-                                                                            <span className="inline-flex items-center justify-center gap-1">
-                                                                                <ScrollText className="h-3.5 w-3.5 text-mcm-walnut/60" />
+                                                                            <span className="inline-flex items-center gap-1">
+                                                                                <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
+                                                                                    <ScrollText className="h-3.5 w-3.5" />
+                                                                                </span>
                                                                                 <span
                                                                                     className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
                                                                                     style={{

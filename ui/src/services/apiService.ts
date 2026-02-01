@@ -89,6 +89,15 @@ export interface PurgeResponse {
     }>;
 }
 
+export interface DebugSymbolsResponse {
+    enabled: boolean;
+    symbols: string;
+    presetSymbols?: string;
+    targets?: string[];
+    updatedJobs?: string[];
+    requestedJobs?: string[];
+}
+
 export const apiService = {
     // --- Data Endpoints ---
 
@@ -143,6 +152,17 @@ export const apiService = {
 
     purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
         return request<PurgeResponse>('/system/purge', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    },
+
+    getDebugSymbols(): Promise<DebugSymbolsResponse> {
+        return request<DebugSymbolsResponse>('/system/debug-symbols');
+    },
+
+    setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
+        return request<DebugSymbolsResponse>('/system/debug-symbols', {
             method: 'POST',
             body: JSON.stringify(payload),
         });

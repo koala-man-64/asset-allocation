@@ -24,6 +24,8 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         return "skipped_non_parquet"
         
     ticker = blob_name.replace('price-target-data/', '').replace('.parquet', '')
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
+        return "skipped_debug_symbols"
     
     # Silver Path
     silver_path = DataPaths.get_price_target_path(ticker)

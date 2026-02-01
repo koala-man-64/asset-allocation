@@ -50,6 +50,83 @@ def _get_actor(request: Request) -> Optional[str]:
     return None
 
 
+def _update_container_env_var(container: Dict[str, Any], *, name: str, value: str) -> None:
+    existing = container.get("env")
+    env_items: List[Dict[str, Any]] = []
+    if isinstance(existing, list):
+        env_items = [item for item in existing if isinstance(item, dict)]
+
+    updated: List[Dict[str, Any]] = []
+    found = False
+    for item in env_items:
+        if str(item.get("name") or "").strip() != name:
+            updated.append(item)
+            continue
+        next_item = dict(item)
+        next_item["name"] = name
+        next_item.pop("secretRef", None)
+        next_item["value"] = value
+        updated.append(next_item)
+        found = True
+
+    if not found:
+        updated.append({"name": name, "value": value})
+
+    container["env"] = updated
+
+
+def _get_job_env_var(job_payload: Dict[str, Any], *, name: str) -> Optional[str]:
+    props = job_payload.get("properties") if isinstance(job_payload.get("properties"), dict) else {}
+    template = props.get("template") if isinstance(props.get("template"), dict) else {}
+    containers = template.get("containers") if isinstance(template.get("containers"), list) else []
+    if not containers:
+        return None
+
+    first = containers[0] if isinstance(containers[0], dict) else {}
+    env = first.get("env") if isinstance(first.get("env"), list) else []
+    for item in env:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name") or "").strip() != name:
+            continue
+        value = item.get("value")
+        if value is None:
+            return None
+        return str(value)
+    return None
+
+
+def _require_arm_job_config() -> Tuple[str, str, List[str], str, float]:
+    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+    resource_group = resource_group_raw.strip() if resource_group_raw else ""
+
+    job_names_raw = os.environ.get("SYSTEM_HEALTH_ARM_JOBS")
+    job_allowlist = [item.strip() for item in (job_names_raw or "").split(",") if item.strip()]
+
+    if not (subscription_id and resource_group and job_allowlist):
+        raise HTTPException(status_code=503, detail="Azure job control is not configured.")
+
+    api_version_env = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION")
+    api_version = api_version_env.strip() if api_version_env else ""
+    if not api_version:
+        api_version = ArmConfig.api_version
+
+    timeout_env = os.environ.get("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
+    try:
+        timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
+    except ValueError:
+        timeout_seconds = 5.0
+
+    return subscription_id, resource_group, job_allowlist, api_version, timeout_seconds
+
+
+def _target_pipeline_jobs(job_allowlist: List[str]) -> List[str]:
+    prefixes = ("bronze-", "silver-", "gold-")
+    return sorted([name for name in job_allowlist if any(name.startswith(prefix) for prefix in prefixes)])
+
+
 @router.get("/health")
 def system_health(request: Request, refresh: bool = Query(False)) -> JSONResponse:
     logger.info(
@@ -428,6 +505,103 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
             "totalDeleted": total_deleted,
             "targets": results,
         }
+    )
+
+
+class DebugSymbolsUpdateRequest(BaseModel):
+    enabled: bool = Field(..., description="When true, apply DEBUG_SYMBOLS to pipeline jobs; when false, clear it.")
+    symbols: Optional[str] = Field(
+        default=None,
+        description="Optional comma-separated override. When omitted and enabled=true, uses DEBUG_SYMBOLS from the API environment.",
+    )
+
+
+@router.get("/debug-symbols")
+def get_debug_symbols(request: Request) -> JSONResponse:
+    validate_auth(request)
+
+    subscription_id, resource_group, job_allowlist, api_version, timeout_seconds = _require_arm_job_config()
+    targets = _target_pipeline_jobs(job_allowlist)
+    preset = (os.environ.get("DEBUG_SYMBOLS") or "").strip()
+
+    cfg = ArmConfig(
+        subscription_id=subscription_id,
+        resource_group=resource_group,
+        api_version=api_version,
+        timeout_seconds=timeout_seconds,
+    )
+
+    current_value: str = ""
+    with AzureArmClient(cfg) as arm:
+        for job_name in targets:
+            job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=job_name)
+            payload = arm.get_json(job_url)
+            value = _get_job_env_var(payload, name="DEBUG_SYMBOLS")
+            if value is None:
+                continue
+            current_value = str(value or "")
+            break
+
+    enabled = bool(current_value.strip())
+    return JSONResponse(
+        {
+            "enabled": enabled,
+            "symbols": current_value,
+            "presetSymbols": preset,
+            "targets": targets,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/debug-symbols")
+def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+
+    subscription_id, resource_group, job_allowlist, api_version, timeout_seconds = _require_arm_job_config()
+    targets = _target_pipeline_jobs(job_allowlist)
+
+    raw = (payload.symbols or "").strip()
+    if payload.enabled and not raw:
+        raw = (os.environ.get("DEBUG_SYMBOLS") or "").strip()
+    if payload.enabled and not raw:
+        raise HTTPException(status_code=400, detail="DEBUG_SYMBOLS is not configured (set env var DEBUG_SYMBOLS or provide symbols).")
+
+    next_value = raw if payload.enabled else ""
+
+    cfg = ArmConfig(
+        subscription_id=subscription_id,
+        resource_group=resource_group,
+        api_version=api_version,
+        timeout_seconds=timeout_seconds,
+    )
+
+    updated: List[str] = []
+    with AzureArmClient(cfg) as arm:
+        for job_name in targets:
+            job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=job_name)
+            job_payload = arm.get_json(job_url)
+
+            props = job_payload.get("properties") if isinstance(job_payload.get("properties"), dict) else {}
+            template = props.get("template") if isinstance(props.get("template"), dict) else {}
+            containers = template.get("containers") if isinstance(template.get("containers"), list) else []
+            if not containers or not isinstance(containers[0], dict):
+                continue
+
+            container0 = containers[0]
+            _update_container_env_var(container0, name="DEBUG_SYMBOLS", value=next_value)
+
+            arm.patch_json(job_url, json_body={"properties": {"template": template}})
+            updated.append(job_name)
+
+    return JSONResponse(
+        {
+            "enabled": bool(next_value.strip()),
+            "symbols": next_value,
+            "updatedJobs": updated,
+            "requestedJobs": targets,
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 

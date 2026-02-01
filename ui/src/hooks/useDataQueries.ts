@@ -8,6 +8,7 @@ export const queryKeys = {
     // System & Data Health
     systemHealth: () => ['systemHealth'] as const,
     lineage: () => ['lineage'] as const,
+    debugSymbols: () => ['debugSymbols'] as const,
 };
 
 /**
@@ -67,5 +68,16 @@ export function useLineageQuery() {
                 error: err instanceof Error ? err.message : String(err),
             });
         },
+    });
+}
+
+export function useDebugSymbolsQuery() {
+    return useQuery({
+        queryKey: queryKeys.debugSymbols(),
+        queryFn: async () => {
+            return DataService.getDebugSymbols();
+        },
+        staleTime: 30 * 1000,
+        refetchInterval: 60 * 1000,
     });
 }
