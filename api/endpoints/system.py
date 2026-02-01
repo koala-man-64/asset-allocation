@@ -1,9 +1,11 @@
 import logging
+import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal, Tuple
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -26,6 +28,62 @@ from core.blob_storage import BlobStorageClient
 logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()
+
+
+def _extract_arm_error_message(response: httpx.Response) -> str:
+    """
+    Best-effort extraction of a human-friendly error message from ARM responses.
+
+    Some ARM endpoints return a JSON string like:
+      "Reason: Bad Request. Body: {\"error\":\"...\",\"success\":false}"
+    """
+
+    def _from_mapping(payload: Dict[str, Any]) -> str:
+        err = payload.get("error")
+        if isinstance(err, dict):
+            message = err.get("message") or err.get("Message") or err.get("detail") or err.get("details")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+            code = err.get("code") or err.get("Code")
+            if isinstance(code, str) and code.strip():
+                return code.strip()
+            return json.dumps(err, ensure_ascii=False)
+        if isinstance(err, str) and err.strip():
+            return err.strip()
+        message = payload.get("message") or payload.get("Message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _from_text(text: str) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return ""
+        # If the payload includes an embedded JSON body fragment, prefer it.
+        match = re.search(r"Body:\\s*(\\{.*\\})\\s*$", cleaned)
+        if match:
+            fragment = match.group(1)
+            try:
+                nested = json.loads(fragment)
+            except json.JSONDecodeError:
+                return cleaned
+            if isinstance(nested, dict):
+                return _from_mapping(nested)
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+            return fragment
+        return cleaned
+
+    try:
+        payload = response.json()
+    except Exception:
+        return _from_text(response.text)
+
+    if isinstance(payload, dict):
+        return _from_mapping(payload)
+    if isinstance(payload, str):
+        return _from_text(payload)
+    return _from_text(response.text)
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -693,6 +751,23 @@ def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
             job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=resolved)
             start_url = f"{job_url}/start"
             payload = arm.post_json(start_url)
+    except httpx.HTTPStatusError as exc:
+        message = _extract_arm_error_message(exc.response)
+        logger.warning(
+            "Azure job start failed: job=%s status=%s message=%s",
+            resolved,
+            exc.response.status_code,
+            message or "?",
+        )
+        if "suspended" in (message or "").lower():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job is suspended. Resume it, then trigger again. ({message})",
+            ) from exc
+        raise HTTPException(
+            status_code=exc.response.status_code,
+            detail=f"Failed to trigger job: {message or str(exc)}",
+        ) from exc
     except Exception as exc:
         logger.exception("Failed to trigger Azure job run: job=%s", resolved)
         raise HTTPException(status_code=502, detail=f"Failed to trigger job: {exc}") from exc
@@ -1033,21 +1108,59 @@ def get_job_logs(
             job_kql = _escape_kql_literal(resolved)
             exec_kql = _escape_kql_literal(exec_name)
             query = f"""
-	let jobName = '{job_kql}';
-	let execName = '{exec_kql}';
-	union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
-	| extend job = tostring(column_ifexists('ContainerJobName_s', column_ifexists('ContainerName_s', column_ifexists('ContainerAppJobName_s', column_ifexists('JobName_s', column_ifexists('JobName', column_ifexists('ContainerAppName_s', '')))))))
-	| extend exec = tostring(column_ifexists('ContainerGroupName_s', column_ifexists('ContainerGroupName', column_ifexists('ContainerAppJobExecutionName_s', column_ifexists('ExecutionName_s', column_ifexists('ExecutionName', column_ifexists('ContainerGroupId_g', column_ifexists('ContainerAppJobExecutionId_g', column_ifexists('ContainerAppJobExecutionId_s', ''))))))))
-	| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
-	| extend msg = tostring(column_ifexists('Log_s', column_ifexists('Log', column_ifexists('LogMessage_s', column_ifexists('Message', column_ifexists('message', ''))))))
-	| extend jobMatch = (job != '' and job contains jobName) or (resource contains jobName)
-	| extend execMatch = execName != '' and ((exec != '' and exec contains execName) or (resource contains execName))
-	| where jobMatch or execMatch
-	| order by execMatch desc, jobMatch desc, TimeGenerated desc
-	| take {tail_lines}
-	| project TimeGenerated, msg
-	| order by TimeGenerated asc
-	""".strip()
+let jobName = '{job_kql}';
+let execName = '{exec_kql}';
+union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+| extend job = tostring(
+    column_ifexists('ContainerJobName_s',
+        column_ifexists('ContainerName_s',
+            column_ifexists('ContainerAppJobName_s',
+                column_ifexists('JobName_s',
+                    column_ifexists('JobName',
+                        column_ifexists('ContainerAppName_s', '')
+                    )
+                )
+            )
+        )
+    )
+)
+| extend exec = tostring(
+    column_ifexists('ContainerGroupName_s',
+        column_ifexists('ContainerGroupName',
+            column_ifexists('ContainerAppJobExecutionName_s',
+                column_ifexists('ExecutionName_s',
+                    column_ifexists('ExecutionName',
+                        column_ifexists('ContainerGroupId_g',
+                            column_ifexists('ContainerAppJobExecutionId_g',
+                                column_ifexists('ContainerAppJobExecutionId_s', '')
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+| extend msg = tostring(
+    column_ifexists('Log_s',
+        column_ifexists('Log',
+            column_ifexists('LogMessage_s',
+                column_ifexists('Message',
+                    column_ifexists('message', '')
+                )
+            )
+        )
+    )
+)
+| extend jobMatch = (job != '' and job contains jobName) or (resource contains jobName)
+| extend execMatch = execName != '' and ((exec != '' and exec contains execName) or (resource contains execName))
+| where jobMatch or execMatch
+| order by execMatch desc, jobMatch desc, TimeGenerated desc
+| take {tail_lines}
+| project TimeGenerated, msg
+| order by TimeGenerated asc
+""".strip()
 
             try:
                 payload = log_client.query(workspace_id=workspace_id, query=query, timespan=timespan)

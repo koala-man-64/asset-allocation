@@ -37,7 +37,11 @@ async def fetch_and_save_raw(symbol: str, context, semaphore):
         if list_manager.is_blacklisted(symbol):
             return
 
-        page = await context.new_page()
+        try:
+            page = await context.new_page()
+        except Exception as exc:
+            mdc.write_error(f"Failed to create Playwright page for {symbol}: {exc}")
+            return
         try:
             # Check whitelist - if present, skip some validation? 
             # For earnings, we rely on pl.get_yahoo_earnings_data return value.
@@ -75,7 +79,12 @@ async def fetch_and_save_raw(symbol: str, context, semaphore):
             else:
                 mdc.write_line(f"ValueError for {symbol}: {ve}")
         except Exception as e:
-            mdc.write_line(f"Error retrieving earnings data for {symbol}: {str(e)}")
+            message = str(e)
+            if "Symbol not found" in message:
+                mdc.write_line(f"Blacklisting {symbol} (detected invalid/no-data).")
+                list_manager.add_to_blacklist(symbol)
+            else:
+                mdc.write_line(f"Error retrieving earnings data for {symbol}: {message}")
         finally:                
             await page.close()
 

@@ -161,30 +161,80 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
 
     const medallionMetrics = useMemo(() => {
         return dataLayers.map((layer) => {
+            const containerStatusKey = String(layer.status || '').trim().toLowerCase() || 'pending';
+            const containerConfig = getStatusConfig(containerStatusKey);
+            const containerLabel = (() => {
+                if (containerStatusKey === 'healthy' || containerStatusKey === 'success') return 'OK';
+                if (containerStatusKey === 'stale' || containerStatusKey === 'warning' || containerStatusKey === 'degraded') return 'STALE';
+                if (containerStatusKey === 'error' || containerStatusKey === 'failed' || containerStatusKey === 'critical') return 'ERR';
+                if (containerStatusKey === 'pending') return 'PENDING';
+                return containerStatusKey.toUpperCase();
+            })();
+
             let total = 0;
             let running = 0;
             let failed = 0;
             let success = 0;
+            let pending = 0;
 
             for (const domain of layer.domains || []) {
                 if (!domain?.jobName) continue;
                 total += 1;
                 const key = normalizeAzureJobName(domain.jobName);
                 const job = key ? jobIndex.get(key) : undefined;
-                if (job?.status === 'running') running += 1;
-                if (job?.status === 'failed') failed += 1;
-                if (job?.status === 'success') success += 1;
+                if (!job) {
+                    pending += 1;
+                    continue;
+                }
+                if (job.status === 'running') running += 1;
+                else if (job.status === 'failed') failed += 1;
+                else if (job.status === 'success') success += 1;
+                else pending += 1;
             }
+
+            const jobStatusKey = (() => {
+                if (total === 0) return 'pending';
+                if (failed > 0) return 'failed';
+                if (running > 0) return 'running';
+                if (pending > 0) return 'pending';
+                if (success === total) return 'success';
+                return 'pending';
+            })();
+
+            const jobConfig = getStatusConfig(jobStatusKey);
+            const jobLabel = (() => {
+                if (total === 0) return 'N/A';
+                if (jobStatusKey === 'success') return 'OK';
+                if (jobStatusKey === 'failed') return 'FAIL';
+                if (jobStatusKey === 'running') return 'RUN';
+                if (jobStatusKey === 'pending') return 'PENDING';
+                return jobStatusKey.toUpperCase();
+            })();
 
             return {
                 layer: layer.name,
+                containerStatusKey,
+                containerConfig,
+                containerLabel,
                 total,
                 running,
                 failed,
                 success,
+                pending,
+                jobStatusKey,
+                jobConfig,
+                jobLabel,
             };
         });
     }, [dataLayers, jobIndex]);
+
+    const medallionIndex = useMemo(() => {
+        const index = new Map<string, (typeof medallionMetrics)[number]>();
+        for (const metric of medallionMetrics) {
+            index.set(metric.layer, metric);
+        }
+        return index;
+    }, [medallionMetrics]);
 
     const jobCount = useMemo(() => {
         let count = 0;
@@ -294,16 +344,55 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                     </div>
                     <div className="hidden lg:flex flex-wrap items-center gap-2 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-2 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
                         {medallionMetrics.map((metric) => (
-                            <div
-                                key={metric.layer}
-                                className="flex items-center gap-2 rounded-full border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-1 text-[10px] font-black uppercase tracking-widest text-mcm-olive"
-                            >
-                                <span className="text-mcm-walnut">{metric.layer}</span>
-                                <span className="text-mcm-walnut/30">•</span>
-                                <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/80`}>jobs {metric.total}</span>
-                                <span className={`${StatusTypos.MONO} text-[10px] text-mcm-teal`}>run {metric.running}</span>
-                                <span className={`${StatusTypos.MONO} text-[10px] text-destructive`}>fail {metric.failed}</span>
-                            </div>
+                            <Tooltip key={metric.layer}>
+                                <TooltipTrigger asChild>
+                                    <div className="flex items-center gap-2 rounded-full border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-1 text-[10px] font-black uppercase tracking-widest text-mcm-olive">
+                                        <span className="text-mcm-walnut">{metric.layer}</span>
+                                        <span className="text-mcm-walnut/30">•</span>
+
+                                        <span className="inline-flex items-center gap-1">
+                                            <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
+                                                <Database className="h-3.5 w-3.5" />
+                                            </span>
+                                            <span
+                                                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                                style={{
+                                                    backgroundColor: metric.containerConfig.bg,
+                                                    color: metric.containerConfig.text,
+                                                    borderColor: metric.containerConfig.border,
+                                                }}
+                                            >
+                                                {metric.containerLabel}
+                                            </span>
+                                        </span>
+
+                                        <span className="inline-flex items-center gap-1">
+                                            <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
+                                                <ScrollText className="h-3.5 w-3.5" />
+                                            </span>
+                                            <span
+                                                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                                style={{
+                                                    backgroundColor: metric.jobConfig.bg,
+                                                    color: metric.jobConfig.text,
+                                                    borderColor: metric.jobConfig.border,
+                                                }}
+                                            >
+                                                {metric.jobLabel}
+                                            </span>
+                                        </span>
+
+                                        <span className="text-mcm-walnut/30">•</span>
+                                        <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/80`}>jobs {metric.total}</span>
+                                        <span className={`${StatusTypos.MONO} text-[10px] text-mcm-teal`}>run {metric.running}</span>
+                                        <span className={`${StatusTypos.MONO} text-[10px] text-destructive`}>fail {metric.failed}</span>
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">
+                                    {metric.layer} • Data {metric.containerStatusKey.toUpperCase()} • Jobs {metric.jobStatusKey.toUpperCase()} (
+                                    total {metric.total}, ok {metric.success}, run {metric.running}, fail {metric.failed}, pending {metric.pending})
+                                </TooltipContent>
+                            </Tooltip>
                         ))}
                     </div>
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -381,7 +470,13 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                                     DOMAIN
                                 </TableHead>
                                 {dataLayers.map((layer) => {
-                                    const layerStatus = getStatusConfig(layer.status);
+                                    const metric = medallionIndex.get(layer.name);
+                                    const layerUpdatedAgo = layer.lastUpdated ? formatTimeAgo(layer.lastUpdated) : '--';
+                                    const containerConfig = metric?.containerConfig ?? getStatusConfig(layer.status);
+                                    const containerLabel = metric?.containerLabel ?? String(layer.status || '').toUpperCase();
+                                    const jobConfig = metric?.jobConfig ?? getStatusConfig('pending');
+                                    const jobLabel = metric?.jobLabel ?? 'N/A';
+                                    const jobStatusKey = metric?.jobStatusKey ?? 'pending';
                                     const layerState = layerStates[layer.name];
                                     const isLayerLoading = layerState?.isLoading;
                                     const layerAction = layerState?.action;
@@ -391,18 +486,51 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                                             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
                                                 <div className="flex items-center gap-2 min-w-0">
                                                     <span className="font-bold text-mcm-walnut truncate">{layer.name}</span>
-                                                    <span
-                                                        className={`${StatusTypos.MONO} text-[10px] px-2 py-1 rounded-sm font-bold border opacity-80`}
-                                                        style={{
-                                                            backgroundColor: layerStatus.bg,
-                                                            color: layerStatus.text,
-                                                            borderColor: layerStatus.border,
-                                                        }}
-                                                    >
-                                                        <span className="opacity-70">OVERALL</span>
-                                                        <span className="mx-1 opacity-40">•</span>
-                                                        {layer.status.toUpperCase()}
-                                                    </span>
+                                                    <div className="flex items-center gap-1 shrink-0">
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[9px] font-black uppercase tracking-widest opacity-90"
+                                                                    style={{
+                                                                        backgroundColor: containerConfig.bg,
+                                                                        color: containerConfig.text,
+                                                                        borderColor: containerConfig.border,
+                                                                    }}
+                                                                >
+                                                                    <span className="inline-flex w-4 items-center justify-center shrink-0">
+                                                                        <Database className="h-3.5 w-3.5" />
+                                                                    </span>
+                                                                    {containerLabel}
+                                                                </span>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent side="bottom">
+                                                                Container • {String(layer.status || 'unknown').toUpperCase()} • Updated {layerUpdatedAgo} ago
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[9px] font-black uppercase tracking-widest opacity-90"
+                                                                    style={{
+                                                                        backgroundColor: jobConfig.bg,
+                                                                        color: jobConfig.text,
+                                                                        borderColor: jobConfig.border,
+                                                                    }}
+                                                                >
+                                                                    <span className="inline-flex w-4 items-center justify-center shrink-0">
+                                                                        <ScrollText className="h-3.5 w-3.5" />
+                                                                    </span>
+                                                                    {jobLabel}
+                                                                </span>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent side="bottom">
+                                                                Jobs • {String(jobStatusKey || 'pending').toUpperCase()}
+                                                                {metric
+                                                                    ? ` • total ${metric.total}, ok ${metric.success}, run ${metric.running}, fail ${metric.failed}, pending ${metric.pending}`
+                                                                    : ''}
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    </div>
                                                 </div>
                                                 <div className="flex items-center">
                                                     <DropdownMenu>

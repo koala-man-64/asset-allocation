@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import sys
 import threading
 import time
 import warnings
@@ -23,6 +24,13 @@ def _is_truthy(raw: Optional[str]) -> bool:
 
 
 _IS_TEST_ENVIRONMENT = "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
+
+
+def _is_interactive_session() -> bool:
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
 
 try:
     from bs4 import BeautifulSoup
@@ -772,7 +780,8 @@ async def pw_login_to_yahoo_async(
             # — enter username —
             write_line("Entering username…")
             selectors = [
-                {"property_name": "id", "property_value": "login-username"}
+                {"property_name": "id", "property_value": "login-username"},
+                {"property_name": "name", "property_value": "username"},
             ]
             if await pw_fill_by_selectors_async(page, selectors, cfg.YAHOO_USERNAME):
                 write_line("Username entered")
@@ -780,8 +789,12 @@ async def pw_login_to_yahoo_async(
                 if await is_yahoo_logged_in_async(page):
                     pass
                 else:
-                    write_line("Username entry failed; please enter manually.")
-                    input("Press Enter once done…")
+                    message = "Username entry failed; interactive login is required."
+                    write_line(message)
+                    if _is_interactive_session():
+                        input("Press Enter once done…")
+                    else:
+                        raise RuntimeError(f"{message} (non-interactive session; cannot prompt for input).")
 
             # — submit username —
             write_line("Submitting username…")
@@ -804,8 +817,12 @@ async def pw_login_to_yahoo_async(
         if await pw_fill_by_selectors_async(page, selectors, cfg.YAHOO_PASSWORD):
             write_line("Password entered")
         else:
-            write_line("Password entry failed; please enter manually.")
-            input("Press Enter once done…")
+            message = "Password entry failed; interactive login is required."
+            write_line(message)
+            if _is_interactive_session():
+                input("Press Enter once done…")
+            else:
+                raise RuntimeError(f"{message} (non-interactive session; cannot prompt for input).")
 
         # — submit password —
         write_line("Submitting password…")
