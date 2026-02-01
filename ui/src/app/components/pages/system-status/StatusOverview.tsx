@@ -115,6 +115,8 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
         return { time, tz };
     })();
 
+    const overallLabel = String(overall || '').trim().toUpperCase();
+
     const domainNames = useMemo(() => {
         const seen = new Set<string>();
         const names: string[] = [];
@@ -314,8 +316,8 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                     <sysConfig.icon className={`h-8 w-8 ${apiAnim}`} style={{ color: sysConfig.text }} />
                     <div>
                         <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
-                        <div className="text-xl font-black tracking-tighter uppercase pr-6" style={{ color: sysConfig.text }}>
-                            {overall}
+                        <div className={`${StatusTypos.MONO} text-xl font-black tracking-tighter uppercase pr-6`} style={{ color: sysConfig.text }}>
+                            {overallLabel}
                         </div>
                     </div>
                 </div>
