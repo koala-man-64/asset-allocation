@@ -4,7 +4,7 @@ import {
     FinanceData,
     MarketData,
 } from '@/types/data';
-import { SystemHealth } from '@/types/strategy';
+import { DomainMetadata, SystemHealth } from '@/types/strategy';
 import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
 
 interface WindowWithConfig extends Window {
@@ -111,6 +111,16 @@ export const apiService = {
 
     getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {
         return request<SystemHealth>('/system/health', { params });
+    },
+
+    getDomainMetadata(
+        layer: 'bronze' | 'silver' | 'gold' | 'platinum',
+        domain: string,
+        params: { refresh?: boolean } = {},
+    ): Promise<DomainMetadata> {
+        return request<DomainMetadata>('/system/domain-metadata', {
+            params: { layer, domain, ...params },
+        });
     },
 
     getLineage(): Promise<unknown> {

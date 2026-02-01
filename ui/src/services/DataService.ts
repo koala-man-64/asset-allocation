@@ -8,7 +8,7 @@ import type {
   Position,
   RiskMetrics,
 } from '@/types/data';
-import type { SystemHealth } from '@/types/strategy';
+import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 import type { DebugSymbolsResponse, JobLogsResponse, PurgeRequest, PurgeResponse } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
@@ -38,6 +38,14 @@ export const DataService = {
       console.error('[DataService] getSystemHealth error', error);
       throw error;
     }
+  },
+
+  getDomainMetadata(
+    layer: 'bronze' | 'silver' | 'gold' | 'platinum',
+    domain: string,
+    params: { refresh?: boolean } = {},
+  ): Promise<DomainMetadata> {
+    return apiService.getDomainMetadata(layer, domain, params);
   },
 
   getLineage(): Promise<unknown> {

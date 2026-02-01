@@ -68,15 +68,15 @@ def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
     assert resources[0].name == "my-backtest-job"
     assert resources[0].status == "healthy"
 
-    # Limit applies before sorting.
+    # Limit applies after sorting (most recent executions).
     assert len(runs) == 3
-    assert [r["status"] for r in runs] == ["running", "success", "failed"]
+    assert [r["status"] for r in runs] == ["pending", "running", "success"]
     assert [r["startTime"] for r in runs] == [
+        "2024-01-04T00:00:00+00:00",
         "2024-01-03T00:00:00+00:00",
         "2024-01-02T00:00:00+00:00",
-        "2024-01-01T00:00:00+00:00",
     ]
-    assert [r["duration"] for r in runs] == [None, 120, 60]
+    assert [r["duration"] for r in runs] == [None, None, 120]
     assert all(r["jobType"] == "backtest" for r in runs)
     assert all(r["triggeredBy"] == "azure" for r in runs)
 

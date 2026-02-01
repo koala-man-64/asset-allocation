@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
-import type { SystemHealth } from '@/types/strategy';
+import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 
 // Key Factory for consistent query keys
 // Key Factory for consistent query keys
@@ -9,6 +9,7 @@ export const queryKeys = {
     systemHealth: () => ['systemHealth'] as const,
     lineage: () => ['lineage'] as const,
     debugSymbols: () => ['debugSymbols'] as const,
+    domainMetadata: (layer: string, domain: string) => ['domainMetadata', layer, domain] as const,
 };
 
 /**
@@ -79,5 +80,24 @@ export function useDebugSymbolsQuery() {
         },
         staleTime: 30 * 1000,
         refetchInterval: 60 * 1000,
+    });
+}
+
+export function useDomainMetadataQuery(
+    layer: 'bronze' | 'silver' | 'gold' | 'platinum' | undefined,
+    domain: string | undefined,
+    options: { enabled?: boolean } = {},
+) {
+    return useQuery<DomainMetadata>({
+        queryKey: queryKeys.domainMetadata(String(layer || ''), String(domain || '')),
+        queryFn: async () => {
+            if (!layer || !domain) {
+                throw new Error('Layer and domain are required.');
+            }
+            return DataService.getDomainMetadata(layer, domain);
+        },
+        enabled: Boolean(layer && domain) && options.enabled !== false,
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: false,
     });
 }

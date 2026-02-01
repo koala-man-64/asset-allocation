@@ -916,24 +916,40 @@ def collect_system_health_snapshot(
                             _record_resource(enriched, title="Azure job health")
 
                         job_runs.extend(runs)
+                        # Determine health based on the *latest* execution per job.
+                        latest_by_job: Dict[str, Dict[str, Any]] = {}
                         for run in runs:
-                            if run.get("status") == "failed":
-                                statuses.append("error")
-                                alerts.append(
-                                    {
-                                        "id": _alert_id(
-                                            severity="error",
-                                            title="Job execution failed",
-                                            component=str(run.get("jobName") or "job"),
-                                        ),
-                                        "severity": "error",
-                                        "title": "Job execution failed",
-                                        "component": str(run.get("jobName") or "job"),
-                                        "timestamp": checked_iso,
-                                        "message": "Latest execution reported failed.",
-                                        "acknowledged": False,
-                                    }
-                                )
+                            job_name = str(run.get("jobName") or "").strip()
+                            if not job_name:
+                                continue
+                            existing = latest_by_job.get(job_name)
+                            if not existing or str(run.get("startTime") or "") > str(existing.get("startTime") or ""):
+                                latest_by_job[job_name] = run
+
+                        for run in latest_by_job.values():
+                            if run.get("status") != "failed":
+                                continue
+                            job_name = str(run.get("jobName") or "job")
+                            start_time = str(run.get("startTime") or "")
+                            message = "Latest execution reported failed."
+                            if start_time:
+                                message = f"Latest execution reported failed (startTime={start_time})."
+                            statuses.append("error")
+                            alerts.append(
+                                {
+                                    "id": _alert_id(
+                                        severity="error",
+                                        title="Job execution failed",
+                                        component=job_name,
+                                    ),
+                                    "severity": "error",
+                                    "title": "Job execution failed",
+                                    "component": job_name,
+                                    "timestamp": checked_iso,
+                                    "message": message,
+                                    "acknowledged": False,
+                                }
+                            )
                 finally:
                     if log_client is not None:
                         log_client.close()

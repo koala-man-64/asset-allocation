@@ -11,8 +11,6 @@ import { AzureResources } from './system-status/AzureResources';
 // For "High Density" view, we prioritize the Matrix (StatusOverview).
 import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
 import { getAzurePortalUrl, normalizeAzureJobName, normalizeAzurePortalUrl } from './system-status/SystemStatusHelpers';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { Switch } from '@/app/components/ui/switch';
 
 export function SystemStatusPage() {
     const { data, isLoading, error, isFetching } = useSystemHealthQuery();
@@ -145,36 +143,19 @@ export function SystemStatusPage() {
 
     return (
         <div className="space-y-8 pb-10">
-            <div className="flex justify-end">
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <div className="inline-flex items-center gap-3 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-4 py-2 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                            <div className="flex flex-col items-end leading-tight">
-                                <div className="text-[10px] font-black uppercase tracking-widest text-mcm-olive">Debug symbols</div>
-                                <div className="font-mono text-[10px] text-mcm-walnut/70">{debugSymbolsPreview}</div>
-                            </div>
-                            <Switch
-                                checked={debugEnabled}
-                                onCheckedChange={(checked) => void toggleDebugSymbols(Boolean(checked))}
-                                disabled={debugSymbolsQuery.isLoading || isTogglingDebug || Boolean(debugSymbolsQuery.error)}
-                                aria-label="Toggle debug symbols"
-                            />
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="left" className="max-w-[320px]">
-                        {debugSymbolsQuery.error
-                            ? 'Debug-symbol control is unavailable in this deployment.'
-                            : 'When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing to a small ticker set.'}
-                    </TooltipContent>
-                </Tooltip>
-            </div>
-
             {/* Status Matrix - The Hero Component */}
             <StatusOverview
                 overall={overall}
                 dataLayers={dataLayers}
                 recentJobs={recentJobs}
                 jobStates={jobStates}
+                debugSymbols={{
+                    enabled: debugEnabled,
+                    preview: debugSymbolsPreview,
+                    disabled: debugSymbolsQuery.isLoading || isTogglingDebug,
+                    unavailable: Boolean(debugSymbolsQuery.error),
+                    onToggle: (enabled) => void toggleDebugSymbols(enabled),
+                }}
                 onRefresh={handleRefresh}
                 isRefreshing={isRefreshing}
                 isFetching={isFetching}

@@ -17,6 +17,7 @@ from api.service.dependencies import (
 )
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
+from monitoring.domain_metadata import collect_domain_metadata
 from monitoring.log_analytics import AzureLogAnalyticsClient
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
@@ -211,6 +212,47 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     if result.refresh_error:
         headers["X-System-Health-Stale"] = "1"
     return JSONResponse(payload, headers=headers)
+
+
+class DomainDateRange(BaseModel):
+    min: Optional[str] = None
+    max: Optional[str] = None
+    column: Optional[str] = None
+
+
+class DomainMetadataResponse(BaseModel):
+    layer: str
+    domain: str
+    container: str
+    type: Literal["blob", "delta"]
+    computedAt: str
+    symbolCount: Optional[int] = None
+    dateRange: Optional[DomainDateRange] = None
+    totalRows: Optional[int] = None
+    fileCount: Optional[int] = None
+    totalBytes: Optional[int] = None
+    deltaVersion: Optional[int] = None
+    tablePath: Optional[str] = None
+    prefix: Optional[str] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+@router.get("/domain-metadata", response_model=DomainMetadataResponse)
+def domain_metadata(
+    request: Request,
+    layer: str = Query(..., description="Medallion layer key (bronze|silver|gold|platinum)"),
+    domain: str = Query(..., description="Domain key (market|finance|earnings|price-target|platinum)"),
+) -> JSONResponse:
+    validate_auth(request)
+    try:
+        payload = collect_domain_metadata(layer=layer, domain=domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Domain metadata collection failed: layer=%s domain=%s", layer, domain)
+        raise HTTPException(status_code=503, detail=f"Domain metadata unavailable: {exc}") from exc
+
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 class SnoozeRequest(BaseModel):

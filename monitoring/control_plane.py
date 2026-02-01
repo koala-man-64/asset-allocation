@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from monitoring.arm_client import AzureArmClient
@@ -12,7 +12,10 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     except ValueError:
         return None
 
@@ -215,7 +218,16 @@ def collect_jobs_and_executions(
         try:
             exec_payload = arm.get_json(executions_url)
             values = exec_payload.get("value") if isinstance(exec_payload.get("value"), list) else []
-            for item in values[:max_executions_per_job]:
+            executions: List[Dict[str, Any]] = [item for item in values if isinstance(item, dict)]
+
+            def _execution_start_ts(execution: Dict[str, Any]) -> float:
+                props = execution.get("properties") if isinstance(execution.get("properties"), dict) else {}
+                start_dt = _parse_dt(str(props.get("startTime") or ""))
+                return float(start_dt.timestamp()) if start_dt else 0.0
+
+            # Ensure we sample the most recent executions for each job regardless of API ordering.
+            executions.sort(key=_execution_start_ts, reverse=True)
+            for item in executions[:max_executions_per_job]:
                 if not isinstance(item, dict):
                     continue
                 props = item.get("properties") if isinstance(item.get("properties"), dict) else {}

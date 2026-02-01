@@ -137,6 +137,29 @@ export interface DataDomain {
   maxAgeSeconds?: number;
 }
 
+export interface DomainDateRange {
+  min?: string | null;
+  max?: string | null;
+  column?: string | null;
+}
+
+export interface DomainMetadata {
+  layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+  domain: string;
+  container: string;
+  type: 'blob' | 'delta';
+  computedAt: string;
+  symbolCount?: number | null;
+  dateRange?: DomainDateRange | null;
+  totalRows?: number | null;
+  fileCount?: number | null;
+  totalBytes?: number | null;
+  deltaVersion?: number | null;
+  tablePath?: string | null;
+  prefix?: string | null;
+  warnings?: string[];
+}
+
 export interface DataLayer {
   name: string;
   description: string;

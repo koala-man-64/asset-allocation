@@ -16,19 +16,28 @@ import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
+import { Switch } from '@/app/components/ui/switch';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
+import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
 
 interface StatusOverviewProps {
     overall: string;
     dataLayers: DataLayer[];
     recentJobs: JobRun[];
     jobStates?: Record<string, string>;
+    debugSymbols?: {
+        enabled: boolean;
+        preview: string;
+        disabled?: boolean;
+        unavailable?: boolean;
+        onToggle?: (enabled: boolean) => void;
+    };
     onRefresh?: () => void;
     isRefreshing?: boolean;
     isFetching?: boolean;
 }
 
-export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onRefresh, isRefreshing, isFetching }: StatusOverviewProps) {
+export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, debugSymbols, onRefresh, isRefreshing, isFetching }: StatusOverviewProps) {
     const sysConfig = getStatusConfig(overall);
     const apiAnim = sysConfig.animation === 'spin' ? 'animate-spin' : sysConfig.animation === 'pulse' ? 'animate-pulse' : '';
     const { triggeringJob, triggerJob } = useJobTrigger();
@@ -43,6 +52,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
         displayDomain: string;
     } | null>(null);
     const [isPurging, setIsPurging] = useState(false);
+    const [metadataTarget, setMetadataTarget] = useState<DomainMetadataSheetTarget | null>(null);
 
     const confirmPurge = async () => {
         if (!purgeTarget) return;
@@ -188,13 +198,19 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
 
     const jobStatusCounts = useMemo(() => {
         const counts = { running: 0, failed: 0, success: 0 };
-        for (const job of recentJobs || []) {
-            if (job.status === 'running') counts.running += 1;
-            if (job.status === 'failed') counts.failed += 1;
-            if (job.status === 'success') counts.success += 1;
+        for (const layer of dataLayers) {
+            for (const domain of layer.domains || []) {
+                if (!domain?.jobName) continue;
+                const key = normalizeAzureJobName(domain.jobName);
+                const job = key ? jobIndex.get(key) : undefined;
+                if (!job) continue;
+                if (job.status === 'running') counts.running += 1;
+                if (job.status === 'failed') counts.failed += 1;
+                if (job.status === 'success') counts.success += 1;
+            }
         }
         return counts;
-    }, [recentJobs]);
+    }, [dataLayers, jobIndex]);
 
     const matrixCell = 'bg-mcm-paper border border-mcm-walnut/15 rounded-none';
     const matrixHead = `${matrixCell} uppercase tracking-widest text-[10px] font-black text-mcm-walnut/70`;
@@ -229,18 +245,26 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                 </AlertDialogContent>
             </AlertDialog>
 
+            <DomainMetadataSheet
+                target={metadataTarget}
+                open={Boolean(metadataTarget)}
+                onOpenChange={(open) => {
+                    if (!open) setMetadataTarget(null);
+                }}
+            />
+
             {/* System Header - Manual inline styles for specific 'Industrial' theming overrides */}
             <div
-                className="flex items-center gap-6 px-6 py-6 border-2 rounded-[1.6rem] border-l-[6px] border-mcm-walnut bg-mcm-paper shadow-[8px_8px_0px_0px_rgba(119,63,26,0.1)]"
+                className="flex items-center gap-5 px-6 py-4 border-2 rounded-[1.6rem] border-l-[6px] border-mcm-walnut bg-mcm-paper shadow-[8px_8px_0px_0px_rgba(119,63,26,0.1)]"
                 style={{
                     borderLeftColor: sysConfig.text,
                 }}
             >
-                <div className="flex items-center gap-4 min-w-[260px]">
-                    <sysConfig.icon className={`h-10 w-10 ${apiAnim}`} style={{ color: sysConfig.text }} />
+                <div className="flex items-center gap-3 min-w-[240px]">
+                    <sysConfig.icon className={`h-8 w-8 ${apiAnim}`} style={{ color: sysConfig.text }} />
                     <div>
                         <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
-                        <div className="text-2xl font-black tracking-tighter uppercase pr-6" style={{ color: sysConfig.text }}>
+                        <div className="text-xl font-black tracking-tighter uppercase pr-6" style={{ color: sysConfig.text }}>
                             {overall}
                         </div>
                     </div>
@@ -282,17 +306,40 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                             </div>
                         ))}
                     </div>
-                    <div className="ml-auto flex flex-col items-end gap-2">
-                        <div className="flex items-baseline gap-2 text-right">
-                            <div className={StatusTypos.HEADER}>UPTIME CLOCK</div>
-                            <div className={`${StatusTypos.MONO} text-xl text-mcm-walnut/70`}>
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                        <div className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>UPTIME</span>
+                            <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/70`}>
                                 {centralClock.time} {centralClock.tz}
-                            </div>
+                            </span>
                         </div>
+                        {debugSymbols ? (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                                        <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>DEBUG</span>
+                                        <span className={`${StatusTypos.MONO} max-w-[140px] truncate text-[10px] text-mcm-walnut/70`}>
+                                            {debugSymbols.preview}
+                                        </span>
+                                        <Switch
+                                            checked={debugSymbols.enabled}
+                                            onCheckedChange={(checked) => debugSymbols.onToggle?.(Boolean(checked))}
+                                            disabled={Boolean(debugSymbols.disabled) || Boolean(debugSymbols.unavailable)}
+                                            aria-label="Toggle debug symbols"
+                                        />
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="max-w-[320px]">
+                                    {debugSymbols.unavailable
+                                        ? 'Debug-symbol control is unavailable in this deployment.'
+                                        : `When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing. (${debugSymbols.preview})`}
+                                </TooltipContent>
+                            </Tooltip>
+                        ) : null}
                         <Button
                             variant="outline"
                             size="sm"
-                            className="text-xs"
+                            className="h-8 px-3 text-xs"
                             onClick={onRefresh}
                             disabled={!onRefresh || isFetching || isRefreshing}
                         >
@@ -597,6 +644,28 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                                                                     </TooltipContent>
                                                                 </Tooltip>
 
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-mcm-walnut/15 bg-mcm-cream/60 text-mcm-walnut/60 hover:bg-mcm-cream hover:text-mcm-teal focus:outline-none focus:ring-2 focus:ring-mcm-teal/30"
+                                                                            aria-label={`View ${layer.name} ${domainName} metadata`}
+                                                                            onClick={() =>
+                                                                                setMetadataTarget({
+                                                                                    layer: layerKey as DomainMetadataSheetTarget['layer'],
+                                                                                    domain: domainKey,
+                                                                                    displayLayer: layer.name,
+                                                                                    displayDomain: domainName,
+                                                                                    lastUpdated: domain.lastUpdated,
+                                                                                })
+                                                                            }
+                                                                        >
+                                                                            <Database className="h-4 w-4 shrink-0" />
+                                                                        </button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent side="bottom">Metadata</TooltipContent>
+                                                                </Tooltip>
+
                                                                 {hasLinks ? (
                                                                     <DropdownMenu>
                                                                         <Tooltip>
@@ -641,7 +710,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                                                                             {jobPortalUrl ? (
                                                                                 <DropdownMenuItem asChild>
                                                                                     <a href={jobPortalUrl} target="_blank" rel="noreferrer">
-                                                                                        <Database className="h-4 w-4 shrink-0" />
+                                                                                        <ExternalLink className="h-4 w-4 shrink-0" />
                                                                                         <span className="flex-1 leading-none">Job in Azure</span>
                                                                                         <DropdownMenuShortcut>
                                                                                             {jobName
