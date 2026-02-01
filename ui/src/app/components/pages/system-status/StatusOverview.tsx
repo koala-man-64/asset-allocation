@@ -510,25 +510,33 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
 
                                                         const updatedAgo = domain.lastUpdated ? formatTimeAgo(domain.lastUpdated) : '--';
 
-                                                        const effectiveStatusKey = (() => {
-                                                            const jobStatus = String(run?.status || '').trim().toLowerCase();
-                                                            const dataStatus = String(domain.status || '').trim().toLowerCase();
+                                                        const dataStatusKey = String(domain.status || '').trim().toLowerCase() || 'pending';
+                                                        const dataConfig = getStatusConfig(dataStatusKey);
+                                                        const dataLabel = (() => {
+                                                            const key = String(dataStatusKey || '').toLowerCase();
+                                                            if (key === 'healthy') return 'OK';
+                                                            if (key === 'stale' || key === 'warning' || key === 'degraded') return 'STALE';
+                                                            if (key === 'error' || key === 'failed' || key === 'critical') return 'ERR';
+                                                            if (key === 'pending') return 'PENDING';
+                                                            return key.toUpperCase();
+                                                        })();
 
-                                                            if (jobStatus === 'failed') return 'failed';
-                                                            if (dataStatus === 'error') return 'error';
-                                                            if (dataStatus === 'stale') return 'stale';
-                                                            if (jobStatus === 'running') return 'running';
-                                                            if (dataStatus === 'healthy') return 'healthy';
-                                                            if (jobStatus === 'success') return 'success';
+                                                        const jobStatusKey = (() => {
+                                                            const key = String(run?.status || '').trim().toLowerCase();
+                                                            if (!jobName) return 'pending';
+                                                            if (!run) return 'pending';
+                                                            if (key === 'running' || key === 'failed' || key === 'success' || key === 'pending') return key;
                                                             return 'pending';
                                                         })();
 
-                                                        const dataConfig = getStatusConfig(effectiveStatusKey);
-                                                        const dataLabel = (() => {
-                                                            const key = String(effectiveStatusKey || '').toLowerCase();
-                                                            if (key === 'healthy' || key === 'success' || key === 'succeeded') return 'OK';
-                                                            if (key === 'stale' || key === 'warning' || key === 'degraded') return 'STALE';
-                                                            if (key === 'failed' || key === 'error' || key === 'critical') return 'FAIL';
+                                                        const jobConfig = getStatusConfig(jobStatusKey);
+                                                        const jobLabel = (() => {
+                                                            if (!jobName) return 'N/A';
+                                                            if (!run) return 'NO RUN';
+
+                                                            const key = String(jobStatusKey || '').toLowerCase();
+                                                            if (key === 'success' || key === 'succeeded') return 'OK';
+                                                            if (key === 'failed' || key === 'error') return 'FAIL';
                                                             if (key === 'running') return 'RUN';
                                                             if (key === 'pending') return 'PENDING';
                                                             return key.toUpperCase();
@@ -542,20 +550,36 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, onR
                                                                     <TooltipTrigger asChild>
                                                                         <span
                                                                             tabIndex={0}
-                                                                            className="inline-flex items-center justify-center gap-1 rounded-md px-1 focus:outline-none focus:ring-2 focus:ring-mcm-teal/30"
+                                                                            className="inline-flex flex-col items-center justify-center gap-0.5 rounded-md px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-mcm-teal/30"
                                                                         >
-                                                                            <span
-                                                                                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
-                                                                                style={{
-                                                                                    backgroundColor: dataConfig.bg,
-                                                                                    color: dataConfig.text,
-                                                                                    borderColor: dataConfig.border,
-                                                                                }}
-                                                                            >
-                                                                                {dataLabel}
+                                                                            <span className="inline-flex items-center justify-center gap-1">
+                                                                                <CalendarDays className="h-3.5 w-3.5 text-mcm-walnut/60" />
+                                                                                <span
+                                                                                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                                                                    style={{
+                                                                                        backgroundColor: dataConfig.bg,
+                                                                                        color: dataConfig.text,
+                                                                                        borderColor: dataConfig.border,
+                                                                                    }}
+                                                                                >
+                                                                                    {dataLabel}
+                                                                                </span>
+                                                                                <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/60`}>
+                                                                                    {updatedAgo}
+                                                                                </span>
                                                                             </span>
-                                                                            <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/60`}>
-                                                                                {updatedAgo}
+                                                                            <span className="inline-flex items-center justify-center gap-1">
+                                                                                <ScrollText className="h-3.5 w-3.5 text-mcm-walnut/60" />
+                                                                                <span
+                                                                                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                                                                    style={{
+                                                                                        backgroundColor: jobConfig.bg,
+                                                                                        color: jobConfig.text,
+                                                                                        borderColor: jobConfig.border,
+                                                                                    }}
+                                                                                >
+                                                                                    {jobLabel}
+                                                                                </span>
                                                                             </span>
                                                                         </span>
                                                                     </TooltipTrigger>

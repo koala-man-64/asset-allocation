@@ -457,6 +457,23 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
+    from core import delta_core
+
+    existing_cols = delta_core.get_delta_schema_columns(container, path)
+    if not existing_cols:
+        return df.reset_index(drop=True)
+
+    out = df.copy()
+    for col in existing_cols:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    ordered_cols = list(existing_cols) + [col for col in out.columns if col not in existing_cols]
+    out = out[ordered_cols]
+    return out.reset_index(drop=True)
+
+
 def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str]) -> Dict[str, Any]:
     from core import delta_core
 
@@ -495,7 +512,8 @@ def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str]) -> Dict
         return {"ticker": ticker, "status": "failed_compute", "error": str(exc)}
 
     try:
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
+        df_features = _align_to_existing_schema(df_features, gold_container, gold_path)
+        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite", schema_mode="merge")
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
 

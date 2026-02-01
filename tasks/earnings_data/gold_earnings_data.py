@@ -194,7 +194,6 @@ def _build_job_config() -> FeatureJobConfig:
     silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
     gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
 
-    from task_helpers import time_profiler
     from core import config as cfg
     from core import core as mdc
     from core import delta_core

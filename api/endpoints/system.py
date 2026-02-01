@@ -820,8 +820,8 @@ def get_job_logs(
 	let jobName = '{job_kql}';
 	let execName = '{exec_kql}';
 	union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
-	| extend job = tostring(column_ifexists('ContainerAppJobName_s', column_ifexists('JobName_s', column_ifexists('ContainerAppName_s', ''))))
-	| extend exec = tostring(column_ifexists('ContainerAppJobExecutionName_s', column_ifexists('ExecutionName_s', column_ifexists('ContainerAppJobExecutionId_g', column_ifexists('ContainerAppJobExecutionId_s', '')))))
+	| extend job = tostring(column_ifexists('ContainerJobName_s', column_ifexists('ContainerName_s', column_ifexists('ContainerAppJobName_s', column_ifexists('JobName_s', column_ifexists('JobName', column_ifexists('ContainerAppName_s', '')))))))
+	| extend exec = tostring(column_ifexists('ContainerGroupName_s', column_ifexists('ContainerGroupName', column_ifexists('ContainerAppJobExecutionName_s', column_ifexists('ExecutionName_s', column_ifexists('ExecutionName', column_ifexists('ContainerGroupId_g', column_ifexists('ContainerAppJobExecutionId_g', column_ifexists('ContainerAppJobExecutionId_s', ''))))))))
 	| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
 	| extend msg = tostring(column_ifexists('Log_s', column_ifexists('Log', column_ifexists('LogMessage_s', column_ifexists('Message', column_ifexists('message', ''))))))
 	| extend jobMatch = (job != '' and job contains jobName) or (resource contains jobName)
