@@ -312,11 +312,11 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                     borderLeftColor: sysConfig.text,
                 }}
             >
-                <div className="flex items-center gap-3 min-w-[240px]">
+                <div className="flex items-center gap-3">
                     <sysConfig.icon className={`h-8 w-8 ${apiAnim}`} style={{ color: sysConfig.text }} />
                     <div>
                         <h1 className={StatusTypos.HEADER}>SYSTEM STATUS</h1>
-                        <div className={`${StatusTypos.MONO} text-xl font-black tracking-tighter uppercase pr-6`} style={{ color: sysConfig.text }}>
+                        <div className={`${StatusTypos.MONO} text-xl font-black tracking-tighter uppercase`} style={{ color: sysConfig.text }}>
                             {overallLabel}
                         </div>
                     </div>
@@ -327,7 +327,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                             {medallionMetrics.map((metric) => (
                                 <Tooltip key={metric.layer}>
                                     <TooltipTrigger asChild>
-                                        <div className="w-[210px] shrink-0 rounded-[1rem] border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-2">
+                                        <div className="w-[240px] shrink-0 overflow-hidden rounded-[1rem] border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-2">
                                             <div className="flex items-center justify-between gap-3">
                                                 <span className="text-[10px] font-black uppercase tracking-widest text-mcm-walnut">
                                                     {metric.layer}
@@ -380,52 +380,52 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                             ))}
                         </div>
                     </div>
-                    <div className="flex flex-col items-end justify-end gap-2 shrink-0">
-                        <div className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                    <div className="grid shrink-0 grid-cols-[auto_auto] grid-rows-2 items-stretch justify-items-end gap-2">
+                        {debugSymbols ? (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div className="row-span-2 flex h-full w-[140px] flex-col justify-between gap-0.5 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>DEBUG</span>
+                                            <Switch
+                                                checked={debugSymbols.enabled}
+                                                onCheckedChange={(checked) => debugSymbols.onToggle?.(Boolean(checked))}
+                                                disabled={Boolean(debugSymbols.disabled) || Boolean(debugSymbols.unavailable)}
+                                                aria-label="Toggle debug symbols"
+                                            />
+                                        </div>
+                                        <div className="flex min-w-0 items-center">
+                                            <span className={`${StatusTypos.MONO} min-w-0 truncate text-[10px] text-mcm-walnut/70`}>
+                                                {debugSymbols.preview}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="max-w-[320px]">
+                                    {debugSymbols.unavailable
+                                        ? 'Debug-symbol control is unavailable in this deployment.'
+                                        : `When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing. (${debugSymbols.preview})`}
+                                </TooltipContent>
+                            </Tooltip>
+                        ) : null}
+
+                        <div className="inline-flex w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
                             <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>UPTIME CLOCK</span>
                             <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/70`}>
                                 {centralClock.time} {centralClock.tz}
                             </span>
                         </div>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                            {debugSymbols ? (
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <div className="flex w-[176px] flex-col gap-0.5 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>DEBUG</span>
-                                                <Switch
-                                                    checked={debugSymbols.enabled}
-                                                    onCheckedChange={(checked) => debugSymbols.onToggle?.(Boolean(checked))}
-                                                    disabled={Boolean(debugSymbols.disabled) || Boolean(debugSymbols.unavailable)}
-                                                    aria-label="Toggle debug symbols"
-                                                />
-                                            </div>
-                                            <div className="flex min-w-0 items-center">
-                                                <span className={`${StatusTypos.MONO} min-w-0 truncate text-[10px] text-mcm-walnut/70`}>
-                                                    {debugSymbols.preview}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="bottom" className="max-w-[320px]">
-                                        {debugSymbols.unavailable
-                                            ? 'Debug-symbol control is unavailable in this deployment.'
-                                            : `When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing. (${debugSymbols.preview})`}
-                                    </TooltipContent>
-                                </Tooltip>
-                            ) : null}
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 px-3 text-xs"
-                                onClick={onRefresh}
-                                disabled={!onRefresh || isFetching || isRefreshing}
-                            >
-                                <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
-                                Refresh now
-                            </Button>
-                        </div>
+
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 w-[220px] px-3 text-xs"
+                            onClick={onRefresh}
+                            disabled={!onRefresh || isFetching || isRefreshing}
+                        >
+                            <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
+                            Refresh now
+                        </Button>
                     </div>
                 </div>
             </div>
