@@ -32,8 +32,10 @@ def _validate_environment() -> None:
     if not cfg.AZURE_CONTAINER_BRONZE:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
 
-async def fetch_and_save_raw(symbol: str, context, semaphore):
+async def fetch_and_save_raw(symbol: str, context, semaphore, guard: pl.YahooInteractionGuard | None = None):
     async with semaphore:
+        if guard is not None and guard.triggered:
+            return
         if list_manager.is_blacklisted(symbol):
             return
 
@@ -43,6 +45,8 @@ async def fetch_and_save_raw(symbol: str, context, semaphore):
             mdc.write_error(f"Failed to create Playwright page for {symbol}: {exc}")
             return
         try:
+            if guard is not None and guard.triggered:
+                return
             # Check whitelist - if present, skip some validation? 
             # For earnings, we rely on pl.get_yahoo_earnings_data return value.
             
@@ -86,7 +90,10 @@ async def fetch_and_save_raw(symbol: str, context, semaphore):
             else:
                 mdc.write_line(f"Error retrieving earnings data for {symbol}: {message}")
         finally:                
-            await page.close()
+            try:
+                await page.close()
+            except Exception:
+                pass
 
 async def main_async():
     if sys.platform == 'win32':
@@ -95,52 +102,48 @@ async def main_async():
     mdc.log_environment_diagnostics()
     _validate_environment()
     
-    mdc.write_line("Initializing Playwright...")
-    playwright, browser, context, page = await pl.get_playwright_browser(headless=None, use_async=True)
-    
-    await pl.authenticate_yahoo_async(page, context)
-    
-    list_manager.load()
-    
-    mdc.write_line("Fetching symbols...")
-    df_symbols = mdc.get_symbols()
-    
-    # Filter NaNs and ensure string
-    df_symbols = df_symbols.dropna(subset=['Symbol'])
-    # Filter out tickers containing '.' or non-string values
-    symbols = []
-    for _, row in df_symbols.iterrows():
-        sym = row['Symbol']
-        if pd.isna(sym) or not isinstance(sym, str):
-            continue
-        if '.' in sym:
-            continue
-        if list_manager.is_blacklisted(sym):
-            continue
-        symbols.append(sym)
-    
-    if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
-        mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+    async def run_once(_playwright, _browser, context, page, guard: pl.YahooInteractionGuard):
+        mdc.write_line("Initializing Yahoo session...")
+        await pl.authenticate_yahoo_async(page, context)
 
-    mdc.write_line(f"Starting Bronze Earnings Ingestion for {len(symbols)} symbols...")
-    
-    semaphore = asyncio.Semaphore(3)
-    tasks = [fetch_and_save_raw(sym, context, semaphore) for sym in symbols]
-    try:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    finally:
+        list_manager.load()
+
+        mdc.write_line("Fetching symbols...")
+        df_symbols = mdc.get_symbols()
+
+        # Filter NaNs and ensure string
+        df_symbols = df_symbols.dropna(subset=['Symbol'])
+        # Filter out tickers containing '.' or non-string values
+        symbols = []
+        for _, row in df_symbols.iterrows():
+            sym = row['Symbol']
+            if pd.isna(sym) or not isinstance(sym, str):
+                continue
+            if '.' in sym:
+                continue
+            if list_manager.is_blacklisted(sym):
+                continue
+            symbols.append(sym)
+
+        if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
+            mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
+            symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+
+        mdc.write_line(f"Starting Bronze Earnings Ingestion for {len(symbols)} symbols...")
+
+        semaphore = asyncio.Semaphore(3)
+        tasks = [fetch_and_save_raw(sym, context, semaphore, guard) for sym in symbols]
         try:
-            list_manager.flush()
-        except Exception as exc:
-            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-        await context.close()
-        try:
-            await browser.close()
-        except Exception:
-            pass
-        await playwright.stop()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            try:
+                list_manager.flush()
+            except Exception as exc:
+                mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+
         mdc.write_line("Bronze Ingestion Complete.")
+
+    await pl.run_with_yahoo_backoff(run_once)
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env

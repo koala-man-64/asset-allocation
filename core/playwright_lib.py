@@ -10,10 +10,12 @@ import sys
 import threading
 import time
 import warnings
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Coroutine, Dict, List, Literal, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 import pandas as pd
 import pytz
@@ -111,6 +113,362 @@ from core import config as cfg
 warnings.filterwarnings("ignore")
 
 from core import core as mdc
+
+
+def _parse_int_env(name: str, *, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _parse_float_env(name: str, *, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _is_yahoo_related_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+
+    if not host:
+        return False
+
+    return host.endswith("yahoo.com") or host.endswith("yimg.com")
+
+
+@dataclass(frozen=True)
+class YahooGuardEvent:
+    reason: str  # "rate_limited" | "unauthorized"
+    status: Optional[int]
+    url: str
+    source: str  # "response" | "console" | "exception"
+    message: str
+
+
+class YahooGuardTriggered(RuntimeError):
+    def __init__(self, event: YahooGuardEvent):
+        super().__init__(f"Yahoo guard triggered: {event.reason} (status={event.status}) url={event.url}")
+        self.event = event
+
+
+class YahooInteractionGuard:
+    """
+    Watches Playwright network + console signals for Yahoo throttling/auth failures.
+
+    Trigger conditions (Yahoo-only):
+      - HTTP 429 (rate limited)
+      - HTTP 401/403 (unauthorized)
+      - Console messages containing "Too Many Requests" / "Unauthorized" / code=429
+
+    On trigger, schedules closing the browser context to abort in-flight work.
+    """
+
+    def __init__(self) -> None:
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._context: Optional[AsyncBrowserContext] = None
+        self._browser: Optional[AsyncBrowser] = None
+        self._event: Optional[YahooGuardEvent] = None
+        self._closed = False
+
+    @property
+    def triggered(self) -> bool:
+        return self._event is not None
+
+    @property
+    def event(self) -> Optional[YahooGuardEvent]:
+        return self._event
+
+    def attach(
+        self,
+        *,
+        context: AsyncBrowserContext,
+        browser: AsyncBrowser,
+        page: Optional[AsyncPage] = None,
+    ) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._context = context
+        self._browser = browser
+
+        try:
+            context.on("response", self._on_response)
+        except Exception:
+            pass
+        try:
+            context.on("page", self._on_page)
+        except Exception:
+            pass
+
+        if page is not None:
+            self._attach_page(page)
+
+    def _on_page(self, page: AsyncPage) -> None:
+        self._attach_page(page)
+
+    def _attach_page(self, page: AsyncPage) -> None:
+        try:
+            page.on("console", self._on_console)
+        except Exception:
+            pass
+        try:
+            page.on("pageerror", self._on_page_error)
+        except Exception:
+            pass
+
+    def _on_page_error(self, exc: Exception) -> None:
+        # Page errors are noisy; only react if they look like 429/unauthorized symptoms.
+        text = str(exc)
+        if self.triggered:
+            return
+        lowered = text.lower()
+        if "too many requests" in lowered or " code=429" in lowered or "unauthorized" in lowered:
+            self.trigger(
+                YahooGuardEvent(
+                    reason="rate_limited" if "429" in lowered or "too many requests" in lowered else "unauthorized",
+                    status=429 if "429" in lowered else None,
+                    url="",
+                    source="exception",
+                    message=text,
+                )
+            )
+
+    def _on_console(self, message: Any) -> None:
+        if self.triggered:
+            return
+
+        text = ""
+        try:
+            text = str(getattr(message, "text", "") or "")
+            if callable(getattr(message, "text", None)):
+                text = str(message.text())
+        except Exception:
+            text = ""
+
+        lowered = text.lower()
+        if not lowered:
+            return
+
+        if "too many requests" in lowered or '"code":429' in lowered or "code\":429" in lowered:
+            self.trigger(
+                YahooGuardEvent(
+                    reason="rate_limited",
+                    status=429,
+                    url="",
+                    source="console",
+                    message=text,
+                )
+            )
+            return
+
+        if "unauthorized" in lowered or "code\":401" in lowered or '"code":401' in lowered:
+            self.trigger(
+                YahooGuardEvent(
+                    reason="unauthorized",
+                    status=401,
+                    url="",
+                    source="console",
+                    message=text,
+                )
+            )
+
+    def _on_response(self, response: Any) -> None:
+        if self.triggered:
+            return
+
+        try:
+            url = str(getattr(response, "url", "") or "")
+            status = int(getattr(response, "status", 0) or 0)
+        except Exception:
+            return
+
+        if not url or not _is_yahoo_related_url(url):
+            return
+
+        if status == 429:
+            self.trigger(
+                YahooGuardEvent(
+                    reason="rate_limited",
+                    status=status,
+                    url=url,
+                    source="response",
+                    message="Yahoo responded with HTTP 429",
+                )
+            )
+            return
+
+        if status in {401, 403}:
+            self.trigger(
+                YahooGuardEvent(
+                    reason="unauthorized",
+                    status=status,
+                    url=url,
+                    source="response",
+                    message=f"Yahoo responded with HTTP {status}",
+                )
+            )
+
+    def trigger(self, event: YahooGuardEvent) -> None:
+        if self._event is not None:
+            return
+
+        self._event = event
+        try:
+            mdc.write_error(
+                f"YAHOO_GUARD_TRIGGERED reason={event.reason} status={event.status} source={event.source} url={event.url}"
+            )
+        except Exception:
+            pass
+
+        loop = self._loop
+        if loop is None:
+            return
+
+        # Best-effort: close context/browser quickly to stop in-flight work.
+        if not self._closed:
+            self._closed = True
+            loop.call_soon_threadsafe(lambda: loop.create_task(self._close_resources()))
+
+    async def _close_resources(self) -> None:
+        context = self._context
+        browser = self._browser
+
+        if context is not None:
+            try:
+                await context.close()
+            except Exception:
+                pass
+
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+
+
+async def run_with_yahoo_backoff(
+    run_once: Any,
+    *,
+    headless: Optional[bool] = None,
+    slow_mo: Optional[int] = None,
+) -> Any:
+    """
+    Run a Yahoo-backed Playwright workload with automatic recovery on 429/unauthorized signals.
+
+    Behavior:
+      - Creates a fresh persistent context (via get_playwright_browser).
+      - Attaches YahooInteractionGuard to watch for throttling/auth failures.
+      - If triggered, closes the browser, sleeps with jitter, and retries.
+
+    Env knobs (optional):
+      - YAHOO_GUARD_MAX_ATTEMPTS (default 3)
+      - YAHOO_GUARD_BACKOFF_MIN_SECONDS (default 60)
+      - YAHOO_GUARD_BACKOFF_MAX_SECONDS (default 240)
+    """
+
+    max_attempts = max(1, _parse_int_env("YAHOO_GUARD_MAX_ATTEMPTS", default=3))
+    backoff_min = max(0.0, _parse_float_env("YAHOO_GUARD_BACKOFF_MIN_SECONDS", default=60.0))
+    backoff_max = max(backoff_min, _parse_float_env("YAHOO_GUARD_BACKOFF_MAX_SECONDS", default=240.0))
+
+    last_event: Optional[YahooGuardEvent] = None
+
+    for attempt in range(1, max_attempts + 1):
+        playwright: Optional[AsyncPlaywright] = None
+        browser: Optional[AsyncBrowser] = None
+        context: Optional[AsyncBrowserContext] = None
+        page: Optional[AsyncPage] = None
+        guard = YahooInteractionGuard()
+
+        try:
+            playwright, browser, context, page = await get_playwright_browser(
+                headless=headless,
+                slow_mo=slow_mo,
+                use_async=True,
+            )
+            guard.attach(context=context, browser=browser, page=page)
+
+            result = await run_once(playwright, browser, context, page, guard)
+
+            if guard.triggered and guard.event is not None:
+                raise YahooGuardTriggered(guard.event)
+
+            return result
+
+        except YahooGuardTriggered as exc:
+            last_event = exc.event
+            if attempt >= max_attempts:
+                raise
+
+            sleep_seconds = random.uniform(backoff_min, backoff_max)
+            mdc.write_line(
+                "YAHOO_GUARD_BACKOFF attempt={attempt}/{max_attempts} reason={reason} status={status} sleep_seconds={sleep:.0f}".format(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    reason=last_event.reason,
+                    status=last_event.status,
+                    sleep=sleep_seconds,
+                )
+            )
+            await asyncio.sleep(sleep_seconds)
+
+        except Exception as exc:
+            # If the guard triggered and the context was force-closed, treat as a recoverable Yahoo event.
+            if guard.triggered and guard.event is not None:
+                last_event = guard.event
+                if attempt >= max_attempts:
+                    raise YahooGuardTriggered(last_event) from exc
+
+                sleep_seconds = random.uniform(backoff_min, backoff_max)
+                mdc.write_line(
+                    "YAHOO_GUARD_BACKOFF attempt={attempt}/{max_attempts} reason={reason} status={status} sleep_seconds={sleep:.0f}".format(
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        reason=last_event.reason,
+                        status=last_event.status,
+                        sleep=sleep_seconds,
+                    )
+                )
+                await asyncio.sleep(sleep_seconds)
+            else:
+                raise
+
+        finally:
+            # Best-effort cleanup. Guard may already have closed context/browser.
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            if playwright is not None:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
+
+    # Should not happen; loop returns/raises above.
+    if last_event is not None:
+        raise YahooGuardTriggered(last_event)
+    raise RuntimeError("Yahoo backoff runner exhausted attempts without an explicit guard event.")
 
 
 def _require_path(value: Optional[Path], env_name: str) -> Path:
@@ -270,7 +628,7 @@ async def get_yahoo_earnings_data(
     timeout,          # ms
     max_attempts: int = 3,
     delay_between_attempts: float = 1.0,
-) -> Path:
+) -> pd.DataFrame:
     """
     
     Navigate to a Yahoo Finance download URL, capture the file, and
@@ -365,7 +723,8 @@ async def get_yahoo_earnings_data(
                     elif '<h1>500</h1>' in html_content or 'We are experiencing some temporary issues.' in html_content:
                         try:
                             await page.reload()
-                            go_to_sleep(5, 10)
+                            # Avoid blocking the event loop in async contexts.
+                            await asyncio.sleep(random.randint(5, 10))
                         except Exception as e:
                             raise e
                     elif ("We couldn't find any results." in html_content and len(df_symbol_earnings) == 0):
@@ -381,16 +740,18 @@ async def get_yahoo_earnings_data(
         except PlaywrightTimeout:
             # Download didn’t start fast enough – try again.
             if attempt < max_attempts:
-                time.sleep(delay_between_attempts)
+                # Avoid blocking the event loop in async contexts.
+                await asyncio.sleep(delay_between_attempts)
                 continue
-            raise RuntimeError(f"Timed out waiting for download from {url!r}")
+            raise RuntimeError(f"Timed out fetching Yahoo earnings page for {symbol!r}")
 
         except Exception as e:
             # Other transient issues (net::ERR_ABORTED, etc.).
             if 'ERR_ABORTED' in str(e) and 'query1' in str(e): #means this stock has no price data
                 raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
             if attempt < max_attempts:
-                time.sleep(delay_between_attempts)
+                # Avoid blocking the event loop in async contexts.
+                await asyncio.sleep(delay_between_attempts)
                 continue
             else:
                 raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e

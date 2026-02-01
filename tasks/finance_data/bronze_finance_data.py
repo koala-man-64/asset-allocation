@@ -35,7 +35,7 @@ def _validate_environment() -> None:
         raise RuntimeError("Missing env vars: " + ", ".join(missing))
 
 async def download_report(playwright_params, ticker, report, client):
-    playwright, browser, context, page = playwright_params
+    _playwright, _browser, _context, page = playwright_params
     
     # 1. Check Freshness of Bronze Blob
     raw_blob_path = f"finance-data/{report['folder']}/{ticker}_{report['file_suffix']}.csv"
@@ -121,73 +121,77 @@ async def main_async():
         
     mdc.log_environment_diagnostics()
     _validate_environment()
-    
-    mdc.write_line("Initializing Playwright...")
-    playwright, browser, context, page = await pl.get_playwright_browser(use_async=True)
-    await pl.authenticate_yahoo_async(page, context)
-    
-    list_manager.load()
-    
-    mdc.write_line("Fetching symbols...")
-    df_symbols = mdc.get_symbols()
-    
-    # Filter
-    # Filter NaNs and ensure string
-    df_symbols = df_symbols.dropna(subset=['Symbol'])
-    # Filter out tickers containing '.' or non-string values
-    symbols = []
-    for _, row in df_symbols.iterrows():
-        sym = row['Symbol']
-        if pd.isna(sym) or not isinstance(sym, str):
-            continue
-        if '.' in sym:
-            continue
-        if list_manager.is_blacklisted(sym):
-            continue
-        symbols.append(sym)
-    
-    if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
-        mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
-        
-    mdc.write_line(f"Starting Bronze Finance Ingestion for {len(symbols)} symbols...")
 
-    semaphore = asyncio.Semaphore(1)
-    
-    async def process_symbol(symbol):
-        async with semaphore:
-             # Iterate reports
-             for cfg_report in REPORT_CONFIG:
-                 report = cfg_report.copy()
-                 report['ticker'] = symbol
-                 report['url'] = report['url_template'].format(ticker=symbol)
-                 
-                 try:
-                     task_page = await context.new_page()
-                 except Exception as exc:
-                     mdc.write_error(f"Failed to create page for {symbol}: {exc}")
-                     return
-                 try:
-                     params = (playwright, browser, context, task_page)
-                     await download_report(params, symbol, report, bronze_client)
-                 finally:
-                     await task_page.close()
+    async def run_once(_playwright, _browser, context, page, guard: pl.YahooInteractionGuard):
+        mdc.write_line("Initializing Yahoo session...")
+        await pl.authenticate_yahoo_async(page, context)
 
-    tasks = [process_symbol(sym) for sym in symbols]
-    try:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    finally:
+        list_manager.load()
+
+        mdc.write_line("Fetching symbols...")
+        df_symbols = mdc.get_symbols()
+
+        # Filter NaNs and ensure string
+        df_symbols = df_symbols.dropna(subset=['Symbol'])
+        # Filter out tickers containing '.' or non-string values
+        symbols = []
+        for _, row in df_symbols.iterrows():
+            sym = row['Symbol']
+            if pd.isna(sym) or not isinstance(sym, str):
+                continue
+            if '.' in sym:
+                continue
+            if list_manager.is_blacklisted(sym):
+                continue
+            symbols.append(sym)
+
+        if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
+            mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
+            symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+
+        mdc.write_line(f"Starting Bronze Finance Ingestion for {len(symbols)} symbols...")
+
+        semaphore = asyncio.Semaphore(1)
+
+        async def process_symbol(symbol):
+            async with semaphore:
+                if guard.triggered:
+                    return
+
+                # Iterate reports
+                for cfg_report in REPORT_CONFIG:
+                    if guard.triggered:
+                        return
+                    report = cfg_report.copy()
+                    report['ticker'] = symbol
+                    report['url'] = report['url_template'].format(ticker=symbol)
+
+                    try:
+                        task_page = await context.new_page()
+                    except Exception as exc:
+                        mdc.write_error(f"Failed to create page for {symbol}: {exc}")
+                        return
+                    try:
+                        params = (_playwright, _browser, context, task_page)
+                        await download_report(params, symbol, report, bronze_client)
+                    finally:
+                        try:
+                            await task_page.close()
+                        except Exception:
+                            pass
+
+        tasks = [process_symbol(sym) for sym in symbols]
         try:
-            list_manager.flush()
-        except Exception as exc:
-            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-        await context.close()
-        try:
-            await browser.close()
-        except Exception:
-            pass
-        await playwright.stop()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            try:
+                list_manager.flush()
+            except Exception as exc:
+                mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+
         mdc.write_line("Bronze Finance Ingestion Complete.")
+
+    await pl.run_with_yahoo_backoff(run_once)
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env

@@ -322,121 +322,110 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                     </div>
                 </div>
                 <div className="flex flex-1 items-center gap-6 min-w-0">
-                    <div className="hidden md:flex items-stretch border-l-2 border-mcm-walnut/20 pl-6 divide-x-2 divide-mcm-walnut/10">
-                        <div className="flex flex-col items-start px-4">
-                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>LAYERS</span>
-                            <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut`}>{dataLayers.length}</span>
-                        </div>
-                        <div className="flex flex-col items-start px-4">
-                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>DOMAINS</span>
-                            <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut`}>{domainNames.length}</span>
-                        </div>
-                        <div className="flex flex-col items-start px-4">
-                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>JOBS</span>
-                            <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut`}>{jobCount}</span>
-                        </div>
-                        <div className="flex flex-col items-start px-4">
-                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>RUNNING</span>
-                            <span className={`${StatusTypos.MONO} text-sm text-mcm-teal`}>{jobStatusCounts.running}</span>
-                        </div>
-                        <div className="flex flex-col items-start px-4">
-                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>FAILED</span>
-                            <span className={`${StatusTypos.MONO} text-sm text-destructive`}>{jobStatusCounts.failed}</span>
+                    <div className="hidden lg:flex flex-1 items-center justify-center rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-2 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                        <div className="flex flex-nowrap items-stretch justify-center gap-2 overflow-x-auto">
+                            {medallionMetrics.map((metric) => (
+                                <Tooltip key={metric.layer}>
+                                    <TooltipTrigger asChild>
+                                        <div className="w-[210px] shrink-0 rounded-[1rem] border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-2">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-mcm-walnut">
+                                                    {metric.layer}
+                                                </span>
+                                                <span className="inline-flex items-center gap-2">
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
+                                                            <Database className="h-3.5 w-3.5" />
+                                                        </span>
+                                                        <span
+                                                            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                                            style={{
+                                                                backgroundColor: metric.containerConfig.bg,
+                                                                color: metric.containerConfig.text,
+                                                                borderColor: metric.containerConfig.border,
+                                                            }}
+                                                        >
+                                                            {metric.containerLabel}
+                                                        </span>
+                                                    </span>
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
+                                                            <ScrollText className="h-3.5 w-3.5" />
+                                                        </span>
+                                                        <span
+                                                            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                                            style={{
+                                                                backgroundColor: metric.jobConfig.bg,
+                                                                color: metric.jobConfig.text,
+                                                                borderColor: metric.jobConfig.border,
+                                                            }}
+                                                        >
+                                                            {metric.jobLabel}
+                                                        </span>
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div className="mt-1 flex items-center gap-3">
+                                                <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/80`}>jobs {metric.total}</span>
+                                                <span className={`${StatusTypos.MONO} text-[10px] text-mcm-teal`}>run {metric.running}</span>
+                                                <span className={`${StatusTypos.MONO} text-[10px] text-destructive`}>fail {metric.failed}</span>
+                                            </div>
+                                        </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">
+                                        {metric.layer} • Data {metric.containerStatusKey.toUpperCase()} • Jobs {metric.jobStatusKey.toUpperCase()} (
+                                        total {metric.total}, ok {metric.success}, run {metric.running}, fail {metric.failed}, pending {metric.pending})
+                                    </TooltipContent>
+                                </Tooltip>
+                            ))}
                         </div>
                     </div>
-                    <div className="hidden lg:flex flex-wrap items-center gap-2 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-2 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                        {medallionMetrics.map((metric) => (
-                            <Tooltip key={metric.layer}>
-                                <TooltipTrigger asChild>
-                                    <div className="flex items-center gap-2 rounded-full border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-1 text-[10px] font-black uppercase tracking-widest text-mcm-olive">
-                                        <span className="text-mcm-walnut">{metric.layer}</span>
-                                        <span className="text-mcm-walnut/30">•</span>
-
-                                        <span className="inline-flex items-center gap-1">
-                                            <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
-                                                <Database className="h-3.5 w-3.5" />
-                                            </span>
-                                            <span
-                                                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
-                                                style={{
-                                                    backgroundColor: metric.containerConfig.bg,
-                                                    color: metric.containerConfig.text,
-                                                    borderColor: metric.containerConfig.border,
-                                                }}
-                                            >
-                                                {metric.containerLabel}
-                                            </span>
-                                        </span>
-
-                                        <span className="inline-flex items-center gap-1">
-                                            <span className="inline-flex w-4 items-center justify-center shrink-0 text-mcm-walnut/60">
-                                                <ScrollText className="h-3.5 w-3.5" />
-                                            </span>
-                                            <span
-                                                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest"
-                                                style={{
-                                                    backgroundColor: metric.jobConfig.bg,
-                                                    color: metric.jobConfig.text,
-                                                    borderColor: metric.jobConfig.border,
-                                                }}
-                                            >
-                                                {metric.jobLabel}
-                                            </span>
-                                        </span>
-
-                                        <span className="text-mcm-walnut/30">•</span>
-                                        <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/80`}>jobs {metric.total}</span>
-                                        <span className={`${StatusTypos.MONO} text-[10px] text-mcm-teal`}>run {metric.running}</span>
-                                        <span className={`${StatusTypos.MONO} text-[10px] text-destructive`}>fail {metric.failed}</span>
-                                    </div>
-                                </TooltipTrigger>
-                                <TooltipContent side="bottom">
-                                    {metric.layer} • Data {metric.containerStatusKey.toUpperCase()} • Jobs {metric.jobStatusKey.toUpperCase()} (
-                                    total {metric.total}, ok {metric.success}, run {metric.running}, fail {metric.failed}, pending {metric.pending})
-                                </TooltipContent>
-                            </Tooltip>
-                        ))}
-                    </div>
-                    <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex flex-col items-end justify-end gap-2 shrink-0">
                         <div className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
                             <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>UPTIME CLOCK</span>
                             <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/70`}>
                                 {centralClock.time} {centralClock.tz}
                             </span>
                         </div>
-                        {debugSymbols ? (
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <div className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                                        <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>DEBUG</span>
-                                        <span className={`${StatusTypos.MONO} max-w-[140px] truncate text-[10px] text-mcm-walnut/70`}>
-                                            {debugSymbols.preview}
-                                        </span>
-                                        <Switch
-                                            checked={debugSymbols.enabled}
-                                            onCheckedChange={(checked) => debugSymbols.onToggle?.(Boolean(checked))}
-                                            disabled={Boolean(debugSymbols.disabled) || Boolean(debugSymbols.unavailable)}
-                                            aria-label="Toggle debug symbols"
-                                        />
-                                    </div>
-                                </TooltipTrigger>
-                                <TooltipContent side="bottom" className="max-w-[320px]">
-                                    {debugSymbols.unavailable
-                                        ? 'Debug-symbol control is unavailable in this deployment.'
-                                        : `When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing. (${debugSymbols.preview})`}
-                                </TooltipContent>
-                            </Tooltip>
-                        ) : null}
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-3 text-xs"
-                            onClick={onRefresh}
-                            disabled={!onRefresh || isFetching || isRefreshing}
-                        >
-                            <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
-                            Refresh now
-                        </Button>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                            {debugSymbols ? (
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <div className="flex w-[176px] flex-col gap-0.5 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>DEBUG</span>
+                                                <Switch
+                                                    checked={debugSymbols.enabled}
+                                                    onCheckedChange={(checked) => debugSymbols.onToggle?.(Boolean(checked))}
+                                                    disabled={Boolean(debugSymbols.disabled) || Boolean(debugSymbols.unavailable)}
+                                                    aria-label="Toggle debug symbols"
+                                                />
+                                            </div>
+                                            <div className="flex min-w-0 items-center">
+                                                <span className={`${StatusTypos.MONO} min-w-0 truncate text-[10px] text-mcm-walnut/70`}>
+                                                    {debugSymbols.preview}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom" className="max-w-[320px]">
+                                        {debugSymbols.unavailable
+                                            ? 'Debug-symbol control is unavailable in this deployment.'
+                                            : `When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing. (${debugSymbols.preview})`}
+                                    </TooltipContent>
+                                </Tooltip>
+                            ) : null}
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-3 text-xs"
+                                onClick={onRefresh}
+                                disabled={!onRefresh || isFetching || isRefreshing}
+                            >
+                                <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
+                                Refresh now
+                            </Button>
+                        </div>
                     </div>
                 </div>
             </div>
