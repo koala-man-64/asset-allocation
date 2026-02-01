@@ -397,7 +397,7 @@ export function StatusOverview({ overall, dataLayers, recentJobs, jobStates, deb
                     </div>
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                         <div className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>UPTIME</span>
+                            <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>UPTIME CLOCK</span>
                             <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/70`}>
                                 {centralClock.time} {centralClock.tz}
                             </span>
