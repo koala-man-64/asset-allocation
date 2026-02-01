@@ -189,7 +189,10 @@ async def download_yahoo_price_data_async(
                     if 'ERR_ABORTED' in str(e) and 'query1' in str(e):
                         pass
                     else:                        
-                        go_to_sleep(1,1)
+                        # Avoid blocking the event loop in async contexts.
+                        sleep_time = random.randint(1, 1)
+                        write_line(f"Sleeping for {sleep_time} seconds...")
+                        await asyncio.sleep(sleep_time)
                         if not("Download is starting" in str(e)):
                             raise RuntimeError(f"Failed to download after {max_attempts} attempts: {e}") from e
 
@@ -580,16 +583,7 @@ async def _get_playwright_browser_async(
     playwright = await async_playwright().start()
     write_line("async_playwright started.")
 
-    # 2. Launch Chromium
-    write_line(f"Launching chromium process (headless={headless})...")
-    browser = await playwright.chromium.launch(
-        headless=headless,
-        slow_mo=slow_mo or 0,
-        args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-    write_line("Chromium launched successfully.")
-
-    # 3. Persistent context
+    # 2. Persistent context (this launches Chromium under the hood)
     write_line("Launching persistent context...")
     context = await playwright.chromium.launch_persistent_context(
         user_data_dir=str(_get_user_data_dir()),
@@ -602,6 +596,10 @@ async def _get_playwright_browser_async(
         args=["--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
     write_line("Persistent context launched.")
+
+    browser = context.browser
+    if browser is None:
+        raise RuntimeError("Persistent context did not expose a browser instance (unexpected).")
 
     # Stealth Init Script
     write_line("Adding stealth init script2...")

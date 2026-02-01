@@ -699,11 +699,24 @@ def is_weekend(date):
 class JobLock:
     """
     Context manager for distributed locking using Azure Blob Storage Leases.
-    Ensures that only one instance of a job runs at a time.
+
+    By default, if the lock is already held, the job exits successfully (0) to avoid concurrent execution.
+    Optionally, callers can wait for the lock by setting wait_timeout_seconds to a positive number or None
+    (wait forever).
     """
-    def __init__(self, job_name: str, lease_duration: int = 60):
+
+    def __init__(
+        self,
+        job_name: str,
+        lease_duration: int = 60,
+        *,
+        wait_timeout_seconds: Optional[float] = 0,
+        poll_interval_seconds: float = 5.0,
+    ):
         self.job_name = job_name
         self.lease_duration = lease_duration
+        self.wait_timeout_seconds = wait_timeout_seconds
+        self.poll_interval_seconds = poll_interval_seconds
         self.lock_blob_name = f"locks/{job_name}.lock"
         self.lease_client = None
         self.blob_client = None
@@ -752,27 +765,58 @@ class JobLock:
             self.blob_client = container_client.get_blob_client(self.lock_blob_name)
             self.lease_client = BlobLeaseClient(self.blob_client)
 
-            # 3. Acquire Lease
-            self.lease_client.acquire(lease_duration=self.lease_duration)
-            write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
+            # 3. Acquire Lease (optionally wait)
+            start_wait: Optional[float] = None
+            attempt = 0
+            while True:
+                attempt += 1
+                try:
+                    self.lease_client.acquire(lease_duration=self.lease_duration)
+                    write_line(f"Lock acquired for {self.job_name}. Lease ID: {self.lease_client.id}")
 
-            # 4. Keep lease alive for long-running jobs
-            self._renew_stop.clear()
-            self._renew_thread = threading.Thread(
-                target=self._renew_loop,
-                name=f"job-lock-renew:{self.job_name}",
-                daemon=True,
-            )
-            self._renew_thread.start()
-            return self
+                    # 4. Keep lease alive for long-running jobs
+                    self._renew_stop.clear()
+                    self._renew_thread = threading.Thread(
+                        target=self._renew_loop,
+                        name=f"job-lock-renew:{self.job_name}",
+                        daemon=True,
+                    )
+                    self._renew_thread.start()
+                    return self
 
-        except (ResourceExistsError, HttpResponseError) as e:
-            status_code = getattr(e, "status_code", None)
-            if status_code == 409:
-                write_warning(f"Lock already held for {self.job_name}. Skipping execution.")
-                raise SystemExit(0)
-            write_error(f"Failed to acquire lock for {self.job_name}: {e}")
-            raise
+                except (ResourceExistsError, HttpResponseError) as exc:
+                    status_code = getattr(exc, "status_code", None) or getattr(
+                        getattr(exc, "response", None), "status_code", None
+                    )
+                    if status_code != 409:
+                        write_error(f"Failed to acquire lock for {self.job_name}: {exc}")
+                        raise
+
+                    # Locked
+                    if self.wait_timeout_seconds == 0:
+                        write_warning(f"Lock already held for {self.job_name}. Skipping execution.")
+                        raise SystemExit(0)
+
+                    now = time.monotonic()
+                    if start_wait is None:
+                        start_wait = now
+                        write_line(f"Lock already held for {self.job_name}. Waiting for release...")
+                    else:
+                        elapsed = now - start_wait
+                        if self.wait_timeout_seconds is not None and elapsed >= self.wait_timeout_seconds:
+                            write_error(
+                                f"Timed out waiting for lock {self.job_name} after {elapsed:.1f}s; exiting."
+                            )
+                            raise SystemExit(1)
+                        # Emit a periodic heartbeat while waiting (roughly every minute).
+                        if attempt % max(1, int(60 / max(0.1, self.poll_interval_seconds))) == 0:
+                            write_line(f"Still waiting for lock {self.job_name} (elapsed={elapsed:.0f}s)...")
+
+                    sleep_seconds = max(0.5, float(self.poll_interval_seconds))
+                    # Add a small jitter to reduce herd effects if many jobs contend.
+                    sleep_seconds += random.uniform(0, min(1.0, sleep_seconds * 0.2))
+                    time.sleep(sleep_seconds)
+
         except Exception as e:
             write_error(f"Failed to acquire lock for {self.job_name}: {e}")
             raise

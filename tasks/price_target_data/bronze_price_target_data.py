@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-list_manager = ListManager(bronze_client, "price-target-data")
+list_manager = ListManager(bronze_client, "price-target-data", auto_flush=False)
 
 BATCH_SIZE = 50
 
@@ -122,13 +122,20 @@ async def main_async():
     
     mdc.write_line(f"Starting Bronze Price Target Ingestion for {len(symbols)} symbols...")
     tasks = [process_batch_bronze(chunk, semaphore) for chunk in chunked_symbols]
-    await asyncio.gather(*tasks)
-    mdc.write_line("Bronze Ingestion Complete.")
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        try:
+            list_manager.flush()
+        except Exception as exc:
+            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        mdc.write_line("Bronze Ingestion Complete.")
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = 'bronze-price-target-job'
-    with mdc.JobLock(job_name):
-        asyncio.run(main_async())
-        trigger_next_job_from_env()
+    with mdc.JobLock("nasdaq", wait_timeout_seconds=None):
+        with mdc.JobLock(job_name):
+            asyncio.run(main_async())
+            trigger_next_job_from_env()

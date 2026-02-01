@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX)
+list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX, auto_flush=False)
 
 def _validate_environment() -> None:
     required = [
@@ -127,16 +127,26 @@ async def main_async():
     
     semaphore = asyncio.Semaphore(3)
     tasks = [fetch_and_save_raw(sym, context, semaphore) for sym in symbols]
-    await asyncio.gather(*tasks, return_exceptions=True)
-    
-    await browser.close()
-    await playwright.stop()
-    mdc.write_line("Bronze Ingestion Complete.")
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        try:
+            list_manager.flush()
+        except Exception as exc:
+            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        await context.close()
+        try:
+            await browser.close()
+        except Exception:
+            pass
+        await playwright.stop()
+        mdc.write_line("Bronze Ingestion Complete.")
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = 'bronze-earnings-job'
-    with mdc.JobLock(job_name):
-        asyncio.run(main_async())
-        trigger_next_job_from_env()
+    with mdc.JobLock("yahoo", wait_timeout_seconds=None):
+        with mdc.JobLock(job_name):
+            asyncio.run(main_async())
+            trigger_next_job_from_env()

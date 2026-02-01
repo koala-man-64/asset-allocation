@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-list_manager = ListManager(bronze_client, "finance-data")
+list_manager = ListManager(bronze_client, "finance-data", auto_flush=False)
 
 REPORT_CONFIG = [
     {"name": "Quarterly Balance Sheet", "folder": "Balance Sheet", "file_suffix": "quarterly_balance-sheet", "url_template": 'https://finance.yahoo.com/quote/{ticker}/balance-sheet?p={ticker}', "period": "quarterly"},
@@ -162,7 +162,11 @@ async def main_async():
                  report['ticker'] = symbol
                  report['url'] = report['url_template'].format(ticker=symbol)
                  
-                 task_page = await context.new_page()
+                 try:
+                     task_page = await context.new_page()
+                 except Exception as exc:
+                     mdc.write_error(f"Failed to create page for {symbol}: {exc}")
+                     return
                  try:
                      params = (playwright, browser, context, task_page)
                      await download_report(params, symbol, report, bronze_client)
@@ -170,16 +174,26 @@ async def main_async():
                      await task_page.close()
 
     tasks = [process_symbol(sym) for sym in symbols]
-    await asyncio.gather(*tasks)
-    
-    await browser.close()
-    await playwright.stop()
-    mdc.write_line("Bronze Finance Ingestion Complete.")
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        try:
+            list_manager.flush()
+        except Exception as exc:
+            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        await context.close()
+        try:
+            await browser.close()
+        except Exception:
+            pass
+        await playwright.stop()
+        mdc.write_line("Bronze Finance Ingestion Complete.")
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = 'bronze-finance-job'
-    with mdc.JobLock(job_name):
-        asyncio.run(main_async())
-        trigger_next_job_from_env()
+    with mdc.JobLock("yahoo", wait_timeout_seconds=None):
+        with mdc.JobLock(job_name):
+            asyncio.run(main_async())
+            trigger_next_job_from_env()

@@ -3,6 +3,8 @@ import asyncio
 import logging
 from typing import List, Callable, Optional, Set, Any
 
+import pandas as pd
+
 from . import core as mdc
 
 logger = logging.getLogger(__name__)
@@ -88,7 +90,7 @@ class ListManager:
     """
     Manages Whitelist and Blacklist for a specific scraper context.
     """
-    def __init__(self, client, folder: str = ""):
+    def __init__(self, client, folder: str = "", *, auto_flush: bool = True):
         self.client = client
         self.whitelist_file = f"{folder}/whitelist.csv" if folder else "whitelist.csv"
         self.blacklist_file = f"{folder}/blacklist.csv" if folder else "blacklist.csv"
@@ -96,6 +98,9 @@ class ListManager:
         self.whitelist: Set[str] = set()
         self.blacklist: Set[str] = set()
         self._loaded = False
+        self.auto_flush = auto_flush
+        self._dirty_whitelist = False
+        self._dirty_blacklist = False
 
     def load(self):
         """Loads lists from Azure Storage."""
@@ -122,13 +127,46 @@ class ListManager:
     def add_to_whitelist(self, ticker: str):
         if ticker not in self.whitelist:
             self.whitelist.add(ticker)
-            mdc.update_csv_set(self.whitelist_file, ticker, client=self.client)
+            if self.auto_flush:
+                mdc.update_csv_set(self.whitelist_file, ticker, client=self.client)
+            else:
+                self._dirty_whitelist = True
             # If it was in blacklist, maybe remove it? Policy decision: Keep it simple for now.
 
     def add_to_blacklist(self, ticker: str):
         if ticker not in self.blacklist:
             self.blacklist.add(ticker)
-            mdc.update_csv_set(self.blacklist_file, ticker, client=self.client)
+            if self.auto_flush:
+                mdc.update_csv_set(self.blacklist_file, ticker, client=self.client)
+            else:
+                self._dirty_blacklist = True
+
+    def flush(self) -> None:
+        """
+        Persist whitelist/blacklist updates to storage when auto_flush=False.
+
+        This is intended to avoid per-ticker read/modify/write cycles (which are slow and can race under concurrency).
+        """
+        if self.auto_flush:
+            return
+        if not self.client:
+            mdc.write_warning("ListManager has no client. Cannot flush lists.")
+            return
+        if not self._loaded:
+            # Ensure we don't accidentally discard remote content (best-effort).
+            self.load()
+
+        if self._dirty_whitelist:
+            df = pd.DataFrame(sorted(self.whitelist), columns=["Symbol"])
+            mdc.store_csv(df, self.whitelist_file, client=self.client)
+            mdc.write_line(f"Saved {len(df)} symbols to {self.whitelist_file}")
+            self._dirty_whitelist = False
+
+        if self._dirty_blacklist:
+            df = pd.DataFrame(sorted(self.blacklist), columns=["Symbol"])
+            mdc.store_csv(df, self.blacklist_file, client=self.client)
+            mdc.write_line(f"Saved {len(df)} symbols to {self.blacklist_file}")
+            self._dirty_blacklist = False
 
 
 class ScraperRunner:
