@@ -23,7 +23,6 @@ Thumbs.db
 # --- Logs & Secrets ---
 # Logs
 *.log
-scripts/common/Yahoo/
 # Secrets (Do not commit)
 .env
 .env.*
