@@ -31,9 +31,12 @@ subscription tiers【7†L49-L53】【6†L2153-L2156】.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import json
 import random
+import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
@@ -47,6 +50,8 @@ from .utils import parse_time_series, parse_financial_reports
 
 
 logger = logging.getLogger(__name__)
+
+_APIKEY_QUERY_RE = re.compile(r"(apikey=)([^&\s]+)", re.IGNORECASE)
 
 
 class AlphaVantageClient:
@@ -71,6 +76,39 @@ class AlphaVantageClient:
         self._owns_client = http_client is None
         self._client = http_client or httpx.Client(timeout=config.timeout, trust_env=False)
         self._query_url = config.get_query_url()
+
+        self._request_seq = itertools.count(1)
+        self._metrics_lock = threading.Lock()
+        self._metrics: Dict[str, Union[int, float]] = {
+            "logical_requests": 0,
+            "http_calls": 0,
+            "success": 0,
+            "failed": 0,
+            "retries": 0,
+            "throttle_payloads": 0,
+            "invalid_symbols": 0,
+            "http_status_errors": 0,
+            "network_errors": 0,
+            "invalid_json": 0,
+            "total_success_ms": 0.0,
+        }
+        self._summary_interval_seconds = 60.0
+        self._started_monotonic = time.monotonic()
+        self._last_summary_monotonic = self._started_monotonic
+
+        self._log(
+            logging.INFO,
+            "Alpha Vantage client initialized",
+            av_event="client_init",
+            av_base_url=str(getattr(config, "base_url", "")),
+            av_query_url=str(self._query_url),
+            av_timeout_seconds=float(getattr(config, "timeout", 0.0)),
+            av_rate_limit_per_min=int(getattr(config, "rate_limit_per_min", 0)),
+            av_max_workers=int(getattr(config, "max_workers", 0)),
+            av_max_retries=int(getattr(config, "max_retries", 0)),
+            av_backoff_base_seconds=float(getattr(config, "backoff_base_seconds", 0.0)),
+            av_api_key_set=bool(getattr(config, "api_key", "")),
+        )
 
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -120,11 +158,123 @@ class AlphaVantageClient:
             return parsed
         return None
 
-    def _sleep_backoff(self, attempt: int) -> None:
+    def _log(self, level: int, message: str, **context: Any) -> None:
+        if not logger.isEnabledFor(level):
+            return
+
+        def redact(text: str) -> str:
+            out = text
+            api_key = str(getattr(self.config, "api_key", "") or "")
+            if api_key:
+                out = out.replace(api_key, "[REDACTED]")
+            out = _APIKEY_QUERY_RE.sub(r"\1[REDACTED]", out)
+            return out
+
+        def sanitize(value: Any) -> Any:
+            if value is None or isinstance(value, (bool, int, float)):
+                return value
+            if isinstance(value, str):
+                return redact(value)
+            if isinstance(value, list):
+                return [sanitize(v) for v in value]
+            if isinstance(value, dict):
+                return {k: sanitize(v) for k, v in value.items()}
+            return redact(str(value))
+
+        safe_context = {k: sanitize(v) for k, v in context.items() if v is not None}
+        try:
+            logger.log(level, message, extra={"context": safe_context})
+        except Exception:
+            # Logging must never break ingestion; fall back to a plain message.
+            logger.log(level, message)
+
+    def _sanitize_params_for_log(self, params: Mapping[str, Any]) -> Dict[str, Any]:
+        safe: Dict[str, Any] = {}
+        for key, value in params.items():
+            lowered = str(key).lower()
+            if lowered in {"apikey", "api_key"} or "key" in lowered or "token" in lowered:
+                continue
+            if value is None:
+                safe[key] = None
+                continue
+            if isinstance(value, (bool, int, float)):
+                safe[key] = value
+                continue
+            text = str(value)
+            if len(text) > 160:
+                text = text[:160] + "..."
+            safe[key] = text
+        return safe
+
+    def _record_metric(self, key: str, inc: Union[int, float] = 1) -> None:
+        with self._metrics_lock:
+            current = self._metrics.get(key, 0)
+            self._metrics[key] = current + inc  # type: ignore[operator]
+
+    def _maybe_log_summary(self) -> None:
+        if not logger.isEnabledFor(logging.INFO):
+            return
+        now = time.monotonic()
+        if (now - self._last_summary_monotonic) < self._summary_interval_seconds:
+            return
+        with self._metrics_lock:
+            now = time.monotonic()
+            if (now - self._last_summary_monotonic) < self._summary_interval_seconds:
+                return
+            self._last_summary_monotonic = now
+            snapshot = dict(self._metrics)
+
+        success = int(snapshot.get("success") or 0)
+        avg_ms = float(snapshot.get("total_success_ms") or 0.0) / float(max(1, success))
+        elapsed_s = now - self._started_monotonic
+
+        self._log(
+            logging.INFO,
+            "Alpha Vantage client progress",
+            av_event="client_progress",
+            av_elapsed_seconds=round(elapsed_s, 1),
+            av_logical_requests=int(snapshot.get("logical_requests") or 0),
+            av_http_calls=int(snapshot.get("http_calls") or 0),
+            av_success=int(snapshot.get("success") or 0),
+            av_failed=int(snapshot.get("failed") or 0),
+            av_retries=int(snapshot.get("retries") or 0),
+            av_throttle_payloads=int(snapshot.get("throttle_payloads") or 0),
+            av_invalid_symbols=int(snapshot.get("invalid_symbols") or 0),
+            av_http_status_errors=int(snapshot.get("http_status_errors") or 0),
+            av_network_errors=int(snapshot.get("network_errors") or 0),
+            av_invalid_json=int(snapshot.get("invalid_json") or 0),
+            av_avg_success_ms=round(avg_ms, 1),
+        )
+
+    def _sleep_backoff(
+        self,
+        attempt: int,
+        *,
+        req_id: int,
+        function: Optional[str],
+        symbol: Optional[str],
+        reason: str,
+        status_code: Optional[int] = None,
+    ) -> None:
         base = max(0.0, float(getattr(self.config, "backoff_base_seconds", 0.5)))
         # Exponential backoff with jitter; cap at 60s to avoid runaway sleeps.
         sleep_seconds = min(60.0, base * (2.0**attempt))
         sleep_seconds += random.uniform(0.0, min(1.0, sleep_seconds * 0.2))
+
+        warn_reasons = {"throttle_payload", "http_429"}
+        level = logging.WARNING if (attempt == 0 and reason in warn_reasons) else logging.DEBUG
+        self._log(
+            level,
+            "Alpha Vantage backing off before retry",
+            av_event="backoff",
+            av_request_id=req_id,
+            av_function=function,
+            av_symbol=symbol,
+            av_attempt=attempt,
+            av_reason=reason,
+            av_status_code=status_code,
+            av_sleep_seconds=round(float(sleep_seconds), 3),
+        )
         time.sleep(sleep_seconds)
 
     def _request(self, params: Dict[str, Any], raw: bool = False) -> Union[Dict[str, Any], str]:
@@ -153,75 +303,259 @@ class AlphaVantageClient:
         """
         max_retries = max(0, int(getattr(self.config, "max_retries", 0)))
 
-        last_exc: Optional[Exception] = None
-        for attempt in range(max_retries + 1):
-            self._rate_limiter.wait()
+        req_id = next(self._request_seq)
+        function = str(params.get("function") or "")
+        symbol = params.get("symbol")
+        safe_params = self._sanitize_params_for_log(params)
 
-            query_params = dict(params)
-            query_params["apikey"] = self.config.api_key
+        self._record_metric("logical_requests", 1)
+        self._log(
+            logging.DEBUG,
+            "Alpha Vantage request started",
+            av_event="request_start",
+            av_request_id=req_id,
+            av_function=function,
+            av_symbol=symbol,
+            av_raw=bool(raw),
+            av_max_retries=max_retries,
+            av_params=safe_params,
+        )
 
-            try:
-                response = self._client.get(self._query_url, params=query_params)
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                status = exc.response.status_code
-                # Retry 429/5xx; fail fast on other 4xx.
-                if status == 429 or status >= 500:
-                    if attempt < max_retries:
-                        self._sleep_backoff(attempt)
-                        continue
-                raise
-            except httpx.RequestError as exc:
-                last_exc = exc
-                if attempt < max_retries:
-                    self._sleep_backoff(attempt)
-                    continue
-                raise
+        try:
+            for attempt in range(max_retries + 1):
+                wait_started = time.monotonic()
+                self._rate_limiter.wait()
+                rate_wait_ms = (time.monotonic() - wait_started) * 1000.0
 
-            # Attempt to interpret an error payload even for raw CSV endpoints.
-            if raw:
-                text = response.text
-                parsed = self._try_parse_json(text)
-                if parsed is not None:
-                    classified = self._classify_payload_error(parsed)
-                    if classified is not None:
-                        last_exc = classified
-                        if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
-                            self._sleep_backoff(attempt)
-                            continue
-                        raise classified
-                return text
+                query_params = dict(params)
+                query_params["apikey"] = self.config.api_key
 
-            try:
-                payload = response.json()
-            except Exception as exc:
-                last_exc = exc
-                if attempt < max_retries:
-                    self._sleep_backoff(attempt)
-                    continue
-                snippet = (response.text or "").strip().replace("\n", " ")
-                if len(snippet) > 200:
-                    snippet = snippet[:200] + "..."
-                raise AlphaVantageError(
-                    "Failed to parse JSON response from Alpha Vantage.",
-                    code="invalid_json",
-                    payload={"snippet": snippet},
+                self._record_metric("http_calls", 1)
+                attempt_started = time.monotonic()
+                self._log(
+                    logging.DEBUG,
+                    "Alpha Vantage request attempt",
+                    av_event="request_attempt",
+                    av_request_id=req_id,
+                    av_function=function,
+                    av_symbol=symbol,
+                    av_raw=bool(raw),
+                    av_attempt=attempt,
+                    av_rate_wait_ms=round(rate_wait_ms, 1),
+                    av_params=safe_params,
                 )
 
-            if isinstance(payload, dict):
-                classified = self._classify_payload_error(payload)
-                if classified is not None:
-                    last_exc = classified
-                    if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
-                        self._sleep_backoff(attempt)
+                try:
+                    response = self._client.get(self._query_url, params=query_params)
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    self._record_metric("http_status_errors", 1)
+                    status = exc.response.status_code
+                    # Retry 429/5xx; fail fast on other 4xx.
+                    if status == 429 or status >= 500:
+                        if attempt < max_retries:
+                            self._record_metric("retries", 1)
+                            self._sleep_backoff(
+                                attempt,
+                                req_id=req_id,
+                                function=function or None,
+                                symbol=str(symbol) if symbol is not None else None,
+                                reason="http_429" if status == 429 else "http_5xx",
+                                status_code=int(status),
+                            )
+                            continue
+                    raise
+                except httpx.RequestError as exc:
+                    self._record_metric("network_errors", 1)
+                    if attempt < max_retries:
+                        self._record_metric("retries", 1)
+                        self._sleep_backoff(
+                            attempt,
+                            req_id=req_id,
+                            function=function or None,
+                            symbol=str(symbol) if symbol is not None else None,
+                            reason="network_error",
+                        )
                         continue
-                    raise classified
+                    raise
 
-            return payload  # type: ignore[return-value]
+                # Attempt to interpret an error payload even for raw CSV endpoints.
+                if raw:
+                    text = response.text
+                    parsed = self._try_parse_json(text)
+                    if parsed is not None:
+                        classified = self._classify_payload_error(parsed)
+                        if classified is not None:
+                            if isinstance(classified, AlphaVantageThrottleError):
+                                self._record_metric("throttle_payloads", 1)
+                            if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
+                                self._record_metric("retries", 1)
+                                # Log throttling at warning once per request; subsequent retries are debug noise.
+                                level = logging.WARNING if attempt == 0 else logging.DEBUG
+                                note = str(getattr(classified, "message", "") or "")
+                                if len(note) > 200:
+                                    note = note[:200] + "..."
+                                self._log(
+                                    level,
+                                    "Alpha Vantage throttle payload detected (CSV)",
+                                    av_event="throttle",
+                                    av_request_id=req_id,
+                                    av_function=function,
+                                    av_symbol=str(symbol) if symbol is not None else None,
+                                    av_attempt=attempt,
+                                    av_note=note,
+                                )
+                                self._sleep_backoff(
+                                    attempt,
+                                    req_id=req_id,
+                                    function=function or None,
+                                    symbol=str(symbol) if symbol is not None else None,
+                                    reason="throttle_payload",
+                                )
+                                continue
+                            raise classified
+                    elapsed_ms = (time.monotonic() - attempt_started) * 1000.0
+                    self._record_metric("success", 1)
+                    self._record_metric("total_success_ms", float(elapsed_ms))
+                    self._log(
+                        logging.DEBUG,
+                        "Alpha Vantage request succeeded (CSV)",
+                        av_event="request_success",
+                        av_request_id=req_id,
+                        av_function=function,
+                        av_symbol=str(symbol) if symbol is not None else None,
+                        av_raw=True,
+                        av_attempt=attempt,
+                        av_status_code=int(response.status_code),
+                        av_elapsed_ms=round(elapsed_ms, 1),
+                        av_response_chars=len(text or ""),
+                    )
+                    self._maybe_log_summary()
+                    return text
 
-        if last_exc is not None:
-            raise last_exc
+                try:
+                    payload = response.json()
+                except Exception as exc:
+                    if attempt < max_retries:
+                        self._record_metric("retries", 1)
+                        self._record_metric("invalid_json", 1)
+                        self._sleep_backoff(
+                            attempt,
+                            req_id=req_id,
+                            function=function or None,
+                            symbol=str(symbol) if symbol is not None else None,
+                            reason="invalid_json",
+                            status_code=int(response.status_code),
+                        )
+                        continue
+                    self._record_metric("invalid_json", 1)
+                    snippet = (response.text or "").strip().replace("\n", " ")
+                    if len(snippet) > 200:
+                        snippet = snippet[:200] + "..."
+                    raise AlphaVantageError(
+                        "Failed to parse JSON response from Alpha Vantage.",
+                        code="invalid_json",
+                        payload={"snippet": snippet},
+                    ) from exc
+
+                if isinstance(payload, dict):
+                    classified = self._classify_payload_error(payload)
+                    if classified is not None:
+                        if isinstance(classified, AlphaVantageThrottleError):
+                            self._record_metric("throttle_payloads", 1)
+                        if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
+                            self._record_metric("retries", 1)
+                            level = logging.WARNING if attempt == 0 else logging.DEBUG
+                            note = str(getattr(classified, "message", "") or "")
+                            if len(note) > 200:
+                                note = note[:200] + "..."
+                            self._log(
+                                level,
+                                "Alpha Vantage throttle payload detected",
+                                av_event="throttle",
+                                av_request_id=req_id,
+                                av_function=function,
+                                av_symbol=str(symbol) if symbol is not None else None,
+                                av_attempt=attempt,
+                                av_note=note,
+                            )
+                            self._sleep_backoff(
+                                attempt,
+                                req_id=req_id,
+                                function=function or None,
+                                symbol=str(symbol) if symbol is not None else None,
+                                reason="throttle_payload",
+                            )
+                            continue
+                        if isinstance(classified, AlphaVantageInvalidSymbolError):
+                            self._record_metric("invalid_symbols", 1)
+                            self._log(
+                                logging.INFO,
+                                "Alpha Vantage invalid symbol payload",
+                                av_event="invalid_symbol",
+                                av_request_id=req_id,
+                                av_function=function,
+                                av_symbol=str(symbol) if symbol is not None else None,
+                                av_attempt=attempt,
+                                av_message=str(classified),
+                            )
+                        raise classified
+
+                elapsed_ms = (time.monotonic() - attempt_started) * 1000.0
+                self._record_metric("success", 1)
+                self._record_metric("total_success_ms", float(elapsed_ms))
+                payload_keys = []
+                if isinstance(payload, dict):
+                    try:
+                        payload_keys = list(payload.keys())[:10]
+                    except Exception:
+                        payload_keys = []
+
+                self._log(
+                    logging.DEBUG,
+                    "Alpha Vantage request succeeded",
+                    av_event="request_success",
+                    av_request_id=req_id,
+                    av_function=function,
+                    av_symbol=str(symbol) if symbol is not None else None,
+                    av_raw=False,
+                    av_attempt=attempt,
+                    av_status_code=int(response.status_code),
+                    av_elapsed_ms=round(elapsed_ms, 1),
+                    av_payload_keys=payload_keys,
+                )
+                self._maybe_log_summary()
+                return payload  # type: ignore[return-value]
+        except Exception as exc:
+            self._record_metric("failed", 1)
+            level = logging.ERROR
+            if isinstance(exc, AlphaVantageInvalidSymbolError):
+                level = logging.INFO
+            elif isinstance(exc, AlphaVantageThrottleError):
+                level = logging.WARNING
+
+            # Best effort: include the attempt counter for the failure.
+            attempt_no: Optional[int] = None
+            try:
+                attempt_no = int(attempt)  # type: ignore[name-defined]
+            except Exception:
+                attempt_no = None
+
+            self._log(
+                level,
+                "Alpha Vantage request failed",
+                av_event="request_failed",
+                av_request_id=req_id,
+                av_function=function,
+                av_symbol=str(symbol) if symbol is not None else None,
+                av_raw=bool(raw),
+                av_attempt=attempt_no,
+                av_max_retries=max_retries,
+                av_error_type=type(exc).__name__,
+                av_error=str(exc),
+            )
+            self._maybe_log_summary()
+            raise
         raise RuntimeError("Unreachable")
 
     # ------------------------------------------------------------------
