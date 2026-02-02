@@ -365,7 +365,7 @@ class AlphaVantageClient:
                             )
                             continue
                     raise
-                except httpx.RequestError as exc:
+                except httpx.RequestError:
                     self._record_metric("network_errors", 1)
                     if attempt < max_retries:
                         self._record_metric("retries", 1)
