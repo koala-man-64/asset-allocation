@@ -809,24 +809,8 @@ def _ensure_symbols_tables(cur) -> None:
 
 
 def _symbols_refresh_due(cur, interval_hours: float) -> bool:
-    if interval_hours <= 0:
-        return False
-    try:
-        cur.execute("SELECT last_refreshed_at FROM public.symbol_sync_state WHERE id=1;")
-        row = cur.fetchone()
-        last = row[0] if row else None
-    except Exception:
-        return True
-
-    if not last:
-        return True
-
-    now = datetime.now(timezone.utc)
-    try:
-        last_ts = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
-    except Exception:
-        return True
-    return (now - last_ts) >= timedelta(hours=float(interval_hours))
+    # Always return True to allow refreshes whenever get_symbols() is called or job is triggered.
+    return True
 
 
 def _try_advisory_lock_symbols_refresh(cur) -> bool:

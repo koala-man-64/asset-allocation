@@ -71,14 +71,8 @@ def _get_by_date_run_at_utc_hour() -> Optional[int]:
 
 
 def _should_run_by_date(run_at_utc_hour: Optional[int], now: Optional[datetime] = None) -> bool:
-    if run_at_utc_hour is None:
-        return True
-
-    if run_at_utc_hour < 0:
-        return False
-
-    now_utc = now or datetime.now(timezone.utc)
-    return now_utc.hour == run_at_utc_hour
+    # Always return True to allow on-demand and scheduled runs without hour constraints.
+    return True
 
 
 def run_partner_then_by_date(
