@@ -13,6 +13,8 @@ API Root
     ├── /system
     │   ├── /health [GET] (system.system_health) - Returns overall system status, layer freshness, and active alerts :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /lineage [GET] (system.system_lineage) - Returns data lineage graph and dependencies :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /debug-symbols [GET] (system.get_debug_symbols) - Returns debug-symbol config from Postgres :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /debug-symbols [POST] (system.set_debug_symbols) - Updates debug-symbol config in Postgres :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /alerts
     │   │   └── /{alert_id}
     │   │       ├── /ack [POST] (system.acknowledge_alert) - Acknowledges a system alert :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx

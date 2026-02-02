@@ -24,6 +24,8 @@ from monitoring.log_analytics import AzureLogAnalyticsClient
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 from core.blob_storage import BlobStorageClient
+from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
+from core.postgres import PostgresError
 
 logger = logging.getLogger("asset-allocation.api.system")
 
@@ -107,83 +109,6 @@ def _get_actor(request: Request) -> Optional[str]:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
-
-
-def _update_container_env_var(container: Dict[str, Any], *, name: str, value: str) -> None:
-    existing = container.get("env")
-    env_items: List[Dict[str, Any]] = []
-    if isinstance(existing, list):
-        env_items = [item for item in existing if isinstance(item, dict)]
-
-    updated: List[Dict[str, Any]] = []
-    found = False
-    for item in env_items:
-        if str(item.get("name") or "").strip() != name:
-            updated.append(item)
-            continue
-        next_item = dict(item)
-        next_item["name"] = name
-        next_item.pop("secretRef", None)
-        next_item["value"] = value
-        updated.append(next_item)
-        found = True
-
-    if not found:
-        updated.append({"name": name, "value": value})
-
-    container["env"] = updated
-
-
-def _get_job_env_var(job_payload: Dict[str, Any], *, name: str) -> Optional[str]:
-    props = job_payload.get("properties") if isinstance(job_payload.get("properties"), dict) else {}
-    template = props.get("template") if isinstance(props.get("template"), dict) else {}
-    containers = template.get("containers") if isinstance(template.get("containers"), list) else []
-    if not containers:
-        return None
-
-    first = containers[0] if isinstance(containers[0], dict) else {}
-    env = first.get("env") if isinstance(first.get("env"), list) else []
-    for item in env:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("name") or "").strip() != name:
-            continue
-        value = item.get("value")
-        if value is None:
-            return None
-        return str(value)
-    return None
-
-
-def _require_arm_job_config() -> Tuple[str, str, List[str], str, float]:
-    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
-    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
-    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
-    resource_group = resource_group_raw.strip() if resource_group_raw else ""
-
-    job_names_raw = os.environ.get("SYSTEM_HEALTH_ARM_JOBS")
-    job_allowlist = [item.strip() for item in (job_names_raw or "").split(",") if item.strip()]
-
-    if not (subscription_id and resource_group and job_allowlist):
-        raise HTTPException(status_code=503, detail="Azure job control is not configured.")
-
-    api_version_env = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION")
-    api_version = api_version_env.strip() if api_version_env else ""
-    if not api_version:
-        api_version = ArmConfig.api_version
-
-    timeout_env = os.environ.get("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
-    try:
-        timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
-    except ValueError:
-        timeout_seconds = 5.0
-
-    return subscription_id, resource_group, job_allowlist, api_version, timeout_seconds
-
-
-def _target_pipeline_jobs(job_allowlist: List[str]) -> List[str]:
-    prefixes = ("bronze-", "silver-", "gold-")
-    return sorted([name for name in job_allowlist if any(name.startswith(prefix) for prefix in prefixes)])
 
 
 @router.get("/health")
@@ -609,10 +534,10 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
 
 
 class DebugSymbolsUpdateRequest(BaseModel):
-    enabled: bool = Field(..., description="When true, apply DEBUG_SYMBOLS to pipeline jobs; when false, clear it.")
+    enabled: bool = Field(..., description="When true, apply debug symbols from Postgres to ETL jobs.")
     symbols: Optional[str] = Field(
         default=None,
-        description="Optional comma-separated override. When omitted and enabled=true, uses DEBUG_SYMBOLS from the API environment.",
+        description="Comma-separated list or JSON array. When omitted, keeps the stored symbols.",
     )
 
 
@@ -620,35 +545,25 @@ class DebugSymbolsUpdateRequest(BaseModel):
 def get_debug_symbols(request: Request) -> JSONResponse:
     validate_auth(request)
 
-    subscription_id, resource_group, job_allowlist, api_version, timeout_seconds = _require_arm_job_config()
-    targets = _target_pipeline_jobs(job_allowlist)
-    preset = (os.environ.get("DEBUG_SYMBOLS") or "").strip()
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
 
-    cfg = ArmConfig(
-        subscription_id=subscription_id,
-        resource_group=resource_group,
-        api_version=api_version,
-        timeout_seconds=timeout_seconds,
-    )
+    try:
+        state = read_debug_symbols_state(dsn)
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load debug symbols: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to load debug symbols.")
+        raise HTTPException(status_code=502, detail=f"Failed to load debug symbols: {exc}") from exc
 
-    current_value: str = ""
-    with AzureArmClient(cfg) as arm:
-        for job_name in targets:
-            job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=job_name)
-            payload = arm.get_json(job_url)
-            value = _get_job_env_var(payload, name="DEBUG_SYMBOLS")
-            if value is None:
-                continue
-            current_value = str(value or "")
-            break
-
-    enabled = bool(current_value.strip())
     return JSONResponse(
         {
-            "enabled": enabled,
-            "symbols": current_value,
-            "presetSymbols": preset,
-            "targets": targets,
+            "enabled": state.enabled,
+            "symbols": state.symbols_raw,
+            "updatedAt": _iso(state.updated_at),
+            "updatedBy": state.updated_by,
         },
         headers={"Cache-Control": "no-store"},
     )
@@ -658,48 +573,44 @@ def get_debug_symbols(request: Request) -> JSONResponse:
 def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> JSONResponse:
     validate_auth(request)
 
-    subscription_id, resource_group, job_allowlist, api_version, timeout_seconds = _require_arm_job_config()
-    targets = _target_pipeline_jobs(job_allowlist)
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
 
-    raw = (payload.symbols or "").strip()
-    if payload.enabled and not raw:
-        raw = (os.environ.get("DEBUG_SYMBOLS") or "").strip()
-    if payload.enabled and not raw:
-        raise HTTPException(status_code=400, detail="DEBUG_SYMBOLS is not configured (set env var DEBUG_SYMBOLS or provide symbols).")
+    try:
+        current = read_debug_symbols_state(dsn)
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load debug symbols: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to load debug symbols.")
+        raise HTTPException(status_code=502, detail=f"Failed to load debug symbols: {exc}") from exc
 
-    next_value = raw if payload.enabled else ""
+    raw = payload.symbols if payload.symbols is not None else current.symbols_raw
+    raw_text = str(raw or "").strip()
+    if payload.enabled and not raw_text:
+        raise HTTPException(status_code=400, detail="Debug symbols are required when enabled.")
 
-    cfg = ArmConfig(
-        subscription_id=subscription_id,
-        resource_group=resource_group,
-        api_version=api_version,
-        timeout_seconds=timeout_seconds,
-    )
-
-    updated: List[str] = []
-    with AzureArmClient(cfg) as arm:
-        for job_name in targets:
-            job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=job_name)
-            job_payload = arm.get_json(job_url)
-
-            props = job_payload.get("properties") if isinstance(job_payload.get("properties"), dict) else {}
-            template = props.get("template") if isinstance(props.get("template"), dict) else {}
-            containers = template.get("containers") if isinstance(template.get("containers"), list) else []
-            if not containers or not isinstance(containers[0], dict):
-                continue
-
-            container0 = containers[0]
-            _update_container_env_var(container0, name="DEBUG_SYMBOLS", value=next_value)
-
-            arm.patch_json(job_url, json_body={"properties": {"template": template}})
-            updated.append(job_name)
+    actor = _get_actor(request)
+    try:
+        state = update_debug_symbols_state(
+            dsn=dsn,
+            enabled=payload.enabled,
+            symbols=raw_text,
+            actor=actor,
+        )
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to update debug symbols: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to update debug symbols.")
+        raise HTTPException(status_code=502, detail=f"Failed to update debug symbols: {exc}") from exc
 
     return JSONResponse(
         {
-            "enabled": bool(next_value.strip()),
-            "symbols": next_value,
-            "updatedJobs": updated,
-            "requestedJobs": targets,
+            "enabled": state.enabled,
+            "symbols": state.symbols_raw,
+            "updatedAt": _iso(state.updated_at),
+            "updatedBy": state.updated_by,
         },
         headers={"Cache-Control": "no-store"},
     )

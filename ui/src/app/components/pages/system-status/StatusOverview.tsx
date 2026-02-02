@@ -472,7 +472,7 @@ export function StatusOverview({
                 <TooltipContent side="bottom" className="max-w-[320px]">
                   {debugSymbols.unavailable
                     ? 'Debug-symbol control is unavailable in this deployment.'
-                    : `When enabled, pipeline jobs use DEBUG_SYMBOLS to restrict processing. (${debugSymbols.preview})`}
+                    : `When enabled, pipeline jobs pull debug symbols from Postgres. (${debugSymbols.preview})`}
                 </TooltipContent>
               </Tooltip>
             ) : null}

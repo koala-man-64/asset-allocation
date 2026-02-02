@@ -102,6 +102,24 @@ def log_environment_diagnostics():
 
     write_section("ENVIRONMENT DIAGNOSTICS", "Logging selected environment variables...")
 
+    try:
+        from core.debug_symbols import refresh_debug_symbols_from_db
+
+        debug_symbols = refresh_debug_symbols_from_db()
+        if debug_symbols:
+            preview = ", ".join(debug_symbols[:8])
+            suffix = "..." if len(debug_symbols) > 8 else ""
+            logger.info(
+                "Debug symbols loaded from Postgres (%s): %s%s",
+                len(debug_symbols),
+                preview,
+                suffix,
+            )
+        else:
+            logger.info("Debug symbols disabled or empty.")
+    except Exception as exc:
+        logger.warning("Debug symbols refresh skipped: %s", exc)
+
     sensitive_patterns = [
         "KEY",
         "SECRET",

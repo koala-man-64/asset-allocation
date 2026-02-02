@@ -13,6 +13,55 @@ def _is_truthy(raw: Optional[str]) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
+def parse_debug_symbols(value: object) -> list[str]:
+    if value is None:
+        return []
+
+    def normalize_symbol_token(raw_token: object) -> str | None:
+        token = str(raw_token).strip()
+        if not token:
+            return None
+        return token.upper()
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+
+        # Accept either JSON array syntax or a comma-separated string.
+        if raw.startswith("["):
+            try:
+                decoded = json.loads(raw)
+            except Exception:
+                decoded = None
+            else:
+                if isinstance(decoded, list):
+                    symbols: list[str] = []
+                    for item in decoded:
+                        token = normalize_symbol_token(item)
+                        if token:
+                            symbols.append(token)
+                    return symbols
+
+        symbols = []
+        for item in raw.split(","):
+            token = normalize_symbol_token(item)
+            if token:
+                symbols.append(token)
+        return symbols
+
+    if isinstance(value, list):
+        symbols = []
+        for item in value:
+            token = normalize_symbol_token(item)
+            if token:
+                symbols.append(token)
+        return symbols
+
+    token = normalize_symbol_token(value)
+    return [token] if token else []
+
+
 if not _is_truthy(os.environ.get("DISABLE_DOTENV")):
     load_dotenv(override=False)
 
@@ -75,54 +124,14 @@ class AppSettings(BaseSettings):
     ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: int = 7
     ALPHA_VANTAGE_FINANCE_FRESH_DAYS: int = 28
 
-    # Comma-separated list for debug runs (e.g., \"AAPL,MSFT\"). Empty disables filtering.
+    # Comma-separated list for debug runs (e.g., "AAPL,MSFT"). Empty disables filtering.
+    # Note: ETL jobs may override this from Postgres at startup.
     DEBUG_SYMBOLS: list[str] = Field(default_factory=list)
 
     @field_validator("DEBUG_SYMBOLS", mode="before")
     @classmethod
     def _parse_debug_symbols(cls, value):
-        if value is None:
-            return []
-        def normalize_symbol_token(raw_token: object) -> str | None:
-            token = str(raw_token).strip()
-            if not token:
-                return None
-            return token.upper()
-
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return []
-
-            # Accept either JSON array syntax or a comma-separated string.
-            if raw.startswith("["):
-                try:
-                    decoded = json.loads(raw)
-                except Exception:
-                    decoded = None
-                else:
-                    if isinstance(decoded, list):
-                        symbols: list[str] = []
-                        for item in decoded:
-                            token = normalize_symbol_token(item)
-                            if token:
-                                symbols.append(token)
-                        return symbols
-
-            symbols = []
-            for item in raw.split(","):
-                token = normalize_symbol_token(item)
-                if token:
-                    symbols.append(token)
-            return symbols
-        if isinstance(value, list):
-            symbols = []
-            for item in value:
-                token = normalize_symbol_token(item)
-                if token:
-                    symbols.append(token)
-            return symbols
-        return value
+        return parse_debug_symbols(value)
 
     @model_validator(mode="after")
     def _validate_storage_auth(self):

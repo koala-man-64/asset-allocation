@@ -90,10 +90,8 @@ export interface PurgeResponse {
 export interface DebugSymbolsResponse {
   enabled: boolean;
   symbols: string;
-  presetSymbols?: string;
-  targets?: string[];
-  updatedJobs?: string[];
-  requestedJobs?: string[];
+  updatedAt?: string | null;
+  updatedBy?: string | null;
 }
 
 export const apiService = {

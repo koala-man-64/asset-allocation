@@ -101,9 +101,7 @@ export function SystemStatusPage() {
   };
 
   const debugEnabled = Boolean(debugSymbolsQuery.data?.enabled);
-  const debugSymbolsRaw = String(
-    debugSymbolsQuery.data?.symbols || debugSymbolsQuery.data?.presetSymbols || ''
-  ).trim();
+  const debugSymbolsRaw = String(debugSymbolsQuery.data?.symbols || '').trim();
   const debugSymbolsPreview = (() => {
     if (!debugSymbolsRaw) return 'Not configured';
     const parts = debugSymbolsRaw

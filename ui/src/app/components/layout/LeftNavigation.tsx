@@ -19,7 +19,8 @@ import {
   Pin,
   PinOff,
   Globe,
-  Database
+  Database,
+  Bug
 } from 'lucide-react';
 import Cookies from 'js-cookie';
 
@@ -50,6 +51,7 @@ const navSections: NavSection[] = [
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alerts', icon: Bell },
       { path: '/system-status', label: 'System Status', icon: Activity },
+      { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
       { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database }
     ]
   }
