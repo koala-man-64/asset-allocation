@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from io import StringIO
@@ -121,8 +122,23 @@ def download_and_save_raw(symbol: str, av: AlphaVantageClient) -> None:
         outputsize = "full"
 
     csv_text = av.get_daily_time_series(symbol, outputsize=outputsize, datatype="csv")  # type: ignore[assignment]
-    raw_bytes = _normalize_alpha_vantage_daily_csv(str(csv_text))
-    mdc.store_raw_bytes(raw_bytes, f"market-data/{symbol}.csv", client=bronze_client)
+    raw_text = str(csv_text)
+    try:
+        raw_bytes = _normalize_alpha_vantage_daily_csv(raw_text)
+    except Exception as exc:
+        snippet = raw_text.strip().replace("\n", " ")
+        if len(snippet) > 200:
+            snippet = snippet[:200] + "..."
+        raise AlphaVantageError(
+            f"Failed to normalize Alpha Vantage TIME_SERIES_DAILY CSV for {symbol}: {type(exc).__name__}: {exc}",
+            code="invalid_csv",
+            payload={"snippet": snippet},
+        ) from exc
+
+    try:
+        mdc.store_raw_bytes(raw_bytes, f"market-data/{symbol}.csv", client=bronze_client)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
     list_manager.add_to_whitelist(symbol)
 
 
@@ -145,7 +161,8 @@ async def main_async() -> int:
     # Preserve original ordering while de-duping.
     symbols = list(dict.fromkeys(symbols))
 
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
+    debug_mode = bool(hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS)
+    if debug_mode:
         mdc.write_line(f"DEBUG MODE: Restricting to {cfg.DEBUG_SYMBOLS}")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
 
@@ -183,6 +200,8 @@ async def main_async() -> int:
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
+                if debug_mode:
+                    mdc.write_line(f"Downloading OHLCV for {symbol}...")
                 await loop.run_in_executor(executor, worker, symbol)
                 async with progress_lock:
                     progress["downloaded"] += 1
@@ -192,18 +211,50 @@ async def main_async() -> int:
                     async with progress_lock:
                         progress["skipped"] += 1
                 else:
+                    should_log = debug_mode
                     async with progress_lock:
                         progress["failed"] += 1
-            except AlphaVantageInvalidSymbolError:
+                        should_log = should_log or progress["failed"] <= 20
+                    if should_log:
+                        mdc.write_error(f"Failed to ingest {symbol}: {exc}")
+            except AlphaVantageInvalidSymbolError as exc:
                 list_manager.add_to_blacklist(symbol)
+                should_log = debug_mode
                 async with progress_lock:
                     progress["blacklisted"] += 1
-            except AlphaVantageThrottleError:
+                    should_log = should_log or progress["blacklisted"] <= 20
+                if should_log:
+                    mdc.write_warning(f"Invalid symbol {symbol}; blacklisting. ({exc})")
+            except AlphaVantageThrottleError as exc:
+                should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
-            except AlphaVantageError:
+                    should_log = should_log or progress["failed"] <= 20
+                if should_log:
+                    note = str(exc)
+                    if len(note) > 200:
+                        note = note[:200] + "..."
+                    mdc.write_warning(f"Alpha Vantage throttled while processing {symbol}. ({note})")
+            except AlphaVantageError as exc:
+                should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
+                    should_log = should_log or progress["failed"] <= 20
+                if should_log:
+                    details = f"code={getattr(exc, 'code', 'unknown')} message={exc}"
+                    payload = getattr(exc, "payload", None)
+                    if payload:
+                        details = f"{details} payload={payload}"
+                    mdc.write_error(f"Alpha Vantage error while processing {symbol}. ({details})")
+            except Exception as exc:
+                should_log = debug_mode
+                async with progress_lock:
+                    progress["failed"] += 1
+                    should_log = should_log or progress["failed"] <= 20
+                if should_log:
+                    mdc.write_error(
+                        f"Unexpected error processing {symbol}: {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+                    )
             finally:
                 async with progress_lock:
                     progress["processed"] += 1
@@ -214,7 +265,7 @@ async def main_async() -> int:
                         )
 
     try:
-        await asyncio.gather(*(run_symbol(s) for s in symbols), return_exceptions=True)
+        await asyncio.gather(*(run_symbol(s) for s in symbols))
     finally:
         try:
             executor.shutdown(wait=True, cancel_futures=False)
