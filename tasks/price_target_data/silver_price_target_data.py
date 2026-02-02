@@ -1,9 +1,7 @@
 
-import os
-import warnings
 import pandas as pd
 import numpy as np
-from datetime import datetime, timezone
+from datetime import datetime
 from io import BytesIO
 
 from core import core as mdc
@@ -11,8 +9,6 @@ from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
-
-warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)

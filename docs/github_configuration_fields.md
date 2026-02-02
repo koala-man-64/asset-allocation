@@ -51,8 +51,7 @@ These fields are directly referenced via `${{ secrets.<NAME> }}` in `.github/wor
   - `AZURE_STORAGE_CONNECTION_STRING`
   - `AZURE_STORAGE_ACCOUNT_NAME`
 - **External data providers (deploy/jobs):**
-  - `YAHOO_USERNAME`
-  - `YAHOO_PASSWORD`
+  - `ALPHA_VANTAGE_API_KEY`
   - `NASDAQ_API_KEY`
 - **Databases (deploy/jobs):**
   - `POSTGRES_DSN`

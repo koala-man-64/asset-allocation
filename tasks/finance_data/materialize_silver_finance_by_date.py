@@ -250,7 +250,7 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
             # Prefix columns? To avoid collisions? 
             # e.g. "Total Assets" might be unique to BalSheet, but "Net Income" might appear in others?
             # Usually strict accounting types are distinct. 
-            # But let's keep them as is for now, assuming standard Yahoo Finance schema.
+            # But let's keep them as is for now, assuming a standard finance schema.
             # actually, duplicates might exist.
             # let's suffix with type if needed? No, too complex for now.
             # Just drop 'Symbol' and 'symbol' from columns before merge if they exist in non-index

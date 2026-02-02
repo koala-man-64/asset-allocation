@@ -8,11 +8,9 @@ os.environ.setdefault("LOG_LEVEL", "INFO")
 
 # Mock Environment Variables for Testing (Set fallbacks if missing)
 # Note: NASDAQ_API_KEY should be in .env for actual data fetching.
-os.environ.setdefault("YAHOO_USERNAME", "test_user")
-os.environ.setdefault("YAHOO_PASSWORD", "test_password")
+os.environ.setdefault("ALPHA_VANTAGE_API_KEY", "test_alpha_vantage_key")
 os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "test_account")
 os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net")
-os.environ.setdefault("HEADLESS_MODE", "True")
 os.environ.setdefault("TEST_MODE", "True")
 os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "10")
 os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")

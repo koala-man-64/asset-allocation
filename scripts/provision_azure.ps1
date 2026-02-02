@@ -31,7 +31,19 @@ $githubSpObjectId = $null
 
 $envPath = $EnvFile
 if ([string]::IsNullOrWhiteSpace($envPath)) {
-    $envPath = Join-Path (Join-Path $PSScriptRoot "..") ".env.web"
+    $repoRoot = Join-Path $PSScriptRoot ".."
+    $candidateWeb = Join-Path $repoRoot ".env.web"
+    $candidateEnv = Join-Path $repoRoot ".env"
+
+    if (Test-Path $candidateWeb) {
+        $envPath = $candidateWeb
+    }
+    elseif (Test-Path $candidateEnv) {
+        $envPath = $candidateEnv
+    }
+    else {
+        $envPath = $candidateWeb
+    }
 }
 $envLabel = Split-Path -Leaf $envPath
 
@@ -40,7 +52,7 @@ if (Test-Path $envPath) {
     $envLines = Get-Content $envPath
 }
 else {
-    throw "Env file not found at '$envPath'. Provide -EnvFile or create '$envLabel'."
+    throw "Env file not found at '$envPath'. Provide -EnvFile or create '.env' (recommended) or '.env.web'."
 }
 
 Write-Host "Loaded configuration from $envLabel" -ForegroundColor Cyan

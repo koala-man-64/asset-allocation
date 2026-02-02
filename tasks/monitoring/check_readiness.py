@@ -1,5 +1,4 @@
 import sys
-import os
 import logging
 from core import config as cfg
 from core import core as mdc

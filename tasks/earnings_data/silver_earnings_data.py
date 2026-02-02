@@ -1,9 +1,5 @@
 
-import os
-import asyncio
-import warnings
 import pandas as pd
-import numpy as np
 from datetime import datetime
 
 from core import core as mdc
@@ -12,8 +8,6 @@ from core import delta_core
 from core.pipeline import DataPaths
 from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest_only_flag
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
-
-warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)

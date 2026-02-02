@@ -15,6 +15,10 @@ python3 -m pip install -r requirements-dev.txt
 python3 -m pip install -e .
 ```
 
+### Configure environment
+- Copy `.env.template` to `.env` and fill required values, or run the interactive setup:
+  - `pwsh scripts/setup-env.ps1`
+
 ### Run tests
 ```bash
 python3 -m pytest -q

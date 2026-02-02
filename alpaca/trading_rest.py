@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from alpaca.config import AlpacaConfig

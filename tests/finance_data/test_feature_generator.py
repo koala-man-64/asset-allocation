@@ -54,8 +54,6 @@ def test_piotroski_score_calculation():
     dates = pd.date_range("2020-01-01", periods=8, freq="3MS")
     
     # Make everything improve
-    base_assets = 1000.0
-    
     df = pd.DataFrame({
         "Date": dates,
         "Symbol": ["TEST"] * 8,

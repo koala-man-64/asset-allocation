@@ -15,8 +15,7 @@ def test_log_environment_diagnostics(caplog, capsys):
         "NORMAL_VAR": "visible",
         "AZURE_STORAGE_ACCOUNT_NAME": "test_account",
         "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net",
-        "YAHOO_USERNAME": "user@example.com",
-        "YAHOO_PASSWORD": "SuperSecretPassword",
+        "ALPHA_VANTAGE_API_KEY": "SuperSecretApiKey",
         "CONTAINER_APP_JOB_NAME": "my-job",
         "CONTAINER_APP_JOB_EXECUTION_NAME": "my-job-123",
     }
@@ -43,6 +42,5 @@ def test_log_environment_diagnostics(caplog, capsys):
 
     # 4. Ensure secrets/PII are NOT present in logs
     assert "AZURE_STORAGE_CONNECTION_STRING" not in logs
-    assert "YAHOO_USERNAME" not in logs
-    assert "YAHOO_PASSWORD" not in logs
-    assert "SuperSecretPassword" not in logs
+    assert "ALPHA_VANTAGE_API_KEY" not in logs
+    assert "SuperSecretApiKey" not in logs

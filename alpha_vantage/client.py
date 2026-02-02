@@ -10,7 +10,7 @@ symbols in parallel.
 
 Typical usage looks like this::
 
-    from alpha_vantage_client import AlphaVantageClient, AlphaVantageConfig
+    from alpha_vantage import AlphaVantageClient, AlphaVantageConfig
 
     cfg = AlphaVantageConfig(api_key="YOUR_KEY", rate_limit_per_min=60, max_workers=5)
     av = AlphaVantageClient(cfg)
@@ -32,12 +32,16 @@ subscription tiers【7†L49-L53】【6†L2153-L2156】.
 from __future__ import annotations
 
 import logging
+import json
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 import httpx
 
 from .config import AlphaVantageConfig
+from .errors import AlphaVantageError, AlphaVantageInvalidSymbolError, AlphaVantageThrottleError
 from .rate_limiter import RateLimiter
 from .utils import parse_time_series, parse_financial_reports
 
@@ -55,7 +59,7 @@ class AlphaVantageClient:
         connection settings.
     """
 
-    def __init__(self, config: AlphaVantageConfig) -> None:
+    def __init__(self, config: AlphaVantageConfig, *, http_client: Optional[httpx.Client] = None) -> None:
         self.config = config
         self._rate_limiter = RateLimiter(config.rate_limit_per_min)
         # httpx will attempt to use proxy settings from the environment by
@@ -64,12 +68,64 @@ class AlphaVantageClient:
         # installed.  Setting ``trust_env=False`` prevents httpx from
         # reading proxy configuration from the environment and avoids
         # that error.
-        self._client = httpx.Client(timeout=config.timeout, trust_env=False)
+        self._owns_client = http_client is None
+        self._client = http_client or httpx.Client(timeout=config.timeout, trust_env=False)
         self._query_url = config.get_query_url()
 
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
-        self._client.close()
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> "AlphaVantageClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    @staticmethod
+    def _classify_payload_error(payload: Mapping[str, Any]) -> Optional[AlphaVantageError]:
+        """
+        Alpha Vantage often returns HTTP 200 with an error payload.
+
+        Common patterns:
+        - {"Note": "..."} (throttle)
+        - {"Information": "..."} (throttle / informational)
+        - {"Error Message": "..."} (invalid symbol / bad request)
+        """
+        note = payload.get("Note") or payload.get("Information")
+        if isinstance(note, str) and note.strip():
+            return AlphaVantageThrottleError(note.strip(), payload=payload)
+
+        error_message = payload.get("Error Message")
+        if isinstance(error_message, str) and error_message.strip():
+            text = error_message.strip()
+            lowered = text.lower()
+            if "invalid api call" in lowered or "invalid symbol" in lowered:
+                return AlphaVantageInvalidSymbolError(text, payload=payload)
+            return AlphaVantageError(text, code="api_error", payload=payload)
+
+        return None
+
+    @staticmethod
+    def _try_parse_json(text: str) -> Optional[Dict[str, Any]]:
+        raw = (text or "").strip()
+        if not raw or not raw.startswith("{"):
+            return None
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _sleep_backoff(self, attempt: int) -> None:
+        base = max(0.0, float(getattr(self.config, "backoff_base_seconds", 0.5)))
+        # Exponential backoff with jitter; cap at 60s to avoid runaway sleeps.
+        sleep_seconds = min(60.0, base * (2.0**attempt))
+        sleep_seconds += random.uniform(0.0, min(1.0, sleep_seconds * 0.2))
+        time.sleep(sleep_seconds)
 
     def _request(self, params: Dict[str, Any], raw: bool = False) -> Union[Dict[str, Any], str]:
         """Perform a GET request to the Alpha Vantage API.
@@ -95,20 +151,78 @@ class AlphaVantageClient:
             returns ``200 OK`` for most errors, in which case the
             message will be contained in the JSON payload.
         """
-        self._rate_limiter.wait()
-        # Copy the parameters to avoid side effects
-        query_params = dict(params)
-        # Always append the API key
-        query_params["apikey"] = self.config.api_key
-        response = self._client.get(self._query_url, params=query_params)
-        response.raise_for_status()
-        if raw:
-            return response.text
-        try:
-            return response.json()
-        except ValueError:
-            # If JSON parsing fails, return the raw text
-            return response.text
+        max_retries = max(0, int(getattr(self.config, "max_retries", 0)))
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            self._rate_limiter.wait()
+
+            query_params = dict(params)
+            query_params["apikey"] = self.config.api_key
+
+            try:
+                response = self._client.get(self._query_url, params=query_params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                status = exc.response.status_code
+                # Retry 429/5xx; fail fast on other 4xx.
+                if status == 429 or status >= 500:
+                    if attempt < max_retries:
+                        self._sleep_backoff(attempt)
+                        continue
+                raise
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    self._sleep_backoff(attempt)
+                    continue
+                raise
+
+            # Attempt to interpret an error payload even for raw CSV endpoints.
+            if raw:
+                text = response.text
+                parsed = self._try_parse_json(text)
+                if parsed is not None:
+                    classified = self._classify_payload_error(parsed)
+                    if classified is not None:
+                        last_exc = classified
+                        if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
+                            self._sleep_backoff(attempt)
+                            continue
+                        raise classified
+                return text
+
+            try:
+                payload = response.json()
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    self._sleep_backoff(attempt)
+                    continue
+                snippet = (response.text or "").strip().replace("\n", " ")
+                if len(snippet) > 200:
+                    snippet = snippet[:200] + "..."
+                raise AlphaVantageError(
+                    "Failed to parse JSON response from Alpha Vantage.",
+                    code="invalid_json",
+                    payload={"snippet": snippet},
+                )
+
+            if isinstance(payload, dict):
+                classified = self._classify_payload_error(payload)
+                if classified is not None:
+                    last_exc = classified
+                    if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
+                        self._sleep_backoff(attempt)
+                        continue
+                    raise classified
+
+            return payload  # type: ignore[return-value]
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Unreachable")
 
     # ------------------------------------------------------------------
     # Generic request helpers
@@ -194,9 +308,8 @@ class AlphaVantageClient:
             List of parsed JSON objects or raw CSV strings in the same
             order as provided.
         """
-        results: List[Union[Dict[str, Any], str]] = [None] * len(list(request_params))
-        # Convert to list so we can index into it
         reqs = list(request_params)
+        results: List[Union[Dict[str, Any], str]] = [None] * len(reqs)  # type: ignore[list-item]
 
         def worker(index: int, params: Dict[str, Any]) -> Union[Dict[str, Any], str]:
             # Unpack function and symbol from the dict; copy so we don't mutate the caller's data

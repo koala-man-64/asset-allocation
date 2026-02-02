@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import json
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -68,22 +67,13 @@ class AppSettings(BaseSettings):
     # API Configuration
     API_PORT: int = os.environ.get("API_PORT", 8000)
 
-    # Optional data source credentials (varies by workflow).
-    YAHOO_USERNAME: Optional[str] = None
-    YAHOO_PASSWORD: Optional[str] = None
-
-    # Playwright configuration.
-    HEADLESS_MODE: bool = True
-    DOWNLOADS_PATH: Optional[Path] = None
-    USER_DATA_DIR: Optional[Path] = Field(default=None, validation_alias="PLAYWRIGHT_USER_DATA_DIR")
-
-    USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
-
-    # Yahoo download URL parameters.
-    YAHOO_MAX_PERIOD: int = 99999999999
+    # Alpha Vantage (market + fundamentals data source).
+    ALPHA_VANTAGE_API_KEY: Optional[str] = None
+    ALPHA_VANTAGE_RATE_LIMIT_PER_MIN: int = 300
+    ALPHA_VANTAGE_TIMEOUT_SECONDS: float = 15.0
+    ALPHA_VANTAGE_MAX_WORKERS: int = 32
+    ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: int = 7
+    ALPHA_VANTAGE_FINANCE_FRESH_DAYS: int = 28
 
     # Comma-separated list for debug runs (e.g., \"AAPL,MSFT\"). Empty disables filtering.
     DEBUG_SYMBOLS: list[str] = Field(default_factory=list)
@@ -140,14 +130,12 @@ AZURE_CONTAINER_PLATINUM = settings.AZURE_CONTAINER_PLATINUM
 
 EARNINGS_DATA_PREFIX: str = "earnings-data"
 
-YAHOO_USERNAME = settings.YAHOO_USERNAME
-YAHOO_PASSWORD = settings.YAHOO_PASSWORD
-
-HEADLESS_MODE = settings.HEADLESS_MODE
-DOWNLOADS_PATH = settings.DOWNLOADS_PATH
-USER_DATA_DIR = settings.USER_DATA_DIR
-USER_AGENT = settings.USER_AGENT
-YAHOO_MAX_PERIOD = settings.YAHOO_MAX_PERIOD
+ALPHA_VANTAGE_API_KEY = settings.ALPHA_VANTAGE_API_KEY
+ALPHA_VANTAGE_RATE_LIMIT_PER_MIN = settings.ALPHA_VANTAGE_RATE_LIMIT_PER_MIN
+ALPHA_VANTAGE_TIMEOUT_SECONDS = settings.ALPHA_VANTAGE_TIMEOUT_SECONDS
+ALPHA_VANTAGE_MAX_WORKERS = settings.ALPHA_VANTAGE_MAX_WORKERS
+ALPHA_VANTAGE_EARNINGS_FRESH_DAYS = settings.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS
+ALPHA_VANTAGE_FINANCE_FRESH_DAYS = settings.ALPHA_VANTAGE_FINANCE_FRESH_DAYS
 DEBUG_SYMBOLS = settings.DEBUG_SYMBOLS
 
 TICKERS_TO_ADD = [

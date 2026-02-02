@@ -1,5 +1,5 @@
 import hashlib
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from alpaca.config import ExecutionConfig
 from alpaca.execution.rebalance_planner import PlannedOrder

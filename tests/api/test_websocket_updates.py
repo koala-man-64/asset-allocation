@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from api.service.app import create_app
 
@@ -25,7 +24,7 @@ def test_websocket_updates_endpoint_accepts_connection(tmp_path: Path, monkeypat
     with TestClient(app) as client:
         with client.websocket_connect("/api/ws/updates") as websocket:
             websocket.send_text("ping")
-            data = websocket.receive_text()
+            websocket.receive_text()
 
 def test_websocket_pubsub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _set_required_env(tmp_path, monkeypatch)

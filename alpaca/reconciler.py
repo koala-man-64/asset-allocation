@@ -1,10 +1,8 @@
 import asyncio
 import logging
-import time
 from typing import Optional
 
 from alpaca.config import AlpacaConfig
-from alpaca.models import BrokerageState
 from alpaca.state import StateManager
 from alpaca.trading_rest import AlpacaTradingClient
 

@@ -1,6 +1,6 @@
 # Tasks-only image for Azure Container Apps Jobs.
 # NOTE: API/UI are intentionally excluded from this image to minimize size and attack surface.
-FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
+FROM python:3.10-slim-bookworm
 
 WORKDIR /app
 
@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 
 # Copy application code required by jobs.
 COPY pyproject.toml README.md ./
+COPY alpha_vantage/ alpha_vantage/
 COPY core/ core/
 COPY monitoring/ monitoring/
 COPY tasks/ tasks/

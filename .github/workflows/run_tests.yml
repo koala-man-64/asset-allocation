@@ -52,7 +52,7 @@ jobs:
           -v /app/node_modules \
           -w /app \
           node:20-bookworm-slim@sha256:6c51af7dc83f4708aaac35991306bca8f478351cfd2bda35750a62d7efcf05bb \
-          bash -lc "corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && pnpm exec vitest run --coverage && pnpm build"
+          bash -lc "corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm exec vitest run --coverage && pnpm build"
     
     - name: Set up Python
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -69,12 +69,15 @@ jobs:
         if [ -f requirements.lock.txt ]; then pip install -r requirements.lock.txt; else pip install -r requirements.txt; fi
         if [ -f requirements-dev.lock.txt ]; then pip install -r requirements-dev.lock.txt; else pip install -r requirements-dev.txt; fi
         pip install -e .
-        playwright install --with-deps chromium
         python -m pip check
 
     - name: Verify pytest-asyncio plugin
       run: |
         python -c "import pytest_asyncio; print(pytest_asyncio.__version__)"
+
+    - name: Run ruff
+      run: |
+        python -m ruff check .
         
     - name: Run tests
       env:
@@ -85,9 +88,6 @@ jobs:
         DISABLE_DOTENV: "true"
         LOG_FORMAT: "JSON"
         LOG_LEVEL: "INFO"
-        HEADLESS_MODE: "True"
-        DOWNLOADS_PATH: "/tmp/downloads"
-        PLAYWRIGHT_USER_DATA_DIR: "/tmp/playwright_userdata"
         # Container Mappings
         AZURE_FOLDER_MARKET: "market-data"
         AZURE_FOLDER_FINANCE: "finance-data"
@@ -99,22 +99,11 @@ jobs:
         AZURE_CONTAINER_GOLD: "gold"
         AZURE_CONTAINER_PLATINUM: "platinum"
 
-        # Backtest service defaults for CI
-        BACKTEST_OUTPUT_DIR: "/tmp/backtest_results"
-        BACKTEST_DB_PATH: "/tmp/backtest_results/runs.sqlite3"
-        BACKTEST_MAX_CONCURRENT: "1"
-        BACKTEST_API_KEY_HEADER: "X-API-Key"
-        API_AUTH_MODE: "none"
-        BACKTEST_ALLOW_LOCAL_DATA: "false"
-        BACKTEST_ADLS_CONTAINER_ALLOWLIST: "bronze,silver,gold,platinum,common"
-        BACKTEST_RUN_STORE_MODE: "sqlite"
-        BACKTEST_CSP: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'"
-
         # System health config (required by monitoring/system_health.py)
         SYSTEM_HEALTH_TTL_SECONDS: "30"
         SYSTEM_HEALTH_MAX_AGE_SECONDS: "129600"
       run: |
-        python -m pytest --cov=alpaca --cov=api --cov=backtest --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing
+        python -m pytest --cov=alpaca --cov=api --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing
         echo "::group::Coverage Summary"
         coverage report | grep TOTAL | awk '{print "Backend Total Coverage: " $NF}'
         echo "::endgroup::"

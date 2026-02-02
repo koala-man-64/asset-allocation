@@ -1,11 +1,11 @@
 import asyncio
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
-from alpaca.config import AlpacaConfig, ExecutionConfig
+from alpaca.config import AlpacaConfig
 from alpaca.execution.order_factory import OrderFactory
 from alpaca.execution.rebalance_planner import RebalancePlanner, RebalancePlan
-from alpaca.models import AlpacaOrder, BrokerageState
+from alpaca.models import AlpacaOrder
 from alpaca.price_cache import PriceCache
 from alpaca.state import StateManager
 from alpaca.trading_rest import AlpacaTradingClient

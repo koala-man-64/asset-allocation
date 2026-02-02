@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timezone
 from alpaca.models import (
-    BrokerageState, AlpacaAccount, AlpacaPosition, AlpacaOrder, TradeUpdateEvent
+    BrokerageState, AlpacaAccount, AlpacaOrder, TradeUpdateEvent
 )
 from alpaca.state import StateManager
 

@@ -4,7 +4,6 @@ from fastapi import Request
 from monitoring.ttl_cache import TtlCache
 
 from api.service.auth import AuthManager
-from api.service.auth import AuthManager
 from api.service.settings import ServiceSettings
 
 logger = logging.getLogger("asset-allocation.api.auth")

@@ -1,5 +1,3 @@
-import os
-from typing import Generator, Optional
 from core import delta_core
 from core import config as cfg
 

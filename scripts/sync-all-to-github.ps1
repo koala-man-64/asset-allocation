@@ -25,23 +25,33 @@ $ExpectedVars = @()
 
 # These patterns identify CONFIGURATION variables (GitHub Variables).
 # Anything NOT matching these patterns is treated as a SECRET.
-$ConfigPatterns = @(
-    "^AZURE_CONTAINER_",
-    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
-    "^SYSTEM_HEALTH_",
-    "^HEADLESS_MODE$",
-    "^DISABLE_DOTENV$",
-    "^LOG_",
-    "^TEST_MODE$",
-    "^VITE_PORT$",
-    "^SERVICE_ACCOUNT_NAME$",
-    "^KUBERNETES_NAMESPACE$",
-    "^AKS_CLUSTER_NAME$",
-    "^API_AUTH_MODE$",
-    "^API_CSP$",
-    "^API_OIDC_",
-    "^UI_"
-)
+	$ConfigPatterns = @(
+	    "^AZURE_CONTAINER_",
+	    "^AZURE_FOLDER_",
+	    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
+	    "^DEBUG_SYMBOLS$",
+	    "^FEATURE_ENGINEERING_MAX_WORKERS$",
+	    "^DOMAIN_METADATA_MAX_SCANNED_BLOBS$",
+	    "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
+	    "^ALPHA_VANTAGE_(?!API_KEY$)",
+	    "^SYSTEM_HEALTH_",
+	    "^HEADLESS_MODE$",
+	    "^DISABLE_DOTENV$",
+	    "^LOG_",
+	    "^TEST_MODE$",
+	    "^VITE_PORT$",
+	    "^SERVICE_ACCOUNT_NAME$",
+	    "^KUBERNETES_NAMESPACE$",
+	    "^AKS_CLUSTER_NAME$",
+	    "^API_AUTH_MODE$",
+	    "^API_KEY_HEADER$",
+	    "^API_ROOT_PREFIX$",
+	    "^API_PORT$",
+	    "^API_CSP$",
+	    "^API_CORS_ALLOW_ORIGINS$",
+	    "^API_OIDC_",
+	    "^UI_"
+	)
 
 # -------------------------------------------------------------------------
 # 1. PARSE .ENV
@@ -69,39 +79,55 @@ foreach ($line in $lines) {
             }
         }
 
-        if ($isConfig) {
-            # It's a Variable
-            if ($DryRun) {
-                Write-Host "[DRY RUN] Would set VARIABLE: $key" -ForegroundColor Cyan
-            } else {
-                Write-Host "Setting VARIABLE: $key" -NoNewline
-                try {
-                    $value | gh variable set "$key" 
-                    Write-Host " [OK]" -ForegroundColor Green
-                } catch {
-                    Write-Host " [FAILED]" -ForegroundColor Red
-                    Write-Error $_
-                }
-            }
-            $ExpectedVars += $key
-        } else {
-            # It's a Secret
-            if ($DryRun) {
-                Write-Host "[DRY RUN] Would set SECRET:   $key" -ForegroundColor Magenta
-            } else {
-                Write-Host "Setting SECRET:   $key" -NoNewline
-                try {
-                    $value | gh secret set "$key" 
-                    Write-Host " [OK]" -ForegroundColor Green
-                } catch {
-                    Write-Host " [FAILED]" -ForegroundColor Red
-                    Write-Error $_
-                }
-            }
-            $ExpectedSecrets += $key
-        }
-    }
-}
+	        if ($isConfig) {
+	            # It's a Variable
+	            if ([string]::IsNullOrWhiteSpace($value)) {
+	                if ($DryRun) {
+	                    Write-Host "[DRY RUN] Would SKIP empty VARIABLE: $key" -ForegroundColor Yellow
+	                } else {
+	                    Write-Host "Skipping VARIABLE with empty value: $key" -ForegroundColor Yellow
+	                }
+	            } else {
+	                if ($DryRun) {
+	                    Write-Host "[DRY RUN] Would set VARIABLE: $key" -ForegroundColor Cyan
+	                } else {
+	                    Write-Host "Setting VARIABLE: $key" -NoNewline
+	                    try {
+	                        $value | gh variable set "$key" 
+	                        Write-Host " [OK]" -ForegroundColor Green
+	                    } catch {
+	                        Write-Host " [FAILED]" -ForegroundColor Red
+	                        Write-Error $_
+	                    }
+	                }
+	            }
+	            $ExpectedVars += $key
+	        } else {
+	            # It's a Secret
+	            if ([string]::IsNullOrWhiteSpace($value)) {
+	                if ($DryRun) {
+	                    Write-Host "[DRY RUN] Would SKIP empty SECRET:   $key" -ForegroundColor Yellow
+	                } else {
+	                    Write-Host "Skipping SECRET with empty value:   $key" -ForegroundColor Yellow
+	                }
+	            } else {
+	                if ($DryRun) {
+	                    Write-Host "[DRY RUN] Would set SECRET:   $key" -ForegroundColor Magenta
+	                } else {
+	                    Write-Host "Setting SECRET:   $key" -NoNewline
+	                    try {
+	                        $value | gh secret set "$key" 
+	                        Write-Host " [OK]" -ForegroundColor Green
+	                    } catch {
+	                        Write-Host " [FAILED]" -ForegroundColor Red
+	                        Write-Error $_
+	                    }
+	                }
+	            }
+	            $ExpectedSecrets += $key
+	        }
+	    }
+	}
 
 # -------------------------------------------------------------------------
 # 2. PRUNE SECRETS

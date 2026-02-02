@@ -1,18 +1,14 @@
 
 import os
 import asyncio
-import warnings
 import pandas as pd
 import nasdaqdatalink
 from datetime import datetime, date, timezone
-from pathlib import Path
 from typing import List
 
 from core import core as mdc
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
-
-warnings.filterwarnings('ignore')
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)

@@ -1,12 +1,11 @@
 
 import sys
 import os
-from datetime import datetime
 
 # Add project root
 sys.path.append(os.path.abspath(os.getcwd()))
 
-from monitoring.monitor_metrics import _status_for_value, MetricThreshold, _worse_status
+from monitoring.monitor_metrics import _status_for_value, MetricThreshold
 
 def test_logic():
     # Setup from test case

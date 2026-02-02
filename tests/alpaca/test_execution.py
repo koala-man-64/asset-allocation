@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 from alpaca.execution.rebalance_planner import RebalancePlanner, PlannedOrder
 from alpaca.execution.order_factory import OrderFactory
 from alpaca.execution.execution_service import ExecutionService
-from alpaca.models import AlpacaPosition, AlpacaOrder, BrokerageState
+from alpaca.models import AlpacaPosition
 from alpaca.config import ExecutionConfig
 
 @pytest.fixture

@@ -54,6 +54,13 @@ env:
   SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
   DEBUG_SYMBOLS: ${{ vars.DEBUG_SYMBOLS || '' }}
 
+  # Alpha Vantage tunables (defaults match core/config.py)
+  ALPHA_VANTAGE_RATE_LIMIT_PER_MIN: ${{ vars.ALPHA_VANTAGE_RATE_LIMIT_PER_MIN || '300' }}
+  ALPHA_VANTAGE_TIMEOUT_SECONDS: ${{ vars.ALPHA_VANTAGE_TIMEOUT_SECONDS || '15' }}
+  ALPHA_VANTAGE_MAX_WORKERS: ${{ vars.ALPHA_VANTAGE_MAX_WORKERS || '32' }}
+  ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS || '7' }}
+  ALPHA_VANTAGE_FINANCE_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_FINANCE_FRESH_DAYS || '28' }}
+
 jobs:
   tests:
     uses: ./.github/workflows/run_tests.yml
@@ -80,8 +87,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
@@ -103,8 +109,7 @@ jobs:
           require_secret AZURE_TENANT_ID
           require_secret AZURE_SUBSCRIPTION_ID
           require_secret AZURE_STORAGE_CONNECTION_STRING
-          require_secret YAHOO_USERNAME
-          require_secret YAHOO_PASSWORD
+          require_secret ALPHA_VANTAGE_API_KEY
           require_secret NASDAQ_API_KEY
           require_secret POSTGRES_DSN
           require_secret SERVICE_ACCOUNT_NAME
@@ -450,8 +455,7 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.bronze_market == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -647,8 +651,7 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.bronze_finance == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -1040,8 +1043,7 @@ jobs:
       - name: Update and Start Earnings Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.bronze_earnings == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         env:
-          YAHOO_USERNAME: ${{ secrets.YAHOO_USERNAME }}
-          YAHOO_PASSWORD: ${{ secrets.YAHOO_PASSWORD }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}

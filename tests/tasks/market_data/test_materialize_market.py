@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import pandas as pd
 from tasks.market_data.materialize_silver_market_by_date import (
     MaterializeConfig,

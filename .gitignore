@@ -38,6 +38,7 @@ local.settings.json
 data/
 !ui/src/data/
 !ui/src/data/**
+tmp/
 
 # --- Node / Frontend ---
 node_modules/

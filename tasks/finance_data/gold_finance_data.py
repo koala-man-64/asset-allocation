@@ -78,17 +78,11 @@ def _rolling_slope(series: pd.Series, window: int) -> pd.Series:
     if len(series) < window:
         return pd.Series(np.nan, index=series.index)
  
-    y = series.rolling(window=window, min_periods=window)
-    
     # Pre-calculated constants for x = 0, 1, ..., window-1
     n = window
     sum_x = (n * (n - 1)) // 2
     sum_xx = (n * (n - 1) * (2 * n - 1)) // 6
     denom = n * sum_xx - sum_x * sum_x
-    
-    # We need sum_y and sum_xy for each window
-    # sum_y is just rolling sum
-    sum_y = y.sum()
     
     # sum_xy is a bit trickier with rolling(). Warning: O(N*W) if done naively.
     # Convolution approach: convolve series with [0, 1, ..., window-1]

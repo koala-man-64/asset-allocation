@@ -5,7 +5,7 @@ import io
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.blob_storage import BlobStorageClient
 from core import delta_core

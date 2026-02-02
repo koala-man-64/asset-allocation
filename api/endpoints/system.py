@@ -231,7 +231,7 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
                 alert_ids.append(alert_id)
         try:
             states = alert_store.get_states(alert_ids)
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to load alert lifecycle states; returning stateless alerts.")
             states = {}
 

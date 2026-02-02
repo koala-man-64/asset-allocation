@@ -1,8 +1,7 @@
 import os
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, Union, List
-from pathlib import Path
+from typing import Optional, Dict, Any, List
 
 import pandas as pd
 from azure.core.exceptions import AzureError, ResourceExistsError

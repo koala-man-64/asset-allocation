@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 logger = logging.getLogger("asset_allocation.monitoring.lineage")
 

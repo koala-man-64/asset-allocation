@@ -1,9 +1,6 @@
 
-import os
-import asyncio
 import pandas as pd
 from datetime import datetime
-import warnings
 
 from tasks.market_data import config as cfg
 from core import core as mdc
@@ -13,7 +10,6 @@ from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 
 # Suppress warnings
-warnings.filterwarnings('ignore')
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -73,6 +69,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     # Normalize common column casing if needed (defensive for non-standard CSVs)
     canonical_map = {
         "date": "Date",
+        "timestamp": "Date",
         "open": "Open",
         "high": "High",
         "low": "Low",

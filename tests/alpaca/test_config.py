@@ -1,5 +1,4 @@
 import pytest
-import yaml
 from alpaca.config import LiveConfig, validate_live_config_dict_strict
 
 def test_config_strict_validation_success():

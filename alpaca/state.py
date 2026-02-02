@@ -1,15 +1,13 @@
 import logging
-from typing import Dict, Optional, List
+from typing import List
 from datetime import datetime
-import copy
 
 from alpaca.models import (
     BrokerageState, 
     AlpacaAccount, 
     AlpacaPosition, 
     AlpacaOrder, 
-    TradeUpdateEvent, 
-    PositionStateLike
+    TradeUpdateEvent
 )
 
 logger = logging.getLogger(__name__)
@@ -68,9 +66,7 @@ class StateManager:
         # We rely on REST sync for authoritative match, but we can patch it here.
         if event.event in ("filled", "partial_fill"):
             symbol = order.symbol
-            filled_qty = event.qty
             filled_price = event.price
-            side = order.side
             
             # This is complex to do perfectly without a full ledger, 
             # so usually we might wait for position push or rely on 'position_qty' if sent.

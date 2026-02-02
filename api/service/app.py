@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -6,13 +5,12 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from api.endpoints import data, system, postgres
 from api.service.auth import AuthManager
-from api.service.dependencies import get_settings
 from api.service.settings import ServiceSettings
 from api.service.realtime import manager as realtime_manager
 from api.service.alert_state_store import PostgresAlertStateStore
@@ -26,19 +24,47 @@ def _normalize_root_prefix(value: str | None) -> str:
         return ""
     return "/" + raw.strip("/")
 
-def _request_context(request: Request) -> dict[str, str]:
-    return {
-        "client": request.client.host if request.client else "unknown",
-        "method": request.method,
-        "path": request.url.path or "",
-        "query": request.url.query or "",
-        "host": request.headers.get("host", ""),
-        "forwarded_for": request.headers.get("x-forwarded-for", ""),
-        "forwarded_proto": request.headers.get("x-forwarded-proto", ""),
-        "forwarded_host": request.headers.get("x-forwarded-host", ""),
-        "request_id": request.headers.get("x-request-id", "") or request.headers.get("x-correlation-id", ""),
-        "user_agent": request.headers.get("user-agent", ""),
-    }
+def _parse_env_list(value: str | None) -> list[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return []
+
+    # Accept either JSON array syntax or a comma-separated list.
+    if raw.startswith("["):
+        try:
+            decoded = json.loads(raw)
+        except Exception:
+            decoded = None
+        else:
+            if isinstance(decoded, list):
+                return [str(item).strip() for item in decoded if str(item).strip()]
+
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _get_cors_allow_origins() -> list[str]:
+    configured = _parse_env_list(os.environ.get("API_CORS_ALLOW_ORIGINS"))
+    if configured:
+        origins = configured
+    else:
+        origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:3000",
+        ]
+
+    # CORSMiddleware does not allow credentials with wildcard origins.
+    if "*" in origins:
+        logger.warning(
+            "API_CORS_ALLOW_ORIGINS contains '*', which is incompatible with allow_credentials=true. "
+            "Dropping '*' and keeping explicit origins only."
+        )
+        origins = [origin for origin in origins if origin != "*"]
+
+    # De-dup while preserving order.
+    return list(dict.fromkeys(origins))
 
 def create_app() -> FastAPI:
     # ... (existing inner functions) ...
@@ -68,30 +94,27 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(title="Asset Allocation API", version="0.1.0", lifespan=lifespan)
-    print(">>> SERVICE APPLICATION STARTING <<<")
+    logger.info("Service application starting")
 
-    content_security_policy = os.environ.get("API_CSP") or "default-src 'self'; base-uri 'none';"
+    content_security_policy = (os.environ.get("API_CSP") or "").strip()
 
     @app.middleware("http")
     async def _http_middleware(request: Request, call_next):
         try:
             start = time.monotonic()
             path = request.url.path or ""
-            method = request.method
-            
-            # Simple context extraction for logging (safe access)
-            client_host = request.client.host if request.client else "unknown"
-            
+
             response = await call_next(request)
-            
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-            
+            _ = (time.monotonic() - start) * 1000.0
+
             # Safe logic for headers
             if path.startswith("/assets/") and response.status_code == 200:
                 response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
 
             response.headers.setdefault("X-Content-Type-Options", "nosniff")
             response.headers.setdefault("X-Frame-Options", "DENY")
+            if content_security_policy:
+                response.headers.setdefault("Content-Security-Policy", content_security_policy)
             
             return response
             
@@ -102,14 +125,7 @@ def create_app() -> FastAPI:
     # CORS Configuration
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:5174",
-            "http://127.0.0.1:5174",
-            "http://localhost:3000",
-            "*",  # Fallback for dev
-        ],
+        allow_origins=_get_cors_allow_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

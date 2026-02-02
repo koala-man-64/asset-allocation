@@ -1,7 +1,7 @@
 import logging
 import math
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Tuple
 
 from alpaca.config import ExecutionConfig

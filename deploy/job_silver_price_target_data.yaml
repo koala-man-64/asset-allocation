@@ -50,8 +50,6 @@ properties:
         value: ${GOLD_PRICE_TARGET_JOB}
       - name: TRIGGER_NEXT_JOB_REQUIRED
         value: "true"
-      - name: HEADLESS_MODE
-        value: "true"
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING

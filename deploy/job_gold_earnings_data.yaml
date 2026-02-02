@@ -60,8 +60,6 @@ properties:
         secretRef: nasdaq-api-key
       - name: POSTGRES_DSN
         secretRef: pg-dsn
-      - name: HEADLESS_MODE
-        value: 'True'
       image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: gold-earnings-job

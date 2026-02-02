@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from alpaca.config import AlpacaConfig, HttpConfig
 from alpaca.trading_rest import AlpacaTradingClient
 

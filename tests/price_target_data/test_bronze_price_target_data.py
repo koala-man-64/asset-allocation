@@ -2,13 +2,11 @@ import pytest
 import pandas as pd
 import asyncio
 import uuid
-import os
 from unittest.mock import MagicMock, patch
 
 from tasks.price_target_data import bronze_price_target_data as bronze
 from core import config as cfg
 from core import core as mdc
-from core.pipeline import DataPaths
 
 # --- Helpers ---
 

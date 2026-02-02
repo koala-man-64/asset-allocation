@@ -1,7 +1,6 @@
-import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, List, Optional, Union
 
 import websockets
 try:

@@ -169,7 +169,7 @@ def materialize_silver_targets_by_date(cfg: MaterializeConfig) -> int:
         if df is None or df.empty:
             continue
 
-        # Silver price target tables use `obs_date` (Yahoo/Nasdaq convention). Older tables may use `Date`/`date`.
+        # Silver price target tables use `obs_date` (vendor convention). Older tables may use `Date`/`date`.
         if "Date" in df.columns:
             date_col = "Date"
         elif "date" in df.columns:

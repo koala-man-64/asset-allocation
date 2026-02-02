@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from typing import List, Callable, Optional, Iterable
+from typing import List, Callable, Optional
 
 from core import core as mdc
 from core.core import write_line

@@ -1,6 +1,6 @@
 # Backtest API image (FastAPI).
 # Kept as a separate Dockerfile so production tasks-only images can stay lean.
-FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
+FROM python:3.10-slim-bookworm
 
 WORKDIR /app
 
@@ -8,6 +8,7 @@ COPY requirements.lock.txt .
 RUN pip install --no-cache-dir -r requirements.lock.txt
 
 COPY pyproject.toml README.md ./
+COPY alpha_vantage/ alpha_vantage/
 COPY core/ core/
 COPY tasks/ tasks/
 COPY alpaca/ alpaca/
@@ -18,4 +19,3 @@ RUN pip install --no-cache-dir .
 EXPOSE 8000
 
 CMD ["uvicorn", "api.service.app:app", "--host", "0.0.0.0", "--port", "8000"]
-

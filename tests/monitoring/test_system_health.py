@@ -113,7 +113,6 @@ def test_system_health_control_plane_redacts_resource_ids(monkeypatch: pytest.Mo
     monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
 
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    checked_iso = now.isoformat()
 
     app_url = (
         "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/myapp"

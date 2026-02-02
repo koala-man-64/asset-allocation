@@ -1,6 +1,5 @@
-import pytest
 import pandas as pd
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from tasks.common import materialization
 
 def test_load_ticker_universe():

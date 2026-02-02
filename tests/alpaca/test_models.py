@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import timezone
 from alpaca.models import AlpacaAccount, AlpacaOrder
 
 def test_alpaca_account_parsing():

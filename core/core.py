@@ -7,7 +7,7 @@ import re
 import random
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Union, Optional
 
@@ -20,7 +20,7 @@ from .blob_storage import BlobStorageClient
 from azure.storage.blob import BlobLeaseClient
 from . import config as cfg
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
-from core.postgres import connect, PostgresError, copy_rows
+from core.postgres import connect, copy_rows
 # NOTE: We are importing cfg here. If config depends on core, we have a cycle.
 # Checking market_data.core imports: it imports config. 
 # market_data.config usually just has constants. Safe.
@@ -132,7 +132,6 @@ def log_environment_diagnostics():
         "AZURE_CONTAINER_PLATINUM",
         # Job behavior toggles
         "LOG_FORMAT",
-        "HEADLESS_MODE",
         "FEATURE_ENGINEERING_MAX_WORKERS",
         "MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR",
         "MATERIALIZE_YEAR_MONTH",
@@ -144,7 +143,6 @@ def log_environment_diagnostics():
         "PYTHONIOENCODING",
         "LANG",
         "TZ",
-        "PLAYWRIGHT_BROWSERS_PATH",
     ]
 
     keys = list(base_allowlist)
@@ -342,7 +340,7 @@ def update_csv_set(file_path, ticker, client: Optional[BlobStorageClient] = None
 def store_parquet(df: pd.DataFrame, file_path: Union[str, Path], client: Optional[BlobStorageClient] = None):
     """
     Stores a DataFrame as a Parquet file in Azure Blob Storage.
-    file_path: Relative path in the container (e.g. 'Yahoo/Price Data/AAPL.parquet')
+    file_path: Relative path in the container (e.g. 'market-data/AAPL.parquet')
     client: Specific client to use.
     """
     remote_path = get_remote_path(file_path)
@@ -533,7 +531,7 @@ def get_active_tickers():
     if api_key:
         nasdaqdatalink.ApiConfig.api_key = api_key
     else:
-         print(f"Warning: NASDAQ_API_KEY environment variable is missing. Active tickers fetch may fail or be limited.")
+         print("Warning: NASDAQ_API_KEY environment variable is missing. Active tickers fetch may fail or be limited.")
             
     try:
         df = nasdaqdatalink.get_table("ZACKS/MT", paginate=True, qopts={"columns": selected_columns})

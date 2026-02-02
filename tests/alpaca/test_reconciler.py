@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from unittest.mock import MagicMock
 from alpaca.reconciler import Reconciler
 

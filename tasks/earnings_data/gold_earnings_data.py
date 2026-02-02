@@ -196,7 +196,6 @@ def _build_job_config() -> FeatureJobConfig:
 
     from core import config as cfg
     from core import core as mdc
-    from core import delta_core
 
     df_symbols = mdc.get_symbols()
     df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
