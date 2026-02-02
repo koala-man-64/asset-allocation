@@ -692,7 +692,7 @@ export function StatusOverview({
                         <TableHead className={`${matrixHead} h-8 text-center w-[96px]`}>
                           STATUS
                         </TableHead>
-                        <TableHead className={`${matrixHead} h-8 text-center w-[96px]`}>
+                        <TableHead className={`${matrixHead} h-8 text-center w-[140px]`}>
                           ACTIONS
                         </TableHead>
                       </React.Fragment>
@@ -1052,7 +1052,7 @@ export function StatusOverview({
                                   'inline-flex h-7 w-7 items-center justify-center rounded-md border border-mcm-walnut/15 bg-mcm-cream/60 text-mcm-walnut/60 hover:bg-mcm-cream hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/30 disabled:opacity-40';
 
                                 return (
-                                  <div className="inline-grid grid-cols-2 gap-1">
+                                  <div className="inline-flex items-center gap-1">
                                     <Tooltip>
                                       <TooltipTrigger asChild>
                                         {executionsUrl ? (
