@@ -1044,106 +1044,135 @@ export function StatusOverview({
                                 const isControlDisabled =
                                   Boolean(triggeringJob) || Boolean(jobControl);
                                 const executionsUrl = getAzureJobExecutionsUrl(domain.jobUrl);
+                                const actionButtonBase =
+                                  'inline-flex h-7 w-7 items-center justify-center rounded-md border border-mcm-walnut/15 bg-mcm-cream/60 text-mcm-walnut/60 hover:bg-mcm-cream hover:text-mcm-teal focus:outline-none focus:ring-2 focus:ring-mcm-teal/30 disabled:opacity-40';
+                                const actionButtonDisabled =
+                                  'inline-flex h-7 w-7 items-center justify-center rounded-md border border-mcm-walnut/10 bg-mcm-cream/40 text-mcm-walnut/25';
+                                const actionButtonDestructive =
+                                  'inline-flex h-7 w-7 items-center justify-center rounded-md border border-mcm-walnut/15 bg-mcm-cream/60 text-mcm-walnut/60 hover:bg-mcm-cream hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/30 disabled:opacity-40';
 
                                 return (
-                                  <DropdownMenu>
+                                  <div className="inline-grid grid-cols-2 gap-1">
                                     <Tooltip>
                                       <TooltipTrigger asChild>
-                                        <DropdownMenuTrigger asChild>
+                                        {executionsUrl ? (
+                                          <a
+                                            href={executionsUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className={actionButtonBase}
+                                            aria-label={`Open ${domainName} execution history`}
+                                          >
+                                            <ScrollText className="h-4 w-4" />
+                                          </a>
+                                        ) : (
+                                          <span
+                                            tabIndex={0}
+                                            className={actionButtonDisabled}
+                                            aria-label="Execution history unavailable"
+                                          >
+                                            <ScrollText className="h-4 w-4" />
+                                          </span>
+                                        )}
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom">
+                                        Execution history
+                                        {run
+                                          ? ` • ${run.status.toUpperCase()} • ${formatTimeAgo(run.startTime)} ago`
+                                          : ''}
+                                      </TooltipContent>
+                                    </Tooltip>
+
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        {!jobName || isControlDisabled ? (
+                                          <span
+                                            tabIndex={0}
+                                            className={actionButtonDisabled}
+                                            aria-label="Suspend/resume unavailable"
+                                          >
+                                            {isSuspended ? (
+                                              <CirclePlay className="h-4 w-4" />
+                                            ) : (
+                                              <CirclePause className="h-4 w-4" />
+                                            )}
+                                          </span>
+                                        ) : (
                                           <button
                                             type="button"
-                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-mcm-walnut/15 bg-mcm-cream/60 text-mcm-walnut/60 hover:bg-mcm-cream hover:text-mcm-teal focus:outline-none focus:ring-2 focus:ring-mcm-teal/30"
-                                            aria-label={`${domainName} actions`}
+                                            className={actionButtonBase}
+                                            aria-label={isSuspended ? 'Resume job' : 'Suspend job'}
+                                            disabled={!jobName || isControlDisabled}
+                                            onClick={() =>
+                                              void setJobSuspended(actionJobName, !isSuspended)
+                                            }
                                           >
-                                            <MoreHorizontal className="h-4 w-4" />
+                                            {isControlling ? (
+                                              <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : isSuspended ? (
+                                              <CirclePlay className="h-4 w-4" />
+                                            ) : (
+                                              <CirclePause className="h-4 w-4" />
+                                            )}
                                           </button>
-                                        </DropdownMenuTrigger>
+                                        )}
                                       </TooltipTrigger>
-                                      <TooltipContent side="bottom">Actions</TooltipContent>
+                                      <TooltipContent side="bottom">
+                                        {isSuspended ? 'Resume job' : 'Suspend job'}
+                                      </TooltipContent>
                                     </Tooltip>
-                                    <DropdownMenuContent align="end" className="min-w-[240px]">
-                                      <DropdownMenuLabel className="text-xs">
-                                        {layer.name} • {domainName}
-                                      </DropdownMenuLabel>
 
-                                      {executionsUrl ? (
-                                        <DropdownMenuItem asChild>
-                                          <a href={executionsUrl} target="_blank" rel="noreferrer">
-                                            <ScrollText className="h-4 w-4 shrink-0" />
-                                            <span className="flex-1 leading-none">
-                                              Execution history
-                                            </span>
-                                            <DropdownMenuShortcut>
-                                              {run
-                                                ? `${run.status.toUpperCase()} • ${formatTimeAgo(run.startTime)}`
-                                                : ''}
-                                            </DropdownMenuShortcut>
-                                          </a>
-                                        </DropdownMenuItem>
-                                      ) : (
-                                        <DropdownMenuItem disabled>
-                                          <ScrollText className="h-4 w-4 shrink-0" />
-                                          <span className="flex-1 leading-none">
-                                            Execution history
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        {!jobName || Boolean(triggeringJob) ? (
+                                          <span
+                                            tabIndex={0}
+                                            className={actionButtonDisabled}
+                                            aria-label="Trigger unavailable"
+                                          >
+                                            <Play className="h-4 w-4" />
                                           </span>
-                                          <DropdownMenuShortcut>n/a</DropdownMenuShortcut>
-                                        </DropdownMenuItem>
-                                      )}
-
-                                      <DropdownMenuSeparator />
-
-                                      <DropdownMenuItem
-                                        disabled={!jobName || isControlDisabled}
-                                        onSelect={() =>
-                                          void setJobSuspended(actionJobName, !isSuspended)
-                                        }
-                                      >
-                                        {isControlling ? (
-                                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                                        ) : isSuspended ? (
-                                          <CirclePlay className="h-4 w-4 shrink-0" />
                                         ) : (
-                                          <CirclePause className="h-4 w-4 shrink-0" />
+                                          <button
+                                            type="button"
+                                            className={actionButtonBase}
+                                            aria-label="Trigger job"
+                                            disabled={!jobName || Boolean(triggeringJob)}
+                                            onClick={() => void triggerJob(actionJobName)}
+                                          >
+                                            {isTriggering ? (
+                                              <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                              <Play className="h-4 w-4" />
+                                            )}
+                                          </button>
                                         )}
-                                        <span className="flex-1 leading-none">
-                                          {isSuspended ? 'Resume job' : 'Suspend job'}
-                                        </span>
-                                        <DropdownMenuShortcut>
-                                          {jobName ? '' : 'n/a'}
-                                        </DropdownMenuShortcut>
-                                      </DropdownMenuItem>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom">Trigger job</TooltipContent>
+                                    </Tooltip>
 
-                                      <DropdownMenuItem
-                                        disabled={!jobName || Boolean(triggeringJob)}
-                                        onSelect={() => void triggerJob(actionJobName)}
-                                      >
-                                        {isTriggering ? (
-                                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                                        ) : (
-                                          <Play className="h-4 w-4 shrink-0" />
-                                        )}
-                                        <span className="flex-1 leading-none">Trigger job</span>
-                                      </DropdownMenuItem>
-
-                                      <DropdownMenuSeparator />
-
-                                      <DropdownMenuItem
-                                        variant="destructive"
-                                        disabled={isPurging}
-                                        onSelect={() =>
-                                          setPurgeTarget({
-                                            layer: layerKey,
-                                            domain: domainKey,
-                                            displayLayer: layer.name,
-                                            displayDomain: domainName
-                                          })
-                                        }
-                                      >
-                                        <Trash2 className="h-4 w-4 shrink-0" />
-                                        <span className="flex-1 leading-none">Purge data</span>
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className={actionButtonDestructive}
+                                          aria-label="Purge data"
+                                          disabled={isPurging}
+                                          onClick={() =>
+                                            setPurgeTarget({
+                                              layer: layerKey,
+                                              domain: domainKey,
+                                              displayLayer: layer.name,
+                                              displayDomain: domainName
+                                            })
+                                          }
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom">Purge data</TooltipContent>
+                                    </Tooltip>
+                                  </div>
                                 );
                               })()
                             ) : (

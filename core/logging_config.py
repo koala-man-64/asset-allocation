@@ -93,5 +93,8 @@ def configure_logging() -> logging.Logger:
     # Silence Azure SDK spam
     logging.getLogger("azure").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # Silence http client request logs (can include query-string secrets like apikey=...).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     
     return logger
