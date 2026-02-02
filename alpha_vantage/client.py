@@ -728,7 +728,7 @@ class AlphaVantageClient:
             Parsed JSON response or raw CSV text.
         """
         function = "TIME_SERIES_DAILY_ADJUSTED" if adjusted else "TIME_SERIES_DAILY"
-        params = {"symbol": symbol, "outputsize": outputsize}
+        params = {"outputsize": outputsize}
         if datatype.lower() == "csv":
             return self.fetch_csv(function, symbol, **params)
         return self.fetch(function, symbol, **params)
@@ -753,20 +753,18 @@ class AlphaVantageClient:
             Parsed JSON or raw CSV.
         """
         function = "TIME_SERIES_WEEKLY_ADJUSTED" if adjusted else "TIME_SERIES_WEEKLY"
-        params = {"symbol": symbol}
         if datatype.lower() == "csv":
-            return self.fetch_csv(function, symbol, **params)
-        return self.fetch(function, symbol, **params)
+            return self.fetch_csv(function, symbol)
+        return self.fetch(function, symbol)
 
     def get_monthly_time_series(
         self, symbol: str, adjusted: bool = False, datatype: str = "json"
     ) -> Union[Dict[str, Any], str]:
         """Retrieve monthly OHLCV data for a symbol."""
         function = "TIME_SERIES_MONTHLY_ADJUSTED" if adjusted else "TIME_SERIES_MONTHLY"
-        params = {"symbol": symbol}
         if datatype.lower() == "csv":
-            return self.fetch_csv(function, symbol, **params)
-        return self.fetch(function, symbol, **params)
+            return self.fetch_csv(function, symbol)
+        return self.fetch(function, symbol)
 
     def get_intraday_time_series(
         self,
@@ -805,7 +803,7 @@ class AlphaVantageClient:
             Parsed JSON or raw CSV.
         """
         function = "TIME_SERIES_INTRADAY"
-        params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "outputsize": outputsize}
+        params: Dict[str, Any] = {"interval": interval, "outputsize": outputsize}
         if month:
             params["month"] = month
         if datatype.lower() == "csv":
@@ -892,7 +890,7 @@ class AlphaVantageClient:
             "monthly": "DIGITAL_CURRENCY_MONTHLY",
         }
         function = function_map.get(interval.lower()) or "DIGITAL_CURRENCY_DAILY"
-        params: Dict[str, Any] = {"symbol": symbol, "market": market}
+        params: Dict[str, Any] = {"market": market}
         if datatype.lower() == "csv":
             return self.fetch_csv(function, symbol, **params)
         return self.fetch(function, symbol, **params)
@@ -941,7 +939,7 @@ class AlphaVantageClient:
         dict or str
             Parsed JSON or raw CSV.
         """
-        params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "series_type": series_type}
+        params: Dict[str, Any] = {"interval": interval, "series_type": series_type}
         if time_period is not None:
             params["time_period"] = time_period
         # Merge additional parameters
