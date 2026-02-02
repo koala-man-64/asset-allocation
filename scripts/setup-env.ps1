@@ -82,6 +82,7 @@ $Config += "LOG_LEVEL=" + (Prompt-Var "LOG_LEVEL" "INFO" "Options: DEBUG | INFO 
 $Config += "TEST_MODE=" + (Prompt-Var "TEST_MODE" "false" "Set true to disable network calls during some code paths.")
 $Config += "ENABLE_ENV_DIAGNOSTICS=" + (Prompt-Var "ENABLE_ENV_DIAGNOSTICS" "false" "Set true to log additional (allowlisted) environment diagnostics.")
 $Config += "DEBUG_SYMBOLS=" + (Prompt-Var "DEBUG_SYMBOLS" "" "Optional: comma-separated symbols for debug runs (e.g., AAPL,MSFT).")
+$Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTERVAL_HOURS" "24" "Optional: refresh symbol universe from NASDAQ + Alpha Vantage when older than this many hours (0 disables).")
 $Config += "FEATURE_ENGINEERING_MAX_WORKERS=" + (Prompt-Var "FEATURE_ENGINEERING_MAX_WORKERS" "" "Optional: max workers for feature engineering fan-out.")
 $Config += "DOMAIN_METADATA_MAX_SCANNED_BLOBS=" + (Prompt-Var "DOMAIN_METADATA_MAX_SCANNED_BLOBS" "200000" "Optional: upper bound for domain metadata scans (monitoring).")
 $Config += "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE=" + (Prompt-Var "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE" "" "Optional: set true to require Azure storage config at startup.")

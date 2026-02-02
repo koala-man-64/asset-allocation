@@ -671,6 +671,33 @@ class AlphaVantageClient:
     # ------------------------------------------------------------------
     # High‑level convenience methods
     # ------------------------------------------------------------------
+    def get_listing_status(self, *, state: Optional[str] = "active", date: Optional[str] = None) -> str:
+        """
+        Retrieve Alpha Vantage's listing status CSV.
+
+        This endpoint returns a CSV payload (not JSON) and does not require a symbol.
+
+        Parameters
+        ----------
+        state : {'active', 'delisted', None}, optional
+            Filter to active or delisted listings. When None, Alpha Vantage returns the
+            provider default (often active).
+        date : str, optional
+            Optional listing status snapshot date in YYYY-MM-DD format (premium keys may
+            support historical snapshots).
+
+        Returns
+        -------
+        str
+            Raw CSV text.
+        """
+        params: Dict[str, Any] = {"function": "LISTING_STATUS"}
+        if state:
+            params["state"] = state
+        if date:
+            params["date"] = date
+        return self._request(params, raw=True)  # type: ignore[return-value]
+
     def get_daily_time_series(
         self,
         symbol: str,

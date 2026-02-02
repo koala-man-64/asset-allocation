@@ -1,15 +1,17 @@
 
 import logging
 import glob
+import json
 import os
 import sys
 import re
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from io import StringIO
 from pathlib import Path
-from typing import Union, Optional
+from typing import Any, Union, Optional
 
 import pandas as pd
 import numpy as np
@@ -405,7 +407,6 @@ def save_file_text(content: str, file_path: Union[str, Path], client: Optional[B
     else:
          raise RuntimeError(f"Cannot save {file_path}: Azure Client not initialized.")
 
-import json
 def get_json_content(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> Optional[dict]:
     """Retrieves JSON content from Azure."""
     text = get_file_text(file_path, client=client)
@@ -549,6 +550,452 @@ def get_active_tickers():
         write_error(f"Failed to get active tickers: {e}")
         return pd.DataFrame(columns=['Symbol'])
 
+
+def _parse_alpha_vantage_listing_status_csv(csv_text: str) -> pd.DataFrame:
+    """
+    Parse Alpha Vantage LISTING_STATUS CSV into a normalized symbol DataFrame.
+
+    Alpha Vantage columns:
+      symbol,name,exchange,assetType,ipoDate,delistingDate,status
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: Symbol, Name, Exchange, AssetType, IpoDate, DelistingDate, Status
+    """
+    raw = (csv_text or "").strip()
+    if not raw:
+        return pd.DataFrame(columns=["Symbol"])
+
+    df = pd.read_csv(StringIO(raw), dtype=str, keep_default_na=False)
+    if df.empty:
+        return pd.DataFrame(columns=["Symbol"])
+
+    rename_map = {
+        "symbol": "Symbol",
+        "name": "Name",
+        "exchange": "Exchange",
+        "assetType": "AssetType",
+        "ipoDate": "IpoDate",
+        "delistingDate": "DelistingDate",
+        "status": "Status",
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+
+    if "Symbol" not in df.columns:
+        return pd.DataFrame(columns=["Symbol"])
+
+    for col in ["Symbol", "Name", "Exchange", "AssetType", "IpoDate", "DelistingDate", "Status"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+
+    # Alpha Vantage uses "null" for some empty cells (e.g., delistingDate).
+    for col in ["IpoDate", "DelistingDate"]:
+        if col in df.columns:
+            df[col] = df[col].replace({"null": "", "None": "", "nan": ""})
+
+    df = df[df["Symbol"].astype(str).str.strip().ne("")]
+
+    # Filter to active equities by default; callers can merge other sets if desired.
+    if "Status" in df.columns:
+        df = df[df["Status"].str.upper() == "ACTIVE"]
+    if "AssetType" in df.columns:
+        df = df[df["AssetType"].str.upper() == "STOCK"]
+
+    keep = [c for c in ["Symbol", "Name", "Exchange", "AssetType", "IpoDate", "DelistingDate", "Status"] if c in df.columns]
+    df = df[keep].drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
+    return df
+
+
+def get_active_tickers_alpha_vantage() -> pd.DataFrame:
+    """
+    Fetch active tickers from Alpha Vantage via LISTING_STATUS.
+
+    Uses environment variable ALPHA_VANTAGE_API_KEY.
+    """
+    api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
+    if not api_key or not api_key.strip():
+        write_warning("ALPHA_VANTAGE_API_KEY not set. Skipping Alpha Vantage LISTING_STATUS symbol fetch.")
+        return pd.DataFrame(columns=["Symbol"])
+
+    try:
+        from alpha_vantage import AlphaVantageClient, AlphaVantageConfig
+
+        rate_limit = int(os.environ.get("ALPHA_VANTAGE_RATE_LIMIT_PER_MIN", "300") or 300)
+        timeout = float(os.environ.get("ALPHA_VANTAGE_TIMEOUT_SECONDS", "15") or 15.0)
+
+        av_cfg = AlphaVantageConfig(
+            api_key=str(api_key).strip(),
+            rate_limit_per_min=rate_limit,
+            timeout=timeout,
+            max_workers=1,
+            max_retries=3,
+            backoff_base_seconds=0.5,
+        )
+
+        with AlphaVantageClient(av_cfg) as av:
+            csv_text = av.get_listing_status(state="active")
+        return _parse_alpha_vantage_listing_status_csv(str(csv_text))
+    except Exception as e:
+        write_error(f"Failed to get active tickers from Alpha Vantage: {e}")
+        return pd.DataFrame(columns=["Symbol"])
+
+
+def merge_symbol_sources(df_nasdaq: pd.DataFrame, df_alpha_vantage: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge NASDAQ + Alpha Vantage symbol universes into a single DataFrame.
+
+    Precedence:
+      - Prefer NASDAQ Name/sector/industry metadata when present.
+      - Use Alpha Vantage Exchange/AssetType/IPO/Delisting/Status when present.
+    """
+    df_n = df_nasdaq.copy() if df_nasdaq is not None else pd.DataFrame()
+    df_a = df_alpha_vantage.copy() if df_alpha_vantage is not None else pd.DataFrame()
+
+    if "Symbol" not in df_n.columns:
+        df_n["Symbol"] = pd.Series(dtype="object")
+    if "Symbol" not in df_a.columns:
+        df_a["Symbol"] = pd.Series(dtype="object")
+
+    df_n["Symbol"] = df_n["Symbol"].astype(str).str.strip()
+    df_a["Symbol"] = df_a["Symbol"].astype(str).str.strip()
+    df_n = df_n[df_n["Symbol"].ne("")]
+    df_a = df_a[df_a["Symbol"].ne("")]
+
+    nasdaq_cols = [c for c in ["Symbol", "Name", "Description", "Sector", "Industry", "Industry_2", "Optionable", "Country"] if c in df_n.columns]
+    alpha_cols = [c for c in ["Symbol", "Name", "Exchange", "AssetType", "IpoDate", "DelistingDate", "Status"] if c in df_a.columns]
+
+    left = df_n[nasdaq_cols].drop_duplicates(subset=["Symbol"]) if nasdaq_cols else df_n[["Symbol"]].drop_duplicates(subset=["Symbol"])
+    right = df_a[alpha_cols].drop_duplicates(subset=["Symbol"]) if alpha_cols else df_a[["Symbol"]].drop_duplicates(subset=["Symbol"])
+
+    # Add explicit source markers to avoid fragile inference after merge.
+    left = left.copy()
+    right = right.copy()
+    left["source_nasdaq"] = True
+    right["source_alpha_vantage"] = True
+
+    merged = left.merge(right, on="Symbol", how="outer", suffixes=("_nasdaq", "_av"))
+
+    def pick_str(primary: Any, fallback: Any) -> Any:
+        if primary is None or pd.isna(primary):
+            p = ""
+        else:
+            p = str(primary).strip()
+        if p:
+            return p
+        if fallback is None or pd.isna(fallback):
+            f = ""
+        else:
+            f = str(fallback).strip()
+        return f if f else None
+
+    out = pd.DataFrame()
+    out["Symbol"] = merged["Symbol"].astype(str).str.strip()
+
+    name_primary = merged["Name_nasdaq"] if "Name_nasdaq" in merged.columns else (merged["Name"] if "Name" in merged.columns else None)
+    name_fallback = merged["Name_av"] if "Name_av" in merged.columns else None
+    if name_primary is None and name_fallback is None:
+        out["Name"] = None
+    elif name_primary is None:
+        out["Name"] = name_fallback
+    elif name_fallback is None:
+        out["Name"] = name_primary
+    else:
+        out["Name"] = [pick_str(p, f) for p, f in zip(name_primary, name_fallback)]
+
+    # NASDAQ metadata (best effort).
+    for col in ["Description", "Sector", "Industry", "Industry_2", "Optionable", "Country"]:
+        if col in merged.columns:
+            out[col] = merged[col]
+
+    # Alpha Vantage metadata (best effort).
+    for col in ["Exchange", "AssetType", "IpoDate", "DelistingDate", "Status"]:
+        if col in merged.columns:
+            out[col] = merged[col]
+
+    # Source tracking (nullable booleans so failed fetches don't overwrite).
+    out["source_nasdaq"] = merged["source_nasdaq"] if "source_nasdaq" in merged.columns else None
+    out["source_alpha_vantage"] = merged["source_alpha_vantage"] if "source_alpha_vantage" in merged.columns else None
+    if "source_nasdaq" in out.columns:
+        out["source_nasdaq"] = out["source_nasdaq"].fillna(False).astype(bool)
+    if "source_alpha_vantage" in out.columns:
+        out["source_alpha_vantage"] = out["source_alpha_vantage"].fillna(False).astype(bool)
+
+    out = out[out["Symbol"].ne("")].drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
+    return out
+
+
+def _get_symbols_refresh_interval_hours() -> float:
+    raw = os.environ.get("SYMBOLS_REFRESH_INTERVAL_HOURS", "24")
+    try:
+        value = float(str(raw).strip() or "24")
+    except Exception:
+        return 24.0
+    if value < 0:
+        return 24.0
+    return value
+
+
+def _ensure_symbols_tables(cur) -> None:
+    """
+    Ensure the symbols and sync metadata tables exist (best-effort).
+
+    This keeps `get_symbols()` self-healing for fresh environments.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public.symbols (
+          symbol TEXT PRIMARY KEY
+        );
+        """
+    )
+
+    # Ensure expected columns exist even if the table pre-dates Alpha Vantage integration.
+    columns: list[tuple[str, str]] = [
+        ("name", "TEXT"),
+        ("description", "TEXT"),
+        ("sector", "TEXT"),
+        ("industry", "TEXT"),
+        ("industry_2", "TEXT"),
+        ("optionable", "TEXT"),
+        ("country", "TEXT"),
+        ("exchange", "TEXT"),
+        ("asset_type", "TEXT"),
+        ("ipo_date", "TEXT"),
+        ("delisting_date", "TEXT"),
+        ("status", "TEXT"),
+        ("source_nasdaq", "BOOLEAN"),
+        ("source_alpha_vantage", "BOOLEAN"),
+        ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
+    ]
+    for name, col_type in columns:
+        cur.execute(f"ALTER TABLE public.symbols ADD COLUMN IF NOT EXISTS {name} {col_type};")
+
+    # Ensure a unique index exists for upserts even if the table was created without a PK.
+    try:
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS symbols_symbol_uidx ON public.symbols(symbol);")
+    except Exception as exc:
+        write_warning(f"Unable to ensure unique index for symbols.symbol. ({exc})")
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public.symbol_sync_state (
+          id SMALLINT PRIMARY KEY,
+          last_refreshed_at TIMESTAMPTZ,
+          last_refreshed_sources JSONB,
+          last_refresh_error TEXT
+        );
+        """
+    )
+    cur.execute("INSERT INTO public.symbol_sync_state(id) VALUES (1) ON CONFLICT DO NOTHING;")
+
+
+def _symbols_refresh_due(cur, interval_hours: float) -> bool:
+    if interval_hours <= 0:
+        return False
+    try:
+        cur.execute("SELECT last_refreshed_at FROM public.symbol_sync_state WHERE id=1;")
+        row = cur.fetchone()
+        last = row[0] if row else None
+    except Exception:
+        return True
+
+    if not last:
+        return True
+
+    now = datetime.now(timezone.utc)
+    try:
+        last_ts = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+    except Exception:
+        return True
+    return (now - last_ts) >= timedelta(hours=float(interval_hours))
+
+
+def _try_advisory_lock_symbols_refresh(cur) -> bool:
+    try:
+        cur.execute("SELECT pg_try_advisory_lock(%s, %s);", (11873, 42001))
+        row = cur.fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return True  # best-effort: if locks unavailable, proceed.
+
+
+def _unlock_symbols_refresh(cur) -> None:
+    try:
+        cur.execute("SELECT pg_advisory_unlock(%s, %s);", (11873, 42001))
+    except Exception:
+        pass
+
+
+def upsert_symbols_to_db(
+    df_symbols: pd.DataFrame, *, sources: Optional[dict[str, Any]] = None, cur: Any = None
+) -> None:
+    """
+    Upsert symbol universe into Postgres, preserving existing values when new values are empty.
+    """
+    if df_symbols is None or df_symbols.empty:
+        return
+
+    dsn = os.environ.get("POSTGRES_DSN")
+    if not dsn and cur is None:
+        return
+
+    # Map DF columns (TitleCase) to DB columns (lowercase)
+    col_map = {
+        "Symbol": "symbol",
+        "Name": "name",
+        "Description": "description",
+        "Sector": "sector",
+        "Industry": "industry",
+        "Industry_2": "industry_2",
+        "Optionable": "optionable",
+        "Country": "country",
+        "Exchange": "exchange",
+        "AssetType": "asset_type",
+        "IpoDate": "ipo_date",
+        "DelistingDate": "delisting_date",
+        "Status": "status",
+        "source_nasdaq": "source_nasdaq",
+        "source_alpha_vantage": "source_alpha_vantage",
+    }
+
+    df_to_upload = df_symbols.copy()
+    if "Symbol" not in df_to_upload.columns:
+        return
+
+    # Normalize and keep only mapped columns.
+    existing_cols = [c for c in col_map.keys() if c in df_to_upload.columns]
+    df_to_upload = df_to_upload[existing_cols].copy()
+    df_to_upload["Symbol"] = df_to_upload["Symbol"].astype(str).str.strip()
+    df_to_upload = df_to_upload[df_to_upload["Symbol"].ne("")]
+    df_to_upload = df_to_upload.drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
+    if df_to_upload.empty:
+        return
+
+    # Convert empty strings/NaNs to NULL to avoid wiping out existing values on upsert.
+    for col in df_to_upload.columns:
+        if col in {"source_nasdaq", "source_alpha_vantage"}:
+            continue
+        df_to_upload[col] = df_to_upload[col].apply(lambda v: None if v is None or pd.isna(v) or str(v).strip() == "" else v)
+
+    df_to_upload.rename(columns=col_map, inplace=True)
+    db_cols = list(df_to_upload.columns)
+
+    # Build DO UPDATE clause preserving existing values when EXCLUDED values are NULL/empty.
+    update_cols = [c for c in db_cols if c != "symbol"]
+    set_parts = []
+    for col in update_cols:
+        if col in {"source_nasdaq", "source_alpha_vantage"}:
+            set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
+        else:
+            set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
+    set_parts.append("updated_at = now()")
+    set_clause = ", ".join(set_parts)
+
+    def _execute_upsert(target_cur) -> None:
+        _ensure_symbols_tables(target_cur)
+
+        target_cur.execute("CREATE TEMP TABLE tmp_symbols (LIKE public.symbols INCLUDING DEFAULTS) ON COMMIT DROP;")
+        copy_rows(
+            target_cur,
+            table="tmp_symbols",
+            columns=db_cols,
+            rows=df_to_upload.itertuples(index=False, name=None),
+        )
+
+        cols_sql = ", ".join(db_cols)
+        target_cur.execute(
+            f"""
+            INSERT INTO public.symbols AS s ({cols_sql})
+            SELECT {cols_sql} FROM tmp_symbols
+            ON CONFLICT (symbol) DO UPDATE SET {set_clause};
+            """
+        )
+
+        if sources is not None:
+            target_cur.execute(
+                "UPDATE public.symbol_sync_state SET last_refreshed_at=now(), last_refreshed_sources=%s, last_refresh_error=NULL WHERE id=1;",
+                (json.dumps(sources),),
+            )
+
+    if cur is not None:
+        _execute_upsert(cur)
+        return
+
+    with connect(dsn) as conn:
+        with conn.cursor() as target_cur:
+            _execute_upsert(target_cur)
+
+
+def refresh_symbols_to_db_if_due() -> None:
+    """
+    Periodically refresh the Postgres symbols table from NASDAQ + Alpha Vantage.
+
+    This is invoked opportunistically by get_symbols() and uses an advisory lock
+    to avoid redundant refreshes across concurrent jobs.
+    """
+    dsn = os.environ.get("POSTGRES_DSN")
+    if not dsn:
+        return
+
+    interval_hours = _get_symbols_refresh_interval_hours()
+    if interval_hours <= 0:
+        return
+
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            _ensure_symbols_tables(cur)
+
+            if not _try_advisory_lock_symbols_refresh(cur):
+                write_line("Symbols refresh already in progress; skipping.")
+                return
+
+            try:
+                if not _symbols_refresh_due(cur, interval_hours):
+                    return
+
+                write_line("Refreshing symbols from NASDAQ + Alpha Vantage...")
+                df_nasdaq = get_active_tickers()
+                df_av = get_active_tickers_alpha_vantage()
+
+                sources = {
+                    "nasdaq": {"rows": int(len(df_nasdaq)) if df_nasdaq is not None else 0},
+                    "alpha_vantage": {"rows": int(len(df_av)) if df_av is not None else 0},
+                }
+
+                df_merged = merge_symbol_sources(df_nasdaq, df_av)
+
+                # Mix in manual additions before persisting.
+                tickers_to_add = cfg.TICKERS_TO_ADD
+                for ticker_to_add in tickers_to_add:
+                    symbol = str(ticker_to_add.get("Symbol") or "").strip()
+                    if not symbol:
+                        continue
+                    if df_merged["Symbol"].eq(symbol).any():
+                        continue
+                    df_merged = pd.concat([df_merged, pd.DataFrame.from_dict([ticker_to_add])], ignore_index=True)
+
+                df_merged = df_merged.drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
+                sources["merged"] = {"rows": int(len(df_merged))}
+
+                if df_merged.empty:
+                    write_warning("Symbols refresh produced empty symbol universe; skipping DB update.")
+                    return
+
+                upsert_symbols_to_db(df_merged, sources=sources, cur=cur)
+                write_line(f"Symbols refresh complete. merged={len(df_merged)}")
+            except Exception as exc:
+                try:
+                    cur.execute(
+                        "UPDATE public.symbol_sync_state SET last_refresh_error=%s WHERE id=1;",
+                        (str(exc),),
+                    )
+                except Exception:
+                    pass
+                write_warning(f"Symbols refresh failed: {exc}")
+            finally:
+                _unlock_symbols_refresh(cur)
+
 def get_symbols_from_db():
     try:
         dsn = os.environ.get("POSTGRES_DSN")
@@ -578,7 +1025,15 @@ def get_symbols_from_db():
                 'industry': 'Industry', 
                 'industry_2': 'Industry_2',
                 'optionable': 'Optionable',
-                'country': 'Country'
+                'country': 'Country',
+                'exchange': 'Exchange',
+                'asset_type': 'AssetType',
+                'ipo_date': 'IpoDate',
+                'delisting_date': 'DelistingDate',
+                'status': 'Status',
+                'source_nasdaq': 'source_nasdaq',
+                'source_alpha_vantage': 'source_alpha_vantage',
+                'updated_at': 'UpdatedAt',
             }
             df.rename(columns=rename_map, inplace=True)
             return df
@@ -624,6 +1079,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
     try:
         with connect(dsn) as conn:
             with conn.cursor() as cur:
+                _ensure_symbols_tables(cur)
                 # 1. Fetch existing symbols to avoid duplicates
                 cur.execute("SELECT symbol FROM symbols")
                 existing_symbols = set(row[0] for row in cur.fetchall())
@@ -652,15 +1108,23 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
         write_error(f"Error syncing symbols to DB: {e}")
 
 def get_symbols():
+    # Opportunistic periodic refresh from external sources.
+    refresh_symbols_to_db_if_due()
+
     df_symbols = get_symbols_from_db()
 
     # Fallback/Supplemental Logic
     if df_symbols is None or df_symbols.empty:
-        write_line("DB symbols missing or empty. Fetching from NASDAQ API...")
-        df_symbols = get_active_tickers() 
-        # Note: We no longer store to CSV cache as primary source of truth is DB.
-        # But we could optionally cache it if we wanted to sync back to DB? 
-        # For now, let's keep the API fetch as a live fallback.
+        write_line("DB symbols missing or empty. Fetching from NASDAQ + Alpha Vantage...")
+        df_nasdaq = get_active_tickers()
+        df_av = get_active_tickers_alpha_vantage()
+        df_symbols = merge_symbol_sources(df_nasdaq, df_av)
+
+        # Best effort: persist immediately if Postgres is configured.
+        try:
+            upsert_symbols_to_db(df_symbols, sources={"mode": "bootstrap"})
+        except Exception:
+            pass
     else:
         write_line(f"Loaded {len(df_symbols)} symbols from Postgres.")
         
