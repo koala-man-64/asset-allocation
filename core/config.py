@@ -83,6 +83,12 @@ class AppSettings(BaseSettings):
     def _parse_debug_symbols(cls, value):
         if value is None:
             return []
+        def normalize_symbol_token(raw_token: object) -> str | None:
+            token = str(raw_token).strip()
+            if not token:
+                return None
+            return token.upper()
+
         if isinstance(value, str):
             raw = value.strip()
             if not raw:
@@ -96,11 +102,26 @@ class AppSettings(BaseSettings):
                     decoded = None
                 else:
                     if isinstance(decoded, list):
-                        return [str(item).strip() for item in decoded if str(item).strip()]
+                        symbols: list[str] = []
+                        for item in decoded:
+                            token = normalize_symbol_token(item)
+                            if token:
+                                symbols.append(token)
+                        return symbols
 
-            return [item.strip() for item in raw.split(",") if item.strip()]
+            symbols = []
+            for item in raw.split(","):
+                token = normalize_symbol_token(item)
+                if token:
+                    symbols.append(token)
+            return symbols
         if isinstance(value, list):
-            return [str(item).strip() for item in value if str(item).strip()]
+            symbols = []
+            for item in value:
+                token = normalize_symbol_token(item)
+                if token:
+                    symbols.append(token)
+            return symbols
         return value
 
     @model_validator(mode="after")
