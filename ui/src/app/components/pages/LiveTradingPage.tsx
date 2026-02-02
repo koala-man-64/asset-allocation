@@ -12,11 +12,10 @@ export function LiveTradingPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          Live trading views are not enabled in this deployment. Use System Status and Signal Monitor for operational
-          monitoring.
+          Live trading views are not enabled in this deployment. Use System Status and Signal
+          Monitor for operational monitoring.
         </CardContent>
       </Card>
     </div>
   );
 }
-

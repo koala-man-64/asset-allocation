@@ -19,7 +19,10 @@ function getRuntimeConfig(): RuntimeConfig {
 
 function parseScopes(raw: unknown): string[] {
   if (Array.isArray(raw)) {
-    return raw.map(String).map((s) => s.trim()).filter(Boolean);
+    return raw
+      .map(String)
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
   if (typeof raw !== 'string') return [];
   const normalized = raw.replace(/,/g, ' ').trim();
@@ -27,7 +30,9 @@ function parseScopes(raw: unknown): string[] {
 }
 
 function parseAuthMode(rawValue: unknown): AuthMode {
-  const raw = String(rawValue ?? '').trim().toLowerCase();
+  const raw = String(rawValue ?? '')
+    .trim()
+    .toLowerCase();
   if (!raw) return 'none';
   if (raw === 'oidc') return 'oidc';
   if (raw === 'api_key') return 'api_key';
@@ -47,8 +52,12 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const runtime = getRuntimeConfig();
   const mode = parseAuthMode(runtime.authMode ?? import.meta.env.VITE_AUTH_MODE);
-  const oidcClientId = String(runtime.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? '').trim();
-  const oidcAuthority = String(runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? '').trim();
+  const oidcClientId = String(
+    runtime.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? ''
+  ).trim();
+  const oidcAuthority = String(
+    runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? ''
+  ).trim();
   const oidcScopesRaw = runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES;
   const oidcScopes = useMemo(() => parseScopes(oidcScopesRaw), [oidcScopesRaw]);
 
@@ -61,11 +70,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clientId: oidcClientId,
         authority: oidcAuthority,
         redirectUri: window.location.origin,
-        postLogoutRedirectUri: window.location.origin,
+        postLogoutRedirectUri: window.location.origin
       },
       cache: {
-        cacheLocation: 'sessionStorage',
-      },
+        cacheLocation: 'sessionStorage'
+      }
     });
   }, [enabled, oidcClientId, oidcAuthority]);
 
@@ -82,7 +91,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     msal
       .handleRedirectPromise()
       .then((result: AuthenticationResult | null) => {
-        const chosen = result?.account ?? msal.getActiveAccount() ?? msal.getAllAccounts()[0] ?? null;
+        const chosen =
+          result?.account ?? msal.getActiveAccount() ?? msal.getAllAccounts()[0] ?? null;
         if (chosen) {
           msal.setActiveAccount(chosen);
         }
@@ -109,7 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const result = await msal.acquireTokenSilent({
           account,
-          scopes: oidcScopes,
+          scopes: oidcScopes
         });
         return result.accessToken || null;
       } catch (err) {
@@ -145,7 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         authenticated: Boolean(account),
         userLabel,
         signIn,
-        signOut,
+        signOut
       }}
     >
       {children}

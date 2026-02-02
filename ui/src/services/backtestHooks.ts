@@ -7,10 +7,14 @@ export const backtestKeys = {
   runs: () => [...backtestKeys.all, 'runs'] as const,
   runList: (params: ListRunsParams) => [...backtestKeys.runs(), params] as const,
   run: (runId: string) => [...backtestKeys.runs(), runId] as const,
-  summary: (runId: string, source: DataSource) => [...backtestKeys.run(runId), 'summary', source] as const,
-  timeseries: (runId: string, source: DataSource, maxPoints: number) => [...backtestKeys.run(runId), 'timeseries', source, maxPoints] as const,
-  rolling: (runId: string, source: DataSource, windowDays: number, maxPoints: number) => [...backtestKeys.run(runId), 'rolling', source, windowDays, maxPoints] as const,
-  trades: (runId: string, source: DataSource, limit: number, offset: number) => [...backtestKeys.run(runId), 'trades', source, limit, offset] as const,
+  summary: (runId: string, source: DataSource) =>
+    [...backtestKeys.run(runId), 'summary', source] as const,
+  timeseries: (runId: string, source: DataSource, maxPoints: number) =>
+    [...backtestKeys.run(runId), 'timeseries', source, maxPoints] as const,
+  rolling: (runId: string, source: DataSource, windowDays: number, maxPoints: number) =>
+    [...backtestKeys.run(runId), 'rolling', source, windowDays, maxPoints] as const,
+  trades: (runId: string, source: DataSource, limit: number, offset: number) =>
+    [...backtestKeys.run(runId), 'trades', source, limit, offset] as const
 };
 
 function isNotFoundError(error: unknown): boolean {
@@ -24,7 +28,7 @@ export function useRunList(params: ListRunsParams = {}, opts: { enabled?: boolea
     queryKey: backtestKeys.runList(params),
     queryFn: ({ signal }) => backtestApi.listRuns(params, signal),
     enabled: opts.enabled ?? true,
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousData
   });
 
   return {
@@ -32,11 +36,14 @@ export function useRunList(params: ListRunsParams = {}, opts: { enabled?: boolea
     runs: data?.runs ?? [],
     loading: isLoading,
     error: error ? String(error) : undefined,
-    refresh: refetch,
+    refresh: refetch
   };
 }
 
-export function useRunSummary(runId: string | undefined, opts: { enabled?: boolean; source?: DataSource } = {}) {
+export function useRunSummary(
+  runId: string | undefined,
+  opts: { enabled?: boolean; source?: DataSource } = {}
+) {
   const source = opts.source ?? 'auto';
   const enabled = (opts.enabled ?? true) && !!runId;
 
@@ -54,13 +61,13 @@ export function useRunSummary(runId: string | undefined, opts: { enabled?: boole
   return {
     data,
     loading: isLoading,
-    error: error ? String(error) : undefined,
+    error: error ? String(error) : undefined
   };
 }
 
 export function useRunSummaries(
   runIds: string[],
-  opts: { enabled?: boolean; source?: DataSource; limit?: number } = {},
+  opts: { enabled?: boolean; source?: DataSource; limit?: number } = {}
 ) {
   const source = opts.source ?? 'auto';
   const limit = opts.limit;
@@ -71,9 +78,10 @@ export function useRunSummaries(
   const enabled = (opts.enabled ?? true) && targetIds.length > 0;
 
   const results = useQueries({
-    queries: targetIds.map(runId => ({
+    queries: targetIds.map((runId) => ({
       queryKey: backtestKeys.summary(runId, source),
-      queryFn: ({ signal }: { signal: AbortSignal }) => backtestApi.getSummary(runId, { source }, signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        backtestApi.getSummary(runId, { source }, signal),
       enabled,
       retry: (failureCount: number, error: unknown) => {
         if (isNotFoundError(error)) return false;
@@ -98,7 +106,7 @@ export function useRunSummaries(
 
 export function useTimeseriesMulti(
   runIds: string[],
-  opts: { enabled?: boolean; source?: DataSource; maxPoints?: number } = {},
+  opts: { enabled?: boolean; source?: DataSource; maxPoints?: number } = {}
 ) {
   const source = opts.source ?? 'auto';
   const maxPoints = opts.maxPoints ?? 5000;
@@ -106,9 +114,10 @@ export function useTimeseriesMulti(
   const enabled = (opts.enabled ?? true) && uniqueIds.length > 0;
 
   const results = useQueries({
-    queries: uniqueIds.map(runId => ({
+    queries: uniqueIds.map((runId) => ({
       queryKey: backtestKeys.timeseries(runId, source, maxPoints),
-      queryFn: ({ signal }: { signal: AbortSignal }) => backtestApi.getTimeseries(runId, { source, maxPoints }, signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        backtestApi.getTimeseries(runId, { source, maxPoints }, signal),
       enabled,
       retry: (failureCount: number, error: unknown) => {
         if (isNotFoundError(error)) return false;
@@ -134,7 +143,7 @@ export function useTimeseriesMulti(
 export function useRollingMulti(
   runIds: string[],
   windowDays: number,
-  opts: { enabled?: boolean; source?: DataSource; maxPoints?: number } = {},
+  opts: { enabled?: boolean; source?: DataSource; maxPoints?: number } = {}
 ) {
   const source = opts.source ?? 'auto';
   const maxPoints = opts.maxPoints ?? 5000;
@@ -142,9 +151,10 @@ export function useRollingMulti(
   const enabled = (opts.enabled ?? true) && uniqueIds.length > 0;
 
   const results = useQueries({
-    queries: uniqueIds.map(runId => ({
+    queries: uniqueIds.map((runId) => ({
       queryKey: backtestKeys.rolling(runId, source, windowDays, maxPoints),
-      queryFn: ({ signal }: { signal: AbortSignal }) => backtestApi.getRolling(runId, { source, windowDays, maxPoints }, signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        backtestApi.getRolling(runId, { source, windowDays, maxPoints }, signal),
       enabled,
       retry: (failureCount: number, error: unknown) => {
         if (isNotFoundError(error)) return false;
@@ -169,7 +179,7 @@ export function useRollingMulti(
 
 export function useTrades(
   runId: string | undefined,
-  opts: { enabled?: boolean; source?: DataSource; limit?: number; offset?: number } = {},
+  opts: { enabled?: boolean; source?: DataSource; limit?: number; offset?: number } = {}
 ) {
   const source = opts.source ?? 'auto';
   const limit = opts.limit ?? 2000;
@@ -179,12 +189,12 @@ export function useTrades(
   const { data, error, isLoading } = useQuery({
     queryKey: backtestKeys.trades(runId!, source, limit, offset),
     queryFn: ({ signal }) => backtestApi.getTrades(runId!, { source, limit, offset }, signal),
-    enabled,
+    enabled
   });
 
   return {
     data,
     loading: isLoading,
-    error: error ? String(error) : undefined,
+    error: error ? String(error) : undefined
   };
 }

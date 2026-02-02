@@ -6,10 +6,15 @@ import type {
   MarketData,
   Order,
   Position,
-  RiskMetrics,
+  RiskMetrics
 } from '@/types/data';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
-import type { DebugSymbolsResponse, JobLogsResponse, PurgeRequest, PurgeResponse } from '@/services/apiService';
+import type {
+  DebugSymbolsResponse,
+  JobLogsResponse,
+  PurgeRequest,
+  PurgeResponse
+} from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
 
@@ -20,7 +25,11 @@ export const DataService = {
     return apiService.getMarketData(ticker, layer);
   },
 
-  getFinanceData(ticker: string, subDomain: string, layer: 'silver' | 'gold' = 'silver'): Promise<FinanceData[]> {
+  getFinanceData(
+    ticker: string,
+    subDomain: string,
+    layer: 'silver' | 'gold' = 'silver'
+  ): Promise<FinanceData[]> {
     return apiService.getFinanceData(ticker, subDomain, layer);
   },
 
@@ -31,7 +40,7 @@ export const DataService = {
       console.info('[DataService] getSystemHealth success', {
         overall: data?.overall,
         layers: data?.dataLayers?.length ?? 0,
-        alerts: data?.alerts?.length ?? 0,
+        alerts: data?.alerts?.length ?? 0
       });
       return data;
     } catch (error) {
@@ -43,7 +52,7 @@ export const DataService = {
   getDomainMetadata(
     layer: 'bronze' | 'silver' | 'gold' | 'platinum',
     domain: string,
-    params: { refresh?: boolean } = {},
+    params: { refresh?: boolean } = {}
   ): Promise<DomainMetadata> {
     return apiService.getDomainMetadata(layer, domain, params);
   },
@@ -79,14 +88,21 @@ export const DataService = {
   getJobLogs(
     jobName: string,
     params: { runs?: number } = {},
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<JobLogsResponse> {
     return apiService.getJobLogs(jobName, params, signal);
   },
 
   getStockScreener(
-    params: { q?: string; limit?: number; offset?: number; asOf?: string; sort?: string; direction?: 'asc' | 'desc' } = {},
-    signal?: AbortSignal,
+    params: {
+      q?: string;
+      limit?: number;
+      offset?: number;
+      asOf?: string;
+      sort?: string;
+      direction?: 'asc' | 'desc';
+    } = {},
+    signal?: AbortSignal
   ): Promise<StockScreenerResponse> {
     return apiService.getStockScreener(params, signal);
   },
@@ -110,5 +126,5 @@ export const DataService = {
 
   setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
     return apiService.setDebugSymbols(payload);
-  },
+  }
 };

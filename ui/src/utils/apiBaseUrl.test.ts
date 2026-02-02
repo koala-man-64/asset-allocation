@@ -31,4 +31,3 @@ describe('toWebSocketBaseUrl', () => {
     expect(toWebSocketBaseUrl('/api')).toBe('/api');
   });
 });
-

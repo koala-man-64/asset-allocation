@@ -2,8 +2,8 @@
 
 :root {
   --font-size: 16px;
-  --font-body: "Montserrat", "Helvetica Neue", Arial, sans-serif;
-  --font-display: "Josefin Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-body: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Josefin Sans', 'Helvetica Neue', Arial, sans-serif;
   --font-sans: var(--font-body);
 
   --mcm-cream: #f5f5dc;
@@ -150,9 +150,21 @@
     @apply bg-background text-foreground;
     font-family: var(--font-body);
     background-image:
-      radial-gradient(700px circle at 8% 8%, color-mix(in srgb, var(--mcm-mustard) 20%, transparent), transparent 55%),
-      radial-gradient(520px circle at 92% 12%, color-mix(in srgb, var(--mcm-teal) 18%, transparent), transparent 50%),
-      radial-gradient(620px circle at 10% 90%, color-mix(in srgb, var(--mcm-olive) 18%, transparent), transparent 55%);
+      radial-gradient(
+        700px circle at 8% 8%,
+        color-mix(in srgb, var(--mcm-mustard) 20%, transparent),
+        transparent 55%
+      ),
+      radial-gradient(
+        520px circle at 92% 12%,
+        color-mix(in srgb, var(--mcm-teal) 18%, transparent),
+        transparent 50%
+      ),
+      radial-gradient(
+        620px circle at 10% 90%,
+        color-mix(in srgb, var(--mcm-olive) 18%, transparent),
+        transparent 55%
+      );
     background-attachment: fixed;
   }
 

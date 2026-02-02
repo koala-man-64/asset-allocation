@@ -8,7 +8,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenuTrigger
 } from '@/app/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -20,7 +20,7 @@ export function AppHeader() {
     isDarkMode,
     setIsDarkMode,
     environment,
-    setEnvironment,
+    setEnvironment
   } = useUIStore();
   const auth = useAuth();
 
@@ -68,7 +68,11 @@ export function AppHeader() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
                 <Download className="h-5 w-5" />
               </Button>
             </DropdownMenuTrigger>
@@ -90,7 +94,11 @@ export function AppHeader() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 w-9 rounded-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
                 <User className="h-5 w-5" />
               </Button>
             </DropdownMenuTrigger>

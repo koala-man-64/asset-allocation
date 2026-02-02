@@ -20,10 +20,13 @@ export function normalizeApiBaseUrl(value: unknown, fallback: string = '/api'): 
   }
 
   if (withoutTrailingSlashes === '/') return '/api';
-  return withoutTrailingSlashes.startsWith('/') ? withoutTrailingSlashes : `/${withoutTrailingSlashes}`;
+  return withoutTrailingSlashes.startsWith('/')
+    ? withoutTrailingSlashes
+    : `/${withoutTrailingSlashes}`;
 }
 
 export function toWebSocketBaseUrl(apiBaseUrl: string): string {
-  return apiBaseUrl.replace(/^https?:\/\//i, (match) => (match.toLowerCase().startsWith('https') ? 'wss://' : 'ws://'));
+  return apiBaseUrl.replace(/^https?:\/\//i, (match) =>
+    match.toLowerCase().startsWith('https') ? 'wss://' : 'ws://'
+  );
 }
-

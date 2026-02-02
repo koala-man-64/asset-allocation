@@ -11,7 +11,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialogTrigger
 } from '@/app/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { queryKeys } from '@/hooks/useDataQueries';
@@ -20,11 +20,7 @@ import { DataService } from '@/services/DataService';
 export type PurgeScope = 'layer-domain' | 'layer' | 'domain';
 
 export const normalizeLayerKey = (value: string) =>
-  value
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/_/g, '-');
+  value.toLowerCase().trim().replace(/\s+/g, '-').replace(/_/g, '-');
 
 export const normalizeDomainKey = (value: string) => {
   const cleaned = normalizeLayerKey(value);
@@ -47,7 +43,7 @@ export function PurgeActionIcon({
   className,
   iconClassName,
   disabled,
-  tooltip,
+  tooltip
 }: {
   scope: PurgeScope;
   layer?: string;
@@ -69,7 +65,7 @@ export function PurgeActionIcon({
         scope,
         layer,
         domain,
-        confirm: true,
+        confirm: true
       });
       toast.success(`Purged ${result.totalDeleted} blob(s).`);
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
@@ -121,8 +117,8 @@ export function PurgeActionIcon({
             Confirm purge
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This will permanently delete all blobs for <strong>{scopeLabel}</strong>. Containers remain, but the data
-            cannot be recovered.
+            This will permanently delete all blobs for <strong>{scopeLabel}</strong>. Containers
+            remain, but the data cannot be recovered.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

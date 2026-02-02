@@ -21,7 +21,6 @@ import { PostgresExplorerPage } from '@/app/components/pages/PostgresExplorerPag
 function AppContent() {
   // Enable real-time updates from backend
 
-
   return (
     <div className="h-screen flex flex-col bg-background">
       <div className="flex-1 flex overflow-hidden">
@@ -44,7 +43,6 @@ function AppContent() {
           </div>
         </main>
       </div>
-
 
       <Toaster />
     </div>

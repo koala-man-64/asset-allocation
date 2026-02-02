@@ -12,11 +12,10 @@ export function DataTiersPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          This page is not configured in this deployment. Use System Status for data freshness, pipeline links, and
-          lineage/impact details.
+          This page is not configured in this deployment. Use System Status for data freshness,
+          pipeline links, and lineage/impact details.
         </CardContent>
       </Card>
     </div>
   );
 }
-

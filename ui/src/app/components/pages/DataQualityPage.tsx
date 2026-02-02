@@ -6,7 +6,14 @@ import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Badge } from '@/app/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getStatusConfig } from './system-status/SystemStatusHelpers';
 import {
@@ -19,7 +26,7 @@ import {
   ScanSearch,
   ShieldAlert,
   Timer,
-  TriangleAlert,
+  TriangleAlert
 } from 'lucide-react';
 
 type ProbeStatus = 'idle' | 'running' | 'pass' | 'warn' | 'fail';
@@ -47,7 +54,7 @@ const FINANCE_SUBDOMAINS: Array<{ value: string; label: string }> = [
   { value: 'balance_sheet', label: 'Balance Sheet' },
   { value: 'income_statement', label: 'Income Statement' },
   { value: 'cash_flow', label: 'Cash Flow' },
-  { value: 'valuation', label: 'Valuation' },
+  { value: 'valuation', label: 'Valuation' }
 ];
 
 function nowIso(): string {
@@ -97,7 +104,7 @@ function ProbePill({ status }: { status: ProbeStatus }) {
       variant="outline"
       className={cn(
         'rounded-none px-2 py-0.5 font-mono text-[11px] tracking-[0.22em] uppercase',
-        styles,
+        styles
       )}
     >
       {text}
@@ -114,7 +121,9 @@ function formatDurationMs(ms?: number): string {
   return `${minutes.toFixed(1)}m`;
 }
 
-function computeLayerDrift(layers: DataLayer[]): Array<{ domain: string; lagSeconds: number; from: string; to: string }> {
+function computeLayerDrift(
+  layers: DataLayer[]
+): Array<{ domain: string; lagSeconds: number; from: string; to: string }> {
   const byDomain = new Map<string, Array<{ layer: string; ts: number }>>();
   for (const layer of layers || []) {
     for (const domain of layer.domains || []) {
@@ -136,7 +145,7 @@ function computeLayerDrift(layers: DataLayer[]): Array<{ domain: string; lagSeco
       domain,
       lagSeconds: Math.max(0, Math.round(lagMs / 1000)),
       from: sorted[0].layer,
-      to: sorted[sorted.length - 1].layer,
+      to: sorted[sorted.length - 1].layer
     });
   }
 
@@ -144,7 +153,9 @@ function computeLayerDrift(layers: DataLayer[]): Array<{ domain: string; lagSeco
 }
 
 function normalizeLayerName(layerName: string): 'silver' | 'gold' | 'platinum' | 'bronze' | null {
-  const key = String(layerName || '').trim().toLowerCase();
+  const key = String(layerName || '')
+    .trim()
+    .toLowerCase();
   if (key === 'silver') return 'silver';
   if (key === 'gold') return 'gold';
   if (key === 'platinum') return 'platinum';
@@ -152,8 +163,12 @@ function normalizeLayerName(layerName: string): 'silver' | 'gold' | 'platinum' |
   return null;
 }
 
-function normalizeDomainName(domainName: string): 'market' | 'finance' | 'earnings' | 'price-target' | string {
-  const key = String(domainName || '').trim().toLowerCase();
+function normalizeDomainName(
+  domainName: string
+): 'market' | 'finance' | 'earnings' | 'price-target' | string {
+  const key = String(domainName || '')
+    .trim()
+    .toLowerCase();
   if (key === 'price-target' || key === 'price_target') return 'price-target';
   return key;
 }
@@ -181,17 +196,23 @@ export function DataQualityPage() {
           layerName: layer.name,
           layerStatus: layer.status,
           layerPortalUrl: layer.portalUrl,
-          domain,
+          domain
         });
       }
     }
     return out;
   }, [health.data]);
 
-  const drift = useMemo(() => computeLayerDrift(health.data?.dataLayers || []), [health.data?.dataLayers]);
+  const drift = useMemo(
+    () => computeLayerDrift(health.data?.dataLayers || []),
+    [health.data?.dataLayers]
+  );
 
   const impactsByDomain = useMemo(() => {
-    const raw = lineage.data && typeof lineage.data === 'object' ? (lineage.data as { impactsByDomain?: unknown }).impactsByDomain : null;
+    const raw =
+      lineage.data && typeof lineage.data === 'object'
+        ? (lineage.data as { impactsByDomain?: unknown }).impactsByDomain
+        : null;
     if (!raw || typeof raw !== 'object') return {};
     return raw as Record<string, string[]>;
   }, [lineage.data]);
@@ -199,15 +220,26 @@ export function DataQualityPage() {
   const summary = useMemo(() => {
     const payload = health.data;
     const overall = payload?.overall || 'unknown';
-    const layerPenalty = (payload?.dataLayers || []).reduce((acc, layer) => acc + scoreFromStatus(layer.status), 0);
+    const layerPenalty = (payload?.dataLayers || []).reduce(
+      (acc, layer) => acc + scoreFromStatus(layer.status),
+      0
+    );
     const domainPenalty = rows.reduce((acc, row) => acc + scoreFromStatus(row.domain.status), 0);
-    const probePenalty = Object.values(probeResults).reduce((acc, probe) => acc + scoreFromStatus(probe.status), 0);
+    const probePenalty = Object.values(probeResults).reduce(
+      (acc, probe) => acc + scoreFromStatus(probe.status),
+      0
+    );
 
-    const penalty = layerPenalty + Math.round(domainPenalty * 0.6) + Math.round(probePenalty * 1.25);
+    const penalty =
+      layerPenalty + Math.round(domainPenalty * 0.6) + Math.round(probePenalty * 1.25);
     const score = clampInt(100 - penalty, 0, 100);
 
-    const failures = rows.filter((r) => ['error', 'critical', 'failed'].includes(String(r.domain.status).toLowerCase())).length;
-    const stales = rows.filter((r) => ['stale', 'warning', 'degraded'].includes(String(r.domain.status).toLowerCase())).length;
+    const failures = rows.filter((r) =>
+      ['error', 'critical', 'failed'].includes(String(r.domain.status).toLowerCase())
+    ).length;
+    const stales = rows.filter((r) =>
+      ['stale', 'warning', 'degraded'].includes(String(r.domain.status).toLowerCase())
+    ).length;
     const probesFailing = Object.values(probeResults).filter((p) => p.status === 'fail').length;
 
     return {
@@ -215,20 +247,24 @@ export function DataQualityPage() {
       score,
       failures,
       stales,
-      probesFailing,
+      probesFailing
     };
   }, [health.data, rows, probeResults]);
 
   const runProbe = useCallback(
-    async (id: string, title: string, fn: () => Promise<{ ok: boolean; detail?: string; meta?: Record<string, unknown> }>) => {
+    async (
+      id: string,
+      title: string,
+      fn: () => Promise<{ ok: boolean; detail?: string; meta?: Record<string, unknown> }>
+    ) => {
       const started = performance.now();
       setProbeResults((prev) => ({
         ...prev,
         [id]: {
           status: 'running',
           title,
-          at: nowIso(),
-        },
+          at: nowIso()
+        }
       }));
 
       try {
@@ -243,8 +279,8 @@ export function DataQualityPage() {
             at: nowIso(),
             ms,
             detail: result.detail,
-            meta: result.meta,
-          },
+            meta: result.meta
+          }
         }));
       } catch (err: unknown) {
         const ms = performance.now() - started;
@@ -256,12 +292,12 @@ export function DataQualityPage() {
             title,
             at: nowIso(),
             ms,
-            detail: message,
-          },
+            detail: message
+          }
         }));
       }
     },
-    [],
+    []
   );
 
   const probeForRow = useCallback(
@@ -273,7 +309,12 @@ export function DataQualityPage() {
       if (!resolvedTicker) {
         setProbeResults((prev) => ({
           ...prev,
-          [`row:${domainKey(row)}`]: { status: 'fail', title: 'Probe', at: nowIso(), detail: 'Ticker is required.' },
+          [`row:${domainKey(row)}`]: {
+            status: 'fail',
+            title: 'Probe',
+            at: nowIso(),
+            detail: 'Ticker is required.'
+          }
         }));
         return;
       }
@@ -286,7 +327,7 @@ export function DataQualityPage() {
           return {
             ok: count > 0,
             detail: count > 0 ? `Rows: ${count.toLocaleString()}` : 'No rows returned.',
-            meta: { count },
+            meta: { count }
           };
         });
         return;
@@ -300,23 +341,31 @@ export function DataQualityPage() {
           return {
             ok: count > 0,
             detail: count > 0 ? `Rows: ${count.toLocaleString()}` : 'No rows returned.',
-            meta: { count, subDomain: financeSubDomain },
+            meta: { count, subDomain: financeSubDomain }
           };
         });
         return;
       }
 
-      if ((layer === 'silver' || layer === 'gold') && (domain === 'earnings' || domain === 'price-target')) {
+      if (
+        (layer === 'silver' || layer === 'gold') &&
+        (domain === 'earnings' || domain === 'price-target')
+      ) {
         const id = `probe:${layer}:${domain}`;
         await runProbe(id, `${domain} (${layer})`, async () => {
           const data = await backtestApi.getDomainData(resolvedTicker, domain, layer);
           const count = Array.isArray(data) ? data.length : 0;
           const sampleKeys =
-            count > 0 && data && typeof data[0] === 'object' && data[0] !== null ? Object.keys(data[0] as object).slice(0, 8) : [];
+            count > 0 && data && typeof data[0] === 'object' && data[0] !== null
+              ? Object.keys(data[0] as object).slice(0, 8)
+              : [];
           return {
             ok: count > 0,
-            detail: count > 0 ? `Rows: ${count.toLocaleString()} • Keys: ${sampleKeys.join(', ') || '—'}` : 'No rows returned.',
-            meta: { count, sampleKeys },
+            detail:
+              count > 0
+                ? `Rows: ${count.toLocaleString()} • Keys: ${sampleKeys.join(', ') || '—'}`
+                : 'No rows returned.',
+            meta: { count, sampleKeys }
           };
         });
         return;
@@ -328,11 +377,11 @@ export function DataQualityPage() {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),
-          detail: 'No active probe is defined for this container/folder.',
-        },
+          detail: 'No active probe is defined for this container/folder.'
+        }
       }));
     },
-    [financeSubDomain, runProbe, ticker],
+    [financeSubDomain, runProbe, ticker]
   );
 
   const runAll = useCallback(async () => {
@@ -375,7 +424,10 @@ export function DataQualityPage() {
   }
 
   if (health.error || !health.data) {
-    const message = health.error instanceof Error ? health.error.message : String(health.error || 'Unknown error');
+    const message =
+      health.error instanceof Error
+        ? health.error.message
+        : String(health.error || 'Unknown error');
     return (
       <div className="dq min-h-[calc(100vh-6rem)]">
         <div className="dq-panel p-6">
@@ -403,12 +455,16 @@ export function DataQualityPage() {
             </div>
             <div className="flex items-end gap-4">
               <h1 className="dq-title">Data Quality</h1>
-              <div className="dq-stamp" data-status={summary.score >= 85 ? 'pass' : summary.score >= 65 ? 'warn' : 'fail'}>
+              <div
+                className="dq-stamp"
+                data-status={summary.score >= 85 ? 'pass' : summary.score >= 65 ? 'warn' : 'fail'}
+              >
                 SCORE {summary.score}
               </div>
             </div>
             <p className="dq-subtitle">
-              Cross-check freshness, structure, and API reachability across the container/folder topology.
+              Cross-check freshness, structure, and API reachability across the container/folder
+              topology.
             </p>
           </div>
 
@@ -452,7 +508,11 @@ export function DataQualityPage() {
                 <RefreshCw className={cn('h-4 w-4', health.isFetching && 'animate-spin')} />
                 Refresh
               </Button>
-              <Button className="dq-btn-primary" onClick={() => void runAll()} disabled={health.isFetching}>
+              <Button
+                className="dq-btn-primary"
+                onClick={() => void runAll()}
+                disabled={health.isFetching}
+              >
                 <ScanSearch className="h-4 w-4" />
                 Run Probes
               </Button>
@@ -476,7 +536,11 @@ export function DataQualityPage() {
                   onClick={() => setOnlyIssues((v) => !v)}
                   className={cn('dq-toggle-btn', onlyIssues && 'dq-toggle-btn-on')}
                 >
-                  {onlyIssues ? <TriangleAlert className="h-4 w-4" /> : <CircleSlash2 className="h-4 w-4" />}
+                  {onlyIssues ? (
+                    <TriangleAlert className="h-4 w-4" />
+                  ) : (
+                    <CircleSlash2 className="h-4 w-4" />
+                  )}
                   {onlyIssues ? 'Issues only' : 'All rows'}
                 </button>
               </div>
@@ -521,7 +585,10 @@ export function DataQualityPage() {
                     <button
                       key={opt.value}
                       type="button"
-                      className={cn('dq-pill-btn', financeSubDomain === opt.value && 'dq-pill-btn-on')}
+                      className={cn(
+                        'dq-pill-btn',
+                        financeSubDomain === opt.value && 'dq-pill-btn-on'
+                      )}
                       onClick={() => setFinanceSubDomain(opt.value)}
                     >
                       {opt.label}
@@ -536,7 +603,8 @@ export function DataQualityPage() {
             <div className="dq-kicker">DRIFT</div>
             <div className="dq-title text-lg">Cross-Layer Lag</div>
             <p className="dq-subtitle mt-1 text-sm">
-              Largest observed timestamp spread across layers (best-effort, based on folder/table last modified).
+              Largest observed timestamp spread across layers (best-effort, based on folder/table
+              last modified).
             </p>
 
             <div className="mt-4 space-y-2">
@@ -564,7 +632,9 @@ export function DataQualityPage() {
               {drift.length === 0 && (
                 <div className="dq-empty">
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <div className="dq-mono text-sm">No cross-layer lag detected from available timestamps.</div>
+                  <div className="dq-mono text-sm">
+                    No cross-layer lag detected from available timestamps.
+                  </div>
                 </div>
               )}
             </div>
@@ -577,7 +647,8 @@ export function DataQualityPage() {
               <div className="dq-kicker">CONTAINERS & FOLDERS</div>
               <div className="dq-title text-lg">Validation Ledger</div>
               <p className="dq-subtitle mt-1 text-sm">
-                Each row is a folder/table probe target emitted by `/api/system/health` with optional active checks.
+                Each row is a folder/table probe target emitted by `/api/system/health` with
+                optional active checks.
               </p>
             </div>
             <div className="dq-ledger-meta">
@@ -608,14 +679,21 @@ export function DataQualityPage() {
                   const status = getStatusConfig(row.domain.status);
 
                   const probeId = (() => {
-                    if (layerKey === 'silver' && domainName === 'market') return `probe:silver:market`;
+                    if (layerKey === 'silver' && domainName === 'market')
+                      return `probe:silver:market`;
                     if (layerKey === 'gold' && domainName === 'market') return `probe:gold:market`;
-                    if (layerKey === 'silver' && domainName === 'finance') return `probe:silver:finance:${financeSubDomain}`;
-                    if (layerKey === 'gold' && domainName === 'finance') return `probe:gold:finance:${financeSubDomain}`;
-                    if (layerKey === 'silver' && domainName === 'earnings') return `probe:silver:earnings`;
-                    if (layerKey === 'gold' && domainName === 'earnings') return `probe:gold:earnings`;
-                    if (layerKey === 'silver' && domainName === 'price-target') return `probe:silver:price-target`;
-                    if (layerKey === 'gold' && domainName === 'price-target') return `probe:gold:price-target`;
+                    if (layerKey === 'silver' && domainName === 'finance')
+                      return `probe:silver:finance:${financeSubDomain}`;
+                    if (layerKey === 'gold' && domainName === 'finance')
+                      return `probe:gold:finance:${financeSubDomain}`;
+                    if (layerKey === 'silver' && domainName === 'earnings')
+                      return `probe:silver:earnings`;
+                    if (layerKey === 'gold' && domainName === 'earnings')
+                      return `probe:gold:earnings`;
+                    if (layerKey === 'silver' && domainName === 'price-target')
+                      return `probe:silver:price-target`;
+                    if (layerKey === 'gold' && domainName === 'price-target')
+                      return `probe:gold:price-target`;
                     return null;
                   })();
 
@@ -639,7 +717,9 @@ export function DataQualityPage() {
                             <div className="dq-domain-meta">
                               <span className="dq-mono text-[11px] text-muted-foreground">
                                 Impacts: {impactedStrategies.slice(0, 2).join(', ')}
-                                {impactedStrategies.length > 2 ? ` +${impactedStrategies.length - 2}` : ''}
+                                {impactedStrategies.length > 2
+                                  ? ` +${impactedStrategies.length - 2}`
+                                  : ''}
                               </span>
                             </div>
                           )}
@@ -668,7 +748,7 @@ export function DataQualityPage() {
                           style={{
                             borderColor: status.border,
                             color: status.text,
-                            backgroundColor: status.bg,
+                            backgroundColor: status.bg
                           }}
                         >
                           {String(row.domain.status).toUpperCase()}
@@ -677,7 +757,9 @@ export function DataQualityPage() {
 
                       <TableCell className="dq-td text-center">
                         <div className="dq-mono text-[11px] text-muted-foreground">
-                          {row.domain.lastUpdated ? `${formatTimeAgo(row.domain.lastUpdated)} ago` : '—'}
+                          {row.domain.lastUpdated
+                            ? `${formatTimeAgo(row.domain.lastUpdated)} ago`
+                            : '—'}
                         </div>
                       </TableCell>
 
@@ -685,7 +767,9 @@ export function DataQualityPage() {
                         <div className="dq-probe-cell">
                           <ProbePill status={probeStatus} />
                           {probe?.ms !== undefined && (
-                            <div className="dq-mono text-[10px] text-muted-foreground">{formatDurationMs(probe.ms)}</div>
+                            <div className="dq-mono text-[10px] text-muted-foreground">
+                              {formatDurationMs(probe.ms)}
+                            </div>
                           )}
                           {probeId && (
                             <Tooltip>
@@ -697,7 +781,12 @@ export function DataQualityPage() {
                                   disabled={probeStatus === 'running'}
                                   aria-label={`Probe ${row.layerName} ${row.domain.name}`}
                                 >
-                                  <ScanSearch className={cn('h-4 w-4', probeStatus === 'running' && 'animate-spin')} />
+                                  <ScanSearch
+                                    className={cn(
+                                      'h-4 w-4',
+                                      probeStatus === 'running' && 'animate-spin'
+                                    )}
+                                  />
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>
@@ -711,7 +800,12 @@ export function DataQualityPage() {
                       <TableCell className="dq-td text-right">
                         <div className="dq-links">
                           {row.domain.portalUrl ? (
-                            <a className="dq-link" href={row.domain.portalUrl} target="_blank" rel="noreferrer">
+                            <a
+                              className="dq-link"
+                              href={row.domain.portalUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
                               <ExternalLink className="h-4 w-4" />
                               <span className="sr-only">Open portal</span>
                             </a>
@@ -722,7 +816,12 @@ export function DataQualityPage() {
                           )}
 
                           {row.domain.jobUrl ? (
-                            <a className="dq-link" href={row.domain.jobUrl} target="_blank" rel="noreferrer">
+                            <a
+                              className="dq-link"
+                              href={row.domain.jobUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
                               <ArrowUpRight className="h-4 w-4" />
                               <span className="sr-only">Open job</span>
                             </a>
@@ -733,7 +832,12 @@ export function DataQualityPage() {
                           )}
 
                           {row.domain.triggerUrl ? (
-                            <a className="dq-link" href={row.domain.triggerUrl} target="_blank" rel="noreferrer">
+                            <a
+                              className="dq-link"
+                              href={row.domain.triggerUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
                               <CheckCircle2 className="h-4 w-4" />
                               <span className="sr-only">Trigger</span>
                             </a>

@@ -26,7 +26,7 @@ vi.mock('lucide-react', () => ({
   PinOff: () => <div data-testid="icon-pinoff" />,
   Globe: () => <div data-testid="icon-globe" />,
   ChevronUp: () => <div data-testid="icon-up" />,
-  ChevronDown: () => <div data-testid="icon-down" />,
+  ChevronDown: () => <div data-testid="icon-down" />
 }));
 
 describe('LeftNavigation', () => {

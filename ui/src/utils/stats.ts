@@ -65,7 +65,9 @@ export interface MonthlyReturn {
   return: number; // percent
 }
 
-export function computeMonthlyReturns(points: Array<{ date: string; dailyReturn: number }>): MonthlyReturn[] {
+export function computeMonthlyReturns(
+  points: Array<{ date: string; dailyReturn: number }>
+): MonthlyReturn[] {
   const byMonth = new Map<string, { year: number; month: number; product: number }>();
   for (const point of points) {
     const date = new Date(point.date);
@@ -82,7 +84,7 @@ export function computeMonthlyReturns(points: Array<{ date: string; dailyReturn:
   for (const { year, month, product } of byMonth.values()) {
     out.push({ year, month, return: (product - 1) * 100 });
   }
-  out.sort((a, b) => (a.year - b.year) || (a.month - b.month));
+  out.sort((a, b) => a.year - b.year || a.month - b.month);
   return out;
 }
 
@@ -95,7 +97,9 @@ export interface DrawdownPeriod {
   recovery?: number; // days (index delta)
 }
 
-export function computeTopDrawdowns(drawdownPctSeries: Array<{ date: string; value: number }>): DrawdownPeriod[] {
+export function computeTopDrawdowns(
+  drawdownPctSeries: Array<{ date: string; value: number }>
+): DrawdownPeriod[] {
   const drawdowns: DrawdownPeriod[] = [];
   let inDrawdown = false;
   let startDate = '';
@@ -130,7 +134,7 @@ export function computeTopDrawdowns(drawdownPctSeries: Array<{ date: string; val
         endDate: point.date,
         depth: troughValue,
         duration,
-        recovery,
+        recovery
       });
       inDrawdown = false;
     }
@@ -144,10 +148,9 @@ export function computeTopDrawdowns(drawdownPctSeries: Array<{ date: string; val
       startDate,
       troughDate,
       depth: troughValue,
-      duration,
+      duration
     });
   }
 
   return drawdowns.sort((a, b) => a.depth - b.depth).slice(0, 5);
 }
-

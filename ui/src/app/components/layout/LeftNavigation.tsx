@@ -6,7 +6,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
+  TooltipTrigger
 } from '@/app/components/ui/tooltip';
 import {
   Folder,
@@ -39,7 +39,7 @@ const navSections: NavSection[] = [
     title: 'MARKET INTELLIGENCE',
     items: [
       { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
-      { path: '/stock-detail', label: 'Live Stock View', icon: TrendingUp },
+      { path: '/stock-detail', label: 'Live Stock View', icon: TrendingUp }
     ]
   },
   {
@@ -50,7 +50,7 @@ const navSections: NavSection[] = [
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/alerts', label: 'Alerts', icon: Bell },
       { path: '/system-status', label: 'System Status', icon: Activity },
-      { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database },
+      { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database }
     ]
   }
 ];
@@ -58,7 +58,7 @@ const navSections: NavSection[] = [
 // Helper to find item by path
 const findNavItem = (path: string): NavItem | undefined => {
   for (const section of navSections) {
-    const found = section.items.find(item => item.path === path);
+    const found = section.items.find((item) => item.path === path);
     if (found) return found;
   }
   return undefined;
@@ -84,10 +84,8 @@ export function LeftNavigation() {
   }, []);
 
   const togglePin = (path: string) => {
-    setPinnedPaths(prev => {
-      const next = prev.includes(path)
-        ? prev.filter(p => p !== path)
-        : [...prev, path];
+    setPinnedPaths((prev) => {
+      const next = prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path];
 
       Cookies.set(PINNED_TABS_COOKIE, JSON.stringify(next), { expires: 365 });
       return next;
@@ -95,7 +93,7 @@ export function LeftNavigation() {
   };
 
   const pinnedItems = pinnedPaths
-    .map(path => findNavItem(path))
+    .map((path) => findNavItem(path))
     .filter((item): item is NavItem => !!item);
 
   // Grouped Rendering Helper
@@ -121,7 +119,9 @@ export function LeftNavigation() {
                 }
               >
                 {({ isActive }) => (
-                  <span className={cn('flex min-w-0 items-center gap-3', collapsed && 'justify-center')}>
+                  <span
+                    className={cn('flex min-w-0 items-center gap-3', collapsed && 'justify-center')}
+                  >
                     <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
                     {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
                   </span>
@@ -145,19 +145,15 @@ export function LeftNavigation() {
               togglePin(item.path);
             }}
             className={cn(
-              "absolute right-2 p-1 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-background/80 hover:text-foreground text-muted-foreground/50",
+              'absolute right-2 p-1 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-background/80 hover:text-foreground text-muted-foreground/50',
               // If it's the pinned section, we show the unpin icon (always visible if desired, or on hover)
               // If it's the normal section, we show pin icon if not already pinned
-              isPinnedSection && "text-muted-foreground hover:text-red-400",
-              !isPinnedSection && isPinned && "text-primary opacity-100", // Already pinned indicator in main list
+              isPinnedSection && 'text-muted-foreground hover:text-red-400',
+              !isPinnedSection && isPinned && 'text-primary opacity-100' // Already pinned indicator in main list
             )}
-            title={isPinned ? "Unpin" : "Pin to top"}
+            title={isPinned ? 'Unpin' : 'Pin to top'}
           >
-            {isPinned ? (
-              <PinOff className="h-3.5 w-3.5" />
-            ) : (
-              <Pin className="h-3.5 w-3.5" />
-            )}
+            {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
           </button>
         )}
       </div>
@@ -176,7 +172,7 @@ export function LeftNavigation() {
         <Button
           variant="ghost"
           size="icon"
-          className={cn("h-8 w-8", collapsed && "mx-auto")}
+          className={cn('h-8 w-8', collapsed && 'mx-auto')}
           onClick={() => setCollapsed(!collapsed)}
         >
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
@@ -192,9 +188,7 @@ export function LeftNavigation() {
                 <Pin className="h-3 w-3" /> PINNED
               </h4>
             )}
-            <div className="space-y-1">
-              {pinnedItems.map(item => renderNavItem(item, true))}
-            </div>
+            <div className="space-y-1">{pinnedItems.map((item) => renderNavItem(item, true))}</div>
             {!collapsed && <div className="my-4 border-b border-border/40" />}
           </div>
         )}
@@ -206,17 +200,13 @@ export function LeftNavigation() {
                 {section.title}
               </h4>
             )}
-            <div className="space-y-1">
-              {section.items.map((item) => renderNavItem(item))}
-            </div>
+            <div className="space-y-1">{section.items.map((item) => renderNavItem(item))}</div>
           </div>
         ))}
       </div>
 
       {!collapsed && (
-        <div className="p-4 border-t text-xs text-muted-foreground text-center">
-          v2.5.0-beta
-        </div>
+        <div className="p-4 border-t text-xs text-muted-foreground text-center">v2.5.0-beta</div>
       )}
     </div>
   );

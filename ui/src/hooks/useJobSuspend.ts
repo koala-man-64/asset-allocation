@@ -7,9 +7,16 @@ type JobControlAction = 'suspend' | 'resume';
 
 export function useJobSuspend() {
   const queryClient = useQueryClient();
-  const [jobControl, setJobControl] = useState<{ jobName: string; action: JobControlAction } | null>(null);
+  const [jobControl, setJobControl] = useState<{
+    jobName: string;
+    action: JobControlAction;
+  } | null>(null);
 
-  const setJobSuspended = async (jobName: string, suspended: boolean, queryKey: string[] = ['systemHealth']) => {
+  const setJobSuspended = async (
+    jobName: string,
+    suspended: boolean,
+    queryKey: string[] = ['systemHealth']
+  ) => {
     const action: JobControlAction = suspended ? 'suspend' : 'resume';
     setJobControl({ jobName, action });
     try {
@@ -36,6 +43,6 @@ export function useJobSuspend() {
 
   return {
     jobControl,
-    setJobSuspended,
+    setJobSuspended
   };
 }

@@ -8,7 +8,14 @@ import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import type { StockScreenerRow } from '@/services/backtestApi';
 import { DataService } from '@/services/DataService';
 import { cn } from '@/app/components/ui/utils';
@@ -63,7 +70,10 @@ export function StockExplorerPage() {
     return () => window.clearTimeout(handle);
   }, [rawQuery]);
 
-  const queryKey = useMemo(() => ['stockScreener', query || '-', sort, direction, asOf || '-'] as const, [query, sort, direction, asOf]);
+  const queryKey = useMemo(
+    () => ['stockScreener', query || '-', sort, direction, asOf || '-'] as const,
+    [query, sort, direction, asOf]
+  );
 
   const screenerQuery = useInfiniteQuery({
     queryKey,
@@ -75,9 +85,9 @@ export function StockExplorerPage() {
           offset: typeof pageParam === 'number' ? pageParam : 0,
           asOf: asOf || undefined,
           sort,
-          direction,
+          direction
         },
-        signal,
+        signal
       ),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
@@ -86,7 +96,7 @@ export function StockExplorerPage() {
       return nextOffset;
     },
     staleTime: 15_000,
-    retry: false,
+    retry: false
   });
 
   const rows = useMemo(() => {
@@ -220,8 +230,12 @@ export function StockExplorerPage() {
                         Symbol <ArrowUpDown className="h-3.5 w-3.5" />
                       </button>
                     </TableHead>
-                    <TableHead className="min-w-[240px] font-mono text-[10px] uppercase tracking-widest">Name</TableHead>
-                    <TableHead className="min-w-[160px] font-mono text-[10px] uppercase tracking-widest">Sector</TableHead>
+                    <TableHead className="min-w-[240px] font-mono text-[10px] uppercase tracking-widest">
+                      Name
+                    </TableHead>
+                    <TableHead className="min-w-[160px] font-mono text-[10px] uppercase tracking-widest">
+                      Sector
+                    </TableHead>
                     <TableHead className="text-right font-mono text-[10px] uppercase tracking-widest">
                       <button
                         type="button"
@@ -300,12 +314,17 @@ export function StockExplorerPage() {
 
                 <TableBody>
                   {rows.map((row) => {
-                    const symbol = String(row.symbol || '').trim().toUpperCase();
+                    const symbol = String(row.symbol || '')
+                      .trim()
+                      .toUpperCase();
                     const hasSilver = Boolean(row.hasSilver);
                     const hasGold = Boolean(row.hasGold);
 
                     return (
-                      <TableRow key={`${symbol}:${row.name || ''}`} className="text-xs hover:bg-muted/40">
+                      <TableRow
+                        key={`${symbol}:${row.name || ''}`}
+                        className="text-xs hover:bg-muted/40"
+                      >
                         <TableCell className="font-mono font-black">
                           <div className="flex items-center gap-2">
                             <button
@@ -319,14 +338,16 @@ export function StockExplorerPage() {
                               <span
                                 className={cn(
                                   'h-2 w-2 rounded-full border',
-                                  hasSilver ? 'bg-sky-500 border-sky-600' : 'bg-muted border-border',
+                                  hasSilver ? 'bg-sky-500 border-sky-600' : 'bg-muted border-border'
                                 )}
                                 title={hasSilver ? 'Silver data present' : 'Missing Silver data'}
                               />
                               <span
                                 className={cn(
                                   'h-2 w-2 rounded-full border',
-                                  hasGold ? 'bg-amber-500 border-amber-600' : 'bg-muted border-border',
+                                  hasGold
+                                    ? 'bg-amber-500 border-amber-600'
+                                    : 'bg-muted border-border'
                                 )}
                                 title={hasGold ? 'Gold data present' : 'Missing Gold data'}
                               />
@@ -341,20 +362,45 @@ export function StockExplorerPage() {
                             {row.industry || ''}
                           </div>
                         </TableCell>
-                        <TableCell className="min-w-[160px] text-muted-foreground">{row.sector || '—'}</TableCell>
-                        <TableCell className="text-right font-mono font-semibold">{formatPrice(row.close)}</TableCell>
-                        <TableCell className={cn('text-right font-mono font-semibold', heatClassForPercent(row.return1d))}>
+                        <TableCell className="min-w-[160px] text-muted-foreground">
+                          {row.sector || '—'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold">
+                          {formatPrice(row.close)}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            'text-right font-mono font-semibold',
+                            heatClassForPercent(row.return1d)
+                          )}
+                        >
                           {formatPercent(row.return1d)}
                         </TableCell>
-                        <TableCell className={cn('text-right font-mono font-semibold', heatClassForPercent(row.return5d))}>
+                        <TableCell
+                          className={cn(
+                            'text-right font-mono font-semibold',
+                            heatClassForPercent(row.return5d)
+                          )}
+                        >
                           {formatPercent(row.return5d)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-muted-foreground">{formatPercent(row.vol20d, 1)}</TableCell>
-                        <TableCell className={cn('text-right font-mono font-semibold', heatClassForPercent(row.drawdown1y))}>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {formatPercent(row.vol20d, 1)}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            'text-right font-mono font-semibold',
+                            heatClassForPercent(row.drawdown1y)
+                          )}
+                        >
                           {formatPercent(row.drawdown1y, 1)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-muted-foreground">{formatNumber(row.atr14d, 2)}</TableCell>
-                        <TableCell className="text-right font-mono text-muted-foreground">{formatMillions(row.volume)}</TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {formatNumber(row.atr14d, 2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {formatMillions(row.volume)}
+                        </TableCell>
                         <TableCell className="text-right font-mono text-muted-foreground">
                           {row.compressionScore === null || row.compressionScore === undefined
                             ? '—'
@@ -381,7 +427,9 @@ export function StockExplorerPage() {
                       <TableCell colSpan={12} className="py-16">
                         <div className="flex items-center justify-center gap-2 text-muted-foreground">
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          <span className="font-mono text-xs uppercase tracking-widest">Loading snapshot…</span>
+                          <span className="font-mono text-xs uppercase tracking-widest">
+                            Loading snapshot…
+                          </span>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -403,7 +451,8 @@ export function StockExplorerPage() {
 
           <div className="flex items-center justify-between border-t px-4 py-3">
             <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              {resolvedAsOf ? `As-of ${resolvedAsOf}` : 'As-of —'} • {showing.toLocaleString()} shown • {total.toLocaleString()} total
+              {resolvedAsOf ? `As-of ${resolvedAsOf}` : 'As-of —'} • {showing.toLocaleString()}{' '}
+              shown • {total.toLocaleString()} total
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -414,7 +463,11 @@ export function StockExplorerPage() {
                 disabled={!screenerQuery.hasNextPage || screenerQuery.isFetchingNextPage}
                 onClick={() => void screenerQuery.fetchNextPage()}
               >
-                {screenerQuery.isFetchingNextPage ? 'Loading…' : screenerQuery.hasNextPage ? 'Load More' : 'End'}
+                {screenerQuery.isFetchingNextPage
+                  ? 'Loading…'
+                  : screenerQuery.hasNextPage
+                    ? 'Load More'
+                    : 'End'}
               </Button>
             </div>
           </div>

@@ -30,14 +30,15 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
                 lastUpdated: now,
                 status: 'healthy',
                 portalUrl: 'https://example.com/storage/bronze/market',
-                jobUrl: 'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
+                jobUrl:
+                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-market/overview',
                 jobName: 'aca-job-market',
                 frequency: 'Daily',
-                cron: '0 0 * * *',
-              },
+                cron: '0 0 * * *'
+              }
             ],
-            portalUrl: 'https://example.com/storage/bronze',
-          },
+            portalUrl: 'https://example.com/storage/bronze'
+          }
         ],
         recentJobs: [
           {
@@ -45,20 +46,20 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
             jobType: 'data-ingest',
             status: 'success',
             startTime: now,
-            triggeredBy: 'azure',
-          },
+            triggeredBy: 'azure'
+          }
         ],
         alerts: [],
-        resources: [],
+        resources: []
       },
       isLoading: false,
-      error: null,
+      error: null
     }),
     useLineageQuery: () => ({
       data: { impactsByDomain: {} },
       isLoading: false,
-      error: null,
-    }),
+      error: null
+    })
   };
 });
 

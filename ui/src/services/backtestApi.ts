@@ -20,7 +20,9 @@ const debugApi = (() => {
   const isTruthy = (value: unknown): boolean => {
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number') return value !== 0;
-    const text = String(value ?? '').trim().toLowerCase();
+    const text = String(value ?? '')
+      .trim()
+      .toLowerCase();
     return ['1', 'true', 'yes', 'y', 'on'].includes(text);
   };
 
@@ -36,7 +38,7 @@ const debugApi = (() => {
     runtimeConfig.debugApi,
     import.meta.env.VITE_DEBUG_API,
     queryFlag,
-    localStorageFlag,
+    localStorageFlag
   ];
   const explicitFlag = candidates.find((value) => {
     if (value === undefined || value === null) return false;
@@ -48,7 +50,6 @@ const debugApi = (() => {
 
 const apiLogPrefix = '[Backtest API]';
 
-
 function logApi(message: string, meta: Record<string, unknown> = {}): void {
   if (!debugApi) return;
   if (Object.keys(meta).length) {
@@ -58,14 +59,12 @@ function logApi(message: string, meta: Record<string, unknown> = {}): void {
   console.info(apiLogPrefix, message);
 }
 
-
-
 if (debugApi) {
   logApi('Runtime config', {
     apiBaseUrl: config.apiBaseUrl,
     runtimeBaseUrl: runtimeConfig.backtestApiBaseUrl,
     envBaseUrl: import.meta.env.VITE_BACKTEST_API_BASE_URL || import.meta.env.VITE_API_BASE_URL,
-    origin: window.location.origin,
+    origin: window.location.origin
   });
 }
 
@@ -274,7 +273,6 @@ export interface GetTradesParams {
   offset?: number;
 }
 
-
 function getBaseUrl(): string {
   return config.apiBaseUrl;
 }
@@ -285,10 +283,14 @@ function getApiKey(): string {
 }
 
 function shouldSendApiKey(): boolean {
-  const mode = String(import.meta.env.VITE_AUTH_MODE ?? '').trim().toLowerCase();
+  const mode = String(import.meta.env.VITE_AUTH_MODE ?? '')
+    .trim()
+    .toLowerCase();
   if (mode === 'api_key') return true;
 
-  const explicitOverride = String(import.meta.env.VITE_ALLOW_BROWSER_API_KEY ?? '').trim().toLowerCase();
+  const explicitOverride = String(import.meta.env.VITE_ALLOW_BROWSER_API_KEY ?? '')
+    .trim()
+    .toLowerCase();
   if (explicitOverride === 'true') return true;
 
   return Boolean(import.meta.env.DEV);
@@ -315,7 +317,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     method,
     baseUrl,
     path,
-    url,
+    url
   });
 
   const headers = new Headers(init.headers);
@@ -339,7 +341,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   console.info('[backtestApi] response', {
     method,
     url: resp.url,
-    status: resp.status,
+    status: resp.status
   });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
@@ -347,7 +349,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
       method,
       url: resp.url,
       status: resp.status,
-      detail,
+      detail
     });
     throw new ApiError(resp.status, detail || resp.statusText);
   }
@@ -365,48 +367,67 @@ export const backtestApi = {
       status: params.status,
       q: params.q,
       limit: params.limit ?? 200,
-      offset: params.offset ?? 0,
+      offset: params.offset ?? 0
     });
     return requestJson<RunListResponse>(`/backtests${query}`, { signal });
   },
 
-  async getSummary(runId: string, params: { source?: DataSource } = {}, signal?: AbortSignal): Promise<BacktestSummary> {
+  async getSummary(
+    runId: string,
+    params: { source?: DataSource } = {},
+    signal?: AbortSignal
+  ): Promise<BacktestSummary> {
     const query = buildQuery({ source: params.source ?? 'auto' });
-    return requestJson<BacktestSummary>(`/backtests/${encodeURIComponent(runId)}/summary${query}`, { signal });
+    return requestJson<BacktestSummary>(`/backtests/${encodeURIComponent(runId)}/summary${query}`, {
+      signal
+    });
   },
 
   async getTimeseries(
     runId: string,
     params: GetTimeseriesParams = {},
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<TimeseriesResponse> {
     const query = buildQuery({
       source: params.source ?? 'auto',
-      max_points: params.maxPoints ?? 5000,
+      max_points: params.maxPoints ?? 5000
     });
-    return requestJson<TimeseriesResponse>(`/backtests/${encodeURIComponent(runId)}/metrics/timeseries${query}`, { signal });
+    return requestJson<TimeseriesResponse>(
+      `/backtests/${encodeURIComponent(runId)}/metrics/timeseries${query}`,
+      { signal }
+    );
   },
 
   async getRolling(
     runId: string,
     params: GetRollingParams = {},
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<RollingMetricsResponse> {
     const query = buildQuery({
       source: params.source ?? 'auto',
       window_days: params.windowDays ?? 63,
-      max_points: params.maxPoints ?? 5000,
+      max_points: params.maxPoints ?? 5000
     });
-    return requestJson<RollingMetricsResponse>(`/backtests/${encodeURIComponent(runId)}/metrics/rolling${query}`, { signal });
+    return requestJson<RollingMetricsResponse>(
+      `/backtests/${encodeURIComponent(runId)}/metrics/rolling${query}`,
+      { signal }
+    );
   },
 
-  async getTrades(runId: string, params: GetTradesParams = {}, signal?: AbortSignal): Promise<TradeListResponse> {
+  async getTrades(
+    runId: string,
+    params: GetTradesParams = {},
+    signal?: AbortSignal
+  ): Promise<TradeListResponse> {
     const query = buildQuery({
       source: params.source ?? 'auto',
       limit: params.limit ?? 2000,
-      offset: params.offset ?? 0,
+      offset: params.offset ?? 0
     });
-    return requestJson<TradeListResponse>(`/backtests/${encodeURIComponent(runId)}/trades${query}`, { signal });
+    return requestJson<TradeListResponse>(
+      `/backtests/${encodeURIComponent(runId)}/trades${query}`,
+      { signal }
+    );
   },
 
   async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
@@ -418,7 +439,6 @@ export const backtestApi = {
     return requestJson<unknown>('/system/lineage', { signal });
   },
 
-
   async acknowledgeAlert(alertId: string, signal?: AbortSignal): Promise<unknown> {
     const encoded = encodeURIComponent(alertId);
     return requestJson<unknown>(`/system/alerts/${encoded}/ack`, { method: 'POST', signal });
@@ -427,14 +447,14 @@ export const backtestApi = {
   async snoozeAlert(
     alertId: string,
     payload: { minutes?: number; until?: string } = {},
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<unknown> {
     const encoded = encodeURIComponent(alertId);
     return requestJson<unknown>(`/system/alerts/${encoded}/snooze`, {
       method: 'POST',
       signal,
       body: JSON.stringify(payload),
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' }
     });
   },
 
@@ -443,8 +463,11 @@ export const backtestApi = {
     return requestJson<unknown>(`/system/alerts/${encoded}/resolve`, { method: 'POST', signal });
   },
 
-
-  async getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver', signal?: AbortSignal): Promise<MarketData[]> {
+  async getMarketData(
+    ticker: string,
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal
+  ): Promise<MarketData[]> {
     const query = buildQuery({ ticker });
     return requestJson<MarketData[]>(`/data/${layer}/market${query}`, { signal });
   },
@@ -458,7 +481,7 @@ export const backtestApi = {
       sort?: string;
       direction?: 'asc' | 'desc';
     } = {},
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<StockScreenerResponse> {
     const query = buildQuery({
       q: params.q,
@@ -466,7 +489,7 @@ export const backtestApi = {
       offset: params.offset ?? 0,
       as_of: params.asOf,
       sort: params.sort ?? 'volume',
-      direction: params.direction ?? 'desc',
+      direction: params.direction ?? 'desc'
     });
     return requestJson<StockScreenerResponse>(`/data/screener${query}`, { signal });
   },
@@ -475,7 +498,7 @@ export const backtestApi = {
     ticker: string,
     domain: Exclude<DataDomain, 'market'>,
     layer: 'silver' | 'gold' = 'silver',
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<GenericDataRow[]> {
     const query = buildQuery({ ticker });
     const encoded = encodeURIComponent(domain);
@@ -486,37 +509,44 @@ export const backtestApi = {
     ticker: string,
     subDomain: string,
     layer: 'silver' | 'gold' = 'silver',
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<FinanceData[]> {
     const encodedSub = encodeURIComponent(subDomain);
     const query = buildQuery({ ticker });
     return requestJson<FinanceData[]>(`/data/${layer}/finance/${encodedSub}${query}`, { signal });
   },
 
-
-
   async triggerJob(jobName: string, signal?: AbortSignal): Promise<JobTriggerResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobTriggerResponse>(`/system/jobs/${encoded}/run`, { method: 'POST', signal });
+    return requestJson<JobTriggerResponse>(`/system/jobs/${encoded}/run`, {
+      method: 'POST',
+      signal
+    });
   },
 
   async suspendJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/suspend`, { method: 'POST', signal });
+    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/suspend`, {
+      method: 'POST',
+      signal
+    });
   },
 
   async resumeJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
     const encoded = encodeURIComponent(jobName);
-    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/resume`, { method: 'POST', signal });
+    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/resume`, {
+      method: 'POST',
+      signal
+    });
   },
 
   async getJobLogs(
     jobName: string,
     params: { runs?: number } = {},
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<JobLogsResponse> {
     const encoded = encodeURIComponent(jobName);
     const query = buildQuery({ runs: params.runs ?? 1 });
     return requestJson<JobLogsResponse>(`/system/jobs/${encoded}/logs${query}`, { signal });
-  },
+  }
 };

@@ -12,11 +12,10 @@ export function AlertsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          Trading alert configuration is not implemented yet. Operational alerts (ack/snooze/resolve) are available on
-          the System Status page.
+          Trading alert configuration is not implemented yet. Operational alerts
+          (ack/snooze/resolve) are available on the System Status page.
         </CardContent>
       </Card>
     </div>
   );
 }
-

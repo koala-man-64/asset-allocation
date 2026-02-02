@@ -1,8 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/app/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '@/app/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { cn } from '@/app/components/ui/utils';
 
@@ -18,7 +31,7 @@ import {
   getStatusBadge,
   getStatusIcon,
   normalizeAzureJobName,
-  normalizeAzurePortalUrl,
+  normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
 import { apiService } from '@/services/apiService';
 
@@ -55,21 +68,27 @@ type LogResponseLike = {
   }>;
 };
 
-export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: ScheduledJobMonitorProps) {
+export function ScheduledJobMonitor({
+  dataLayers,
+  recentJobs,
+  jobLinks = {}
+}: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [logStateByJob, setLogStateByJob] = useState<Record<string, LogState>>({});
   const logControllers = useRef<Record<string, AbortController>>({});
 
   const layerStyleFor = (layerName: string) => {
-    const key = String(layerName || '').trim().toLowerCase();
+    const key = String(layerName || '')
+      .trim()
+      .toLowerCase();
     if (key === 'bronze') {
       return {
         stripe: 'bg-mcm-walnut/90',
         headerBg: 'bg-gradient-to-r from-mcm-walnut/10 via-mcm-cream/60 to-mcm-cream/60',
         chip: 'border-mcm-walnut/30 bg-mcm-walnut/10 text-mcm-walnut',
         dot: 'bg-mcm-walnut',
-        count: 'border-mcm-walnut/25 bg-mcm-paper text-mcm-walnut/80',
+        count: 'border-mcm-walnut/25 bg-mcm-paper text-mcm-walnut/80'
       };
     }
     if (key === 'silver') {
@@ -78,7 +97,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
         headerBg: 'bg-gradient-to-r from-mcm-teal/12 via-mcm-cream/60 to-mcm-cream/60',
         chip: 'border-mcm-teal/35 bg-mcm-teal/12 text-mcm-teal',
         dot: 'bg-mcm-teal',
-        count: 'border-mcm-teal/25 bg-mcm-paper text-mcm-walnut/80',
+        count: 'border-mcm-teal/25 bg-mcm-paper text-mcm-walnut/80'
       };
     }
     if (key === 'gold') {
@@ -87,7 +106,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
         headerBg: 'bg-gradient-to-r from-mcm-mustard/16 via-mcm-cream/60 to-mcm-cream/60',
         chip: 'border-mcm-mustard/45 bg-mcm-mustard/18 text-mcm-walnut',
         dot: 'bg-mcm-mustard',
-        count: 'border-mcm-mustard/30 bg-mcm-paper text-mcm-walnut/80',
+        count: 'border-mcm-mustard/30 bg-mcm-paper text-mcm-walnut/80'
       };
     }
     if (key === 'platinum') {
@@ -96,7 +115,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
         headerBg: 'bg-gradient-to-r from-mcm-olive/12 via-mcm-cream/60 to-mcm-cream/60',
         chip: 'border-mcm-olive/35 bg-mcm-olive/12 text-mcm-olive',
         dot: 'bg-mcm-olive',
-        count: 'border-mcm-olive/25 bg-mcm-paper text-mcm-walnut/80',
+        count: 'border-mcm-olive/25 bg-mcm-paper text-mcm-walnut/80'
       };
     }
 
@@ -105,7 +124,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
       headerBg: 'bg-mcm-cream/60',
       chip: 'border-mcm-walnut/25 bg-mcm-paper text-mcm-walnut',
       dot: 'bg-mcm-walnut/60',
-      count: 'border-mcm-walnut/20 bg-mcm-paper text-mcm-walnut/80',
+      count: 'border-mcm-walnut/20 bg-mcm-paper text-mcm-walnut/80'
     };
   };
 
@@ -147,7 +166,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
           layerName: layer.name,
           domainName: domain.name,
           schedule,
-          jobRun: (jobKey ? jobIndex.get(jobKey) : null) ?? null,
+          jobRun: (jobKey ? jobIndex.get(jobKey) : null) ?? null
         });
       }
     }
@@ -178,7 +197,7 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
         group = {
           key,
           layerName: job.layerName,
-          items: [],
+          items: []
         };
         index.set(key, group);
         groups.push(group);
@@ -200,8 +219,8 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
         lines: prev[jobName]?.lines ?? [],
         loading: true,
         error: null,
-        runStart,
-      },
+        runStart
+      }
     }));
 
     apiService
@@ -213,14 +232,13 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
           ...(payload?.consoleLogs ?? []),
           ...(payload?.runs ?? []).flatMap((run) => [
             ...(run?.tail ?? []),
-            ...(run?.consoleLogs ?? []),
-          ]),
+            ...(run?.consoleLogs ?? [])
+          ])
         ]
           .filter((line) => line !== undefined && line !== null)
           .map((line) => String(line));
 
-        const firstError =
-          (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
+        const firstError = (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
         const logs = combined.slice(-50);
         setLogStateByJob((prev) => ({
           ...prev,
@@ -228,8 +246,8 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
             lines: logs,
             loading: false,
             error: logs.length === 0 ? firstError : null,
-            runStart,
-          },
+            runStart
+          }
         }));
       })
       .catch((error) => {
@@ -240,21 +258,21 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
             lines: [],
             loading: false,
             error: error instanceof Error ? error.message : String(error),
-            runStart,
-          },
+            runStart
+          }
         }));
       });
   };
 
-	useEffect(() => {
-		const controllers = logControllers.current;
-		return () => {
-			Object.values(controllers).forEach((controller) => controller.abort());
-		};
-	}, []);
+  useEffect(() => {
+    const controllers = logControllers.current;
+    return () => {
+      Object.values(controllers).forEach((controller) => controller.abort());
+    };
+  }, []);
 
   return (
-      <Card className="h-full flex flex-col">
+    <Card className="h-full flex flex-col">
       <CardHeader>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -263,7 +281,9 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
                 <CalendarDays className="h-5 w-5" />
                 Scheduled Jobs
               </CardTitle>
-              <CardDescription className="text-sm">Schedules inferred from domain cron/frequency</CardDescription>
+              <CardDescription className="text-sm">
+                Schedules inferred from domain cron/frequency
+              </CardDescription>
             </div>
           </div>
           <div className="text-sm font-mono text-muted-foreground">{scheduledJobs.length}</div>
@@ -273,305 +293,376 @@ export function ScheduledJobMonitor({ dataLayers, recentJobs, jobLinks = {} }: S
         <div className="rounded-md border overflow-hidden">
           <div className="-my-2">
             <Table className="[&_[data-slot=table-head]]:px-5 [&_[data-slot=table-cell]]:px-5">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Job</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Start</TableHead>
-                <TableHead>Schedule</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groupedJobs.map((group) => (
-                <React.Fragment key={group.key}>
-                  {(() => {
-                    const style = layerStyleFor(group.layerName);
-                    return (
-                      <TableRow className="hover:[&>td]:bg-mcm-cream/60">
-                        <TableCell
-                          colSpan={5}
-                          className={cn(
-                            'relative py-3 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.06)]',
-                            'border-mcm-walnut/35',
-                            style.headerBg,
-                          )}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={cn('absolute inset-y-0 left-0 w-1.5 rounded-l-2xl', style.stripe)}
-                          />
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3 min-w-0">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Job</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Last Start</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {groupedJobs.map((group) => (
+                  <React.Fragment key={group.key}>
+                    {(() => {
+                      const style = layerStyleFor(group.layerName);
+                      return (
+                        <TableRow className="hover:[&>td]:bg-mcm-cream/60">
+                          <TableCell
+                            colSpan={5}
+                            className={cn(
+                              'relative py-3 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.06)]',
+                              'border-mcm-walnut/35',
+                              style.headerBg
+                            )}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'absolute inset-y-0 left-0 w-1.5 rounded-l-2xl',
+                                style.stripe
+                              )}
+                            />
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-2 rounded-full border-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest',
+                                    style.chip
+                                  )}
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    className={cn('h-2 w-2 rounded-full', style.dot)}
+                                  />
+                                  {group.layerName}
+                                </span>
+                                <span
+                                  className={cn(
+                                    'hidden sm:inline text-[11px] italic text-mcm-olive'
+                                  )}
+                                >
+                                  Medallion layer
+                                </span>
+                              </div>
                               <span
                                 className={cn(
-                                  'inline-flex items-center gap-2 rounded-full border-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest',
-                                  style.chip,
+                                  'inline-flex items-center whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-mono tracking-tight',
+                                  style.count
                                 )}
                               >
-                                <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', style.dot)} />
-                                {group.layerName}
-                              </span>
-                              <span className={cn('hidden sm:inline text-[11px] italic text-mcm-olive')}>
-                                Medallion layer
+                                {group.items.length} jobs
                               </span>
                             </div>
-                            <span
-                              className={cn(
-                                'inline-flex items-center whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-mono tracking-tight',
-                                style.count,
-                              )}
-                            >
-                              {group.items.length} jobs
-                            </span>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })()}
-                  {group.items.map((job) => {
-                    const rowKey = `${job.layerName}:${job.domainName}:${job.jobName}`;
-                    const isExpanded = expandedRow === rowKey;
-                    const runStart = job.jobRun?.startTime ?? null;
-                    const logState = logStateByJob[job.jobName];
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })()}
+                    {group.items.map((job) => {
+                      const rowKey = `${job.layerName}:${job.domainName}:${job.jobName}`;
+                      const isExpanded = expandedRow === rowKey;
+                      const runStart = job.jobRun?.startTime ?? null;
+                      const logState = logStateByJob[job.jobName];
 
-                    const handleToggle = () => {
-                      if (!isExpanded) {
-                        if (!logState || logState.runStart !== runStart) {
-                          fetchLogs(job.jobName, runStart);
+                      const handleToggle = () => {
+                        if (!isExpanded) {
+                          if (!logState || logState.runStart !== runStart) {
+                            fetchLogs(job.jobName, runStart);
+                          }
                         }
-                      }
-                      setExpandedRow(isExpanded ? null : rowKey);
-                    };
+                        setExpandedRow(isExpanded ? null : rowKey);
+                      };
 
-                    return (
-                      <React.Fragment key={rowKey}>
-                        <TableRow>
-                          <TableCell className="py-2">
-                            <div className="flex flex-col gap-1">
+                      return (
+                        <React.Fragment key={rowKey}>
+                          <TableRow>
+                            <TableCell className="py-2">
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-sm">{job.jobName}</span>
+                                  {(() => {
+                                    const portalLink = getJobPortalLink(job.jobName);
+                                    if (!portalLink) return null;
+
+                                    const runStatus = job.jobRun?.status
+                                      ? String(job.jobRun.status).toUpperCase()
+                                      : 'UNKNOWN';
+                                    const runTimeAgo = job.jobRun?.startTime
+                                      ? `${formatTimeAgo(job.jobRun.startTime)} ago`
+                                      : 'UNKNOWN';
+
+                                    return (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <a
+                                            href={portalLink}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-muted-foreground hover:text-primary transition-colors"
+                                            aria-label={`Open ${job.jobName} in Azure`}
+                                          >
+                                            <ExternalLink className="h-4 w-4" />
+                                          </a>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="right">
+                                          {job.jobRun
+                                            ? `Last run: ${runStatus} • ${runTimeAgo}`
+                                            : 'No recent run info'}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    );
+                                  })()}
+                                </div>
+                                <span className="text-xs text-muted-foreground">
+                                  {job.layerName} • {job.domainName}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2">
                               <div className="flex items-center gap-2">
-                                <span className="font-medium text-sm">{job.jobName}</span>
+                                {getStatusIcon(job.jobRun?.status || 'unknown')}
+                                {getStatusBadge(job.jobRun?.status || 'unknown')}
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2 font-mono text-sm">
+                              {formatTimestamp(job.jobRun?.startTime || null)}
+                            </TableCell>
+                            <TableCell className="py-2 font-mono text-sm">
+                              <span className="text-slate-700" title={job.schedule}>
+                                {formatSchedule(job.schedule)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-2 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={handleToggle}
+                                      aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${job.jobName} details`}
+                                      aria-expanded={isExpanded}
+                                    >
+                                      <ChevronDown
+                                        className={`h-4 w-4 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
+                                      />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left">
+                                    {isExpanded ? 'Hide details' : 'View details'}
+                                  </TooltipContent>
+                                </Tooltip>
+
                                 {(() => {
-                                  const portalLink = getJobPortalLink(job.jobName);
-                                  if (!portalLink) return null;
-
-                                  const runStatus = job.jobRun?.status ? String(job.jobRun.status).toUpperCase() : 'UNKNOWN';
-                                  const runTimeAgo = job.jobRun?.startTime ? `${formatTimeAgo(job.jobRun.startTime)} ago` : 'UNKNOWN';
-
+                                  const executionsUrl = getAzureJobExecutionsUrl(
+                                    getJobPortalLink(job.jobName)
+                                  );
                                   return (
                                     <Tooltip>
                                       <TooltipTrigger asChild>
-                                        <a
-                                          href={portalLink}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="text-muted-foreground hover:text-primary transition-colors"
-                                          aria-label={`Open ${job.jobName} in Azure`}
-                                        >
-                                        <ExternalLink className="h-4 w-4" />
-                                        </a>
+                                        {executionsUrl ? (
+                                          <Button
+                                            asChild
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            aria-label={`Open ${job.jobName} executions in Azure`}
+                                          >
+                                            <a
+                                              href={executionsUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                            >
+                                              <ScrollText className="h-4 w-4" />
+                                            </a>
+                                          </Button>
+                                        ) : (
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            disabled
+                                            aria-label={`No Azure portal link for ${job.jobName}`}
+                                          >
+                                            <ScrollText className="h-4 w-4" />
+                                          </Button>
+                                        )}
                                       </TooltipTrigger>
-                                      <TooltipContent side="right">
-                                        {job.jobRun ? `Last run: ${runStatus} • ${runTimeAgo}` : 'No recent run info'}
+                                      <TooltipContent side="left">
+                                        {executionsUrl
+                                          ? 'Open execution history'
+                                          : 'Azure link not configured'}
                                       </TooltipContent>
                                     </Tooltip>
                                   );
                                 })()}
-                              </div>
-                              <span className="text-xs text-muted-foreground">
-                                {job.layerName} • {job.domainName}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-2">
-                            <div className="flex items-center gap-2">
-                              {getStatusIcon(job.jobRun?.status || 'unknown')}
-                              {getStatusBadge(job.jobRun?.status || 'unknown')}
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-2 font-mono text-sm">{formatTimestamp(job.jobRun?.startTime || null)}</TableCell>
-                          <TableCell className="py-2 font-mono text-sm">
-                            <span className="text-slate-700" title={job.schedule}>
-                              {formatSchedule(job.schedule)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="py-2 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    onClick={handleToggle}
-                                    aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${job.jobName} details`}
-                                    aria-expanded={isExpanded}
-                                  >
-                                    <ChevronDown className={`h-4 w-4 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="left">{isExpanded ? 'Hide details' : 'View details'}</TooltipContent>
-                              </Tooltip>
 
-                              {(() => {
-                                const executionsUrl = getAzureJobExecutionsUrl(getJobPortalLink(job.jobName));
-                                return (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      {executionsUrl ? (
-                                        <Button
-                                          asChild
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-7 w-7"
-                                          aria-label={`Open ${job.jobName} executions in Azure`}
-                                        >
-                                          <a href={executionsUrl} target="_blank" rel="noreferrer">
-                                            <ScrollText className="h-4 w-4" />
-                                          </a>
-                                        </Button>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      disabled={Boolean(triggeringJob)}
+                                      onClick={() => void triggerJob(job.jobName)}
+                                      aria-label={`Run ${job.jobName}`}
+                                    >
+                                      {triggeringJob === job.jobName ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
                                       ) : (
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-7 w-7"
-                                          disabled
-                                          aria-label={`No Azure portal link for ${job.jobName}`}
-                                        >
-                                          <ScrollText className="h-4 w-4" />
-                                        </Button>
+                                        <Play className="h-4 w-4" />
                                       )}
-                                    </TooltipTrigger>
-                                    <TooltipContent side="left">
-                                      {executionsUrl ? 'Open execution history' : 'Azure link not configured'}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                );
-                              })()}
-
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    disabled={Boolean(triggeringJob)}
-                                    onClick={() => void triggerJob(job.jobName)}
-                                    aria-label={`Run ${job.jobName}`}
-                                  >
-                                    {triggeringJob === job.jobName ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Play className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left">Trigger job</TooltipContent>
+                                </Tooltip>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          <TableRow className="border-0 hover:bg-transparent">
+                            <TableCell colSpan={5} className="bg-muted/20 p-0">
+                              <div
+                                className={`will-change-[max-height,opacity,transform] transition-[max-height,opacity,transform] duration-450 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
+                                  isExpanded
+                                    ? 'max-h-[520px] opacity-100 translate-y-0 overflow-auto'
+                                    : 'max-h-0 opacity-0 -translate-y-2 overflow-hidden pointer-events-none'
+                                }`}
+                                aria-hidden={!isExpanded}
+                              >
+                                <div className="space-y-4 p-4">
+                                  <div className="flex items-center justify-between">
+                                    <div className="text-sm font-semibold">Latest Run Details</div>
+                                    {job.jobRun?.startTime && (
+                                      <span className="text-xs text-muted-foreground">
+                                        {formatTimeAgo(job.jobRun.startTime)} ago
+                                      </span>
                                     )}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="left">Trigger job</TooltipContent>
-                              </Tooltip>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                        <TableRow className="border-0 hover:bg-transparent">
-                          <TableCell colSpan={5} className="bg-muted/20 p-0">
-                            <div
-                              className={`will-change-[max-height,opacity,transform] transition-[max-height,opacity,transform] duration-450 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
-                                isExpanded
-                                  ? 'max-h-[520px] opacity-100 translate-y-0 overflow-auto'
-                                  : 'max-h-0 opacity-0 -translate-y-2 overflow-hidden pointer-events-none'
-                              }`}
-                              aria-hidden={!isExpanded}
-                            >
-                              <div className="space-y-4 p-4">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-sm font-semibold">Latest Run Details</div>
-                                  {job.jobRun?.startTime && (
-                                    <span className="text-xs text-muted-foreground">
-                                      {formatTimeAgo(job.jobRun.startTime)} ago
-                                    </span>
-                                  )}
-                                </div>
+                                  </div>
 
-                                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</div>
-                                    <div className="mt-2 flex items-center gap-2 text-sm">
-                                      {getStatusIcon(job.jobRun?.status || 'unknown')}
-                                      {getStatusBadge(job.jobRun?.status || 'unknown')}
+                                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Status
+                                      </div>
+                                      <div className="mt-2 flex items-center gap-2 text-sm">
+                                        {getStatusIcon(job.jobRun?.status || 'unknown')}
+                                        {getStatusBadge(job.jobRun?.status || 'unknown')}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Started
+                                      </div>
+                                      <div className="mt-2 text-sm font-mono">
+                                        {formatTimestamp(job.jobRun?.startTime || null)}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Duration
+                                      </div>
+                                      <div className="mt-2 text-sm font-mono">
+                                        {formatDuration(job.jobRun?.duration)}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Triggered By
+                                      </div>
+                                      <div className="mt-2 text-sm">
+                                        {job.jobRun?.triggeredBy || 'Schedule'}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Records
+                                      </div>
+                                      <div className="mt-2 text-sm font-mono">
+                                        {formatRecordCount(job.jobRun?.recordsProcessed)}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Git SHA
+                                      </div>
+                                      <div className="mt-2 text-sm font-mono">
+                                        {job.jobRun?.gitSha?.substring(0, 7) || '-'}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border bg-muted/20 p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                                        Job Type
+                                      </div>
+                                      <div className="mt-2 text-sm">
+                                        {job.jobRun?.jobType || '-'}
+                                      </div>
                                     </div>
                                   </div>
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Started</div>
-                                    <div className="mt-2 text-sm font-mono">{formatTimestamp(job.jobRun?.startTime || null)}</div>
-                                  </div>
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Duration</div>
-                                    <div className="mt-2 text-sm font-mono">{formatDuration(job.jobRun?.duration)}</div>
-                                  </div>
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Triggered By</div>
-                                    <div className="mt-2 text-sm">{job.jobRun?.triggeredBy || 'Schedule'}</div>
-                                  </div>
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Records</div>
-                                    <div className="mt-2 text-sm font-mono">{formatRecordCount(job.jobRun?.recordsProcessed)}</div>
-                                  </div>
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Git SHA</div>
-                                    <div className="mt-2 text-sm font-mono">{job.jobRun?.gitSha?.substring(0, 7) || '-'}</div>
-                                  </div>
-                                  <div className="rounded-md border bg-muted/20 p-3">
-                                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Job Type</div>
-                                    <div className="mt-2 text-sm">{job.jobRun?.jobType || '-'}</div>
-                                  </div>
-                                </div>
 
-                                <div className="rounded-md border bg-background">
-                                  <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
-                                    Console Logs
-                                  </div>
-                                  <div className="max-h-64 overflow-auto overflow-x-hidden break-words px-3 py-2 text-xs font-mono leading-relaxed">
-                                    {logState?.loading && (
-                                      <div className="text-muted-foreground">Loading logs…</div>
-                                    )}
-                                    {!logState?.loading && logState?.error && (
-                                      <div className="break-words text-destructive">Failed to load logs: {logState.error}</div>
-                                    )}
-                                    {!logState?.loading && !logState?.error && (logState?.lines?.length ?? 0) === 0 && (
-                                      <div className="text-muted-foreground">No log output available.</div>
-                                    )}
-                                    {!logState?.loading && !logState?.error && (logState?.lines?.length ?? 0) > 0 && (
-                                      <div className="space-y-1">
-                                        {(logState?.lines ?? []).slice(-50).map((line, index) => (
-                                          <div
-                                            key={`${job.jobName}-log-${index}`}
-                                            className={`whitespace-pre-wrap break-words text-foreground/90 px-2 py-1 max-w-full ${
-                                              index % 2 === 0 ? 'bg-muted/30' : 'bg-transparent'
-                                            }`}
-                                          >
-                                            {line}
+                                  <div className="rounded-md border bg-background">
+                                    <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
+                                      Console Logs
+                                    </div>
+                                    <div className="max-h-64 overflow-auto overflow-x-hidden break-words px-3 py-2 text-xs font-mono leading-relaxed">
+                                      {logState?.loading && (
+                                        <div className="text-muted-foreground">Loading logs…</div>
+                                      )}
+                                      {!logState?.loading && logState?.error && (
+                                        <div className="break-words text-destructive">
+                                          Failed to load logs: {logState.error}
+                                        </div>
+                                      )}
+                                      {!logState?.loading &&
+                                        !logState?.error &&
+                                        (logState?.lines?.length ?? 0) === 0 && (
+                                          <div className="text-muted-foreground">
+                                            No log output available.
                                           </div>
-                                        ))}
-                                      </div>
-                                    )}
+                                        )}
+                                      {!logState?.loading &&
+                                        !logState?.error &&
+                                        (logState?.lines?.length ?? 0) > 0 && (
+                                          <div className="space-y-1">
+                                            {(logState?.lines ?? [])
+                                              .slice(-50)
+                                              .map((line, index) => (
+                                                <div
+                                                  key={`${job.jobName}-log-${index}`}
+                                                  className={`whitespace-pre-wrap break-words text-foreground/90 px-2 py-1 max-w-full ${
+                                                    index % 2 === 0
+                                                      ? 'bg-muted/30'
+                                                      : 'bg-transparent'
+                                                  }`}
+                                                >
+                                                  {line}
+                                                </div>
+                                              ))}
+                                          </div>
+                                        )}
+                                    </div>
                                   </div>
                                 </div>
                               </div>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      </React.Fragment>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
-              {scheduledJobs.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground text-sm py-4">
-                    No scheduled jobs found
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
+                            </TableCell>
+                          </TableRow>
+                        </React.Fragment>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+                {scheduledJobs.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-muted-foreground text-sm py-4"
+                    >
+                      No scheduled jobs found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
             </Table>
           </div>
         </div>
