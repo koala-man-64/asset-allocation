@@ -36,4 +36,3 @@ describe('useSystemHealthQuery', () => {
     expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
   });
 });
-

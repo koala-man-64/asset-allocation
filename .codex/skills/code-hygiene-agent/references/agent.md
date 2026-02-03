@@ -117,7 +117,7 @@ When you see issues *outside* your mandate (security, architecture, performance)
 with a 1-2 line description.
 
 ### D. Test Guidance
-Even though you don't run tests, you provide targeted "verify" hints:
+Prefer running repo-aligned fast checks when available. If you can't run them in the current environment, provide targeted "verify" hints:
 - "Run unit tests touching X"
 - "Watch for behavior around Y edge case"
 Keep this brief and specific.
@@ -129,7 +129,11 @@ Keep this brief and specific.
 2. **Apply formatting and mechanical cleanups**
 3. **Apply safe readability refactors**
 4. **Avoid ambiguity**; annotate instead of changing
-5. **Produce the output artifact** exactly as specified
+5. **Run repo-aligned fast checks (when available)**
+   - If you touched **JS/TS/CSS/MD**: run the repo’s formatter check (e.g., `pnpm -C ui format:check`).
+   - If you touched **Python**: run the repo’s lint/format checks (e.g., `python -m ruff check`, `python -m ruff format --check` if present).
+   - If a toolchain is unavailable, **do not claim CI-green**; record the limitation under **Verification Notes** and provide exact commands for the user/CI to run.
+6. **Produce the output artifact** exactly as specified
 
 ---
 
