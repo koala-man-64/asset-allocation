@@ -20,6 +20,8 @@ properties:
     secrets:
     - name: api-key
       value: "${API_KEY}"
+    - name: alpha-vantage-api-key
+      value: "${ALPHA_VANTAGE_API_KEY}"
     - name: backtest-pg-dsn
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
@@ -54,6 +56,8 @@ properties:
         secretRef: api-key
       - name: API_KEY_HEADER
         value: "X-API-Key"
+      - name: ALPHA_VANTAGE_API_KEY
+        secretRef: alpha-vantage-api-key
       - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
       - name: API_AUTH_MODE

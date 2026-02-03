@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -8,12 +9,11 @@ from io import StringIO
 
 import pandas as pd
 
-from alpha_vantage import (
-    AlphaVantageClient,
-    AlphaVantageConfig,
-    AlphaVantageError,
-    AlphaVantageInvalidSymbolError,
-    AlphaVantageThrottleError,
+from core.alpha_vantage_gateway_client import (
+    AlphaVantageGatewayClient,
+    AlphaVantageGatewayError,
+    AlphaVantageGatewayInvalidSymbolError,
+    AlphaVantageGatewayThrottleError,
 )
 from core import core as mdc
 from core.pipeline import ListManager
@@ -24,12 +24,19 @@ from tasks.market_data import config as cfg
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
 
+def _is_truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
 
 def _validate_environment() -> None:
     if not cfg.AZURE_CONTAINER_BRONZE:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
-    if not getattr(cfg, "ALPHA_VANTAGE_API_KEY", None):
-        raise ValueError("Environment variable 'ALPHA_VANTAGE_API_KEY' is strictly required.")
+    if not (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL")):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
+    if not (
+        os.environ.get("ASSET_ALLOCATION_API_KEY") or os.environ.get("API_KEY") or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
+    ):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
 
 
 def _utc_today() -> datetime.date:
@@ -108,10 +115,10 @@ def _prefetch_existing_last_modified() -> dict[str, datetime]:
     return existing_last_modified
 
 
-def download_and_save_raw(symbol: str, av: AlphaVantageClient) -> None:
+def download_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> None:
     """
     Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
-    from Alpha Vantage and stores it in Bronze.
+    from the API-hosted Alpha Vantage gateway and stores it in Bronze.
     """
     if list_manager.is_blacklisted(symbol):
         return
@@ -121,17 +128,15 @@ def download_and_save_raw(symbol: str, av: AlphaVantageClient) -> None:
     if backfill_start or backfill_end:
         outputsize = "full"
 
-    csv_text = av.get_daily_time_series(symbol, outputsize=outputsize, datatype="csv")  # type: ignore[assignment]
-    raw_text = str(csv_text)
+    raw_text = av.get_daily_time_series_csv(symbol=symbol, outputsize=outputsize, adjusted=False)
     try:
         raw_bytes = _normalize_alpha_vantage_daily_csv(raw_text)
     except Exception as exc:
         snippet = raw_text.strip().replace("\n", " ")
         if len(snippet) > 200:
             snippet = snippet[:200] + "..."
-        raise AlphaVantageError(
+        raise AlphaVantageGatewayError(
             f"Failed to normalize Alpha Vantage TIME_SERIES_DAILY CSV for {symbol}: {type(exc).__name__}: {exc}",
-            code="invalid_csv",
             payload={"snippet": snippet},
         ) from exc
 
@@ -171,21 +176,14 @@ async def main_async() -> int:
     existing_last_modified = _prefetch_existing_last_modified()
     utc_today = _utc_today()
 
-    av_cfg = AlphaVantageConfig(
-        api_key=str(cfg.ALPHA_VANTAGE_API_KEY),
-        rate_limit_per_min=int(getattr(cfg, "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN", 300)),
-        timeout=float(getattr(cfg, "ALPHA_VANTAGE_TIMEOUT_SECONDS", 15.0)),
-        max_retries=5,
-        backoff_base_seconds=0.5,
-    )
-    av = AlphaVantageClient(av_cfg)
+    av = AlphaVantageGatewayClient.from_env()
 
     progress = {"processed": 0, "skipped": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
         if list_manager.is_blacklisted(symbol):
-            raise AlphaVantageInvalidSymbolError("Symbol is blacklisted.")
+            raise AlphaVantageGatewayInvalidSymbolError("Symbol is blacklisted.")
 
         if _should_skip_symbol(symbol, existing_last_modified, utc_today=utc_today):
             raise RuntimeError("SKIP_FRESH")
@@ -217,7 +215,7 @@ async def main_async() -> int:
                         should_log = should_log or progress["failed"] <= 20
                     if should_log:
                         mdc.write_error(f"Failed to ingest {symbol}: {exc}")
-            except AlphaVantageInvalidSymbolError as exc:
+            except AlphaVantageGatewayInvalidSymbolError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = debug_mode
                 async with progress_lock:
@@ -225,7 +223,7 @@ async def main_async() -> int:
                     should_log = should_log or progress["blacklisted"] <= 20
                 if should_log:
                     mdc.write_warning(f"Invalid symbol {symbol}; blacklisting. ({exc})")
-            except AlphaVantageThrottleError as exc:
+            except AlphaVantageGatewayThrottleError as exc:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
@@ -235,17 +233,17 @@ async def main_async() -> int:
                     if len(note) > 200:
                         note = note[:200] + "..."
                     mdc.write_warning(f"Alpha Vantage throttled while processing {symbol}. ({note})")
-            except AlphaVantageError as exc:
+            except AlphaVantageGatewayError as exc:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
                     should_log = should_log or progress["failed"] <= 20
                 if should_log:
-                    details = f"code={getattr(exc, 'code', 'unknown')} message={exc}"
+                    details = f"status={getattr(exc, 'status_code', 'unknown')} message={exc}"
                     payload = getattr(exc, "payload", None)
                     if payload:
                         details = f"{details} payload={payload}"
-                    mdc.write_error(f"Alpha Vantage error while processing {symbol}. ({details})")
+                    mdc.write_error(f"Alpha Vantage gateway error while processing {symbol}. ({details})")
             except Exception as exc:
                 should_log = debug_mode
                 async with progress_lock:

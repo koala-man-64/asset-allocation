@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import json
 
-from alpha_vantage import (
-    AlphaVantageClient,
-    AlphaVantageConfig,
-    AlphaVantageError,
-    AlphaVantageInvalidSymbolError,
-    AlphaVantageThrottleError,
+from core.alpha_vantage_gateway_client import (
+    AlphaVantageGatewayClient,
+    AlphaVantageGatewayError,
+    AlphaVantageGatewayInvalidSymbolError,
+    AlphaVantageGatewayThrottleError,
 )
 from core import core as mdc
 from core.pipeline import ListManager
@@ -27,33 +27,40 @@ REPORTS = [
     {
         "folder": "Balance Sheet",
         "file_suffix": "quarterly_balance-sheet",
-        "function": "BALANCE_SHEET",
+        "report": "balance_sheet",
     },
     {
         "folder": "Cash Flow",
         "file_suffix": "quarterly_cash-flow",
-        "function": "CASH_FLOW",
+        "report": "cash_flow",
     },
     {
         "folder": "Income Statement",
         "file_suffix": "quarterly_financials",
-        "function": "INCOME_STATEMENT",
+        "report": "income_statement",
     },
     # Legacy "valuation measures" is not a 1:1 match in Alpha Vantage.
     # We store the company OVERVIEW snapshot here for continuity of downstream paths.
     {
         "folder": "Valuation",
         "file_suffix": "quarterly_valuation_measures",
-        "function": "OVERVIEW",
+        "report": "overview",
     },
 ]
+
+def _is_truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
 def _validate_environment() -> None:
     if not cfg.AZURE_CONTAINER_BRONZE:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
-    if not getattr(cfg, "ALPHA_VANTAGE_API_KEY", None):
-        raise ValueError("Environment variable 'ALPHA_VANTAGE_API_KEY' is strictly required.")
+    if not (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL")):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
+    if not (
+        os.environ.get("ASSET_ALLOCATION_API_KEY") or os.environ.get("API_KEY") or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
+    ):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
 
 
 def _is_fresh(blob_last_modified: Optional[datetime], *, fresh_days: int) -> bool:
@@ -70,9 +77,9 @@ def _serialize_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageClient) -> bool:
+def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageGatewayClient) -> bool:
     """
-    Fetch a finance report from Alpha Vantage and store raw JSON bytes in Bronze.
+    Fetch a finance report via the API-hosted Alpha Vantage gateway and store raw JSON bytes in Bronze.
 
     Returns True when a write occurred, False when skipped (fresh/no-op).
     """
@@ -81,7 +88,7 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageClie
 
     folder = report["folder"]
     suffix = report["file_suffix"]
-    function = report["function"]
+    report_name = report["report"]
 
     blob_path = f"finance-data/{folder}/{symbol}_{suffix}.json"
 
@@ -95,9 +102,9 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageClie
     except Exception:
         pass
 
-    payload = av.fetch(function, symbol)
+    payload = av.get_finance_report(symbol=symbol, report=report_name)
     if not isinstance(payload, dict):
-        raise AlphaVantageError("Unexpected Alpha Vantage finance response type.", code="invalid_payload")
+        raise AlphaVantageGatewayError("Unexpected Alpha Vantage finance response type.", payload={"symbol": symbol, "report": report_name})
 
     raw = _serialize_json_bytes(payload)
     mdc.store_raw_bytes(raw, blob_path, client=bronze_client)
@@ -129,14 +136,7 @@ async def main_async() -> int:
 
     mdc.write_line(f"Starting Alpha Vantage Bronze Finance Ingestion for {len(symbols)} symbols...")
 
-    av_cfg = AlphaVantageConfig(
-        api_key=str(cfg.ALPHA_VANTAGE_API_KEY),
-        rate_limit_per_min=int(getattr(cfg, "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN", 300)),
-        timeout=float(getattr(cfg, "ALPHA_VANTAGE_TIMEOUT_SECONDS", 15.0)),
-        max_retries=5,
-        backoff_base_seconds=0.5,
-    )
-    av = AlphaVantageClient(av_cfg)
+    av = AlphaVantageGatewayClient.from_env()
 
     max_workers = max(1, int(getattr(cfg, "ALPHA_VANTAGE_MAX_WORKERS", 32)))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-finance")
@@ -162,14 +162,14 @@ async def main_async() -> int:
                         progress["written"] += 1
                     else:
                         progress["skipped"] += 1
-            except AlphaVantageInvalidSymbolError:
+            except AlphaVantageGatewayInvalidSymbolError:
                 list_manager.add_to_blacklist(symbol)
                 async with progress_lock:
                     progress["blacklisted"] += 1
-            except AlphaVantageThrottleError:
+            except AlphaVantageGatewayThrottleError:
                 async with progress_lock:
                     progress["failed"] += 1
-            except AlphaVantageError:
+            except AlphaVantageGatewayError:
                 async with progress_lock:
                     progress["failed"] += 1
             except Exception:

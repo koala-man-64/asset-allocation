@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pandas as pd
 
-from alpha_vantage import (
-    AlphaVantageClient,
-    AlphaVantageConfig,
-    AlphaVantageError,
-    AlphaVantageInvalidSymbolError,
-    AlphaVantageThrottleError,
+from core.alpha_vantage_gateway_client import (
+    AlphaVantageGatewayClient,
+    AlphaVantageGatewayError,
+    AlphaVantageGatewayInvalidSymbolError,
+    AlphaVantageGatewayThrottleError,
 )
 from core import config as cfg
 from core import core as mdc
@@ -22,12 +22,19 @@ from core.pipeline import ListManager
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX, auto_flush=False)
 
+def _is_truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
 
 def _validate_environment() -> None:
     if not cfg.AZURE_CONTAINER_BRONZE:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
-    if not cfg.ALPHA_VANTAGE_API_KEY:
-        raise ValueError("Environment variable 'ALPHA_VANTAGE_API_KEY' is strictly required.")
+    if not (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL")):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
+    if not (
+        os.environ.get("ASSET_ALLOCATION_API_KEY") or os.environ.get("API_KEY") or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
+    ):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
 
 
 def _is_fresh(blob_last_modified: Optional[datetime], *, fresh_days: int) -> bool:
@@ -97,9 +104,9 @@ def _parse_earnings_records(symbol: str, payload: dict[str, Any]) -> pd.DataFram
     return df
 
 
-def fetch_and_save_raw(symbol: str, av: AlphaVantageClient) -> bool:
+def fetch_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> bool:
     """
-    Fetch earnings for a single symbol from Alpha Vantage and store as Bronze JSON records.
+    Fetch earnings for a single symbol via the API-hosted Alpha Vantage gateway and store as Bronze JSON records.
 
     Returns True when a Bronze write occurred, False when skipped/no-op.
     """
@@ -119,13 +126,13 @@ def fetch_and_save_raw(symbol: str, av: AlphaVantageClient) -> bool:
     except Exception:
         pass
 
-    payload = av.fetch("EARNINGS", symbol)
+    payload = av.get_earnings(symbol=symbol)
     if not isinstance(payload, dict):
-        raise AlphaVantageError("Unexpected Alpha Vantage earnings response type.", code="invalid_payload")
+        raise AlphaVantageGatewayError("Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol})
 
     df = _parse_earnings_records(symbol, payload)
     if df is None or df.empty:
-        raise AlphaVantageInvalidSymbolError("No quarterly earnings records found.")
+        raise AlphaVantageGatewayInvalidSymbolError("No quarterly earnings records found.")
 
     raw_json = df.to_json(orient="records").encode("utf-8")
     mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
@@ -155,14 +162,7 @@ async def main_async() -> int:
 
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
-    av_cfg = AlphaVantageConfig(
-        api_key=str(cfg.ALPHA_VANTAGE_API_KEY),
-        rate_limit_per_min=int(cfg.ALPHA_VANTAGE_RATE_LIMIT_PER_MIN),
-        timeout=float(cfg.ALPHA_VANTAGE_TIMEOUT_SECONDS),
-        max_retries=5,
-        backoff_base_seconds=0.5,
-    )
-    av = AlphaVantageClient(av_cfg)
+    av = AlphaVantageGatewayClient.from_env()
 
     max_workers = max(1, int(cfg.ALPHA_VANTAGE_MAX_WORKERS))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-earnings")
@@ -184,14 +184,14 @@ async def main_async() -> int:
                         progress["written"] += 1
                     else:
                         progress["skipped"] += 1
-            except AlphaVantageInvalidSymbolError:
+            except AlphaVantageGatewayInvalidSymbolError:
                 list_manager.add_to_blacklist(symbol)
                 async with progress_lock:
                     progress["blacklisted"] += 1
-            except AlphaVantageThrottleError:
+            except AlphaVantageGatewayThrottleError:
                 async with progress_lock:
                     progress["failed"] += 1
-            except AlphaVantageError:
+            except AlphaVantageGatewayError:
                 async with progress_lock:
                     progress["failed"] += 1
             except Exception:

@@ -43,6 +43,14 @@ API Root
         ├── /artifacts [GET] (backtests.list_artifacts) - Lists generated files (logs, plots, csvs) for a run :: api/endpoints/backtests.py (UI artifacts not wired)
         └── /artifacts/{name:path} [GET] (backtests.get_artifact_content) - Downloads a specific artifact file :: api/endpoints/backtests.py (UI artifacts not wired)
 
+    # Providers (ETL Gateway)
+    ├── /providers
+    │   └── /alpha-vantage
+    │       ├── /listing-status [GET] (alpha_vantage.get_listing_status) - Alpha Vantage LISTING_STATUS CSV :: api/endpoints/alpha_vantage.py
+    │       ├── /time-series/daily [GET] (alpha_vantage.get_daily_time_series) - Alpha Vantage TIME_SERIES_DAILY CSV :: api/endpoints/alpha_vantage.py
+    │       ├── /earnings [GET] (alpha_vantage.get_earnings) - Alpha Vantage EARNINGS payload :: api/endpoints/alpha_vantage.py
+    │       └── /finance/{report} [GET] (alpha_vantage.get_finance_report) - Alpha Vantage finance payload :: api/endpoints/alpha_vantage.py
+
     # Raw Data Layer
     ├── /data
     │   ├── /symbols [GET] (data.list_symbols) - Returns Postgres symbol universe :: api/endpoints/data.py <== ui/src/app/components/pages/StockExplorerPage.tsx

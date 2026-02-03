@@ -691,6 +691,7 @@ export function StatusOverview({
                                   if (!isByDate) return domainPortalUrl;
                                   const derived = domainPortalUrl
                                     .replace(/\/by-date\b/gi, '')
+                                    .replace(/-by-date\b/gi, '')
                                     .replace(/_by_date\b/gi, '');
                                   return derived === domainPortalUrl ? domainPortalUrl : derived;
                                 })();

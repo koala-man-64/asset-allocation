@@ -13,13 +13,13 @@ def unique_ticker():
 def test_bronze_ingestion(unique_ticker):
     """
     Verifies Bronze Ingestion:
-      1) Mocks Alpha Vantage CSV response.
+      1) Mocks API gateway CSV response (Alpha Vantage via API).
       2) Calls bronze.download_and_save_raw.
       3) Verifies data is written to the Bronze container with canonical schema.
     """
     symbol = unique_ticker
     mock_av = MagicMock()
-    mock_av.get_daily_time_series.return_value = (
+    mock_av.get_daily_time_series_csv.return_value = (
         "timestamp,open,high,low,close,volume\n"
         "2024-01-02,10,11,9,10.5,100\n"
         "2024-01-03,10.5,12,10,11,150\n"

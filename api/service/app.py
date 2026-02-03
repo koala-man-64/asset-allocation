@@ -10,8 +10,9 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from api.endpoints import data, system, postgres
+from api.endpoints import alpha_vantage, data, system, postgres
 from api.service.auth import AuthManager
+from api.service.alpha_vantage_gateway import AlphaVantageGateway
 from api.service.settings import ServiceSettings
 from api.service.realtime import manager as realtime_manager
 from api.service.alert_state_store import PostgresAlertStateStore
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
 
         app.state.settings = settings
         app.state.auth = AuthManager(settings)
+        app.state.alpha_vantage_gateway = AlphaVantageGateway()
 
         stop_refresh = asyncio.Event()
         refresh_task: asyncio.Task[None] | None = None
@@ -211,6 +213,11 @@ def create_app() -> FastAPI:
             except Exception:
                 pass
 
+        try:
+            app.state.alpha_vantage_gateway.close()
+        except Exception:
+            pass
+
     app = FastAPI(title="Asset Allocation API", version="0.1.0", lifespan=lifespan)
     logger.info("Service application starting")
 
@@ -258,6 +265,11 @@ def create_app() -> FastAPI:
         app.include_router(data.router, prefix=f"{api_prefix}/data", tags=["Data"])
         app.include_router(system.router, prefix=f"{api_prefix}/system", tags=["System"])
         app.include_router(postgres.router, prefix=f"{api_prefix}/system/postgres", tags=["Postgres"])
+        app.include_router(
+            alpha_vantage.router,
+            prefix=f"{api_prefix}/providers/alpha-vantage",
+            tags=["AlphaVantage"],
+        )
 
     async def websocket_endpoint(websocket: WebSocket):
         await realtime_manager.connect(websocket)

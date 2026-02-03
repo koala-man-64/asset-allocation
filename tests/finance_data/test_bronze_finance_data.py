@@ -14,7 +14,7 @@ def unique_ticker():
 def test_fetch_and_save_raw_writes_json(unique_ticker):
     symbol = unique_ticker
     mock_av = MagicMock()
-    mock_av.fetch.return_value = {"symbol": symbol, "quarterlyReports": [{"fiscalDateEnding": "2024-01-01"}]}
+    mock_av.get_finance_report.return_value = {"symbol": symbol, "quarterlyReports": [{"fiscalDateEnding": "2024-01-01"}]}
 
     mock_blob_client = MagicMock()
     mock_blob_client.exists.return_value = False
@@ -24,7 +24,7 @@ def test_fetch_and_save_raw_writes_json(unique_ticker):
     report = {
         "folder": "Balance Sheet",
         "file_suffix": "quarterly_balance-sheet",
-        "function": "BALANCE_SHEET",
+        "report": "balance_sheet",
     }
 
     with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
@@ -39,4 +39,3 @@ def test_fetch_and_save_raw_writes_json(unique_ticker):
         args, kwargs = mock_store.call_args
         assert args[1] == f"finance-data/Balance Sheet/{symbol}_quarterly_balance-sheet.json"
         assert b"quarterlyReports" in args[0]
-

@@ -12,13 +12,13 @@ def test_fetch_and_save_raw(unique_ticker):
     """
     Verifies fetch_and_save_raw:
     1. Checks blacklist (mocked).
-    2. Calls Alpha Vantage client (mocked).
+    2. Calls API gateway client (mocked).
     3. Saves to Bronze as JSON (Raw Bytes).
     """
     symbol = unique_ticker
 
     mock_av = MagicMock()
-    mock_av.fetch.return_value = {
+    mock_av.get_earnings.return_value = {
         "symbol": symbol,
         "quarterlyEarnings": [
             {
