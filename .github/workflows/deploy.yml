@@ -1,4 +1,4 @@
-name: Build and Deploy Tasks
+name: Build and Deploy (Apps + Jobs)
 
 on:
   push:
@@ -26,7 +26,14 @@ env:
   RESOURCE_GROUP: AssetAllocationRG
   # User-assigned managed identity used by Container Apps/Jobs to pull from ACR on first create.
   ACR_PULL_IDENTITY_NAME: asset-allocation-acr-pull-mi
+  IMAGE_TAG: ${{ github.sha }}
   IMAGE_NAME: asset-allocation-scraper
+  API_APP_NAME: asset-allocation-api
+  API_IMAGE_NAME: asset-allocation-api
+  UI_APP_NAME: asset-allocation-ui
+  UI_IMAGE_NAME: asset-allocation-ui
+  # Controls deploy/app_api.yaml ingress.external (defaults to "true").
+  INGRESS_EXTERNAL: ${{ vars.API_INGRESS_EXTERNAL || 'true' }}
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -92,6 +99,21 @@ jobs:
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
           ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
+          API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
+          API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
+          API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
+          API_OIDC_REQUIRED_SCOPES: ${{ vars.API_OIDC_REQUIRED_SCOPES }}
+          API_OIDC_REQUIRED_ROLES: ${{ vars.API_OIDC_REQUIRED_ROLES }}
+          API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
+          API_CSP: ${{ vars.API_CSP }}
+          API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
+          UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
+          UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
+          UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
+          UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
+          UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI }}
+          UI_API_BASE_URL: ${{ vars.UI_API_BASE_URL }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
           set -euo pipefail
@@ -116,6 +138,7 @@ jobs:
           require_value POSTGRES_DSN
           require_value SERVICE_ACCOUNT_NAME
           require_value ASSET_ALLOCATION_API_BASE_URL
+          require_value API_AUTH_MODE
           require_value API_KEY
 
           python3 - <<'PY'
@@ -163,6 +186,22 @@ jobs:
                   "Container Apps ingress listens on 80/443; use http://asset-allocation-api (no port) or the API app FQDN."
               )
               sys.exit(1)
+
+          auth_mode = (os.environ.get("API_AUTH_MODE") or "").strip().lower()
+          allowed = {"none", "api_key", "oidc", "api_key_or_oidc"}
+          if auth_mode not in allowed:
+              print("::error::API_AUTH_MODE must be one of: none|api_key|oidc|api_key_or_oidc")
+              sys.exit(1)
+
+          if auth_mode in {"oidc", "api_key_or_oidc"}:
+              issuer = (os.environ.get("API_OIDC_ISSUER") or "").strip()
+              audience = (os.environ.get("API_OIDC_AUDIENCE") or "").strip()
+              if not issuer:
+                  print(f"::error::API_AUTH_MODE={auth_mode} requires API_OIDC_ISSUER to be set.")
+                  sys.exit(1)
+              if not audience:
+                  print(f"::error::API_AUTH_MODE={auth_mode} requires API_OIDC_AUDIENCE to be set (csv).")
+                  sys.exit(1)
           PY
 
       - name: Detect Market Changes
@@ -344,6 +383,28 @@ jobs:
               - "deploy/job_gold_price_target_data.yaml"
               - ".github/workflows/deploy.yml"
 
+      - name: Detect App Changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: app_changes
+        with:
+          filters: |
+            api_app:
+              - "Dockerfile.asset_allocation_api"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "alpha_vantage/**"
+              - "core/**"
+              - "api/**"
+              - "tasks/**"
+              - "alpaca/**"
+              - "monitoring/**"
+              - "deploy/app_api.yaml"
+              - ".github/workflows/deploy.yml"
+            ui_app:
+              - "ui/**"
+              - "deploy/app_ui.yaml"
+              - ".github/workflows/deploy.yml"
+
       - name: Log change detection outputs
         run: |
           echo "bronze_market=${{ steps.market_changes.outputs.bronze_market }}"
@@ -358,6 +419,8 @@ jobs:
           echo "bronze_price_target=${{ steps.price_target_changes.outputs.bronze_price_target }}"
           echo "silver_price_target=${{ steps.price_target_changes.outputs.silver_price_target }}"
           echo "gold_price_target=${{ steps.price_target_changes.outputs.gold_price_target }}"
+          echo "api_app=${{ steps.app_changes.outputs.api_app }}"
+          echo "ui_app=${{ steps.app_changes.outputs.ui_app }}"
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
@@ -430,30 +493,44 @@ jobs:
           SANITIZED=$(echo "$SANITIZED" | sed 's/^-*//;s/-*$//')
           echo "tag=$SANITIZED" >> "$GITHUB_OUTPUT"
 
-      - name: Build and Push Tasks Image
+      - name: Build and Push Images (Tasks/API/UI)
         run: |
-          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
-          
-          # 1. Build immutable SHA tag
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          
-          # 2. Build branch tag
-          docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
-          
-          # 3. Push SHA tag and Branch tag
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:$BRANCH_TAG
-          
-          # 4. Handle 'latest' tag (Only on main branch)
-          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "Pushing latest tag..."
-            docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
-            docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
-          fi
+          set -euo pipefail
 
-      - name: Set JOB_IMAGE env
+          BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
+          REGISTRY="${{ env.ACR_NAME }}.azurecr.io"
+
+          build_and_push() {
+            local image_name="$1"
+            local context_dir="$2"
+            local dockerfile_path="$3"
+
+            echo "Building image: $image_name"
+            docker build "$context_dir" -f "$dockerfile_path" -t "$REGISTRY/$image_name:${{ github.sha }}"
+
+            echo "Tagging image: $image_name:$BRANCH_TAG"
+            docker tag "$REGISTRY/$image_name:${{ github.sha }}" "$REGISTRY/$image_name:$BRANCH_TAG"
+
+            echo "Pushing image tags for $image_name"
+            docker push "$REGISTRY/$image_name:${{ github.sha }}"
+            docker push "$REGISTRY/$image_name:$BRANCH_TAG"
+
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "Pushing latest tag for $image_name"
+              docker tag "$REGISTRY/$image_name:${{ github.sha }}" "$REGISTRY/$image_name:latest"
+              docker push "$REGISTRY/$image_name:latest"
+            fi
+          }
+
+          build_and_push "${{ env.IMAGE_NAME }}" "." "Dockerfile"
+          build_and_push "${{ env.API_IMAGE_NAME }}" "." "Dockerfile.asset_allocation_api"
+          build_and_push "${{ env.UI_IMAGE_NAME }}" "ui" "ui/Dockerfile"
+
+      - name: Set image env vars
         run: |
           echo "JOB_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
+          echo "API_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
+          echo "UI_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
 
       - name: Ensure Storage Containers Exist
         run: |
@@ -464,6 +541,144 @@ jobs:
               --account-name assetallocstorage001 \
               --auth-mode login
           done
+
+      - name: Check API App Exists
+        id: api_app_check
+        run: |
+          if az containerapp show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "app_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check UI App Exists
+        id: ui_app_check
+        run: |
+          if az containerapp show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "app_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy API App
+        if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.api_app_check.outputs.app_exists == 'false'
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
+          API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
+          API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
+          API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
+          API_OIDC_REQUIRED_SCOPES: ${{ vars.API_OIDC_REQUIRED_SCOPES }}
+          API_OIDC_REQUIRED_ROLES: ${{ vars.API_OIDC_REQUIRED_ROLES }}
+          API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
+          API_CSP: ${{ vars.API_CSP }}
+          API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
+          UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
+          UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
+          UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
+          UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
+          UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI }}
+          UI_API_BASE_URL: ${{ vars.UI_API_BASE_URL }}
+          SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB: ${{ vars.SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB }}
+          SYSTEM_HEALTH_VERBOSE_IDS: ${{ vars.SYSTEM_HEALTH_VERBOSE_IDS }}
+          SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED }}
+          SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION }}
+          SYSTEM_HEALTH_MONITOR_METRICS_ENABLED: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_ENABLED }}
+          SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION }}
+          SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES }}
+          SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL }}
+          SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION }}
+          SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS }}
+          SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS }}
+          SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON }}
+        run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${ACR_PULL_IDENTITY_CLIENT_ID:?ACR_PULL_IDENTITY_CLIENT_ID is required}"
+          : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
+          : "${IMAGE_TAG:?IMAGE_TAG is required}"
+
+          echo "Deploying API app from YAML..."
+          tmp="deploy/app_api.tmp.yaml"
+          envsubst < deploy/app_api.yaml > "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
+
+          if ! az containerapp show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "App ${{ env.API_APP_NAME }} not found. Creating..."
+            az containerapp create \
+              --name ${{ env.API_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "$tmp"
+          else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp identity show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp identity assign \
+                --name ${{ env.API_APP_NAME }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
+            az containerapp update \
+              --name ${{ env.API_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp"
+          fi
+
+      - name: Deploy UI App
+        if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.ui_app == 'true' || steps.ui_app_check.outputs.app_exists == 'false'
+        run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
+          : "${IMAGE_TAG:?IMAGE_TAG is required}"
+
+          echo "Deploying UI app from YAML..."
+          tmp="deploy/app_ui.tmp.yaml"
+          envsubst < deploy/app_ui.yaml > "$tmp"
+
+          if ! az containerapp show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "App ${{ env.UI_APP_NAME }} not found. Creating..."
+            az containerapp create \
+              --name ${{ env.UI_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment asset-allocation-env \
+              --yaml "$tmp"
+          else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp identity show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp identity assign \
+                --name ${{ env.UI_APP_NAME }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
+            az containerapp update \
+              --name ${{ env.UI_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp"
+          fi
 
       - name: Check Market Bronze Job Exists
         id: market_data_job_check
@@ -1281,21 +1496,42 @@ jobs:
           delete_job_if_exists "gold-price-target-by-date-job"
           delete_job_if_exists "gold-earnings-by-date-job"
 
-      - name: Verify Updated Job Images
+      - name: Verify Updated Images
         run: |
           set -euo pipefail
-          expected_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          expected_task_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          expected_api_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
+          expected_ui_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}"
+
+          check_app() {
+            local app_name="$1"
+            local expected_image="$2"
+            local actual_image
+            actual_image=$(az containerapp show --name "$app_name" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
+            if [ "$actual_image" != "$expected_image" ]; then
+              echo "Image mismatch for app $app_name: expected $expected_image, got $actual_image"
+              exit 1
+            fi
+            echo "Verified $app_name image $actual_image"
+          }
 
           check_job() {
             local job_name="$1"
             local actual_image
             actual_image=$(az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
-            if [ "$actual_image" != "$expected_image" ]; then
-              echo "Image mismatch for $job_name: expected $expected_image, got $actual_image"
+            if [ "$actual_image" != "$expected_task_image" ]; then
+              echo "Image mismatch for job $job_name: expected $expected_task_image, got $actual_image"
               exit 1
             fi
             echo "Verified $job_name image $actual_image"
           }
+
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.api_app }}" = "true" ] || [ "${{ steps.api_app_check.outputs.app_exists }}" = "false" ]; then
+            check_app "${{ env.API_APP_NAME }}" "$expected_api_image"
+          fi
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.ui_app }}" = "true" ] || [ "${{ steps.ui_app_check.outputs.app_exists }}" = "false" ]; then
+            check_app "${{ env.UI_APP_NAME }}" "$expected_ui_image"
+          fi
 
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.market_changes.outputs.bronze_market }}" = "true" ] || [ "${{ steps.market_data_job_check.outputs.job_exists }}" = "false" ]; then
             check_job "${{ env.BRONZE_MARKET_JOB }}"

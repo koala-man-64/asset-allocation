@@ -6,7 +6,7 @@ identity:
   userAssignedIdentities:
     "${ACR_PULL_IDENTITY_RESOURCE_ID}": {}
 properties:
-  managedEnvironmentId: /subscriptions/eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9/resourceGroups/AssetAllocationRG/providers/Microsoft.App/managedEnvironments/asset-allocation-env
+  managedEnvironmentId: ${CONTAINER_APPS_ENVIRONMENT_ID}
   configuration:
     activeRevisionsMode: Single
     ingress:
@@ -23,6 +23,7 @@ properties:
     - name: alpha-vantage-api-key
       value: "${ALPHA_VANTAGE_API_KEY}"
     - name: backtest-pg-dsn
+      value: "${POSTGRES_DSN}"
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
@@ -60,6 +61,8 @@ properties:
         secretRef: alpha-vantage-api-key
       - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
+      - name: API_ROOT_PREFIX
+        value: "${API_ROOT_PREFIX}"
       - name: API_AUTH_MODE
         value: "${API_AUTH_MODE}"
       - name: API_OIDC_ISSUER
@@ -74,6 +77,8 @@ properties:
         value: "${API_OIDC_REQUIRED_ROLES}"
       - name: API_CSP
         value: "${API_CSP}"
+      - name: API_CORS_ALLOW_ORIGINS
+        value: "${API_CORS_ALLOW_ORIGINS}"
       - name: SYSTEM_HEALTH_TTL_SECONDS
         value: "10"
       - name: SYSTEM_HEALTH_MAX_AGE_SECONDS
@@ -86,6 +91,8 @@ properties:
         value: "${UI_OIDC_AUTHORITY}"
       - name: UI_OIDC_SCOPES
         value: "${UI_OIDC_SCOPES}"
+      - name: UI_OIDC_REDIRECT_URI
+        value: "${UI_OIDC_REDIRECT_URI}"
       - name: UI_API_BASE_URL
         value: "${UI_API_BASE_URL}"
       - name: LOG_FORMAT
