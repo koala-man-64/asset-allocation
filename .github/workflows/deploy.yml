@@ -81,7 +81,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate required secrets
+      - name: Validate required deployment inputs
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -91,28 +91,32 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
+          ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
         run: |
           set -euo pipefail
 
-          require_secret() {
+          require_value() {
             local name="$1"
             local value="${!name:-}"
             value="${value#"${value%%[![:space:]]*}"}"
             value="${value%"${value##*[![:space:]]}"}"
             if [ -z "$value" ]; then
-              echo "::error::Missing required GitHub Actions secret: $name"
+              echo "::error::Missing required GitHub Actions value: $name"
               exit 1
             fi
           }
 
-          require_secret AZURE_CLIENT_ID
-          require_secret AZURE_TENANT_ID
-          require_secret AZURE_SUBSCRIPTION_ID
-          require_secret AZURE_STORAGE_CONNECTION_STRING
-          require_secret ALPHA_VANTAGE_API_KEY
-          require_secret NASDAQ_API_KEY
-          require_secret POSTGRES_DSN
-          require_secret SERVICE_ACCOUNT_NAME
+          require_value AZURE_CLIENT_ID
+          require_value AZURE_TENANT_ID
+          require_value AZURE_SUBSCRIPTION_ID
+          require_value AZURE_STORAGE_CONNECTION_STRING
+          require_value ALPHA_VANTAGE_API_KEY
+          require_value NASDAQ_API_KEY
+          require_value POSTGRES_DSN
+          require_value SERVICE_ACCOUNT_NAME
+          require_value ASSET_ALLOCATION_API_BASE_URL
+          require_value API_KEY
 
           python3 - <<'PY'
           import os
@@ -140,6 +144,12 @@ jobs:
           
           
           ranking = parse_postgres_url("POSTGRES_DSN")
+
+          api_base_url = os.environ.get("ASSET_ALLOCATION_API_BASE_URL", "").strip()
+          parsed = urlparse(api_base_url)
+          if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
+              print("::error::ASSET_ALLOCATION_API_BASE_URL must be an http(s) URL (e.g., http://asset-allocation-api)")
+              sys.exit(1)
           PY
 
       - name: Detect Market Changes
@@ -459,6 +469,8 @@ jobs:
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -655,6 +667,8 @@ jobs:
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -1049,6 +1063,8 @@ jobs:
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
