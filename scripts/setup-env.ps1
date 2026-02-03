@@ -82,7 +82,7 @@ $Config += "LOG_LEVEL=" + (Prompt-Var "LOG_LEVEL" "INFO" "Options: DEBUG | INFO 
 $Config += "TEST_MODE=" + (Prompt-Var "TEST_MODE" "false" "Set true to disable network calls during some code paths.")
 $Config += "ENABLE_ENV_DIAGNOSTICS=" + (Prompt-Var "ENABLE_ENV_DIAGNOSTICS" "false" "Set true to log additional (allowlisted) environment diagnostics.")
 $Config += "DEBUG_SYMBOLS=" + (Prompt-Var "DEBUG_SYMBOLS" "" "Optional: comma-separated symbols for debug runs (e.g., AAPL,MSFT).")
-$Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTERVAL_HOURS" "24" "Optional: refresh symbol universe from NASDAQ + Alpha Vantage when older than this many hours (0 disables).")
+$Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTERVAL_HOURS" "24" "Optional: refresh symbol universe from NASDAQ + (Alpha Vantage via API) when older than this many hours (0 disables).")
 $Config += "FEATURE_ENGINEERING_MAX_WORKERS=" + (Prompt-Var "FEATURE_ENGINEERING_MAX_WORKERS" "" "Optional: max workers for feature engineering fan-out.")
 $Config += "DOMAIN_METADATA_MAX_SCANNED_BLOBS=" + (Prompt-Var "DOMAIN_METADATA_MAX_SCANNED_BLOBS" "200000" "Optional: upper bound for domain metadata scans (monitoring).")
 $Config += "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE=" + (Prompt-Var "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE" "" "Optional: set true to require Azure storage config at startup.")
@@ -136,13 +136,26 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# External Data APIs"
 $Config += "# =========================================="
-$Config += "ALPHA_VANTAGE_API_KEY=" + (Prompt-Var "ALPHA_VANTAGE_API_KEY" "" "Alpha Vantage API key (required)." -Secret)
+$Config += "ALPHA_VANTAGE_API_KEY=" + (Prompt-Var "ALPHA_VANTAGE_API_KEY" "" "Alpha Vantage API key (required by the API gateway; ETL jobs should call the Asset Allocation API instead)." -Secret)
 $Config += "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN=" + (Prompt-Var "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN" "300" "Requests per minute allowed for your tier.")
 $Config += "ALPHA_VANTAGE_TIMEOUT_SECONDS=" + (Prompt-Var "ALPHA_VANTAGE_TIMEOUT_SECONDS" "15" "HTTP timeout per request (seconds).")
 $Config += "ALPHA_VANTAGE_MAX_WORKERS=" + (Prompt-Var "ALPHA_VANTAGE_MAX_WORKERS" "32" "Max concurrent fetch workers.")
 $Config += "ALPHA_VANTAGE_EARNINGS_FRESH_DAYS=" + (Prompt-Var "ALPHA_VANTAGE_EARNINGS_FRESH_DAYS" "7" "Skip re-fetching earnings newer than this many days.")
 $Config += "ALPHA_VANTAGE_FINANCE_FRESH_DAYS=" + (Prompt-Var "ALPHA_VANTAGE_FINANCE_FRESH_DAYS" "28" "Skip re-fetching fundamentals newer than this many days.")
 $Config += "NASDAQ_API_KEY=" + (Prompt-Var "NASDAQ_API_KEY" "" "Nasdaq Data Link API key (required for price targets)." -Secret)
+
+# -------------------------------------------------------------------------
+# ETL -> API Gateway (Alpha Vantage via API)
+# -------------------------------------------------------------------------
+$Config += ""
+$Config += "# =========================================="
+$Config += "# ETL -> API Gateway (Alpha Vantage via API)"
+$Config += "# =========================================="
+$Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" "http://localhost:8000" "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
+$Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
+$Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")
+$Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
+$Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
 
 # -------------------------------------------------------------------------
 # Postgres (optional locally; used by API and some tasks)
