@@ -27,9 +27,12 @@ describe('useSystemHealthQuery', () => {
 
     renderWithProviders(<Probe />);
 
-    await waitFor(() => {
+    const waitForCall = waitFor(() => {
       expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
     });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitForCall;
 
     vi.advanceTimersByTime(30_000);
 
