@@ -20,7 +20,7 @@ properties:
     secrets:
     - name: nasdaq-api-key
       value: ${NASDAQ_API_KEY}
-    - name: asset-allocation-api-key
+    - name: api-key
       value: ${API_KEY}
     - name: azure-storage-connection-string
       value: ${AZURE_STORAGE_CONNECTION_STRING}
@@ -74,7 +74,7 @@ properties:
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
       - name: ASSET_ALLOCATION_API_KEY
-        secretRef: asset-allocation-api-key
+        secretRef: api-key
       - name: ASSET_ALLOCATION_API_KEY_HEADER
         value: "X-API-Key"
       - name: ALPHA_VANTAGE_TIMEOUT_SECONDS
