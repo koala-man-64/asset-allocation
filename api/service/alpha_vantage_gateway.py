@@ -11,8 +11,6 @@ from alpha_vantage import (
     AlphaVantageClient,
     AlphaVantageConfig,
     AlphaVantageError,
-    AlphaVantageInvalidSymbolError,
-    AlphaVantageThrottleError,
 )
 
 logger = logging.getLogger("asset-allocation.api.alpha_vantage")
@@ -170,4 +168,3 @@ class AlphaVantageGateway:
         if not isinstance(payload, dict):
             raise AlphaVantageError("Unexpected Alpha Vantage finance response type.", code="invalid_payload")
         return payload
-
