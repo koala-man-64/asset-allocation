@@ -12,6 +12,19 @@ class _ByDateMain(Protocol):
 
 
 PartnerReturn = TypeVar("PartnerReturn", bound=Union[None, int])
+YearMonthProvider = Callable[[], list[str]]
+
+
+def _normalize_year_months(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return sorted(cleaned)
 
 
 def _get_materialize_year_months(now: Optional[datetime] = None) -> list[str]:
@@ -81,6 +94,7 @@ def run_partner_then_by_date(
     partner_main: Callable[[], PartnerReturn],
     by_date_main: _ByDateMain,
     by_date_run_at_utc_hour: Optional[int] = None,
+    year_months_provider: Optional[YearMonthProvider] = None,
 ) -> int:
     """
     Run a partner job and then materialize its by-date table immediately after completion.
@@ -88,6 +102,8 @@ def run_partner_then_by_date(
     - Holds a single distributed lock (`JobLock`) across both steps.
     - Defaults by-date year-month to yesterday's month in UTC (or uses MATERIALIZE_YEAR_MONTH).
     - Can gate by-date execution to a single UTC hour (env or argument) to enforce daily runs.
+    - When a year_months_provider is supplied (and no MATERIALIZE_YEAR_MONTH override),
+      it drives which partitions to materialize.
     """
 
     with mdc.JobLock(job_name):
@@ -105,13 +121,39 @@ def run_partner_then_by_date(
             )
             return 0
 
-        year_months = _get_materialize_year_months()
+        override_raw = os.environ.get("MATERIALIZE_YEAR_MONTH")
+        if override_raw and override_raw.strip():
+            year_months = _get_materialize_year_months()
+            source = "override"
+        elif year_months_provider is not None:
+            try:
+                year_months = _normalize_year_months(year_months_provider())
+            except Exception as exc:
+                mdc.write_warning(
+                    f"Failed to derive data-driven year_months for job={job_name}: {exc}. "
+                    "Falling back to time-window selection."
+                )
+                year_months = _get_materialize_year_months()
+                source = "fallback"
+            else:
+                source = "data"
+        else:
+            year_months = _get_materialize_year_months()
+            source = "window"
         if not year_months:
+            if source == "data":
+                reason = "no year_months discovered from data"
+            else:
+                reason = "MATERIALIZE_WINDOW_MONTHS<=0"
             mdc.write_line(
-                f"Skipping by-date materialization for job={job_name} "
-                "(MATERIALIZE_WINDOW_MONTHS<=0)."
+                f"Skipping by-date materialization for job={job_name} ({reason})."
             )
             return 0
+
+        if source == "data":
+            mdc.write_line(
+                f"Data-driven year_months for job={job_name}: {', '.join(year_months)}."
+            )
 
         for year_month in year_months:
             mdc.write_line(f"Running by-date materialization for job={job_name} year_month={year_month}...")

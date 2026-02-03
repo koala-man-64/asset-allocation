@@ -433,7 +433,7 @@ export function StatusOverview({
               ))}
             </div>
           </div>
-          <div className="grid shrink-0 grid-cols-[auto_auto] grid-rows-2 items-stretch justify-items-end gap-2">
+          <div className="flex shrink-0 flex-col items-end gap-2">
             <div className="inline-flex w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
               <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>
                 UPTIME CLOCK

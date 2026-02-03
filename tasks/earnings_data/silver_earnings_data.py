@@ -156,7 +156,10 @@ def main():
 
 if __name__ == "__main__":
     from core.by_date_pipeline import run_partner_then_by_date
-    from tasks.earnings_data.materialize_silver_earnings_by_date import main as by_date_main
+    from tasks.earnings_data.materialize_silver_earnings_by_date import (
+        discover_year_months_from_data,
+        main as by_date_main,
+    )
     from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = "silver-earnings-job"
@@ -164,6 +167,7 @@ if __name__ == "__main__":
         job_name=job_name,
         partner_main=main,
         by_date_main=by_date_main,
+        year_months_provider=discover_year_months_from_data,
     )
     if exit_code == 0:
         trigger_next_job_from_env()

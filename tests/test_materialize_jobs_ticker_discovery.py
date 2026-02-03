@@ -37,6 +37,24 @@ def test_materialize_gold_market_by_date_prefers_container_listing(monkeypatch):
     assert "year_month" in captured["df"].columns
 
 
+def test_discover_gold_market_year_months_from_data(monkeypatch):
+    from tasks.market_data import materialize_gold_market_by_date as job
+
+    monkeypatch.setattr(job, "_try_load_tickers_from_container", lambda _container, root_prefix: ["AAPL", "MSFT"])
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        if path.endswith("/AAPL"):
+            return pd.DataFrame({"date": [pd.Timestamp("2026-01-10"), pd.Timestamp("2026-02-05")]})
+        return pd.DataFrame({"date": [pd.Timestamp("2026-02-20")]})
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+
+    months = job.discover_year_months_from_data(container="market")
+
+    assert months == ["2026-01", "2026-02"]
+
+
 def test_materialize_gold_earnings_by_date_prefers_container_listing(monkeypatch):
     from tasks.earnings_data import materialize_gold_earnings_by_date as job
 
@@ -64,6 +82,24 @@ def test_materialize_gold_earnings_by_date_prefers_container_listing(monkeypatch
 
     assert job.materialize_earnings_by_date(cfg) == 0
     assert store_calls["count"] == 1
+
+
+def test_discover_gold_earnings_year_months_from_data(monkeypatch):
+    from tasks.earnings_data import materialize_gold_earnings_by_date as job
+
+    monkeypatch.setattr(job, "_try_load_tickers_from_container", lambda _container, root_prefix: ["AAPL", "MSFT"])
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        if path.endswith("/AAPL"):
+            return pd.DataFrame({"date": [pd.Timestamp("2026-01-15"), pd.Timestamp("2026-02-03")]})
+        return pd.DataFrame({"date": [pd.Timestamp("2026-02-20")]})
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+
+    months = job.discover_year_months_from_data(container="earnings")
+
+    assert months == ["2026-01", "2026-02"]
 
 
 def test_materialize_gold_finance_by_date_prefers_container_listing(monkeypatch):
@@ -95,6 +131,24 @@ def test_materialize_gold_finance_by_date_prefers_container_listing(monkeypatch)
     assert store_calls["count"] == 1
 
 
+def test_discover_gold_finance_year_months_from_data(monkeypatch):
+    from tasks.finance_data import materialize_gold_finance_by_date as job
+
+    monkeypatch.setattr(job, "_try_load_tickers_from_container", lambda _container, root_prefix: ["AAPL", "MSFT"])
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        if path.endswith("/AAPL"):
+            return pd.DataFrame({"date": [pd.Timestamp("2026-01-07"), pd.Timestamp("2026-02-11")]})
+        return pd.DataFrame({"date": [pd.Timestamp("2026-02-21")]})
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+
+    months = job.discover_year_months_from_data(container="finance")
+
+    assert months == ["2026-01", "2026-02"]
+
+
 def test_materialize_gold_price_target_by_date_prefers_container_listing(monkeypatch):
     from tasks.price_target_data import materialize_gold_price_target_by_date as job
 
@@ -124,6 +178,24 @@ def test_materialize_gold_price_target_by_date_prefers_container_listing(monkeyp
     assert store_calls["count"] == 1
 
 
+def test_discover_gold_price_target_year_months_from_data(monkeypatch):
+    from tasks.price_target_data import materialize_gold_price_target_by_date as job
+
+    monkeypatch.setattr(job, "_try_load_tickers_from_container", lambda _container, root_prefix: ["AAPL", "MSFT"])
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        if path.endswith("/AAPL"):
+            return pd.DataFrame({"obs_date": [pd.Timestamp("2026-01-04"), pd.Timestamp("2026-02-09")]})
+        return pd.DataFrame({"obs_date": [pd.Timestamp("2026-02-20")]})
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+
+    months = job.discover_year_months_from_data(container="targets")
+
+    assert months == ["2026-01", "2026-02"]
+
+
 def test_materialize_silver_earnings_by_date_prefers_container_listing(monkeypatch):
     from tasks.earnings_data import materialize_silver_earnings_by_date as job
 
@@ -151,6 +223,24 @@ def test_materialize_silver_earnings_by_date_prefers_container_listing(monkeypat
 
     assert job.materialize_silver_earnings_by_date(cfg) == 0
     assert store_calls["count"] == 1
+
+
+def test_discover_silver_earnings_year_months_from_data(monkeypatch):
+    from tasks.earnings_data import materialize_silver_earnings_by_date as job
+
+    monkeypatch.setattr(job, "_try_load_tickers_from_container", lambda _container, root_prefix: ["AAPL", "MSFT"])
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        if path.endswith("/AAPL"):
+            return pd.DataFrame({"Date": [pd.Timestamp("2026-01-15"), pd.Timestamp("2026-02-03")]})
+        return pd.DataFrame({"Date": [pd.Timestamp("2026-02-20")]})
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+
+    months = job.discover_year_months_from_data(container="earnings")
+
+    assert months == ["2026-01", "2026-02"]
 
 
 def test_materialize_silver_price_target_by_date_prefers_container_listing(monkeypatch):
