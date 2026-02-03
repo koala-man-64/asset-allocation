@@ -60,7 +60,6 @@ import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
-import { Switch } from '@/app/components/ui/switch';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
 
@@ -69,13 +68,6 @@ interface StatusOverviewProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobStates?: Record<string, string>;
-  debugSymbols?: {
-    enabled: boolean;
-    preview: string;
-    disabled?: boolean;
-    unavailable?: boolean;
-    onToggle?: (enabled: boolean) => void;
-  };
   onRefresh?: () => void;
   isRefreshing?: boolean;
   isFetching?: boolean;
@@ -86,7 +78,6 @@ export function StatusOverview({
   dataLayers,
   recentJobs,
   jobStates,
-  debugSymbols,
   onRefresh,
   isRefreshing,
   isFetching
@@ -443,40 +434,6 @@ export function StatusOverview({
             </div>
           </div>
           <div className="grid shrink-0 grid-cols-[auto_auto] grid-rows-2 items-stretch justify-items-end gap-2">
-            {debugSymbols ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="row-span-2 flex h-full w-[140px] flex-col justify-between gap-0.5 rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>
-                        DEBUG
-                      </span>
-                      <Switch
-                        checked={debugSymbols.enabled}
-                        onCheckedChange={(checked) => debugSymbols.onToggle?.(Boolean(checked))}
-                        disabled={
-                          Boolean(debugSymbols.disabled) || Boolean(debugSymbols.unavailable)
-                        }
-                        aria-label="Toggle debug symbols"
-                      />
-                    </div>
-                    <div className="flex min-w-0 items-center">
-                      <span
-                        className={`${StatusTypos.MONO} min-w-0 truncate text-[10px] text-mcm-walnut/70`}
-                      >
-                        {debugSymbols.preview}
-                      </span>
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-[320px]">
-                  {debugSymbols.unavailable
-                    ? 'Debug-symbol control is unavailable in this deployment.'
-                    : `When enabled, pipeline jobs pull debug symbols from Postgres. (${debugSymbols.preview})`}
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-
             <div className="inline-flex w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
               <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>
                 UPTIME CLOCK

@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
-import { useDebugSymbolsQuery } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { StatusOverview } from './system-status/StatusOverview';
 
@@ -18,10 +16,8 @@ import {
 
 export function SystemStatusPage() {
   const { data, isLoading, error, isFetching } = useSystemHealthQuery();
-  const debugSymbolsQuery = useDebugSymbolsQuery();
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isTogglingDebug, setIsTogglingDebug] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_, setTick] = useState(0);
   const jobLinks = useMemo(() => {
@@ -100,36 +96,6 @@ export function SystemStatusPage() {
     }
   };
 
-  const debugEnabled = Boolean(debugSymbolsQuery.data?.enabled);
-  const debugSymbolsRaw = String(debugSymbolsQuery.data?.symbols || '').trim();
-  const debugSymbolsPreview = (() => {
-    if (!debugSymbolsRaw) return 'Not configured';
-    const parts = debugSymbolsRaw
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (parts.length <= 4) return parts.join(', ');
-    return `${parts.slice(0, 4).join(', ')} +${parts.length - 4}`;
-  })();
-
-  const toggleDebugSymbols = async (nextEnabled: boolean) => {
-    setIsTogglingDebug(true);
-    try {
-      await DataService.setDebugSymbols({ enabled: nextEnabled });
-      toast.success(
-        nextEnabled
-          ? 'Debug symbols enabled for pipeline jobs.'
-          : 'Debug symbols disabled for pipeline jobs.'
-      );
-      void queryClient.invalidateQueries({ queryKey: queryKeys.debugSymbols() });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to update debug symbols: ${message}`);
-    } finally {
-      setIsTogglingDebug(false);
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-100px)]">
@@ -162,13 +128,6 @@ export function SystemStatusPage() {
         dataLayers={dataLayers}
         recentJobs={recentJobs}
         jobStates={jobStates}
-        debugSymbols={{
-          enabled: debugEnabled,
-          preview: debugSymbolsPreview,
-          disabled: debugSymbolsQuery.isLoading || isTogglingDebug,
-          unavailable: Boolean(debugSymbolsQuery.error),
-          onToggle: (enabled) => void toggleDebugSymbols(enabled)
-        }}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         isFetching={isFetching}
