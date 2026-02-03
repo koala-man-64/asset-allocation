@@ -13,7 +13,10 @@ import type {
   DebugSymbolsResponse,
   JobLogsResponse,
   PurgeRequest,
-  PurgeResponse
+  PurgeResponse,
+  RuntimeConfigCatalogResponse,
+  RuntimeConfigItem,
+  RuntimeConfigListResponse
 } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
@@ -126,5 +129,30 @@ export const DataService = {
 
   setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
     return apiService.setDebugSymbols(payload);
+  },
+
+  getRuntimeConfigCatalog(): Promise<RuntimeConfigCatalogResponse> {
+    return apiService.getRuntimeConfigCatalog();
+  },
+
+  getRuntimeConfig(scope: string = 'global'): Promise<RuntimeConfigListResponse> {
+    return apiService.getRuntimeConfig(scope);
+  },
+
+  setRuntimeConfig(payload: {
+    key: string;
+    scope?: string;
+    enabled: boolean;
+    value: string;
+    description?: string;
+  }): Promise<RuntimeConfigItem> {
+    return apiService.setRuntimeConfig(payload);
+  },
+
+  deleteRuntimeConfig(
+    key: string,
+    scope: string = 'global'
+  ): Promise<{ scope: string; key: string; deleted: boolean }> {
+    return apiService.deleteRuntimeConfig(key, scope);
   }
 };

@@ -2,6 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 
+function isApiNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('API Error: 404');
+}
+
 // Key Factory for consistent query keys
 // Key Factory for consistent query keys
 export const queryKeys = {
@@ -9,6 +13,8 @@ export const queryKeys = {
   systemHealth: () => ['systemHealth'] as const,
   lineage: () => ['lineage'] as const,
   debugSymbols: () => ['debugSymbols'] as const,
+  runtimeConfigCatalog: () => ['runtimeConfigCatalog'] as const,
+  runtimeConfig: (scope: string) => ['runtimeConfig', scope] as const,
   domainMetadata: (layer: string, domain: string) => ['domainMetadata', layer, domain] as const
 };
 
@@ -34,7 +40,8 @@ export function useSystemHealthQuery() {
         throw error;
       }
     },
-    refetchInterval: 10000,
+    retry: (failureCount, error) => (isApiNotFoundError(error) ? false : failureCount < 3),
+    refetchInterval: (query) => (isApiNotFoundError(query.state.error) ? false : 10000),
     onSuccess: (data) => {
       console.info('[Query] systemHealth success', {
         overall: data.overall,
@@ -77,6 +84,28 @@ export function useDebugSymbolsQuery() {
     queryKey: queryKeys.debugSymbols(),
     queryFn: async () => {
       return DataService.getDebugSymbols();
+    },
+    staleTime: 30 * 1000,
+    refetchInterval: 60 * 1000
+  });
+}
+
+export function useRuntimeConfigCatalogQuery() {
+  return useQuery({
+    queryKey: queryKeys.runtimeConfigCatalog(),
+    queryFn: async () => {
+      return DataService.getRuntimeConfigCatalog();
+    },
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false
+  });
+}
+
+export function useRuntimeConfigQuery(scope: string = 'global') {
+  return useQuery({
+    queryKey: queryKeys.runtimeConfig(scope),
+    queryFn: async () => {
+      return DataService.getRuntimeConfig(scope);
     },
     staleTime: 30 * 1000,
     refetchInterval: 60 * 1000

@@ -18,6 +18,7 @@ import { Toaster } from '@/app/components/ui/sonner';
 import { StockDetailPage } from '@/app/components/pages/StockDetailPage';
 import { PostgresExplorerPage } from '@/app/components/pages/PostgresExplorerPage';
 import { DebugSymbolsPage } from '@/app/components/pages/DebugSymbolsPage';
+import { RuntimeConfigPage } from '@/app/components/pages/RuntimeConfigPage';
 
 function AppContent() {
   // Enable real-time updates from backend
@@ -37,6 +38,7 @@ function AppContent() {
               <Route path="/data-quality" element={<DataQualityPage />} />
               <Route path="/system-status" element={<SystemStatusPage />} />
               <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
+              <Route path="/runtime-config" element={<RuntimeConfigPage />} />
               <Route path="/stock-explorer" element={<StockExplorerPage />} />
               <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
               <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />

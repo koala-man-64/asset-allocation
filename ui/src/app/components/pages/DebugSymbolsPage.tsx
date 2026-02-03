@@ -59,8 +59,7 @@ export function DebugSymbolsPage() {
 
   const currentSymbols = String(debugSymbolsQuery.data?.symbols || '').trim();
   const isDirty =
-    enabled !== Boolean(debugSymbolsQuery.data?.enabled) ||
-    symbolsInput.trim() !== currentSymbols;
+    enabled !== Boolean(debugSymbolsQuery.data?.enabled) || symbolsInput.trim() !== currentSymbols;
 
   const updatedAgo = formatTimeAgo(debugSymbolsQuery.data?.updatedAt || null);
 
@@ -120,7 +119,10 @@ export function DebugSymbolsPage() {
               <span>Configuration</span>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Updated</span>
-                <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-widest">
+                <Badge
+                  variant="outline"
+                  className="font-mono text-[10px] uppercase tracking-widest"
+                >
                   {updatedAgo}
                 </Badge>
               </div>
@@ -166,7 +168,11 @@ export function DebugSymbolsPage() {
                 disabled={isSaving || !isDirty || isInvalidEnabled}
                 className="gap-2"
               >
-                {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {isSaving ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
                 Save changes
               </Button>
               <Button variant="outline" onClick={handleReset} disabled={isSaving || !isDirty}>

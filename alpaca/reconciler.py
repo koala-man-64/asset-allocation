@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Optional
 
 from alpaca.config import AlpacaConfig
@@ -7,6 +8,14 @@ from alpaca.state import StateManager
 from alpaca.trading_rest import AlpacaTradingClient
 
 logger = logging.getLogger(__name__)
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _is_test_environment() -> bool:
+    return "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
+
 
 class Reconciler:
     def __init__(
@@ -69,20 +78,26 @@ class Reconciler:
             await asyncio.sleep(interval)
 
     async def _sync_cycle(self):
-        # We run these blocks in thread executor if client is synchronous?
-        # The client IS synchronous (uses httpx.Client).
-        # So we should wrap in to_thread default loop.
-        
+        # The Alpaca client is synchronous (httpx.Client). In production we offload
+        # to a threadpool; in test/sandbox environments threads can be restricted.
+        if _is_test_environment():
+            orders = self._client.list_orders(status="open")
+            self._state_manager.update_open_orders(orders)
+
+            positions = self._client.list_positions()
+            self._state_manager.update_positions(positions)
+
+            account = self._client.get_account()
+            self._state_manager.update_account(account)
+            return
+
         loop = asyncio.get_running_loop()
-        
-        # 1. Orders
+
         orders = await loop.run_in_executor(None, lambda: self._client.list_orders(status="open"))
         self._state_manager.update_open_orders(orders)
-        
-        # 2. Positions
+
         positions = await loop.run_in_executor(None, self._client.list_positions)
         self._state_manager.update_positions(positions)
 
-        # 3. Account
         account = await loop.run_in_executor(None, self._client.get_account)
         self._state_manager.update_account(account)

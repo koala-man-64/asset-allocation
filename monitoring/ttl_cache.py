@@ -36,6 +36,21 @@ class TtlCache(Generic[T]):
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
 
+    @property
+    def ttl_seconds(self) -> float:
+        return float(self._ttl_seconds)
+
+    def set_ttl_seconds(self, ttl_seconds: float) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be > 0")
+
+        with self._lock:
+            self._ttl_seconds = float(ttl_seconds)
+            # Ensure an existing cached value cannot outlive the new TTL.
+            now = self._time_fn()
+            if self._value is not None:
+                self._expires_at = min(self._expires_at, now + self._ttl_seconds)
+
     def get(self, refresh_fn: Callable[[], T], *, force_refresh: bool = False) -> CacheGetResult[T]:
         now = self._time_fn()
 

@@ -6,9 +6,9 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 import pytest
-from fastapi.testclient import TestClient
 
 from api.service.app import create_app
+from tests.api._client import get_test_client
 
 
 @dataclass
@@ -20,27 +20,30 @@ class _FakeConn:
         return None
 
 
-def test_symbols_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_symbols_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
     app = create_app()
-    with TestClient(app) as client:
-        resp = client.get("/api/data/symbols")
-        assert resp.status_code == 503
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/symbols")
+    assert resp.status_code == 503
 
 
-def test_screener_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_screener_endpoint_requires_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
     app = create_app()
-    with TestClient(app) as client:
-        resp = client.get("/api/data/screener")
-        assert resp.status_code == 503
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/screener")
+    assert resp.status_code == 503
 
 
-def test_screener_endpoint_returns_joined_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_screener_endpoint_returns_joined_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setenv("AZURE_CONTAINER_SILVER", "test-container")
     monkeypatch.setenv("AZURE_CONTAINER_GOLD", "test-container")
@@ -92,10 +95,13 @@ def test_screener_endpoint_returns_joined_snapshot(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr("api.endpoints.data.load_delta", fake_load_delta)
 
     app = create_app()
-    with TestClient(app) as client:
-        resp = client.get("/api/data/screener", params={"as_of": "2025-01-02", "limit": 3, "offset": 0, "sort": "return_1d"})
-        assert resp.status_code == 200
-        payload: Dict[str, Any] = resp.json()
+    async with get_test_client(app) as client:
+        resp = await client.get(
+            "/api/data/screener",
+            params={"as_of": "2025-01-02", "limit": 3, "offset": 0, "sort": "return_1d"},
+        )
+    assert resp.status_code == 200
+    payload: Dict[str, Any] = resp.json()
 
     assert payload["asOf"] == "2025-01-02"
     assert payload["total"] == 3

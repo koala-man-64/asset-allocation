@@ -26,6 +26,13 @@ from monitoring.ttl_cache import TtlCache
 from core.blob_storage import BlobStorageClient
 from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
 from core.postgres import PostgresError
+from core.runtime_config import (
+    DEFAULT_ENV_OVERRIDE_KEYS,
+    delete_runtime_config,
+    list_runtime_config,
+    normalize_env_override,
+    upsert_runtime_config,
+)
 
 logger = logging.getLogger("asset-allocation.api.system")
 
@@ -530,6 +537,336 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
             "totalDeleted": total_deleted,
             "targets": results,
         }
+    )
+
+
+RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
+    "SYMBOLS_REFRESH_INTERVAL_HOURS": {
+        "description": "Refresh symbol universe from NASDAQ/Alpha Vantage when older than this many hours (0 disables refresh).",
+        "example": "24",
+    },
+    "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN": {
+        "description": "Alpha Vantage API rate limit per minute (integer).",
+        "example": "300",
+    },
+    "ALPHA_VANTAGE_TIMEOUT_SECONDS": {
+        "description": "Alpha Vantage request timeout (float seconds).",
+        "example": "15",
+    },
+    "ALPHA_VANTAGE_MAX_WORKERS": {
+        "description": "Alpha Vantage concurrency (max worker threads) for ingestion jobs (integer).",
+        "example": "32",
+    },
+    "ALPHA_VANTAGE_EARNINGS_FRESH_DAYS": {
+        "description": "How many days earnings data is considered fresh before re-fetch (integer).",
+        "example": "7",
+    },
+    "ALPHA_VANTAGE_FINANCE_FRESH_DAYS": {
+        "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
+        "example": "28",
+    },
+    "BACKFILL_START_DATE": {
+        "description": "Optional inclusive start date for backfill runs (YYYY-MM-DD).",
+        "example": "2024-01-01",
+    },
+    "BACKFILL_END_DATE": {
+        "description": "Optional inclusive end date for backfill runs (YYYY-MM-DD).",
+        "example": "2024-03-31",
+    },
+    "SILVER_LATEST_ONLY": {
+        "description": "When true, silver jobs prefer latest-only processing if supported.",
+        "example": "true",
+    },
+    "SILVER_MARKET_LATEST_ONLY": {
+        "description": "Domain override for market silver latest-only behavior.",
+        "example": "true",
+    },
+    "SILVER_FINANCE_LATEST_ONLY": {
+        "description": "Domain override for finance silver latest-only behavior.",
+        "example": "true",
+    },
+    "SILVER_EARNINGS_LATEST_ONLY": {
+        "description": "Domain override for earnings silver latest-only behavior.",
+        "example": "true",
+    },
+    "SILVER_PRICE_TARGET_LATEST_ONLY": {
+        "description": "Domain override for price-target silver latest-only behavior.",
+        "example": "true",
+    },
+    "MATERIALIZE_YEAR_MONTH": {
+        "description": "Override year-month partition for by-date materialization (YYYY-MM).",
+        "example": "2026-01",
+    },
+    "MATERIALIZE_WINDOW_MONTHS": {
+        "description": "How many year-month partitions to materialize (integer).",
+        "example": "1",
+    },
+    "MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR": {
+        "description": "Optional UTC hour gate for by-date runs (0-23). Empty disables gating.",
+        "example": "0",
+    },
+    "FEATURE_ENGINEERING_MAX_WORKERS": {
+        "description": "Max workers for feature engineering concurrency (integer).",
+        "example": "8",
+    },
+    "TRIGGER_NEXT_JOB_NAME": {
+        "description": "Optional downstream job name to trigger on success.",
+        "example": "silver-market-job",
+    },
+    "TRIGGER_NEXT_JOB_REQUIRED": {
+        "description": "When true, a downstream trigger failure fails the job; when false, it is best-effort.",
+        "example": "true",
+    },
+    "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS": {
+        "description": "Downstream trigger retry attempts (integer).",
+        "example": "3",
+    },
+    "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS": {
+        "description": "Downstream trigger retry base delay (float seconds).",
+        "example": "1.0",
+    },
+    "SYSTEM_HEALTH_TTL_SECONDS": {
+        "description": "System health cache TTL for the API (float seconds).",
+        "example": "300",
+    },
+    "SYSTEM_HEALTH_MAX_AGE_SECONDS": {
+        "description": "Max staleness window before marking layers stale (integer seconds).",
+        "example": "129600",
+    },
+    "SYSTEM_HEALTH_VERBOSE_IDS": {
+        "description": "Comma-separated list of alert IDs/components to include in verbose mode.",
+        "example": "AzureMonitorMetrics,AzureLogAnalytics",
+    },
+    "SYSTEM_HEALTH_ARM_API_VERSION": {
+        "description": "Azure ARM API version for Container Apps Job queries (string).",
+        "example": "2024-03-01",
+    },
+    "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS": {
+        "description": "Timeout for Azure ARM calls made by system health (float seconds).",
+        "example": "5",
+    },
+    "SYSTEM_HEALTH_ARM_CONTAINERAPPS": {
+        "description": "Comma-separated list of Container App names to probe via ARM.",
+        "example": "asset-allocation-api,asset-allocation-ui",
+    },
+    "SYSTEM_HEALTH_ARM_JOBS": {
+        "description": "Comma-separated list of Container App Job names to probe via ARM.",
+        "example": "silver-market-job,gold-finance-job",
+    },
+    "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB": {
+        "description": "How many recent job executions to pull per job during system-health probes (integer).",
+        "example": "10",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED": {
+        "description": "When true, system health will query Azure Monitor Metrics for configured resources.",
+        "example": "true",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION": {
+        "description": "Azure Monitor Metrics API version.",
+        "example": "2018-01-01",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES": {
+        "description": "Timespan window (minutes) for Azure Monitor Metrics queries (integer).",
+        "example": "15",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL": {
+        "description": "Metrics query interval (ISO8601 duration string).",
+        "example": "PT1M",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION": {
+        "description": "Metrics aggregation (e.g., Average, Total).",
+        "example": "Average",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS": {
+        "description": "Comma-separated metric names to query for Container Apps.",
+        "example": "CpuUsage,MemoryWorkingSetBytes",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS": {
+        "description": "Comma-separated metric names to query for Container Apps Jobs.",
+        "example": "JobExecutionCount,JobExecutionTime",
+    },
+    "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON": {
+        "description": "JSON object mapping metric name to thresholds (warn_above/error_above/etc).",
+        "example": "{\"CpuUsage\":{\"warn_above\":80,\"error_above\":95}}",
+    },
+    "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED": {
+        "description": "When true, system health will query Azure Log Analytics for configured resources.",
+        "example": "true",
+    },
+    "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID": {
+        "description": "Log Analytics workspace ID for system health queries.",
+        "example": "00000000-0000-0000-0000-000000000000",
+    },
+    "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS": {
+        "description": "Timeout for Log Analytics queries made by system health (float seconds).",
+        "example": "5",
+    },
+    "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES": {
+        "description": "Timespan window (minutes) for Log Analytics queries (integer).",
+        "example": "15",
+    },
+    "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON": {
+        "description": "JSON array of Log Analytics query specs used by system health (KQL templates).",
+        "example": "[{\"resourceType\":\"Microsoft.App/jobs\",\"name\":\"job_errors_15m\",\"query\":\"ContainerAppConsoleLogs_CL|...\",\"warnAbove\":1,\"errorAbove\":10,\"unit\":\"count\"}]",
+    },
+    "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED": {
+        "description": "When true, system health includes Azure Resource Health checks.",
+        "example": "true",
+    },
+    "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION": {
+        "description": "Azure Resource Health API version.",
+        "example": "2022-10-01",
+    },
+    "DOMAIN_METADATA_MAX_SCANNED_BLOBS": {
+        "description": "Limit for blob scanning when computing domain metadata (integer).",
+        "example": "200000",
+    },
+}
+
+
+class RuntimeConfigUpsertRequest(BaseModel):
+    key: str = Field(..., description="Configuration key (env-var style).")
+    scope: str = Field(default="global", description="Scope for this key (e.g., global or job:<name>).")
+    enabled: bool = Field(default=True, description="When true, apply this value as an override.")
+    value: str = Field(default="", description="Raw string value to apply (can be empty).")
+    description: Optional[str] = Field(default=None, description="Optional human-readable description.")
+
+
+@router.get("/runtime-config/catalog")
+def get_runtime_config_catalog(request: Request) -> JSONResponse:
+    validate_auth(request)
+    items = []
+    for key in sorted(DEFAULT_ENV_OVERRIDE_KEYS):
+        meta = RUNTIME_CONFIG_CATALOG.get(key, {})
+        items.append(
+            {
+                "key": key,
+                "description": str(meta.get("description") or ""),
+                "example": str(meta.get("example") or ""),
+            }
+        )
+    return JSONResponse({"items": items}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/runtime-config")
+def get_runtime_config(request: Request, scope: str = Query("global")) -> JSONResponse:
+    validate_auth(request)
+
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
+
+    resolved_scope = str(scope or "").strip() or "global"
+    try:
+        rows = list_runtime_config(dsn, scopes=[resolved_scope], keys=sorted(DEFAULT_ENV_OVERRIDE_KEYS))
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load runtime config: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to load runtime config.")
+        raise HTTPException(status_code=502, detail=f"Failed to load runtime config: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "scope": resolved_scope,
+            "items": [
+                {
+                    "scope": item.scope,
+                    "key": item.key,
+                    "enabled": item.enabled,
+                    "value": item.value,
+                    "description": item.description,
+                    "updatedAt": _iso(item.updated_at),
+                    "updatedBy": item.updated_by,
+                }
+                for item in rows
+            ],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/runtime-config")
+def set_runtime_config(payload: RuntimeConfigUpsertRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
+
+    key = str(payload.key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key is required.")
+    if key not in DEFAULT_ENV_OVERRIDE_KEYS:
+        raise HTTPException(status_code=400, detail="Key is not allowed for DB override.")
+
+    scope = str(payload.scope or "").strip() or "global"
+    normalized_value = str(payload.value or "")
+    if payload.enabled:
+        try:
+            normalized_value = normalize_env_override(key, payload.value)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    actor = _get_actor(request)
+    try:
+        row = upsert_runtime_config(
+            dsn=dsn,
+            scope=scope,
+            key=key,
+            enabled=bool(payload.enabled),
+            value=normalized_value,
+            description=payload.description or RUNTIME_CONFIG_CATALOG.get(key, {}).get("description"),
+            actor=actor,
+        )
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to update runtime config: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to update runtime config.")
+        raise HTTPException(status_code=502, detail=f"Failed to update runtime config: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "scope": row.scope,
+            "key": row.key,
+            "enabled": row.enabled,
+            "value": row.value,
+            "description": row.description,
+            "updatedAt": _iso(row.updated_at),
+            "updatedBy": row.updated_by,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.delete("/runtime-config/{key}")
+def remove_runtime_config(key: str, request: Request, scope: str = Query("global")) -> JSONResponse:
+    validate_auth(request)
+
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
+
+    resolved = str(key or "").strip()
+    if not resolved:
+        raise HTTPException(status_code=400, detail="key is required.")
+    if resolved not in DEFAULT_ENV_OVERRIDE_KEYS:
+        raise HTTPException(status_code=400, detail="Key is not allowed for DB override.")
+
+    resolved_scope = str(scope or "").strip() or "global"
+    try:
+        deleted = delete_runtime_config(dsn=dsn, scope=resolved_scope, key=resolved)
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to delete runtime config: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to delete runtime config.")
+        raise HTTPException(status_code=502, detail=f"Failed to delete runtime config: {exc}") from exc
+
+    return JSONResponse(
+        {"scope": resolved_scope, "key": resolved, "deleted": bool(deleted)},
+        headers={"Cache-Control": "no-store"},
     )
 
 

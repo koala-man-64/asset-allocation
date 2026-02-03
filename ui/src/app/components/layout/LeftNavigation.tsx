@@ -20,7 +20,8 @@ import {
   PinOff,
   Globe,
   Database,
-  Bug
+  Bug,
+  SlidersHorizontal
 } from 'lucide-react';
 import Cookies from 'js-cookie';
 
@@ -52,6 +53,7 @@ const navSections: NavSection[] = [
       { path: '/alerts', label: 'Alerts', icon: Bell },
       { path: '/system-status', label: 'System Status', icon: Activity },
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
+      { path: '/runtime-config', label: 'Runtime Config', icon: SlidersHorizontal },
       { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database }
     ]
   }

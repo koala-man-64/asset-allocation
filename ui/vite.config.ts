@@ -4,6 +4,32 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeProxyMountPath(raw: string): string {
+  const trimmed = (raw || '').replace(/\/+$/, '')
+  if (!trimmed || trimmed === '/') return ''
+  if (trimmed === '/api') return ''
+  if (trimmed.endsWith('/api')) {
+    const withoutApi = trimmed.slice(0, -'/api'.length)
+    return withoutApi && withoutApi !== '/' ? withoutApi : ''
+  }
+  return trimmed
+}
+
+function joinPath(prefix: string, path: string): string {
+  const base = (prefix || '').replace(/\/+$/, '')
+  const suffix = (path || '').startsWith('/') ? String(path || '') : `/${String(path || '')}`
+  if (!base) return suffix || '/'
+  return `${base}${suffix || '/'}`
+}
+
+function isTruthy(value: unknown): boolean {
+  return ['1', 'true', 't', 'yes', 'y', 'on'].includes(String(value || '').trim().toLowerCase())
+}
+
 export default defineConfig(({ mode }) => {
   // Load env from parent directory (../.env)
   const env = loadEnv(mode, path.resolve(__dirname, '..'), '')
@@ -19,6 +45,16 @@ export default defineConfig(({ mode }) => {
   const serverPort = parsedPort
 
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
+  const parsedApiProxyTarget = (() => {
+    try {
+      return new URL(apiProxyTarget)
+    } catch {
+      return null
+    }
+  })()
+  const apiProxyOrigin = parsedApiProxyTarget ? parsedApiProxyTarget.origin : apiProxyTarget
+  const apiProxyMountPath = normalizeProxyMountPath(parsedApiProxyTarget?.pathname || '')
+
   const apiRootPrefixRaw = env.API_ROOT_PREFIX || process.env.API_ROOT_PREFIX || ''
   const apiRootPrefix = (() => {
     const value = String(apiRootPrefixRaw || '').trim()
@@ -26,6 +62,8 @@ export default defineConfig(({ mode }) => {
     const trimmed = value.replace(/^\/+/, '').replace(/\/+$/, '')
     return trimmed ? `/${trimmed}` : ''
   })()
+  const apiRootPrefixRe = apiRootPrefix ? new RegExp(`^${escapeRegExp(apiRootPrefix)}`) : null
+  const proxyConfigJs = isTruthy(env.VITE_PROXY_CONFIG_JS || process.env.VITE_PROXY_CONFIG_JS)
 
   return {
     test: {
@@ -45,25 +83,39 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: {
         '/api': {
-          target: apiProxyTarget,
+          target: apiProxyOrigin,
           changeOrigin: true,
           ws: true,
+          rewrite: (path) => joinPath(apiProxyMountPath, path),
         },
-        '/config.js': {
-          target: apiProxyTarget,
-          changeOrigin: true,
-        },
+        ...(proxyConfigJs
+          ? {
+              '/config.js': {
+                target: apiProxyOrigin,
+                changeOrigin: true,
+              },
+            }
+          : {}),
         ...(apiRootPrefix
           ? {
               [`${apiRootPrefix}/api`]: {
-                target: apiProxyTarget,
+                target: apiProxyOrigin,
                 changeOrigin: true,
                 ws: true,
+                rewrite: (path) => {
+                  const stripped = apiRootPrefixRe ? path.replace(apiRootPrefixRe, '') : path
+                  return joinPath(apiProxyMountPath, stripped)
+                },
               },
-              [`${apiRootPrefix}/config.js`]: {
-                target: apiProxyTarget,
-                changeOrigin: true,
-              },
+              ...(proxyConfigJs
+                ? {
+                    [`${apiRootPrefix}/config.js`]: {
+                      target: apiProxyOrigin,
+                      changeOrigin: true,
+                      rewrite: (path) => (apiRootPrefixRe ? path.replace(apiRootPrefixRe, '') : path),
+                    },
+                  }
+                : {}),
             }
           : {}),
       },

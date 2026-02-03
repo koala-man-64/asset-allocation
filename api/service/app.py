@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,6 +18,13 @@ from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
 
 logger = logging.getLogger("asset-allocation.api")
+
+def _is_truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _is_test_environment() -> bool:
+    return "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
 
 def _normalize_root_prefix(value: str | None) -> str:
     raw = (value or "").strip()
@@ -76,8 +84,110 @@ def create_app() -> FastAPI:
         app.state.settings = settings
         app.state.auth = AuthManager(settings)
 
+        stop_refresh = asyncio.Event()
+        refresh_task: asyncio.Task[None] | None = None
+
         if settings.postgres_dsn:
             app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
+            try:
+                from core.config import reload_settings
+                from core.debug_symbols import refresh_debug_symbols_from_db
+                from core.runtime_config import DEFAULT_ENV_OVERRIDE_KEYS, apply_runtime_config_to_env
+
+                if not _is_test_environment():
+                    baseline_env: dict[str, str | None] = {
+                        key: os.environ.get(key) for key in sorted(DEFAULT_ENV_OVERRIDE_KEYS)
+                    }
+                    app.state.runtime_config_baseline = baseline_env
+
+                    def _apply_and_reconcile() -> dict[str, str]:
+                        applied = apply_runtime_config_to_env(
+                            dsn=settings.postgres_dsn,
+                            scopes_by_precedence=["global"],
+                            raise_on_error=True,
+                        )
+
+                        # If a key is no longer overridden (deleted/disabled), revert to its baseline value.
+                        for key in DEFAULT_ENV_OVERRIDE_KEYS:
+                            if key in applied:
+                                continue
+                            baseline = baseline_env.get(key)
+                            if baseline is None:
+                                os.environ.pop(key, None)
+                            else:
+                                os.environ[key] = baseline
+
+                        reload_settings()
+                        debug_symbols = refresh_debug_symbols_from_db(dsn=settings.postgres_dsn)
+                        app.state.runtime_config_applied = applied
+
+                        try:
+                            import hashlib
+
+                            digest = hashlib.sha256(
+                                json.dumps(applied, sort_keys=True, separators=(",", ":")).encode(
+                                    "utf-8"
+                                )
+                            ).hexdigest()
+                            if getattr(app.state, "runtime_config_hash", None) != digest:
+                                app.state.runtime_config_hash = digest
+                                logger.info(
+                                    "Runtime config refreshed: keys=%s hash=%s",
+                                    sorted(applied.keys()),
+                                    digest[:12],
+                                )
+                        except Exception:
+                            pass
+
+                        try:
+                            import hashlib
+
+                            digest = hashlib.sha256(
+                                json.dumps(list(debug_symbols), separators=(",", ":")).encode("utf-8")
+                            ).hexdigest()
+                            if getattr(app.state, "debug_symbols_hash", None) != digest:
+                                app.state.debug_symbols_hash = digest
+                                logger.info(
+                                    "Debug symbols refreshed: count=%s hash=%s",
+                                    len(debug_symbols),
+                                    digest[:12],
+                                )
+                        except Exception:
+                            pass
+                        return applied
+
+                    _apply_and_reconcile()
+
+                    def _get_refresh_seconds() -> float:
+                        raw = os.environ.get("RUNTIME_CONFIG_REFRESH_SECONDS", "60")
+                        try:
+                            seconds = float(str(raw).strip() or "60")
+                        except Exception:
+                            return 60.0
+                        return seconds if seconds >= 5 else 5.0
+
+                    async def _periodic_refresh() -> None:
+                        while not stop_refresh.is_set():
+                            try:
+                                await asyncio.wait_for(stop_refresh.wait(), timeout=_get_refresh_seconds())
+                                break
+                            except asyncio.TimeoutError:
+                                pass
+
+                            try:
+                                _apply_and_reconcile()
+                                # Update TTL cache if config changed.
+                                ttl = _system_health_ttl_seconds()
+                                cache = getattr(app.state, "system_health_cache", None)
+                                if cache is not None and getattr(cache, "ttl_seconds", None) is not None:
+                                    if abs(float(cache.ttl_seconds) - ttl) > 1e-9:
+                                        cache.set_ttl_seconds(ttl)
+                            except Exception as exc:
+                                logger.warning("Periodic runtime config refresh failed: %s", exc)
+
+                    refresh_task = asyncio.create_task(_periodic_refresh())
+            except Exception as exc:
+                logger.warning("Runtime config overrides not applied: %s", exc)
 
         def _system_health_ttl_seconds() -> float:
             raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "300")
@@ -92,6 +202,14 @@ def create_app() -> FastAPI:
         app.state.system_health_cache = TtlCache(ttl_seconds=_system_health_ttl_seconds())
 
         yield
+
+        stop_refresh.set()
+        if refresh_task is not None:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except Exception:
+                pass
 
     app = FastAPI(title="Asset Allocation API", version="0.1.0", lifespan=lifespan)
     logger.info("Service application starting")

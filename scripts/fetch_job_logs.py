@@ -1,10 +1,10 @@
-import sys
 import os
-from datetime import datetime, timedelta, timezone
+
+from dotenv import load_dotenv
+
 from monitoring.log_analytics import AzureLogAnalyticsClient, render_query
 
-# Load .env if needed
-from dotenv import load_dotenv
+
 load_dotenv()
 
 workspace_id = os.getenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")

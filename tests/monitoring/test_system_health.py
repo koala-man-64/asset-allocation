@@ -5,12 +5,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api.service.app import create_app
 from monitoring.delta_log import find_latest_delta_version
 from monitoring import system_health
 from monitoring.ttl_cache import TtlCache
+from tests.api._client import get_test_client
 
 
 def test_find_latest_delta_version_finds_highest_contiguous() -> None:
@@ -74,32 +74,34 @@ def test_make_job_portal_url_uses_resource_anchor() -> None:
     )
 
 
-def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
     app = create_app()
-    with TestClient(app) as client:
-        resp = client.get("/api/system/health")
-        assert resp.status_code == 200
-        payload = resp.json()
-        assert set(payload.keys()) >= {"overall", "dataLayers", "recentJobs", "alerts"}
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/system/health")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert set(payload.keys()) >= {"overall", "dataLayers", "recentJobs", "alerts"}
 
 
-def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_KEY", "secret")
     monkeypatch.setenv("API_AUTH_MODE", "api_key")
     monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
     app = create_app()
-    with TestClient(app) as client:
-        resp = client.get("/api/system/health")
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/system/health")
         assert resp.status_code == 401
-        
-        resp2 = client.get("/api/system/health", headers={"X-API-Key": "secret"})
+
+        resp2 = await client.get("/api/system/health", headers={"X-API-Key": "secret"})
         assert resp2.status_code == 200
 
 

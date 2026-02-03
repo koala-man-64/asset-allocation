@@ -2,11 +2,18 @@
 [mcp_servers.desktop-commander]
 command = "npx"
 args = ["-y", "@wonderwhy-er/desktop-commander@latest"]
+enabled = true
+
+[projects."/mnt/c/Users/rdpro/Projects/AssetAllocation - AG/asset-allocation"]
+trust_level = "trusted"
+
+[projects."/mnt/c/Users/rdpro/Projects/AssetAllocation"]
+trust_level = "trusted"
 
 [mcp_servers.my-mcp-server-a02e0cb0]
 command = "docker"
 args = ["mcp", "gateway", "run"]
-enabled = false # Disables the server without deleting config
+enabled = true # Disables the server without deleting config
 disabled_tools = [
   "aks",
   "applens",

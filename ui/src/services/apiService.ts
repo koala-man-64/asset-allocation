@@ -94,6 +94,31 @@ export interface DebugSymbolsResponse {
   updatedBy?: string | null;
 }
 
+export interface RuntimeConfigCatalogItem {
+  key: string;
+  description: string;
+  example: string;
+}
+
+export interface RuntimeConfigCatalogResponse {
+  items: RuntimeConfigCatalogItem[];
+}
+
+export interface RuntimeConfigItem {
+  scope: string;
+  key: string;
+  enabled: boolean;
+  value: string;
+  description?: string | null;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+}
+
+export interface RuntimeConfigListResponse {
+  scope: string;
+  items: RuntimeConfigItem[];
+}
+
 export const apiService = {
   // --- Data Endpoints ---
 
@@ -183,5 +208,41 @@ export const apiService = {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+  },
+
+  getRuntimeConfigCatalog(): Promise<RuntimeConfigCatalogResponse> {
+    return request<RuntimeConfigCatalogResponse>('/system/runtime-config/catalog');
+  },
+
+  getRuntimeConfig(scope: string = 'global'): Promise<RuntimeConfigListResponse> {
+    return request<RuntimeConfigListResponse>('/system/runtime-config', {
+      params: { scope }
+    });
+  },
+
+  setRuntimeConfig(payload: {
+    key: string;
+    scope?: string;
+    enabled: boolean;
+    value: string;
+    description?: string;
+  }): Promise<RuntimeConfigItem> {
+    return request<RuntimeConfigItem>('/system/runtime-config', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteRuntimeConfig(
+    key: string,
+    scope: string = 'global'
+  ): Promise<{ scope: string; key: string; deleted: boolean }> {
+    return request<{ scope: string; key: string; deleted: boolean }>(
+      `/system/runtime-config/${encodeURIComponent(key)}`,
+      {
+        method: 'DELETE',
+        params: { scope }
+      }
+    );
   }
 };

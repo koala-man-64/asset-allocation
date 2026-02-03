@@ -15,6 +15,10 @@ API Root
     │   ├── /lineage [GET] (system.system_lineage) - Returns data lineage graph and dependencies :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /debug-symbols [GET] (system.get_debug_symbols) - Returns debug-symbol config from Postgres :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /debug-symbols [POST] (system.set_debug_symbols) - Updates debug-symbol config in Postgres :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /runtime-config/catalog [GET] (system.get_runtime_config_catalog) - Lists allowlisted runtime-config keys :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /runtime-config [GET] (system.get_runtime_config) - Lists runtime-config overrides for a scope :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /runtime-config [POST] (system.set_runtime_config) - Upserts a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /runtime-config/{key} [DELETE] (system.remove_runtime_config) - Deletes a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /alerts
     │   │   └── /{alert_id}
     │   │       ├── /ack [POST] (system.acknowledge_alert) - Acknowledges a system alert :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx

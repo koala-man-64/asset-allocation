@@ -8,7 +8,7 @@ import re
 import random
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from typing import Any, Union, Optional
@@ -102,6 +102,41 @@ def log_environment_diagnostics():
 
     write_section("ENVIRONMENT DIAGNOSTICS", "Logging selected environment variables...")
 
+    applied_runtime_config: dict[str, str] = {}
+    try:
+        from core.runtime_config import apply_runtime_config_to_env, default_scopes_by_precedence
+
+        applied_runtime_config = apply_runtime_config_to_env(
+            scopes_by_precedence=default_scopes_by_precedence()
+        )
+        if applied_runtime_config:
+            logger.info(
+                "Runtime config overrides loaded from Postgres: %s",
+                sorted(applied_runtime_config.keys()),
+            )
+    except Exception as exc:
+        logger.warning("Runtime config refresh skipped: %s", exc)
+
+    if applied_runtime_config:
+        try:
+            from core.config import reload_settings
+
+            reload_settings()
+        except Exception as exc:
+            logger.warning("Settings reload skipped: %s", exc)
+        try:
+            import hashlib
+            import json
+
+            digest = hashlib.sha256(
+                json.dumps(applied_runtime_config, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+            logger.info("Runtime config applied hash=%s", digest[:12])
+        except Exception:
+            pass
+
     try:
         from core.debug_symbols import refresh_debug_symbols_from_db
 
@@ -115,6 +150,18 @@ def log_environment_diagnostics():
                 preview,
                 suffix,
             )
+            try:
+                import hashlib
+                import json
+
+                digest = hashlib.sha256(
+                    json.dumps(list(debug_symbols), separators=(",", ":"), sort_keys=False).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                logger.info("Debug symbols hash=%s", digest[:12])
+            except Exception:
+                pass
         else:
             logger.info("Debug symbols disabled or empty.")
     except Exception as exc:

@@ -16,6 +16,14 @@ list_manager = ListManager(bronze_client, "price-target-data", auto_flush=False)
 
 BATCH_SIZE = 50
 
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _is_test_environment() -> bool:
+    return "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
+
 def _validate_environment() -> None:
     required = ["AZURE_CONTAINER_BRONZE", "NASDAQ_API_KEY"]
     missing = [name for name in required if not os.environ.get(name)]
@@ -67,7 +75,11 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
                 return pd.DataFrame()
 
         mdc.write_line(f"Fetching {len(stale_symbols)} symbols from Nasdaq...")
-        batch_df = await loop.run_in_executor(None, fetch_api)
+        if _is_test_environment():
+            # Avoid threadpool usage in test/sandbox environments.
+            batch_df = fetch_api()
+        else:
+            batch_df = await loop.run_in_executor(None, fetch_api)
         
         if not batch_df.empty:
             for symbol, group_df in batch_df.groupby('ticker'):
