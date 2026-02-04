@@ -138,8 +138,7 @@ jobs:
           require_value POSTGRES_DSN
           require_value SERVICE_ACCOUNT_NAME
           require_value ASSET_ALLOCATION_API_BASE_URL
-          require_value API_AUTH_MODE
-          require_value API_KEY
+          API_AUTH_MODE="${API_AUTH_MODE:-none}"
 
           python3 - <<'PY'
           import os
@@ -187,11 +186,33 @@ jobs:
               )
               sys.exit(1)
 
-          auth_mode = (os.environ.get("API_AUTH_MODE") or "").strip().lower()
-          allowed = {"none", "api_key", "oidc", "api_key_or_oidc"}
-          if auth_mode not in allowed:
+          auth_mode_raw = (os.environ.get("API_AUTH_MODE") or "").strip().lower()
+          if not auth_mode_raw:
+              auth_mode_raw = "none"
+          aliases = {
+              "none": "none",
+              "noauth": "none",
+              "disabled": "none",
+              "api_key": "api_key",
+              "apikey": "api_key",
+              "key": "api_key",
+              "oidc": "oidc",
+              "jwt": "oidc",
+              "bearer": "oidc",
+              "api_key_or_oidc": "api_key_or_oidc",
+              "apikey_or_oidc": "api_key_or_oidc",
+              "key_or_oidc": "api_key_or_oidc",
+          }
+          auth_mode = aliases.get(auth_mode_raw)
+          if auth_mode is None:
               print("::error::API_AUTH_MODE must be one of: none|api_key|oidc|api_key_or_oidc")
               sys.exit(1)
+
+          if auth_mode == "api_key":
+              api_key = (os.environ.get("API_KEY") or "").strip()
+              if not api_key:
+                  print("::error::API_AUTH_MODE=api_key requires API_KEY to be set.")
+                  sys.exit(1)
 
           if auth_mode in {"oidc", "api_key_or_oidc"}:
               issuer = (os.environ.get("API_OIDC_ISSUER") or "").strip()
