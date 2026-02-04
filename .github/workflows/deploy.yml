@@ -528,9 +528,11 @@ jobs:
 
       - name: Set image env vars
         run: |
-          echo "JOB_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
-          echo "API_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
-          echo "UI_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
+          {
+            echo "JOB_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+            echo "API_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
+            echo "UI_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}"
+          } >> "$GITHUB_ENV"
 
       - name: Ensure Storage Containers Exist
         run: |
