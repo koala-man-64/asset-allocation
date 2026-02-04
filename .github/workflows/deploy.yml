@@ -629,6 +629,17 @@ jobs:
           : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
           : "${IMAGE_TAG:?IMAGE_TAG is required}"
 
+          ensure_registry_identity() {
+            local app_name="$1"
+            echo "Ensuring ACR registry uses managed identity for $app_name..."
+            az containerapp registry set \
+              --name "$app_name" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
+          }
+
           echo "Deploying API app from YAML..."
           tmp="deploy/app_api.tmp.yaml"
           envsubst < deploy/app_api.yaml > "$tmp"
@@ -652,6 +663,7 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
               --yaml "$tmp"
+            ensure_registry_identity "${{ env.API_APP_NAME }}"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
             if ! az containerapp identity show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
@@ -661,6 +673,8 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            ensure_registry_identity "${{ env.API_APP_NAME }}"
 
             az containerapp update \
               --name ${{ env.API_APP_NAME }} \
@@ -676,6 +690,17 @@ jobs:
           : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
           : "${IMAGE_TAG:?IMAGE_TAG is required}"
 
+          ensure_registry_identity() {
+            local app_name="$1"
+            echo "Ensuring ACR registry uses managed identity for $app_name..."
+            az containerapp registry set \
+              --name "$app_name" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
+          }
+
           echo "Deploying UI app from YAML..."
           tmp="deploy/app_ui.tmp.yaml"
           envsubst < deploy/app_ui.yaml > "$tmp"
@@ -687,6 +712,7 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --environment asset-allocation-env \
               --yaml "$tmp"
+            ensure_registry_identity "${{ env.UI_APP_NAME }}"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
             if ! az containerapp identity show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
@@ -696,6 +722,8 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            ensure_registry_identity "${{ env.UI_APP_NAME }}"
 
             az containerapp update \
               --name ${{ env.UI_APP_NAME }} \
