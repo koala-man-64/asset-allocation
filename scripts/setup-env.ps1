@@ -177,6 +177,7 @@ $Config += "API_AUTH_MODE=" + (Prompt-Var "API_AUTH_MODE" "none" "Options: none 
 $Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required if API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
 $Config += "API_KEY_HEADER=" + (Prompt-Var "API_KEY_HEADER" "X-API-Key" "Header name for API keys.")
 $Config += "API_ROOT_PREFIX=" + (Prompt-Var "API_ROOT_PREFIX" "" "Optional: mount API under /{API_ROOT_PREFIX}/api/* (e.g. asset-allocation).")
+$Config += "API_INGRESS_EXTERNAL=" + (Prompt-Var "API_INGRESS_EXTERNAL" "true" "Deploy only: true for external ingress, false for internal only.")
 $Config += "API_PORT=" + (Prompt-Var "API_PORT" "8000" "Local API port (used by core/config.py).")
 $Config += "API_CSP=" + (Prompt-Var "API_CSP" "" "Optional: Content-Security-Policy header value.")
 $Config += "API_CORS_ALLOW_ORIGINS=" + (Prompt-Var "API_CORS_ALLOW_ORIGINS" "" "Optional: comma-separated or JSON list of allowed origins.")
@@ -196,6 +197,7 @@ $Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OID
 $Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Optional: UI redirect URI.")
 $Config += "UI_API_BASE_URL=" + (Prompt-Var "UI_API_BASE_URL" "" "Optional: base URL where the UI reaches this API.")
 $Config += "UI_DIST_DIR=" + (Prompt-Var "UI_DIST_DIR" "" "Optional: local path to UI dist for serving static UI.")
+$Config += "RUNTIME_CONFIG_REFRESH_SECONDS=" + (Prompt-Var "RUNTIME_CONFIG_REFRESH_SECONDS" "60" "API only: poll Postgres for runtime-config/debug-symbol changes (min 5s).")
 
 # -------------------------------------------------------------------------
 # System Health Monitoring (FastAPI: GET /api/system/health)
@@ -207,6 +209,7 @@ $Config += "# =========================================="
 $Config += "SYSTEM_HEALTH_TTL_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_TTL_SECONDS" "10" "Cache TTL for /api/system/health.")
 $Config += "SYSTEM_HEALTH_MAX_AGE_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_MAX_AGE_SECONDS" "129600" "Max staleness before reporting stale.")
 $Config += "SYSTEM_HEALTH_VERBOSE_IDS=" + (Prompt-Var "SYSTEM_HEALTH_VERBOSE_IDS" "" "Optional: include Azure resource IDs in response.")
+$Config += "SYSTEM_HEALTH_LINK_TOKEN_SECRET=" + (Prompt-Var "SYSTEM_HEALTH_LINK_TOKEN_SECRET" "" "Secret used to sign system health links." -Secret)
 
 # Optional: Azure control-plane probes (ARM) for Container Apps + Jobs
 $Config += "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID=" + (Prompt-Var "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID" "" "Optional: ARM subscription ID for probes / job start allowlist.")
@@ -268,6 +271,8 @@ $Config += "# =========================================="
 $Config += "# UI / CI Variables (GitHub Variables)"
 $Config += "# =========================================="
 $Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port (required by CI UI build).")
+$Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" "UI dev only: when true, proxy /config.js to the API.")
+$Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" "http://127.0.0.1:8000" "UI dev only: Vite proxy target for /api (do not include /api).")
 $Config += "SERVICE_ACCOUNT_NAME=" + (Prompt-Var "SERVICE_ACCOUNT_NAME" "asset-allocation-sa" "Service account name (used by deploy manifests).")
 $Config += "KUBERNETES_NAMESPACE=" + (Prompt-Var "KUBERNETES_NAMESPACE" "" "Optional: Kubernetes namespace (used by provision_azure.ps1 when AKS is enabled).")
 $Config += "AKS_CLUSTER_NAME=" + (Prompt-Var "AKS_CLUSTER_NAME" "" "Optional: AKS cluster name (used by provision_azure.ps1 when AKS is enabled).")

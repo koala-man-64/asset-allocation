@@ -15,6 +15,32 @@ param(
   [switch]$GrantAcrPullToAcaResources,
   [switch]$GrantJobStartToAcaResources,
 
+  [switch]$ProvisionPostgres,
+  [string]$PostgresServerName = "pg-asset-allocation",
+  [string]$PostgresDatabaseName = "asset_allocation",
+  [string]$PostgresAdminUser = "assetallocadmin",
+  [string]$PostgresAdminPassword = "",
+  [switch]$PostgresApplyMigrations,
+  [switch]$PostgresUseDockerPsql,
+  [switch]$PostgresCreateAppUsers,
+  [string]$PostgresBacktestServiceUser = "backtest_service",
+  [string]$PostgresBacktestServicePassword = "",
+  [string]$PostgresSkuName = "standard_b1ms",
+  [string]$PostgresTier = "",
+  [int]$PostgresStorageSizeGiB = 32,
+  [string]$PostgresVersion = "16",
+  [ValidateSet("Disabled", "Enabled", "All", "None")]
+  [string]$PostgresPublicAccess = "Enabled",
+  [bool]$PostgresAllowAzureServices = $true,
+  [string]$PostgresAllowIpRangeStart = "",
+  [string]$PostgresAllowIpRangeEnd = "",
+  [bool]$PostgresAllowCurrentClientIp = $true,
+  [switch]$PostgresEmitSecrets,
+  [string[]]$PostgresLocationFallback = @("eastus2", "centralus", "westus2"),
+
+  [switch]$PromptForResources = $true,
+  [switch]$NonInteractive,
+
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
   [string]$AzureClientId = "",
@@ -56,6 +82,44 @@ else {
 }
 
 Write-Host "Loaded configuration from $envLabel" -ForegroundColor Cyan
+
+function Get-YesNo {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [bool]$DefaultYes = $true
+    )
+
+    if ($NonInteractive -or (-not $PromptForResources)) {
+        return $true
+    }
+
+    $suffix = if ($DefaultYes) { "[Y/n]" } else { "[y/N]" }
+    while ($true) {
+        $input = Read-Host "$Prompt $suffix"
+        if ([string]::IsNullOrWhiteSpace($input)) { return $DefaultYes }
+        $value = $input.Trim().ToLowerInvariant()
+        if ($value -in @("y", "yes")) { return $true }
+        if ($value -in @("n", "no")) { return $false }
+        Write-Host "Please enter y or n."
+    }
+}
+
+$grantAcrPullPrompted = $false
+$grantJobStartPrompted = $false
+
+if (-not $PSBoundParameters.ContainsKey("ProvisionPostgres") -and $PromptForResources -and (-not $NonInteractive)) {
+    $ProvisionPostgres = Get-YesNo "Provision Postgres Flexible Server?" $false
+}
+
+if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources") -and $PromptForResources -and (-not $NonInteractive)) {
+    $GrantAcrPullToAcaResources = Get-YesNo "Grant AcrPull to existing Container Apps/Jobs?" $false
+    $grantAcrPullPrompted = $true
+}
+
+if (-not $PSBoundParameters.ContainsKey("GrantJobStartToAcaResources") -and $PromptForResources -and (-not $NonInteractive)) {
+    $GrantJobStartToAcaResources = Get-YesNo "Grant job-start permissions to ACR pull identity?" $false
+    $grantJobStartPrompted = $true
+}
 
 function Get-EnvValue {
     param(
@@ -240,7 +304,7 @@ if (-not $PSBoundParameters.ContainsKey("EmitSecrets")) {
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources")) {
+if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources") -and (-not $grantAcrPullPrompted)) {
     $grantAcrPullFromEnv = Get-EnvBool -Key "GRANT_ACR_PULL_TO_ACA_RESOURCES"
     if ($grantAcrPullFromEnv -ne $null) {
         Write-Host "Using GRANT_ACR_PULL_TO_ACA_RESOURCES from ${envLabel}: $grantAcrPullFromEnv"
@@ -248,7 +312,7 @@ if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources")) {
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey("GrantJobStartToAcaResources")) {
+if (-not $PSBoundParameters.ContainsKey("GrantJobStartToAcaResources") -and (-not $grantJobStartPrompted)) {
     $grantJobStartFromEnv = Get-EnvBool -Key "GRANT_JOB_START_TO_ACA_RESOURCES"
     if ($grantJobStartFromEnv -ne $null) {
         Write-Host "Using GRANT_JOB_START_TO_ACA_RESOURCES from ${envLabel}: $grantJobStartFromEnv"
@@ -274,7 +338,22 @@ if ($AksClusterName) {
     Assert-CommandExists -Name "kubectl"
 }
 
+$acrLoginServer = ""
+$acrId = ""
+$acrPullIdentityId = ""
+$acrPullIdentityClientId = ""
+$acrPullIdentityPrincipalId = ""
+
+if (-not $NonInteractive -and $PromptForResources) {
+    Write-Host ""
+    Write-Host "Resource provisioning prompts (set -NonInteractive to skip prompts)" -ForegroundColor Cyan
+}
+
 if ($AzureClientId) {
+    $doFederatedCredential = Get-YesNo "Ensure GitHub Actions federated credential on Azure app ($AzureClientId)?" $true
+}
+
+if ($AzureClientId -and $doFederatedCredential) {
     Write-Host "Checking for existing Federated Credential 'github-actions-production'..."
     $paramsFile = "credential.json"
     $subject = "repo:koala-man-64/asset-allocation:environment:production"
@@ -328,108 +407,182 @@ foreach ($p in $providers) {
 Write-Host "Ensuring Azure CLI extensions are installed..."
 az extension add --name containerapp --upgrade --only-show-errors 1>$null
 
-Write-Host "Ensuring resource group exists: $ResourceGroup ($Location)"
-az group create --name $ResourceGroup --location $Location --only-show-errors 1>$null
-
-Write-Host "Ensuring storage account exists: $StorageAccountName"
-$existingStorage = $null
-try {
-  $existingStorage = az storage account show `
-    --name $StorageAccountName `
-    --resource-group $ResourceGroup `
-    --only-show-errors -o json 2>$null | ConvertFrom-Json
+$doResourceGroup = Get-YesNo "Ensure resource group exists: $ResourceGroup ($Location)?" $true
+if ($doResourceGroup) {
+  Write-Host "Ensuring resource group exists: $ResourceGroup ($Location)"
+  az group create --name $ResourceGroup --location $Location --only-show-errors 1>$null
 }
-catch {
+
+if ($ProvisionPostgres) {
+  Write-Host ""
+  Write-Host "Provisioning Postgres Flexible Server..."
+  $postgresScript = Join-Path $PSScriptRoot "provision_azure_postgres.ps1"
+  if (-not (Test-Path $postgresScript)) {
+    throw "Postgres provisioning script not found at $postgresScript"
+  }
+
+  $postgresArgs = @{
+    Location           = $Location
+    LocationFallback   = $PostgresLocationFallback
+    SubscriptionId     = $SubscriptionId
+    ResourceGroup      = $ResourceGroup
+    ServerName         = $PostgresServerName
+    DatabaseName       = $PostgresDatabaseName
+    AdminUser          = $PostgresAdminUser
+    SkuName            = $PostgresSkuName
+    Tier               = $PostgresTier
+    StorageSizeGiB     = $PostgresStorageSizeGiB
+    PostgresVersion    = $PostgresVersion
+    PublicAccess       = $PostgresPublicAccess
+    AllowAzureServices = $PostgresAllowAzureServices
+    AllowCurrentClientIp = $PostgresAllowCurrentClientIp
+  }
+
+  if ($PostgresAdminPassword) { $postgresArgs.AdminPassword = $PostgresAdminPassword }
+  if ($PostgresAllowIpRangeStart) { $postgresArgs.AllowIpRangeStart = $PostgresAllowIpRangeStart }
+  if ($PostgresAllowIpRangeEnd) { $postgresArgs.AllowIpRangeEnd = $PostgresAllowIpRangeEnd }
+  if ($PostgresApplyMigrations) { $postgresArgs.ApplyMigrations = $true }
+  if ($PostgresUseDockerPsql) { $postgresArgs.UseDockerPsql = $true }
+  if ($PostgresCreateAppUsers) { $postgresArgs.CreateAppUsers = $true }
+  if ($PostgresBacktestServiceUser) { $postgresArgs.BacktestServiceUser = $PostgresBacktestServiceUser }
+  if ($PostgresBacktestServicePassword) { $postgresArgs.BacktestServicePassword = $PostgresBacktestServicePassword }
+  if ($PostgresEmitSecrets) { $postgresArgs.EmitSecrets = $true }
+
+  & $postgresScript @postgresArgs
+  if (-not $?) { throw "Postgres provisioning failed." }
+}
+
+$doStorage = Get-YesNo "Ensure storage account exists: $StorageAccountName?" $true
+if ($doStorage) {
+  Write-Host "Ensuring storage account exists: $StorageAccountName"
   $existingStorage = $null
-}
-
-if ($null -eq $existingStorage) {
-  $foundInSubscription = $null
   try {
-    $foundInSubscription = az storage account show `
+    $existingStorage = az storage account show `
       --name $StorageAccountName `
+      --resource-group $ResourceGroup `
       --only-show-errors -o json 2>$null | ConvertFrom-Json
   }
   catch {
+    $existingStorage = $null
+  }
+
+  if ($null -eq $existingStorage) {
     $foundInSubscription = $null
+    try {
+      $foundInSubscription = az storage account show `
+        --name $StorageAccountName `
+        --only-show-errors -o json 2>$null | ConvertFrom-Json
+    }
+    catch {
+      $foundInSubscription = $null
+    }
+
+    if ($null -ne $foundInSubscription) {
+      throw "Storage account '$StorageAccountName' already exists in resource group '$($foundInSubscription.resourceGroup)'. Set -ResourceGroup to that value or choose a new -StorageAccountName."
+    }
+
+    $nameAvailable = az storage account check-name --name $StorageAccountName --query nameAvailable -o tsv --only-show-errors
+    if ($nameAvailable -ne "true") {
+      throw "Storage account name '$StorageAccountName' is not available. Choose a different -StorageAccountName."
+    }
+
+    az storage account create `
+      --name $StorageAccountName `
+      --resource-group $ResourceGroup `
+      --location $Location `
+      --sku Standard_LRS `
+      --kind StorageV2 `
+      --https-only true `
+      --min-tls-version TLS1_2 `
+      --allow-blob-public-access false `
+      --hns true `
+      --only-show-errors 1>$null
+  }
+  else {
+    if (-not [bool]$existingStorage.isHnsEnabled) {
+      Write-Warning "Storage account '$StorageAccountName' exists but Hierarchical Namespace (HNS) is disabled. This cannot be enabled after creation; continuing without updating HNS. To use ADLS Gen2, create a new storage account (or delete & recreate) with --hns true."
+    }
+
+    az storage account update `
+      --name $StorageAccountName `
+      --resource-group $ResourceGroup `
+      --https-only true `
+      --min-tls-version TLS1_2 `
+      --allow-blob-public-access false `
+      --only-show-errors 1>$null
   }
 
-  if ($null -ne $foundInSubscription) {
-    throw "Storage account '$StorageAccountName' already exists in resource group '$($foundInSubscription.resourceGroup)'. Set -ResourceGroup to that value or choose a new -StorageAccountName."
+  $doContainers = Get-YesNo "Create/update blob containers?" $true
+  if ($doContainers) {
+    Write-Host "Creating blob containers (auth-mode=login)..."
+    foreach ($c in $StorageContainers) {
+      if (-not $c) { continue }
+      az storage container create --name $c --account-name $StorageAccountName --auth-mode login --only-show-errors 1>$null
+    }
   }
+}
 
-  $nameAvailable = az storage account check-name --name $StorageAccountName --query nameAvailable -o tsv --only-show-errors
-  if ($nameAvailable -ne "true") {
-    throw "Storage account name '$StorageAccountName' is not available. Choose a different -StorageAccountName."
-  }
-
-  az storage account create `
-    --name $StorageAccountName `
+$doAcr = Get-YesNo "Ensure ACR exists: $AcrName?" $true
+if ($doAcr) {
+  Write-Host "Ensuring ACR exists: $AcrName"
+  $acrAdmin = if ($EnableAcrAdmin) { "true" } else { "false" }
+  az acr create `
+    --name $AcrName `
     --resource-group $ResourceGroup `
     --location $Location `
-    --sku Standard_LRS `
-    --kind StorageV2 `
-    --https-only true `
-    --min-tls-version TLS1_2 `
-    --allow-blob-public-access false `
-    --hns true `
+    --sku Basic `
+    --admin-enabled $acrAdmin `
     --only-show-errors 1>$null
-}
-else {
-  if (-not [bool]$existingStorage.isHnsEnabled) {
-    Write-Warning "Storage account '$StorageAccountName' exists but Hierarchical Namespace (HNS) is disabled. This cannot be enabled after creation; continuing without updating HNS. To use ADLS Gen2, create a new storage account (or delete & recreate) with --hns true."
-  }
 
-  az storage account update `
-    --name $StorageAccountName `
+  $acrLoginServer = az acr show --name $AcrName --resource-group $ResourceGroup --query loginServer -o tsv
+  $acrId = az acr show --name $AcrName --resource-group $ResourceGroup --query id -o tsv --only-show-errors
+}
+
+$doLogAnalytics = Get-YesNo "Ensure Log Analytics workspace exists: $LogAnalyticsWorkspaceName?" $true
+if ($doLogAnalytics) {
+  Write-Host "Ensuring Log Analytics workspace exists: $LogAnalyticsWorkspaceName"
+  az monitor log-analytics workspace create `
     --resource-group $ResourceGroup `
-    --https-only true `
-    --min-tls-version TLS1_2 `
-    --allow-blob-public-access false `
+    --workspace-name $LogAnalyticsWorkspaceName `
+    --location $Location `
     --only-show-errors 1>$null
 }
 
-Write-Host "Creating blob containers (auth-mode=login)..."
-foreach ($c in $StorageContainers) {
-  if (-not $c) { continue }
-  az storage container create --name $c --account-name $StorageAccountName --auth-mode login --only-show-errors 1>$null
+$lawCustomerId = ""
+$lawSharedKey = ""
+if ($doLogAnalytics) {
+  $lawCustomerId = az monitor log-analytics workspace show `
+    --resource-group $ResourceGroup `
+    --workspace-name $LogAnalyticsWorkspaceName `
+    --query customerId -o tsv
+
+  $lawSharedKey = az monitor log-analytics workspace get-shared-keys `
+    --resource-group $ResourceGroup `
+    --workspace-name $LogAnalyticsWorkspaceName `
+    --query primarySharedKey -o tsv
 }
 
-Write-Host "Ensuring ACR exists: $AcrName"
-$acrAdmin = if ($EnableAcrAdmin) { "true" } else { "false" }
-az acr create `
-  --name $AcrName `
-  --resource-group $ResourceGroup `
-  --location $Location `
-  --sku Basic `
-  --admin-enabled $acrAdmin `
-  --only-show-errors 1>$null
+$doContainerAppsEnv = Get-YesNo "Ensure Container Apps environment exists: $ContainerAppsEnvironmentName?" $true
+if ($doContainerAppsEnv) {
+  if (-not $lawCustomerId -or -not $lawSharedKey) {
+    throw "Log Analytics workspace details missing; cannot create Container Apps environment. Enable Log Analytics or provide workspace info."
+  }
+  Write-Host "Ensuring Container Apps environment exists: $ContainerAppsEnvironmentName"
+  az containerapp env create `
+    --name $ContainerAppsEnvironmentName `
+    --resource-group $ResourceGroup `
+    --location $Location `
+    --logs-workspace-id $lawCustomerId `
+    --logs-workspace-key $lawSharedKey `
+    --only-show-errors 1>$null
+}
 
-Write-Host "Ensuring Log Analytics workspace exists: $LogAnalyticsWorkspaceName"
-az monitor log-analytics workspace create `
-  --resource-group $ResourceGroup `
-  --workspace-name $LogAnalyticsWorkspaceName `
-  --location $Location `
-  --only-show-errors 1>$null
-
-$lawCustomerId = az monitor log-analytics workspace show `
-  --resource-group $ResourceGroup `
-  --workspace-name $LogAnalyticsWorkspaceName `
-  --query customerId -o tsv
-
-$lawSharedKey = az monitor log-analytics workspace get-shared-keys `
-  --resource-group $ResourceGroup `
-  --workspace-name $LogAnalyticsWorkspaceName `
-  --query primarySharedKey -o tsv
-
-Write-Host "Ensuring Container Apps environment exists: $ContainerAppsEnvironmentName"
-az containerapp env create `
-  --name $ContainerAppsEnvironmentName `
-  --resource-group $ResourceGroup `
-  --location $Location `
-  --logs-workspace-id $lawCustomerId `
-  --logs-workspace-key $lawSharedKey `
-  --only-show-errors 1>$null
+if ($AksClusterName) {
+  $doAksServiceAccounts = Get-YesNo "Ensure AKS service accounts in $KubernetesNamespace?" $true
+  if (-not $doAksServiceAccounts) {
+    $AksClusterName = ""
+  }
+}
 
 if ($AksClusterName) {
   Write-Host "Ensuring Kubernetes service account exists: $ServiceAccountName (namespace: $KubernetesNamespace)"
@@ -491,57 +644,65 @@ if ($EmitSecrets) {
     --query connectionString -o tsv
 }
 
-$acrLoginServer = az acr show --name $AcrName --resource-group $ResourceGroup --query loginServer -o tsv
-$acrId = az acr show --name $AcrName --resource-group $ResourceGroup --query id -o tsv --only-show-errors
-
-Write-Host "Ensuring user-assigned managed identity exists (for ACR pull): $AcrPullIdentityName"
-$acrPullIdentity = $null
-try {
-  $acrPullIdentity = az identity show --name $AcrPullIdentityName --resource-group $ResourceGroup --only-show-errors -o json 2>$null | ConvertFrom-Json
-}
-catch {
+$doManagedIdentity = Get-YesNo "Ensure user-assigned managed identity for ACR pull ($AcrPullIdentityName)?" $true
+if ($doManagedIdentity) {
+  Write-Host "Ensuring user-assigned managed identity exists (for ACR pull): $AcrPullIdentityName"
   $acrPullIdentity = $null
+  try {
+    $acrPullIdentity = az identity show --name $AcrPullIdentityName --resource-group $ResourceGroup --only-show-errors -o json 2>$null | ConvertFrom-Json
+  }
+  catch {
+    $acrPullIdentity = $null
+  }
+
+  if ($null -eq $acrPullIdentity) {
+    $acrPullIdentity = az identity create --name $AcrPullIdentityName --resource-group $ResourceGroup --location $Location --only-show-errors -o json | ConvertFrom-Json
+  }
+
+  $acrPullIdentityId = $acrPullIdentity.id
+  $acrPullIdentityClientId = $acrPullIdentity.clientId
+  $acrPullIdentityPrincipalId = $acrPullIdentity.principalId
+
+  if (-not $acrPullIdentityId -or -not $acrPullIdentityPrincipalId) {
+    throw "Failed to resolve AcrPull identity details for '$AcrPullIdentityName'."
+  }
+
+  if ($doAcr) {
+    $doAcrPullRole = Get-YesNo "Assign AcrPull role to identity on ACR?" $true
+    if ($doAcrPullRole) {
+      Write-Host "Ensuring AcrPull role assignment exists for identity on ACR..."
+      $acrPullExisting = "0"
+      try {
+        $acrPullExisting = az role assignment list `
+          --assignee-object-id $acrPullIdentityPrincipalId `
+          --scope $acrId `
+          --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv --only-show-errors 2>$null
+        if (-not $acrPullExisting) { $acrPullExisting = "0" }
+      }
+      catch {
+        $acrPullExisting = "0"
+      }
+
+      if ([int]$acrPullExisting -eq 0) {
+        az role assignment create `
+          --assignee-object-id $acrPullIdentityPrincipalId `
+          --assignee-principal-type ServicePrincipal `
+          --role "AcrPull" `
+          --scope $acrId `
+          --only-show-errors 1>$null
+        Write-Host "  AcrPull granted to $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
+      }
+      else {
+        Write-Host "  AcrPull already present for $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
+      }
+    }
+  }
+  else {
+    Write-Host "Skipping AcrPull role assignment (ACR not provisioned)."
+  }
 }
 
-if ($null -eq $acrPullIdentity) {
-  $acrPullIdentity = az identity create --name $AcrPullIdentityName --resource-group $ResourceGroup --location $Location --only-show-errors -o json | ConvertFrom-Json
-}
-
-$acrPullIdentityId = $acrPullIdentity.id
-$acrPullIdentityClientId = $acrPullIdentity.clientId
-$acrPullIdentityPrincipalId = $acrPullIdentity.principalId
-
-if (-not $acrPullIdentityId -or -not $acrPullIdentityPrincipalId) {
-  throw "Failed to resolve AcrPull identity details for '$AcrPullIdentityName'."
-}
-
-Write-Host "Ensuring AcrPull role assignment exists for identity on ACR..."
-$acrPullExisting = "0"
-try {
-  $acrPullExisting = az role assignment list `
-    --assignee-object-id $acrPullIdentityPrincipalId `
-    --scope $acrId `
-    --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv --only-show-errors 2>$null
-  if (-not $acrPullExisting) { $acrPullExisting = "0" }
-}
-catch {
-  $acrPullExisting = "0"
-}
-
-if ([int]$acrPullExisting -eq 0) {
-  az role assignment create `
-    --assignee-object-id $acrPullIdentityPrincipalId `
-    --assignee-principal-type ServicePrincipal `
-    --role "AcrPull" `
-    --scope $acrId `
-    --only-show-errors 1>$null
-  Write-Host "  AcrPull granted to $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
-}
-else {
-  Write-Host "  AcrPull already present for $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
-}
-
-if ($AzureClientId) {
+if ($AzureClientId -and $doManagedIdentity) {
   Write-Host ""
   Write-Host "Ensuring GitHub Actions principal can assign the ACR pull identity..."
   $githubSpObjectId = $null
@@ -585,8 +746,13 @@ if ($AzureClientId) {
 
 Write-Host ""
 Write-Host "ACR Pull identity resource ID:"
-Write-Host "  $acrPullIdentityId"
-Write-Host "Set ACR_PULL_IDENTITY_NAME to '$AcrPullIdentityName' (workflow default) or supply the resource ID as ACR_PULL_IDENTITY_RESOURCE_ID for deployments."
+if ($doManagedIdentity) {
+  Write-Host "  $acrPullIdentityId"
+  Write-Host "Set ACR_PULL_IDENTITY_NAME to '$AcrPullIdentityName' (workflow default) or supply the resource ID as ACR_PULL_IDENTITY_RESOURCE_ID for deployments."
+}
+else {
+  Write-Host "  <not_created>"
+}
 
 function Ensure-AcrPullRoleAssignment {
   param(
@@ -624,10 +790,14 @@ $jobStartAssignmentsCreated = 0
 $jobStartAssignmentsSkipped = 0
 
 if ($GrantAcrPullToAcaResources) {
-  Write-Host ""
-  Write-Host "Granting AcrPull on ACR to existing Container Apps + Jobs (best-effort)..."
-  Write-Host "  ACR: $AcrName"
-  Write-Host "  Scope: $acrId"
+  if (-not $doAcr -or -not $doManagedIdentity) {
+    Write-Warning "Skipping AcrPull grants to existing apps/jobs (ACR or managed identity not provisioned)."
+  }
+  else {
+    Write-Host ""
+    Write-Host "Granting AcrPull on ACR to existing Container Apps + Jobs (best-effort)..."
+    Write-Host "  ACR: $AcrName"
+    Write-Host "  Scope: $acrId"
 
   $appNames = @()
   $jobNames = @()
@@ -680,7 +850,8 @@ if ($GrantAcrPullToAcaResources) {
     }
   }
 
-  Write-Host "AcrPull role assignment summary: created=$acrPullAssignmentsCreated skipped=$acrPullAssignmentsSkipped"
+    Write-Host "AcrPull role assignment summary: created=$acrPullAssignmentsCreated skipped=$acrPullAssignmentsSkipped"
+  }
 }
 else {
   Write-Host ""
@@ -689,6 +860,10 @@ else {
 }
 
 if ($GrantJobStartToAcaResources) {
+  if (-not $doManagedIdentity) {
+    Write-Warning "Skipping job-start grants (managed identity not provisioned)."
+  }
+  else {
   Write-Host ""
   Write-Host "Granting Container App job start permissions to the ACR pull identity (best-effort)..."
   Write-Host "  Assignee: $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
@@ -727,7 +902,8 @@ if ($GrantJobStartToAcaResources) {
     $jobStartAssignmentsSkipped += 1
   }
 
-  Write-Host "Job start role assignment summary: created=$jobStartAssignmentsCreated skipped=$jobStartAssignmentsSkipped"
+    Write-Host "Job start role assignment summary: created=$jobStartAssignmentsCreated skipped=$jobStartAssignmentsSkipped"
+  }
 }
 else {
   Write-Host ""

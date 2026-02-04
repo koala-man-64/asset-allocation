@@ -4,6 +4,7 @@ param(
   # If provisioning fails due to a restricted region, retry creation in these locations (in order).
   # Example: -Location "eastus" -LocationFallback @("eastus2","centralus","westus2")
   [string[]]$LocationFallback = @("eastus2", "centralus", "westus2"),
+  [string]$SubscriptionId = "",
   [string]$ResourceGroup = "AssetAllocationRG",
   [string]$ServerName = "pg-asset-allocation",
 
@@ -172,7 +173,12 @@ Assert-PgIdentifier -Value $BacktestServiceUser -Label "BacktestServiceUser"
 $SkuName = $SkuName.ToLowerInvariant().Trim()
 $selectedLocation = $Location
 
-$SubscriptionId = "eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9"
+if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+  $SubscriptionId = $env:AZURE_SUBSCRIPTION_ID
+}
+if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+  $SubscriptionId = "eabd0bb1-8f36-4f27-ad86-8b33e02aaeb9"
+}
 Write-Host "Using subscription: $SubscriptionId"
 Invoke-Az -Label "account set" -Args @("account", "set", "--subscription", $SubscriptionId, "--only-show-errors")
 

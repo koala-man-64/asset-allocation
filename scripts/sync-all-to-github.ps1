@@ -1,12 +1,29 @@
 param (
-    [string]$EnvFilePath = "$PSScriptRoot\..\.env",
+    [string]$EnvFilePath = "",
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
 
-if (-not (Test-Path $EnvFilePath)) {
-    Write-Error "Error: .env file not found at $EnvFilePath"
+$envPath = $EnvFilePath
+if ([string]::IsNullOrWhiteSpace($envPath)) {
+    $repoRoot = Join-Path $PSScriptRoot ".."
+    $candidateWeb = Join-Path $repoRoot ".env.web"
+    $candidateEnv = Join-Path $repoRoot ".env"
+
+    if (Test-Path $candidateWeb) {
+        $envPath = $candidateWeb
+    }
+    elseif (Test-Path $candidateEnv) {
+        $envPath = $candidateEnv
+    }
+    else {
+        $envPath = $candidateWeb
+    }
+}
+
+if (-not (Test-Path $envPath)) {
+    Write-Error "Error: env file not found at $envPath (create .env.web or .env, or pass -EnvFilePath)."
     exit 1
 }
 
@@ -16,44 +33,48 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-Write-Host "Reading local .env from: $EnvFilePath"
+Write-Host "Reading local env from: $envPath"
 if ($DryRun) { Write-Host "Running in DRY RUN mode (no changes will be made)..." -ForegroundColor Yellow }
 
-$lines = Get-Content $EnvFilePath
+$lines = Get-Content $envPath
 $ExpectedSecrets = @()
 $ExpectedVars = @()
 
 # These patterns identify CONFIGURATION variables (GitHub Variables).
 # Anything NOT matching these patterns is treated as a SECRET.
-	$ConfigPatterns = @(
-	    "^AZURE_CONTAINER_",
-	    "^AZURE_FOLDER_",
-	    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
-	    "^DEBUG_SYMBOLS$",
-	    "^SYMBOLS_REFRESH_INTERVAL_HOURS$",
-	    "^FEATURE_ENGINEERING_MAX_WORKERS$",
-	    "^DOMAIN_METADATA_MAX_SCANNED_BLOBS$",
-	    "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
-	    "^ASSET_ALLOCATION_API_(?!KEY$)",
-	    "^ALPHA_VANTAGE_(?!API_KEY$)",
-	    "^SYSTEM_HEALTH_",
-	    "^HEADLESS_MODE$",
-	    "^DISABLE_DOTENV$",
-	    "^LOG_",
-	    "^TEST_MODE$",
-	    "^VITE_PORT$",
-	    "^SERVICE_ACCOUNT_NAME$",
-	    "^KUBERNETES_NAMESPACE$",
-	    "^AKS_CLUSTER_NAME$",
-	    "^API_AUTH_MODE$",
-	    "^API_KEY_HEADER$",
-	    "^API_ROOT_PREFIX$",
-	    "^API_PORT$",
-	    "^API_CSP$",
-	    "^API_CORS_ALLOW_ORIGINS$",
-	    "^API_OIDC_",
-	    "^UI_"
-	)
+$ConfigPatterns = @(
+    "^AZURE_CONTAINER_",
+    "^AZURE_FOLDER_",
+    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
+    "^DEBUG_SYMBOLS$",
+    "^SYMBOLS_REFRESH_INTERVAL_HOURS$",
+    "^FEATURE_ENGINEERING_MAX_WORKERS$",
+    "^DOMAIN_METADATA_MAX_SCANNED_BLOBS$",
+    "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
+    "^ASSET_ALLOCATION_API_(?!KEY$)",
+    "^ALPHA_VANTAGE_(?!API_KEY$)",
+    "^SYSTEM_HEALTH_(?!LINK_TOKEN_SECRET$)",
+    "^HEADLESS_MODE$",
+    "^DISABLE_DOTENV$",
+    "^LOG_",
+    "^TEST_MODE$",
+    "^VITE_PORT$",
+    "^VITE_PROXY_CONFIG_JS$",
+    "^VITE_API_PROXY_TARGET$",
+    "^SERVICE_ACCOUNT_NAME$",
+    "^KUBERNETES_NAMESPACE$",
+    "^AKS_CLUSTER_NAME$",
+    "^API_AUTH_MODE$",
+    "^API_KEY_HEADER$",
+    "^API_ROOT_PREFIX$",
+    "^API_INGRESS_EXTERNAL$",
+    "^API_PORT$",
+    "^API_CSP$",
+    "^API_CORS_ALLOW_ORIGINS$",
+    "^API_OIDC_",
+    "^RUNTIME_CONFIG_REFRESH_SECONDS$",
+    "^UI_"
+)
 
 # -------------------------------------------------------------------------
 # 1. PARSE .ENV

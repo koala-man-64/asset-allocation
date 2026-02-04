@@ -1,0 +1,201 @@
+# Environment Variables and Secrets Audit
+
+## Scope and Sources
+- Sources reviewed: `.env.template`, Python runtime code (`core/`, `api/`, `tasks/`, `monitoring/`), UI build/runtime (`ui/`), and deploy manifests (`deploy/*.yaml`).
+- This audit focuses on runtime application variables and UI build-time variables. CI/provisioning-only variables are listed in an appendix.
+
+## Classification Legend
+- Secret: must remain in a secret store (never committed, never bundled into UI).
+- Static config candidate: non-secret, rarely changed; good fit for an in-app config file (with env override to preserve current behavior).
+- Environment-specific config: non-secret but varies per environment or deployment.
+- Runtime tuning: operational knobs intended to change over time (many are DB-override allowlisted).
+- Platform/test: injected by Azure or test harness.
+- UI build-time: compiled into the UI bundle (not secret).
+
+## Secrets (Keep in Secret Store)
+- `ALPHA_VANTAGE_API_KEY` — external data provider credential.
+- `API_KEY` — API auth key when `API_AUTH_MODE` uses API key.
+- `ASSET_ALLOCATION_API_KEY` — ETL-to-API gateway key.
+- `AZURE_CLIENT_SECRET` — service principal secret (when not using OIDC).
+- `AZURE_STORAGE_ACCESS_KEY` — storage access key.
+- `AZURE_STORAGE_ACCOUNT_KEY` — storage account key.
+- `AZURE_STORAGE_CONNECTION_STRING` — storage account connection string.
+- `AZURE_STORAGE_SAS_TOKEN` — SAS token.
+- `NASDAQ_API_KEY` — external data provider credential.
+- `POSTGRES_DSN` — database DSN (contains credentials).
+- `SYSTEM_HEALTH_LINK_TOKEN_SECRET` — signing secret for system health links.
+
+## Platform/Test Variables (Injected or Harness-Only)
+- `CONTAINER_APP_JOB_NAME` — Azure Container Apps job name for scoped runtime config.
+- `IDENTITY_ENDPOINT` — Azure managed identity endpoint (platform-injected).
+- `MSI_ENDPOINT` — Azure managed identity endpoint (platform-injected).
+- `PYTEST_CURRENT_TEST` — pytest runtime signal.
+- `SYSTEM_HEALTH_RUN_IN_TEST` — test-only override for system health.
+- `TEST_MODE` — test/dev runtime flag.
+
+## Static Config Candidates (Rarely Change; Good Config-File Targets)
+- `AZURE_CONTAINER_COMMON`
+- `AZURE_CONTAINER_BRONZE`
+- `AZURE_CONTAINER_SILVER`
+- `AZURE_CONTAINER_GOLD`
+- `AZURE_CONTAINER_PLATINUM`
+- `AZURE_FOLDER_MARKET`
+- `AZURE_FOLDER_FINANCE`
+- `AZURE_FOLDER_EARNINGS`
+- `AZURE_FOLDER_TARGETS`
+- `API_KEY_HEADER`
+- `ASSET_ALLOCATION_API_KEY_HEADER`
+- `API_PORT` (if consistent across environments)
+- `API_ROOT_PREFIX` (if consistent across environments)
+- `LOG_FORMAT`
+- `UI_DIST_DIR`
+
+## Environment-Specific Config (Non-Secret, Per-Environment)
+- `ASSET_ALLOCATION_API_BASE_URL`
+- `ASSET_ALLOCATION_API_URL` — legacy alias for `ASSET_ALLOCATION_API_BASE_URL`.
+- `API_AUTH_MODE`
+- `API_CORS_ALLOW_ORIGINS`
+- `API_CSP`
+- `API_INGRESS_EXTERNAL`
+- `API_OIDC_ISSUER`
+- `API_OIDC_AUDIENCE`
+- `API_OIDC_JWKS_URL`
+- `API_OIDC_REQUIRED_SCOPES`
+- `API_OIDC_REQUIRED_ROLES`
+- `ASSET_ALLOCATION_API_ALLOW_NO_AUTH`
+- `ASSET_ALLOCATION_API_TIMEOUT_SECONDS`
+- `AZURE_CLIENT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_STORAGE_ACCOUNT_NAME`
+- `RESOURCE_GROUP` — used as a fallback in job triggering.
+- `UI_AUTH_MODE`
+- `UI_API_BASE_URL`
+- `UI_OIDC_AUTHORITY`
+- `UI_OIDC_CLIENT_ID`
+- `UI_OIDC_REDIRECT_URI`
+- `UI_OIDC_SCOPES`
+
+## Runtime Tuning (Operational Knobs)
+These are intentionally mutable and many are allowlisted in `core/runtime_config.py` for DB overrides.
+- `ALPHA_VANTAGE_RATE_LIMIT_PER_MIN`
+- `ALPHA_VANTAGE_TIMEOUT_SECONDS`
+- `ALPHA_VANTAGE_MAX_WORKERS`
+- `ALPHA_VANTAGE_EARNINGS_FRESH_DAYS`
+- `ALPHA_VANTAGE_FINANCE_FRESH_DAYS`
+- `ALPHA_VANTAGE_MAX_RETRIES`
+- `ALPHA_VANTAGE_BACKOFF_BASE_SECONDS`
+- `ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE`
+- `BACKFILL_START_DATE`
+- `BACKFILL_END_DATE`
+- `DEBUG_SYMBOLS`
+- `DISABLE_DOTENV`
+- `DOMAIN_METADATA_MAX_SCANNED_BLOBS`
+- `ENABLE_ENV_DIAGNOSTICS`
+- `FEATURE_ENGINEERING_MAX_WORKERS`
+- `LOG_LEVEL`
+- `MATERIALIZE_YEAR_MONTH`
+- `MATERIALIZE_WINDOW_MONTHS`
+- `MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR`
+- `RUNTIME_CONFIG_REFRESH_SECONDS`
+- `SILVER_LATEST_ONLY`
+- `SILVER_MARKET_LATEST_ONLY`
+- `SILVER_FINANCE_LATEST_ONLY`
+- `SILVER_EARNINGS_LATEST_ONLY`
+- `SILVER_PRICE_TARGET_LATEST_ONLY`
+- `SYMBOLS_REFRESH_INTERVAL_HOURS`
+- `SYSTEM_HEALTH_TTL_SECONDS`
+- `SYSTEM_HEALTH_MAX_AGE_SECONDS`
+- `SYSTEM_HEALTH_VERBOSE_IDS`
+- `SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID`
+- `SYSTEM_HEALTH_ARM_RESOURCE_GROUP`
+- `SYSTEM_HEALTH_ARM_CONTAINERAPPS`
+- `SYSTEM_HEALTH_ARM_JOBS`
+- `SYSTEM_HEALTH_ARM_API_VERSION`
+- `SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS`
+- `SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB`
+- `SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED`
+- `SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION`
+- `SYSTEM_HEALTH_MONITOR_METRICS_ENABLED`
+- `SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION`
+- `SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES`
+- `SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL`
+- `SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION`
+- `SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS`
+- `SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS`
+- `SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON`
+- `SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED`
+- `SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID`
+- `SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS`
+- `SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES`
+- `SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON`
+- `TRIGGER_NEXT_JOB_NAME`
+- `TRIGGER_NEXT_JOB_REQUIRED`
+- `TRIGGER_NEXT_JOB_RETRY_ATTEMPTS`
+- `TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS`
+
+## UI Build-Time Variables (Exposed in Browser; Not Secrets)
+- `VITE_API_BASE_URL`
+- `VITE_BACKTEST_API_BASE_URL`
+- `VITE_PORT`
+- `VITE_PROXY_CONFIG_JS`
+- `VITE_API_PROXY_TARGET`
+- `VITE_AUTH_MODE`
+- `VITE_OIDC_CLIENT_ID`
+- `VITE_OIDC_AUTHORITY`
+- `VITE_OIDC_SCOPES`
+- `VITE_BACKTEST_API_KEY` — do not treat as a secret; it is bundled into the UI.
+- `VITE_ALLOW_BROWSER_API_KEY`
+- `VITE_DEBUG_API`
+
+## Not in `.env.template` but Used by Code
+- `ALPHA_VANTAGE_BASE_URL`
+- `ALPHA_VANTAGE_MAX_RETRIES`
+- `ALPHA_VANTAGE_BACKOFF_BASE_SECONDS`
+- `ASSET_ALLOCATION_API_URL`
+- `CONTAINER_APP_JOB_NAME`
+- `IDENTITY_ENDPOINT`
+- `MSI_ENDPOINT`
+- `SYSTEM_HEALTH_RUN_IN_TEST`
+- `PYTEST_CURRENT_TEST`
+
+## Appendix: CI/Provisioning-Only Environment Variables
+These are used by deployment workflows and provisioning scripts; they are not consumed by the running application code.
+- `ACA_ENVIRONMENT_NAME`
+- `ACR_NAME`
+- `ACR_PULL_IDENTITY_CLIENT_ID`
+- `ACR_PULL_IDENTITY_NAME`
+- `ACR_PULL_IDENTITY_RESOURCE_ID`
+- `ACR_PULL_USER_ASSIGNED_IDENTITY_NAME`
+- `AKS_CLUSTER_NAME`
+- `AZURE_ACR_NAME`
+- `AZURE_LOCATION`
+- `AZURE_REGION`
+- `AZURE_RESOURCE_GROUP`
+- `CLIENT_ID`
+- `CONTAINER_APPS_ENVIRONMENT_ID`
+- `CONTAINER_APPS_ENVIRONMENT_NAME`
+- `CONTAINERAPPS_ENVIRONMENT_NAME`
+- `CONTAINER_APP_RESOURCE_GROUP`
+- `EMIT_SECRETS`
+- `ENABLE_ACR_ADMIN`
+- `GOLD_EARNINGS_JOB`
+- `GOLD_FINANCE_JOB`
+- `GOLD_MARKET_JOB`
+- `GOLD_PRICE_TARGET_JOB`
+- `GRANT_ACR_PULL_TO_ACA_RESOURCES`
+- `GRANT_JOB_START_TO_ACA_RESOURCES`
+- `IMAGE_TAG`
+- `INGRESS_EXTERNAL`
+- `JOB_IMAGE`
+- `JOB_NAME`
+- `KUBERNETES_NAMESPACE`
+- `LOCATION`
+- `LOG_ANALYTICS_WORKSPACE`
+- `LOG_ANALYTICS_WORKSPACE_NAME`
+- `SERVICE_ACCOUNT_NAME`
+- `SILVER_EARNINGS_JOB`
+- `SILVER_FINANCE_JOB`
+- `SILVER_MARKET_JOB`
+- `SILVER_PRICE_TARGET_JOB`
+- `SUBSCRIPTION_ID`
