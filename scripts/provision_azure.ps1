@@ -452,7 +452,7 @@ if ($ProvisionPostgres) {
   if (-not $?) { throw "Postgres provisioning failed." }
 }
 
-$doStorage = Get-YesNo "Ensure storage account exists: $StorageAccountName?" $true
+$doStorage = Get-YesNo ("Ensure storage account exists: {0}?" -f $StorageAccountName) $true
 if ($doStorage) {
   Write-Host "Ensuring storage account exists: $StorageAccountName"
   $existingStorage = $null
@@ -519,6 +519,61 @@ if ($doStorage) {
       if (-not $c) { continue }
       az storage container create --name $c --account-name $StorageAccountName --auth-mode login --only-show-errors 1>$null
     }
+  }
+}
+
+$storageAccountId = ""
+try {
+  $storageAccountId = az storage account show `
+    --name $StorageAccountName `
+    --resource-group $ResourceGroup `
+    --query id -o tsv --only-show-errors 2>$null
+}
+catch {
+  $storageAccountId = ""
+}
+
+if ($AzureClientId -and $storageAccountId) {
+  Write-Host ""
+  Write-Host "Ensuring GitHub Actions principal can access storage data (Storage Blob Data Contributor)..."
+
+  if (-not $githubSpObjectId) {
+    try {
+      $githubSpObjectId = az ad sp show --id $AzureClientId --query id -o tsv --only-show-errors 2>$null
+    }
+    catch {
+      $githubSpObjectId = $null
+    }
+  }
+
+  if ($githubSpObjectId) {
+    $storageDataExisting = "0"
+    try {
+      $storageDataExisting = az role assignment list `
+        --assignee-object-id $githubSpObjectId `
+        --scope $storageAccountId `
+        --query "[?roleDefinitionName=='Storage Blob Data Contributor'] | length(@)" -o tsv --only-show-errors 2>$null
+      if (-not $storageDataExisting) { $storageDataExisting = "0" }
+    }
+    catch {
+      $storageDataExisting = "0"
+    }
+
+    if ([int]$storageDataExisting -eq 0) {
+      az role assignment create `
+        --assignee-object-id $githubSpObjectId `
+        --assignee-principal-type ServicePrincipal `
+        --role "Storage Blob Data Contributor" `
+        --scope $storageAccountId `
+        --only-show-errors 1>$null
+      Write-Host "  Storage Blob Data Contributor granted to $AzureClientId on $StorageAccountName."
+    }
+    else {
+      Write-Host "  Storage Blob Data Contributor already assigned to $AzureClientId on $StorageAccountName."
+    }
+  }
+  else {
+    Write-Warning "Could not resolve service principal for AzureClientId '$AzureClientId'. Skipping storage data role assignment."
   }
 }
 
@@ -705,12 +760,13 @@ if ($doManagedIdentity) {
 if ($AzureClientId -and $doManagedIdentity) {
   Write-Host ""
   Write-Host "Ensuring GitHub Actions principal can assign the ACR pull identity..."
-  $githubSpObjectId = $null
-  try {
-    $githubSpObjectId = az ad sp show --id $AzureClientId --query id -o tsv --only-show-errors 2>$null
-  }
-  catch {
-    $githubSpObjectId = $null
+  if (-not $githubSpObjectId) {
+    try {
+      $githubSpObjectId = az ad sp show --id $AzureClientId --query id -o tsv --only-show-errors 2>$null
+    }
+    catch {
+      $githubSpObjectId = $null
+    }
   }
 
   if ($githubSpObjectId) {
