@@ -1,176 +1,23 @@
 """Technical Analysis Indicators (built from Silver market data).
 
-This job derives technical analysis indicators (including candlestick patterns) from the cleaned OHLCV
-data in the Silver layer (market-data/<ticker>) and writes the results as a
-Gold per-ticker Delta table (technical-analysis/<ticker>), plus a cross-sectional
-table (technical_analysis_by_date) partitioned by year_month and date.
+This module contains logic to derive technical analysis indicators (including candlestick patterns)
+from cleaned OHLCV data. It is designed to be known as a library function called by other jobs.
 
 Design goals
 ------------
 - Deterministic, vectorized OHLC-based pattern detection.
 - Context-aware where patterns are otherwise ambiguous (e.g., Hammer vs Hanging Man).
 - Minimal dependencies: pandas/numpy only.
-
-Output
-------
-For each symbol/date, the per-ticker output table includes:
-- Base OHLCV columns (snake_case)
-- Candle geometry metrics (body, range, shadows, ATR)
-- Pattern flags (0/1) for the patterns shown in the provided spec/image
-
-The by-date table is a concatenation of the per-ticker tables for a given
-year-month. It normalizes `date` to the day boundary for partitioning and also
-preserves the original timestamp in `timestamp` (useful when the project moves
-to intraday bars).
-
-Notes
------
-- Many patterns traditionally depend on "trend" context. We implement a simple
-  configurable trend heuristic based on prior closes.
-- The thresholds below are intentionally conservative defaults and can be tuned.
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
-import multiprocessing as mp
-from datetime import datetime, timezone
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-
-from tasks.common.watermarks import load_watermarks, save_watermarks
-
-
-@dataclass(frozen=True)
-class FeatureJobConfig:
-    silver_container: str
-    gold_container: str
-    max_workers: int
-    tickers: Sequence[str]
-
-
-@dataclass(frozen=True)
-class MaterializeConfig:
-    container: str
-    year_month: str
-    output_path: str
-    max_tickers: Optional[int]
-
-
-def _parse_year_month_bounds(year_month: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    try:
-        start = pd.Timestamp(f"{year_month}-01")
-    except Exception as exc:
-        raise ValueError(f"Invalid year_month '{year_month}'. Expected YYYY-MM.") from exc
-    end = start + pd.offsets.MonthBegin(1)
-    return start, end
-
-
-def _load_ticker_universe() -> List[str]:
-    """Fallback ticker universe when we cannot list Delta tables in the gold container."""
-    from core import core as mdc
-
-    df_symbols = mdc.get_symbols()
-    df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
-
-    tickers: List[str] = []
-    for symbol in df_symbols["Symbol"].astype(str).tolist():
-        if "." in symbol:
-            continue
-        tickers.append(symbol.replace(".", "-"))
-
-    return list(dict.fromkeys(tickers))
-
-
-def _extract_tickers_from_delta_tables(blob_names: Iterable[str], *, root_prefix: str) -> List[str]:
-    """Extract tickers that have a valid Delta log under `<root_prefix>/<ticker>/_delta_log/`."""
-
-    root_prefix = root_prefix.strip("/")
-    tickers: set[str] = set()
-    for blob_name in blob_names:
-        parts = str(blob_name).strip("/").split("/")
-        if len(parts) < 4:
-            continue
-        if parts[0] != root_prefix:
-            continue
-
-        ticker = parts[1].strip()
-        if not ticker:
-            continue
-
-        if parts[2] != "_delta_log":
-            continue
-
-        log_file = parts[3]
-        if log_file.endswith(".json") or log_file.endswith(".checkpoint.parquet"):
-            tickers.add(ticker)
-
-    return sorted(tickers)
-
-
-def _try_load_tickers_from_container(container: str, *, root_prefix: str) -> Optional[List[str]]:
-    """Attempt to list tickers by scanning the container for Delta logs (preferred)."""
-
-    from core.core import write_warning
-    from core import core as mdc
-
-    client = mdc.get_storage_client(container)
-    if client is None:
-        return None
-
-    prefix = root_prefix.strip("/") + "/"
-    try:
-        blobs = client.container_client.list_blobs(name_starts_with=prefix)
-        return _extract_tickers_from_delta_tables((b.name for b in blobs), root_prefix=root_prefix)
-    except Exception as exc:
-        write_warning(
-            f"Unable to list per-ticker Delta tables under {prefix} in container={container}: {exc}. "
-            "Falling back to symbol universe."
-        )
-        return None
-
-
-def _resolve_gold_container(container_raw: Optional[str]) -> str:
-    """Resolve the gold container name for by-date materialization."""
-    value = (container_raw or os.environ.get("AZURE_CONTAINER_GOLD") or os.environ.get("AZURE_FOLDER_MARKET") or "").strip()
-    if not value:
-        raise ValueError("Missing gold container. Set AZURE_CONTAINER_GOLD (preferred) or AZURE_FOLDER_MARKET.")
-    return value
-
-
-def _build_materialize_config(argv: Optional[List[str]]) -> MaterializeConfig:
-    from core.pipeline import DataPaths
-
-    parser = argparse.ArgumentParser(
-        description="Materialize candlestick indicators into a cross-sectional Delta table (partitioned by date)."
-    )
-    parser.add_argument("--container", help="Gold container (default: AZURE_CONTAINER_GOLD).")
-    parser.add_argument("--year-month", required=True, help="Year-month partition to materialize (YYYY-MM).")
-    parser.add_argument(
-        "--output-path",
-        default=DataPaths.get_technical_analysis_by_date_path(),
-        help="Output Delta table path within the container.",
-    )
-    parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
-    args = parser.parse_args(argv)
-
-    container = _resolve_gold_container(args.container)
-    max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
-    if max_tickers is not None and max_tickers <= 0:
-        max_tickers = None
-
-    return MaterializeConfig(
-        container=container,
-        year_month=str(args.year_month).strip(),
-        output_path=str(args.output_path).strip().lstrip("/"),
-        max_tickers=max_tickers,
-    )
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -242,23 +89,36 @@ def _approx_equal(a: pd.Series, b: pd.Series, tol: pd.Series) -> pd.Series:
     return (a - b).abs() <= tol
 
 
-def compute_features(df: pd.DataFrame) -> pd.DataFrame:
+def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     """Compute candlestick indicator features from OHLCV data."""
 
-    out = _snake_case_columns(df)
+    # Assume upstream has already snake_cased or aligned columns,
+    # but we enforce standard names for our logic.
+    out = df.copy()
 
     required = {"date", "open", "high", "low", "close", "volume", "symbol"}
     missing = required.difference(out.columns)
     if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
+        # If upstream didn't normalize, try one pass of snake_casing just in case,
+        # but typically we expect the caller to have done this.
+        out = _snake_case_columns(out)
+        missing = required.difference(out.columns)
+        if missing:
+            raise ValueError(f"Missing required columns: {sorted(missing)}")
 
-    out["date"] = _coerce_datetime(out["date"])
+    # Ensure types
+    if not pd.api.types.is_datetime64_any_dtype(out["date"]):
+        out["date"] = _coerce_datetime(out["date"])
+    
     out["symbol"] = out["symbol"].astype(str)
     for col in ["open", "high", "low", "close", "volume"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
+        if not pd.api.types.is_numeric_dtype(out[col]):
+            out[col] = pd.to_numeric(out[col], errors="coerce")
 
-    out = out.dropna(subset=["date"]).sort_values(["symbol", "date"]).reset_index(drop=True)
-    out = out.drop_duplicates(subset=["symbol", "date"], keep="last").reset_index(drop=True)
+    # Only sort if not monotonic to preserve caller's intent if possible, 
+    # but indicators strictly require time-ordering.
+    if not out["date"].is_monotonic_increasing:
+        out = out.sort_values(["symbol", "date"]).reset_index(drop=True)
 
     # --- Candle geometry ---
     o = out["open"]
@@ -765,319 +625,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["pat_three_outside_down"] = (
         uptrend_before_3
         & c1_bull
-        & (bearish_engulfing_prev == 1)
+        & (bearish_engulfing_prev == 1)  # engulfing on candle2
         & c3_bear
         & (c3 < c1)
     ).fillna(False).astype(int)
 
     out = out.replace([np.inf, -np.inf], np.nan)
     return out
-
-
-def _process_ticker(task: Tuple[str, str, str, str, str]) -> Dict[str, Any]:
-    from core import delta_core
-
-    ticker, raw_path, gold_path, silver_container, gold_container = task
-
-    df_raw = delta_core.load_delta(silver_container, raw_path)
-    if df_raw is None or df_raw.empty:
-        return {"ticker": ticker, "status": "skipped_no_data", "raw_path": raw_path}
-
-    try:
-        df_features = compute_features(df_raw)
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
-
-    try:
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
-
-    return {"ticker": ticker, "status": "ok", "rows": len(df_features), "gold_path": gold_path}
-
-
-def _get_max_workers() -> int:
-    try:
-        available_cpus = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
-    except Exception:
-        available_cpus = os.cpu_count() or 1
-
-    default_workers = available_cpus if available_cpus <= 2 else available_cpus - 1
-
-    configured = os.environ.get("FEATURE_ENGINEERING_MAX_WORKERS")
-    if configured:
-        try:
-            parsed = int(configured)
-            if parsed > 0:
-                return min(parsed, available_cpus)
-        except ValueError:
-            pass
-    return max(1, default_workers)
-
-
-def _build_job_config() -> FeatureJobConfig:
-    silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
-    gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
-
-    from core import core as mdc
-    from core import config as common_cfg
-
-    df_symbols = mdc.get_symbols()
-    df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
-
-    if hasattr(common_cfg, "DEBUG_SYMBOLS") and common_cfg.DEBUG_SYMBOLS:
-        mdc.write_line(
-            f"DEBUG MODE: Restricting execution to {len(common_cfg.DEBUG_SYMBOLS)} symbols: {common_cfg.DEBUG_SYMBOLS}"
-        )
-        df_symbols = df_symbols[df_symbols["Symbol"].isin(common_cfg.DEBUG_SYMBOLS)]
-
-    tickers: List[str] = []
-    for symbol in df_symbols["Symbol"].astype(str).tolist():
-        if "." in symbol:
-            continue
-        tickers.append(symbol.replace(".", "-"))
-
-    tickers = list(dict.fromkeys(tickers))
-
-    max_workers = _get_max_workers()
-    mdc.write_line(f"Candlestick feature engineering configured for {len(tickers)} tickers (max_workers={max_workers})")
-
-    return FeatureJobConfig(
-        silver_container=silver_container,
-        gold_container=gold_container,
-        max_workers=max_workers,
-        tickers=tickers,
-    )
-
-
-def main() -> int:
-    from core import core as mdc
-    from core import delta_core
-    from core.pipeline import DataPaths
-
-    mdc.log_environment_diagnostics()
-    job_cfg = _build_job_config()
-
-    watermarks = load_watermarks("gold_candlesticks")
-    watermarks_dirty = False
-
-    tasks: List[Tuple[str, str, str, str, str]] = []
-    commit_map: Dict[str, float | None] = {}
-    skipped_unchanged = 0
-
-    for ticker in job_cfg.tickers:
-        raw_path = DataPaths.get_market_data_path(ticker)
-        gold_path = DataPaths.get_gold_candlesticks_path(ticker)
-
-        silver_commit = delta_core.get_delta_last_commit(job_cfg.silver_container, raw_path)
-        commit_map[ticker] = silver_commit
-
-        if watermarks is not None and silver_commit is not None:
-            prior = watermarks.get(ticker, {})
-            if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
-                skipped_unchanged += 1
-                continue
-
-        tasks.append((ticker, raw_path, gold_path, job_cfg.silver_container, job_cfg.gold_container))
-
-    mp_context = mp.get_context("spawn")
-    results: List[Dict[str, Any]] = []
-
-    mdc.write_line("Starting candlestick feature engineering pool...")
-    with ProcessPoolExecutor(max_workers=job_cfg.max_workers, mp_context=mp_context) as executor:
-        futures = {executor.submit(_process_ticker, task): task[0] for task in tasks}
-        for future in as_completed(futures):
-            ticker = futures[future]
-            try:
-                result = future.result()
-            except Exception as exc:
-                mdc.write_error(f"Unhandled failure for {ticker}: {exc}")
-                results.append({"ticker": ticker, "status": "failed_unhandled", "error": str(exc)})
-                continue
-
-            status = result.get("status")
-            if status == "ok":
-                mdc.write_line(f"[OK] {ticker}: {result.get('rows')} rows -> {result.get('gold_path')}")
-            else:
-                mdc.write_warning(f"[{status}] {ticker}: {result.get('error') or ''}".strip())
-            results.append(result)
-
-    ok = sum(1 for r in results if r.get("status") == "ok")
-    skipped = sum(1 for r in results if r.get("status") == "skipped_no_data")
-    failed = len(results) - ok - skipped
-    mdc.write_line(
-        f"Candlestick feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
-        f"skipped_unchanged={skipped_unchanged}, failed={failed}"
-    )
-
-    if watermarks is not None:
-        for result in results:
-            if result.get("status") != "ok":
-                continue
-            ticker = result.get("ticker")
-            if not ticker:
-                continue
-            silver_commit = commit_map.get(ticker)
-            if silver_commit is None:
-                continue
-            watermarks[ticker] = {
-                "silver_last_commit": silver_commit,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            watermarks_dirty = True
-        if watermarks_dirty:
-            save_watermarks("gold_candlesticks", watermarks)
-
-    return 0 if failed == 0 else 1
-
-
-def discover_year_months_from_data(*, container: Optional[str] = None, max_tickers: Optional[int] = None) -> List[str]:
-    """Discover available year-month partitions from per-ticker candlestick tables."""
-
-    from core.core import write_line
-    from core.delta_core import load_delta
-    from core.pipeline import DataPaths
-
-    container = _resolve_gold_container(container)
-
-    tickers_from_container = _try_load_tickers_from_container(container, root_prefix="candlesticks")
-    if tickers_from_container is None:
-        tickers = _load_ticker_universe()
-        ticker_source = "symbol_universe"
-    else:
-        tickers = tickers_from_container
-        ticker_source = "container_listing"
-
-    if max_tickers is not None:
-        tickers = tickers[: max_tickers]
-
-    if not tickers:
-        write_line(
-            f"No per-ticker candlestick tables found (source={ticker_source}); no year_months discovered."
-        )
-        return []
-
-    year_months: set[str] = set()
-    for ticker in tickers:
-        src_path = DataPaths.get_gold_candlesticks_path(ticker)
-        df = load_delta(container, src_path, columns=["date"])
-        if df is None or df.empty or "date" not in df.columns:
-            continue
-
-        ts = pd.to_datetime(df["date"], errors="coerce").dropna()
-        if ts.empty:
-            continue
-        # Normalize to day boundary to match by-date partitioning.
-        for value in ts.dt.normalize().dt.strftime("%Y-%m").unique().tolist():
-            if value:
-                year_months.add(str(value))
-
-    discovered = sorted(year_months)
-    write_line(
-        f"Discovered {len(discovered)} year_month(s) from gold candlestick tables in {container}."
-    )
-    return discovered
-
-
-def materialize_candlesticks_by_date(cfg: MaterializeConfig) -> int:
-    """Materialize `candlesticks_by_date` for a given year_month."""
-
-    from core.core import write_line
-    from core.delta_core import load_delta, store_delta
-    from core.pipeline import DataPaths
-
-    start, end = _parse_year_month_bounds(cfg.year_month)
-
-    tickers_from_container = _try_load_tickers_from_container(cfg.container, root_prefix="candlesticks")
-    if tickers_from_container is None:
-        tickers = _load_ticker_universe()
-        ticker_source = "symbol_universe"
-    else:
-        tickers = tickers_from_container
-        ticker_source = "container_listing"
-
-    if cfg.max_tickers is not None:
-        tickers = tickers[: cfg.max_tickers]
-
-    write_line(
-        f"Materializing candlesticks_by_date for {cfg.year_month}: container={cfg.container} "
-        f"tickers={len(tickers)} ticker_source={ticker_source} output_path={cfg.output_path}"
-    )
-
-    if not tickers:
-        write_line(f"No per-ticker candlestick tables found (source={ticker_source}); nothing to materialize.")
-        return 0
-
-    frames: List[pd.DataFrame] = []
-    for ticker in tickers:
-        src_path = DataPaths.get_gold_candlesticks_path(ticker)
-        df = load_delta(
-            cfg.container,
-            src_path,
-            filters=[("date", ">=", start.to_pydatetime()), ("date", "<", end.to_pydatetime())],
-        )
-        if df is None or df.empty:
-            continue
-        frames.append(df)
-
-    if not frames:
-        write_line(f"No candlestick rows found for {cfg.year_month}; nothing to materialize.")
-        return 0
-
-    out = pd.concat(frames, ignore_index=True)
-    if "date" not in out.columns:
-        write_line(f"No 'date' column found while materializing {cfg.year_month}; nothing to materialize.")
-        return 0
-
-    # Forward-compatible with intraday: preserve timestamp while partitioning by day.
-    out["timestamp"] = pd.to_datetime(out["date"], errors="coerce")
-    out = out.dropna(subset=["timestamp"])
-    if out.empty:
-        write_line(f"No valid timestamp rows found for {cfg.year_month}; nothing to materialize.")
-        return 0
-
-    out["date"] = out["timestamp"].dt.normalize()
-    out["year_month"] = out["date"].dt.strftime("%Y-%m")
-    out = out[out["year_month"] == cfg.year_month].copy()
-    if out.empty:
-        write_line(f"No rows remain after year_month filter for {cfg.year_month}; nothing to materialize.")
-        return 0
-
-    predicate = f"year_month = '{cfg.year_month}'"
-    store_delta(
-        out,
-        container=cfg.container,
-        path=cfg.output_path,
-        mode="overwrite",
-        partition_by=["year_month", "date"],
-        merge_schema=True,
-        predicate=predicate,
-    )
-
-    write_line(f"Materialized {len(out)} row(s) into {cfg.container}/{cfg.output_path} ({cfg.year_month}).")
-    return 0
-
-
-def by_date_main(argv: Optional[List[str]] = None) -> int:
-    cfg = _build_materialize_config(argv)
-    return materialize_candlesticks_by_date(cfg)
-
-
-if __name__ == "__main__":
-    from core.by_date_pipeline import run_partner_then_by_date
-    from tasks.common.job_trigger import trigger_next_job_from_env
-
-    job_name = "gold-candlesticks-job"
-
-    def _year_months_provider() -> List[str]:
-        return discover_year_months_from_data(container=os.environ.get("AZURE_CONTAINER_GOLD"))
-
-    exit_code = run_partner_then_by_date(
-        job_name=job_name,
-        partner_main=main,
-        by_date_main=by_date_main,
-        year_months_provider=_year_months_provider,
-    )
-    if exit_code == 0:
-        trigger_next_job_from_env()
-    raise SystemExit(exit_code)

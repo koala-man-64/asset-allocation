@@ -54,6 +54,8 @@ def test_compute_features_adds_expected_columns():
         "range_close",
         "volume_z_20d",
         "volume_pct_rank_252d",
+        "pat_doji",
+        "atr_14d",
     }
 
     assert expected.issubset(set(out.columns))

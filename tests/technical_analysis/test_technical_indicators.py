@@ -45,7 +45,7 @@ def sample_ohlcv_engulfing():
     return pd.DataFrame(data)
 
 def test_compute_features_doji(sample_ohlcv_doji):
-    df = gc.compute_features(sample_ohlcv_doji)
+    df = gc.add_candlestick_patterns(sample_ohlcv_doji)
     row = df.iloc[0]
     
     # Assert Doji flag is set
@@ -54,7 +54,7 @@ def test_compute_features_doji(sample_ohlcv_doji):
     assert row["body"] == pytest.approx(0.05)
 
 def test_compute_features_bullish_engulfing(sample_ohlcv_engulfing):
-    df = gc.compute_features(sample_ohlcv_engulfing)
+    df = gc.add_candlestick_patterns(sample_ohlcv_engulfing)
     
     # Check last row for pattern
     row = df.iloc[-1]
@@ -62,55 +62,7 @@ def test_compute_features_bullish_engulfing(sample_ohlcv_engulfing):
     assert row["pat_bullish_engulfing"] == 1
     assert row["is_bull"] == 1
 
-def test_process_ticker_flow():
-    """Test the end-to-end flow of _process_ticker with mocks."""
-    ticker = "TEST_TICKER"
-    raw_path = "market/silver/TEST_TICKER"
-    gold_path = "technical-analysis/TEST_TICKER"
-    silver_container = "silver-test"
-    gold_container = "gold-test"
-    
-    # Mock data
-    mock_df = pd.DataFrame({
-        "date": [datetime(2023, 1, 1)],
-        "symbol": [ticker],
-        "open": [100.0],
-        "high": [110.0],
-        "low": [90.0],
-        "close": [105.0],
-        "volume": [1000]
-    })
-    
-    with patch("core.delta_core.load_delta") as mock_load, \
-         patch("core.delta_core.store_delta") as mock_store:
-        
-        mock_load.return_value = mock_df
-        
-        task = (ticker, raw_path, gold_path, silver_container, gold_container)
-        result = gc._process_ticker(task)
-        
-        assert result["status"] == "ok"
-        assert result["ticker"] == ticker
-        assert result["rows"] == 1
-        
-        mock_load.assert_called_once_with(silver_container, raw_path)
-        mock_store.assert_called_once()
-        
-        # Verify stored DF has features
-        args, _ = mock_store.call_args
-        stored_df = args[0]
-        assert "pat_doji" in stored_df.columns
-        assert "atr_14d" in stored_df.columns
 
-def test_process_ticker_no_data():
-    """Test _process_ticker handles missing/empty data gracefully."""
-    with patch("core.delta_core.load_delta") as mock_load:
-        mock_load.return_value = None # Or empty DF
-        
-        task = ("TEST", "path", "path", "c1", "c2")
-        result = gc._process_ticker(task)
-        
-        assert result["status"] == "skipped_no_data"
 
 def test_snake_case_conversion():
     assert gc._to_snake_case("Adj Close") == "adj_close"
