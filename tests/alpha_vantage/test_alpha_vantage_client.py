@@ -76,3 +76,28 @@ def test_fetch_raises_on_throttle_when_retries_exhausted(monkeypatch):
     with pytest.raises(AlphaVantageThrottleError):
         av.fetch("TIME_SERIES_DAILY", "AAPL")
 
+
+def test_fetch_raises_throttle_when_rate_wait_timeout(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(transport=transport)
+
+    cfg = AlphaVantageConfig(
+        api_key="test",
+        rate_limit_per_min=10_000,
+        max_workers=1,
+        max_retries=0,
+        backoff_base_seconds=0.0,
+        rate_wait_timeout_seconds=0.01,
+    )
+    av = AlphaVantageClient(cfg, http_client=http_client)
+
+    def _raise_timeout(*, caller=None, timeout_seconds=None):
+        raise TimeoutError("simulated wait timeout")
+
+    monkeypatch.setattr(av._rate_limiter, "wait", _raise_timeout)
+
+    with pytest.raises(AlphaVantageThrottleError):
+        av.fetch("TIME_SERIES_DAILY", "AAPL")

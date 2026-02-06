@@ -60,6 +60,8 @@ This repo supports DB-backed runtime configuration so operational knobs can be c
 
 The runtime-config allowlist includes common pipeline knobs (backfills/materialization), system-health probes, and selected non-secret ingestion tunables (e.g., Alpha Vantage rate limits/timeouts).
 
+Alpha Vantage Bronze jobs use per-job locks only; provider-level contention is handled by API-side fair-share rate limiting keyed by caller job headers.
+
 ## Deployment
 
 Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under `deploy/`.
@@ -70,6 +72,7 @@ Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under
 
 ## Docs
 - `api/API_ENDPOINTS.md`
+- `docs/alpha_vantage_fair_rate_limiting.md`
 - `docs/config_js_contract.md`
 - `docs/strategy_pipeline_layer_domain_bindings.md`
 

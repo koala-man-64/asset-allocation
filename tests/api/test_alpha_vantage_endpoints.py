@@ -1,7 +1,7 @@
 import pytest
 
 from alpha_vantage import AlphaVantageInvalidSymbolError, AlphaVantageThrottleError
-from api.service.alpha_vantage_gateway import AlphaVantageGateway
+from api.service.alpha_vantage_gateway import AlphaVantageGateway, get_current_caller_context
 from api.service.app import create_app
 from tests.api._client import get_test_client
 
@@ -104,3 +104,26 @@ async def test_alpha_vantage_invalid_symbol_maps_to_404(monkeypatch):
 
     assert resp.status_code == 404
 
+
+@pytest.mark.asyncio
+async def test_alpha_vantage_routes_set_caller_context(monkeypatch):
+    observed: dict[str, str] = {}
+
+    def fake_earnings(self, *, symbol):
+        caller_job, caller_execution = get_current_caller_context()
+        observed["job"] = caller_job
+        observed["execution"] = caller_execution
+        return {"symbol": symbol}
+
+    monkeypatch.setattr(AlphaVantageGateway, "get_earnings", fake_earnings)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get(
+            "/api/providers/alpha-vantage/earnings?symbol=AAPL",
+            headers={"X-Caller-Job": "bronze-market-job", "X-Caller-Execution": "exec-123"},
+        )
+
+    assert resp.status_code == 200
+    assert observed["job"] == "bronze-market-job"
+    assert observed["execution"] == "exec-123"

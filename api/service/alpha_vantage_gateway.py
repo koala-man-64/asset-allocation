@@ -94,7 +94,9 @@ def get_current_caller_context() -> tuple[str, str]:
 
 
 @contextmanager
-def alpha_vantage_caller_context(*, caller_job: Optional[str], caller_execution: Optional[str] = None) -> Iterator[None]:
+def alpha_vantage_caller_context(
+    *, caller_job: Optional[str], caller_execution: Optional[str] = None
+) -> Iterator[None]:
     job_token = _CALLER_JOB.set(_normalize_caller_component(caller_job, default="api"))
     execution_token = _CALLER_EXECUTION.set(_normalize_caller_component(caller_execution, default=""))
     try:
@@ -125,6 +127,9 @@ class AlphaVantageGateway:
             raise AlphaVantageNotConfiguredError("ALPHA_VANTAGE_API_KEY is not configured for the API service.")
 
         base_url = _strip_or_none(os.environ.get("ALPHA_VANTAGE_BASE_URL")) or "https://www.alphavantage.co"
+        rate_wait_timeout_seconds = _env_float("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", 120.0)
+        if rate_wait_timeout_seconds <= 0:
+            rate_wait_timeout_seconds = None
 
         cfg = AlphaVantageConfig(
             api_key=api_key,
@@ -134,7 +139,7 @@ class AlphaVantageGateway:
             max_workers=_env_int("ALPHA_VANTAGE_MAX_WORKERS", 32),
             max_retries=_env_int("ALPHA_VANTAGE_MAX_RETRIES", 5),
             backoff_base_seconds=_env_float("ALPHA_VANTAGE_BACKOFF_BASE_SECONDS", 0.5),
-            rate_wait_timeout_seconds=_env_float("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", 120.0),
+            rate_wait_timeout_seconds=rate_wait_timeout_seconds,
         )
 
         snapshot = _ClientSnapshot(

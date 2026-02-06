@@ -294,7 +294,9 @@ def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSO
         minutes = payload.minutes or 30
         until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
 
-    logger.info("Snooze alert: id=%s actor=%s minutes=%s until=%s", alert_id, actor or "-", payload.minutes, payload.until)
+    logger.info(
+        "Snooze alert: id=%s actor=%s minutes=%s until=%s", alert_id, actor or "-", payload.minutes, payload.until
+    )
     try:
         state = store.snooze(alert_id, until=until, actor=actor)
     except Exception as exc:
@@ -479,7 +481,9 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
                 target.get("layer"),
                 target.get("domain"),
             )
-            raise HTTPException(status_code=502, detail=f"Purge preflight failed for {container}:{prefix}: {exc}") from exc
+            raise HTTPException(
+                status_code=502, detail=f"Purge preflight failed for {container}:{prefix}: {exc}"
+            ) from exc
 
         planned.append((client, target))
         any_data = any_data or has_data
@@ -552,6 +556,10 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "ALPHA_VANTAGE_TIMEOUT_SECONDS": {
         "description": "Alpha Vantage request timeout (float seconds).",
         "example": "15",
+    },
+    "ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS": {
+        "description": "Max wait time for API-side Alpha Vantage rate-limit queue before returning throttle (float seconds).",
+        "example": "120",
     },
     "ALPHA_VANTAGE_MAX_WORKERS": {
         "description": "Alpha Vantage concurrency (max worker threads) for ingestion jobs (integer).",
@@ -687,7 +695,7 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     },
     "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON": {
         "description": "JSON object mapping metric name to thresholds (warn_above/error_above/etc).",
-        "example": "{\"CpuUsage\":{\"warn_above\":80,\"error_above\":95}}",
+        "example": '{"CpuUsage":{"warn_above":80,"error_above":95}}',
     },
     "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED": {
         "description": "When true, system health will query Azure Log Analytics for configured resources.",
@@ -707,7 +715,7 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     },
     "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON": {
         "description": "JSON array of Log Analytics query specs used by system health (KQL templates).",
-        "example": "[{\"resourceType\":\"Microsoft.App/jobs\",\"name\":\"job_errors_15m\",\"query\":\"ContainerAppConsoleLogs_CL|...\",\"warnAbove\":1,\"errorAbove\":10,\"unit\":\"count\"}]",
+        "example": '[{"resourceType":"Microsoft.App/jobs","name":"job_errors_15m","query":"ContainerAppConsoleLogs_CL|...","warnAbove":1,"errorAbove":10,"unit":"count"}]',
     },
     "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED": {
         "description": "When true, system health includes Azure Resource Health checks.",

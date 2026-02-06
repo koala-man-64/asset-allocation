@@ -59,6 +59,14 @@ properties:
         value: "X-API-Key"
       - name: ALPHA_VANTAGE_API_KEY
         secretRef: alpha-vantage-api-key
+      - name: ALPHA_VANTAGE_RATE_LIMIT_PER_MIN
+        value: "${ALPHA_VANTAGE_RATE_LIMIT_PER_MIN}"
+      - name: ALPHA_VANTAGE_TIMEOUT_SECONDS
+        value: "${ALPHA_VANTAGE_TIMEOUT_SECONDS}"
+      - name: ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS
+        value: "${ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS}"
+      - name: ALPHA_VANTAGE_MAX_WORKERS
+        value: "${ALPHA_VANTAGE_MAX_WORKERS}"
       - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
       - name: API_ROOT_PREFIX

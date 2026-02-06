@@ -48,6 +48,7 @@ REPORTS = [
     },
 ]
 
+
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
@@ -58,7 +59,9 @@ def _validate_environment() -> None:
     if not (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL")):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
     if not (
-        os.environ.get("ASSET_ALLOCATION_API_KEY") or os.environ.get("API_KEY") or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
+        os.environ.get("ASSET_ALLOCATION_API_KEY")
+        or os.environ.get("API_KEY")
+        or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
     ):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
 
@@ -104,7 +107,9 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageGate
 
     payload = av.get_finance_report(symbol=symbol, report=report_name)
     if not isinstance(payload, dict):
-        raise AlphaVantageGatewayError("Unexpected Alpha Vantage finance response type.", payload={"symbol": symbol, "report": report_name})
+        raise AlphaVantageGatewayError(
+            "Unexpected Alpha Vantage finance response type.", payload={"symbol": symbol, "report": report_name}
+        )
 
     raw = _serialize_json_bytes(payload)
     mdc.store_raw_bytes(raw, blob_path, client=bronze_client)

@@ -92,14 +92,18 @@ class AlphaVantageGatewayClient:
         if not base_url:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Alpha Vantage ETL via API gateway.")
 
-        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(os.environ.get("API_KEY"))
+        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(
+            os.environ.get("API_KEY")
+        )
         api_key_header = (
             _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY_HEADER"))
             or _strip_or_none(os.environ.get("API_KEY_HEADER"))
             or "X-API-Key"
         )
 
-        timeout_seconds = _env_float("ASSET_ALLOCATION_API_TIMEOUT_SECONDS", _env_float("ALPHA_VANTAGE_TIMEOUT_SECONDS", 120.0))
+        timeout_seconds = _env_float(
+            "ASSET_ALLOCATION_API_TIMEOUT_SECONDS", _env_float("ALPHA_VANTAGE_TIMEOUT_SECONDS", 120.0)
+        )
 
         return AlphaVantageGatewayClient(
             AlphaVantageGatewayClientConfig(
@@ -154,7 +158,9 @@ class AlphaVantageGatewayClient:
         except httpx.TimeoutException as exc:
             raise AlphaVantageGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
         except Exception as exc:
-            raise AlphaVantageGatewayError(f"API gateway call failed: {type(exc).__name__}: {exc}", payload={"path": path}) from exc
+            raise AlphaVantageGatewayError(
+                f"API gateway call failed: {type(exc).__name__}: {exc}", payload={"path": path}
+            ) from exc
 
         if resp.status_code < 400:
             return resp
@@ -163,13 +169,21 @@ class AlphaVantageGatewayClient:
         payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
 
         if resp.status_code in {401, 403}:
-            raise AlphaVantageGatewayAuthError("API gateway auth failed.", status_code=resp.status_code, detail=detail, payload=payload)
+            raise AlphaVantageGatewayAuthError(
+                "API gateway auth failed.", status_code=resp.status_code, detail=detail, payload=payload
+            )
         if resp.status_code == 404:
-            raise AlphaVantageGatewayInvalidSymbolError(detail or "Symbol not found.", status_code=resp.status_code, detail=detail, payload=payload)
+            raise AlphaVantageGatewayInvalidSymbolError(
+                detail or "Symbol not found.", status_code=resp.status_code, detail=detail, payload=payload
+            )
         if resp.status_code == 429:
-            raise AlphaVantageGatewayThrottleError(detail or "Throttled.", status_code=resp.status_code, detail=detail, payload=payload)
+            raise AlphaVantageGatewayThrottleError(
+                detail or "Throttled.", status_code=resp.status_code, detail=detail, payload=payload
+            )
         if resp.status_code == 503:
-            raise AlphaVantageGatewayUnavailableError(detail or "Gateway unavailable.", status_code=resp.status_code, detail=detail, payload=payload)
+            raise AlphaVantageGatewayUnavailableError(
+                detail or "Gateway unavailable.", status_code=resp.status_code, detail=detail, payload=payload
+            )
         raise AlphaVantageGatewayError(
             f"API gateway error (status={resp.status_code}).",
             status_code=resp.status_code,
