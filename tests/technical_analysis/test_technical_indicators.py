@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 
-from unittest.mock import patch
+
 from datetime import datetime
 
 from tasks.technical_analysis import technical_indicators as gc
