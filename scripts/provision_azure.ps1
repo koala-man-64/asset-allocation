@@ -13,6 +13,9 @@ param(
   [switch]$EnableAcrAdmin,
   [switch]$EmitSecrets,
   [switch]$GrantAcrPullToAcaResources,
+  # Best-effort: assign the ACR pull user-assigned identity to existing apps/jobs and configure
+  # their registry to use that identity (instead of username/password).
+  [switch]$ConfigureAcrPullIdentityOnAcaResources,
   [switch]$GrantJobStartToAcaResources,
 
   [switch]$ProvisionPostgres,
@@ -119,6 +122,10 @@ if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources") -and $Prom
 if (-not $PSBoundParameters.ContainsKey("GrantJobStartToAcaResources") -and $PromptForResources -and (-not $NonInteractive)) {
     $GrantJobStartToAcaResources = Get-YesNo "Grant job-start permissions to ACR pull identity?" $false
     $grantJobStartPrompted = $true
+}
+
+if (-not $PSBoundParameters.ContainsKey("ConfigureAcrPullIdentityOnAcaResources") -and $PromptForResources -and (-not $NonInteractive)) {
+    $ConfigureAcrPullIdentityOnAcaResources = Get-YesNo "Configure existing Container Apps/Jobs to pull from ACR via the user-assigned identity ($AcrPullIdentityName)?" $false
 }
 
 function Get-EnvValue {
@@ -965,6 +972,81 @@ else {
   Write-Host ""
   Write-Host "NOTE: Bronze jobs now attempt to trigger Silver jobs via ARM when they complete."
   Write-Host "To grant the required permissions, re-run this script after deployment with -GrantJobStartToAcaResources."
+}
+
+if ($ConfigureAcrPullIdentityOnAcaResources) {
+  if (-not $doManagedIdentity -or -not $acrPullIdentityId) {
+    Write-Warning "Skipping ACR pull identity configuration (managed identity not provisioned)."
+  }
+  elseif (-not $doAcr -or -not $acrLoginServer) {
+    Write-Warning "Skipping ACR pull identity configuration (ACR not provisioned)."
+  }
+  else {
+    Write-Host ""
+    Write-Host "Configuring existing Container Apps/Jobs to pull from ACR via managed identity (best-effort)..." -ForegroundColor Cyan
+    Write-Host "  ACR: $AcrName ($acrLoginServer)"
+    Write-Host "  Identity: $AcrPullIdentityName ($acrPullIdentityId)"
+
+    $appsConfigured = 0
+    $appsFailed = 0
+    $jobsConfigured = 0
+    $jobsFailed = 0
+
+    $appNames = @()
+    try {
+      $appNames = @(az containerapp list --resource-group $ResourceGroup --query "[].name" -o tsv --only-show-errors 2>$null)
+    }
+    catch {
+      $appNames = @()
+    }
+
+    foreach ($name in $appNames) {
+      if (-not $name) { continue }
+      try {
+        $out = az containerapp identity assign --name $name --resource-group $ResourceGroup --user-assigned $acrPullIdentityId --only-show-errors 2>&1
+        if ($LASTEXITCODE -ne 0) { throw $out }
+
+        $out = az containerapp registry set --name $name --resource-group $ResourceGroup --server $acrLoginServer --identity $acrPullIdentityId --only-show-errors 2>&1
+        if ($LASTEXITCODE -ne 0) { throw $out }
+
+        $appsConfigured += 1
+        Write-Host "  Configured app: $name"
+      }
+      catch {
+        $appsFailed += 1
+        Write-Warning "Failed to configure app '$name': $($_.Exception.Message)"
+        Write-Warning "  If this mentions ACR UNAUTHORIZED, re-run the deploy workflow (it bootstraps to a public image to break ACR auth deadlocks)."
+      }
+    }
+
+    $jobNames = @()
+    try {
+      $jobNames = @(az containerapp job list --resource-group $ResourceGroup --query "[].name" -o tsv --only-show-errors 2>$null)
+    }
+    catch {
+      $jobNames = @()
+    }
+
+    foreach ($name in $jobNames) {
+      if (-not $name) { continue }
+      try {
+        $out = az containerapp job identity assign --name $name --resource-group $ResourceGroup --user-assigned $acrPullIdentityId --only-show-errors 2>&1
+        if ($LASTEXITCODE -ne 0) { throw $out }
+
+        $out = az containerapp job registry set --name $name --resource-group $ResourceGroup --server $acrLoginServer --identity $acrPullIdentityId --only-show-errors 2>&1
+        if ($LASTEXITCODE -ne 0) { throw $out }
+
+        $jobsConfigured += 1
+        Write-Host "  Configured job: $name"
+      }
+      catch {
+        $jobsFailed += 1
+        Write-Warning "Failed to configure job '$name': $($_.Exception.Message)"
+      }
+    }
+
+    Write-Host "ACR pull identity configuration summary: appsConfigured=$appsConfigured appsFailed=$appsFailed jobsConfigured=$jobsConfigured jobsFailed=$jobsFailed"
+  }
 }
 
 $outputs = [ordered]@{

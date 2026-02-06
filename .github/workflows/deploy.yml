@@ -640,6 +640,38 @@ jobs:
               --only-show-errors
           }
 
+          BOOTSTRAP_IMAGE="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+
+          is_acr_auth_error() {
+            # Best-effort match on the most common ACR pull failure strings.
+            echo "$1" | grep -qiE "(UNAUTHORIZED: authentication required|UNAUTHORIZED|authentication required|aka\\.ms/acr/authorization)"
+          }
+
+          bootstrap_app_image() {
+            local app_name="$1"
+            echo "Switching $app_name to bootstrap image ($BOOTSTRAP_IMAGE) to unblock identity/registry updates..."
+            az containerapp update \
+              --name "$app_name" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --image "$BOOTSTRAP_IMAGE" \
+              --only-show-errors
+          }
+
+          ensure_app_identity_assigned() {
+            local app_name="$1"
+            if ! az containerapp identity show \
+              --name "$app_name" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              echo "Assigning user-assigned managed identity (for ACR pull) to $app_name..."
+              az containerapp identity assign \
+                --name "$app_name" \
+                --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+          }
+
           echo "Deploying API app from YAML..."
           tmp="deploy/app_api.tmp.yaml"
           envsubst < deploy/app_api.yaml > "$tmp"
@@ -658,28 +690,97 @@ jobs:
 
           if ! az containerapp show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "App ${{ env.API_APP_NAME }} not found. Creating..."
-            az containerapp create \
+            if ! create_out="$(az containerapp create \
               --name ${{ env.API_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
-              --yaml "$tmp"
-            ensure_registry_identity "${{ env.API_APP_NAME }}"
-          else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp identity show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp identity assign \
-                --name ${{ env.API_APP_NAME }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
+              --yaml "$tmp" 2>&1)"; then
+              echo "$create_out"
+              if is_acr_auth_error "$create_out"; then
+                echo "Create failed due to ACR auth. Bootstrapping app with a public image, then applying YAML..."
+                az containerapp create \
+                  --name ${{ env.API_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
+                  --image "$BOOTSTRAP_IMAGE" \
+                  --ingress internal \
+                  --target-port 80 \
+                  --only-show-errors
+
+                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+                ensure_registry_identity "${{ env.API_APP_NAME }}"
+
+                az containerapp update \
+                  --name ${{ env.API_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --yaml "$tmp" \
+                  --only-show-errors
+              else
+                echo "::error::Failed to create Container App '${{ env.API_APP_NAME }}'. See output above."
+                exit 1
+              fi
             fi
 
+            # Idempotent safety: ensure identity + registry use MI (and clears username/password).
+            ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
             ensure_registry_identity "${{ env.API_APP_NAME }}"
+          else
+            echo "Ensuring app can pull from ACR using managed identity..."
 
-            az containerapp update \
+            # If the app is in a bad state (private image + bad registry credentials), identity
+            # assignment can deadlock because it triggers a revision pull. Bootstrap to a public
+            # image first so identity/registry updates can succeed, then apply the desired YAML.
+            current_registry_identity="$(az containerapp show \
               --name ${{ env.API_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+              --query \"properties.configuration.registries[?server=='${{ env.ACR_NAME }}.azurecr.io'].identity | [0]\" -o tsv 2>/dev/null | tr -d '\r' || true)"
+
+            if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
+              bootstrap_app_image "${{ env.API_APP_NAME }}" || true
+            fi
+
+            if ! assign_out="$(ensure_app_identity_assigned "${{ env.API_APP_NAME }}" 2>&1)"; then
+              echo "$assign_out"
+              if is_acr_auth_error "$assign_out"; then
+                bootstrap_app_image "${{ env.API_APP_NAME }}"
+                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+              else
+                echo "::error::Failed to assign managed identity to '${{ env.API_APP_NAME }}'."
+                exit 1
+              fi
+            fi
+
+            if ! reg_out="$(ensure_registry_identity "${{ env.API_APP_NAME }}" 2>&1)"; then
+              echo "$reg_out"
+              if is_acr_auth_error "$reg_out"; then
+                bootstrap_app_image "${{ env.API_APP_NAME }}"
+                ensure_registry_identity "${{ env.API_APP_NAME }}"
+              else
+                echo "::error::Failed to set ACR registry identity for '${{ env.API_APP_NAME }}'."
+                exit 1
+              fi
+            fi
+
+            if ! update_out="$(az containerapp update \
+              --name ${{ env.API_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp" 2>&1)"; then
+              echo "$update_out"
+              if is_acr_auth_error "$update_out"; then
+                echo "Update failed due to ACR auth. Bootstrapping and retrying..."
+                bootstrap_app_image "${{ env.API_APP_NAME }}"
+                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+                ensure_registry_identity "${{ env.API_APP_NAME }}"
+                az containerapp update \
+                  --name ${{ env.API_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --yaml "$tmp" \
+                  --only-show-errors
+              else
+                echo "::error::Failed to update Container App '${{ env.API_APP_NAME }}'. See output above."
+                exit 1
+              fi
+            fi
           fi
 
       - name: Deploy UI App
@@ -701,34 +802,131 @@ jobs:
               --only-show-errors
           }
 
+          BOOTSTRAP_IMAGE="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+
+          is_acr_auth_error() {
+            echo "$1" | grep -qiE "(UNAUTHORIZED: authentication required|UNAUTHORIZED|authentication required|aka\\.ms/acr/authorization)"
+          }
+
+          bootstrap_app_image() {
+            local app_name="$1"
+            echo "Switching $app_name to bootstrap image ($BOOTSTRAP_IMAGE) to unblock identity/registry updates..."
+            az containerapp update \
+              --name "$app_name" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --image "$BOOTSTRAP_IMAGE" \
+              --only-show-errors
+          }
+
+          ensure_app_identity_assigned() {
+            local app_name="$1"
+            if ! az containerapp identity show \
+              --name "$app_name" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              echo "Assigning user-assigned managed identity (for ACR pull) to $app_name..."
+              az containerapp identity assign \
+                --name "$app_name" \
+                --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+          }
+
           echo "Deploying UI app from YAML..."
           tmp="deploy/app_ui.tmp.yaml"
           envsubst < deploy/app_ui.yaml > "$tmp"
 
           if ! az containerapp show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
             echo "App ${{ env.UI_APP_NAME }} not found. Creating..."
-            az containerapp create \
+            if ! create_out="$(az containerapp create \
               --name ${{ env.UI_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
-              --yaml "$tmp"
-            ensure_registry_identity "${{ env.UI_APP_NAME }}"
-          else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp identity show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp identity assign \
-                --name ${{ env.UI_APP_NAME }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
+              --yaml "$tmp" 2>&1)"; then
+              echo "$create_out"
+              if is_acr_auth_error "$create_out"; then
+                echo "Create failed due to ACR auth. Bootstrapping app with a public image, then applying YAML..."
+                az containerapp create \
+                  --name ${{ env.UI_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
+                  --image "$BOOTSTRAP_IMAGE" \
+                  --ingress internal \
+                  --target-port 80 \
+                  --only-show-errors
+
+                ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
+                ensure_registry_identity "${{ env.UI_APP_NAME }}"
+
+                az containerapp update \
+                  --name ${{ env.UI_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --yaml "$tmp" \
+                  --only-show-errors
+              else
+                echo "::error::Failed to create Container App '${{ env.UI_APP_NAME }}'. See output above."
+                exit 1
+              fi
             fi
 
+            # Idempotent safety: ensure identity + registry use MI (and clears username/password).
+            ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
             ensure_registry_identity "${{ env.UI_APP_NAME }}"
+          else
+            echo "Ensuring app can pull from ACR using managed identity..."
 
-            az containerapp update \
+            current_registry_identity="$(az containerapp show \
               --name ${{ env.UI_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+              --query \"properties.configuration.registries[?server=='${{ env.ACR_NAME }}.azurecr.io'].identity | [0]\" -o tsv 2>/dev/null | tr -d '\r' || true)"
+
+            if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
+              bootstrap_app_image "${{ env.UI_APP_NAME }}" || true
+            fi
+
+            if ! assign_out="$(ensure_app_identity_assigned "${{ env.UI_APP_NAME }}" 2>&1)"; then
+              echo "$assign_out"
+              if is_acr_auth_error "$assign_out"; then
+                bootstrap_app_image "${{ env.UI_APP_NAME }}"
+                ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
+              else
+                echo "::error::Failed to assign managed identity to '${{ env.UI_APP_NAME }}'."
+                exit 1
+              fi
+            fi
+
+            if ! reg_out="$(ensure_registry_identity "${{ env.UI_APP_NAME }}" 2>&1)"; then
+              echo "$reg_out"
+              if is_acr_auth_error "$reg_out"; then
+                bootstrap_app_image "${{ env.UI_APP_NAME }}"
+                ensure_registry_identity "${{ env.UI_APP_NAME }}"
+              else
+                echo "::error::Failed to set ACR registry identity for '${{ env.UI_APP_NAME }}'."
+                exit 1
+              fi
+            fi
+
+            if ! update_out="$(az containerapp update \
+              --name ${{ env.UI_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp" 2>&1)"; then
+              echo "$update_out"
+              if is_acr_auth_error "$update_out"; then
+                echo "Update failed due to ACR auth. Bootstrapping and retrying..."
+                bootstrap_app_image "${{ env.UI_APP_NAME }}"
+                ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
+                ensure_registry_identity "${{ env.UI_APP_NAME }}"
+                az containerapp update \
+                  --name ${{ env.UI_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --yaml "$tmp" \
+                  --only-show-errors
+              else
+                echo "::error::Failed to update Container App '${{ env.UI_APP_NAME }}'. See output above."
+                exit 1
+              fi
+            fi
           fi
 
       - name: Check Market Bronze Job Exists
@@ -781,7 +979,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.BRONZE_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -792,6 +990,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.BRONZE_MARKET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.BRONZE_MARKET_JOB }} \
@@ -850,7 +1056,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.SILVER_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -861,6 +1067,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.SILVER_MARKET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.SILVER_MARKET_JOB }} \
@@ -913,7 +1127,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.GOLD_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -924,6 +1138,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.GOLD_MARKET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.GOLD_MARKET_JOB }} \
@@ -979,7 +1201,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.BRONZE_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -990,6 +1212,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.BRONZE_FINANCE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.BRONZE_FINANCE_JOB }} \
@@ -1048,7 +1278,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.SILVER_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1059,6 +1289,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.SILVER_FINANCE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.SILVER_FINANCE_JOB }} \
@@ -1111,7 +1349,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.GOLD_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1122,6 +1360,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.GOLD_FINANCE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.GOLD_FINANCE_JOB }} \
@@ -1175,7 +1421,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1186,6 +1432,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
@@ -1244,7 +1498,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1255,6 +1509,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
@@ -1307,7 +1569,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1318,6 +1580,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
@@ -1374,7 +1644,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1385,6 +1655,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.BRONZE_EARNINGS_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
@@ -1443,7 +1721,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.SILVER_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1454,6 +1732,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.SILVER_EARNINGS_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.SILVER_EARNINGS_JOB }} \
@@ -1506,7 +1792,7 @@ jobs:
             az containerapp job create \
               --name ${{ env.GOLD_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment asset-allocation-env \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
             echo "Ensuring managed identity is assigned (for ACR pull)..."
@@ -1517,6 +1803,14 @@ jobs:
                 --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
                 --only-show-errors
             fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.GOLD_EARNINGS_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
 
             az containerapp job update \
               --name ${{ env.GOLD_EARNINGS_JOB }} \
