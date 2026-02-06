@@ -104,9 +104,14 @@ def trigger_containerapp_job_start(*, job_name: str, required: bool = True) -> N
 
 
 def trigger_next_job_from_env() -> None:
-    next_job = (os.environ.get("TRIGGER_NEXT_JOB_NAME") or "").strip()
-    if not next_job:
+    raw_next_jobs = (os.environ.get("TRIGGER_NEXT_JOB_NAME") or "").strip()
+    if not raw_next_jobs:
         return
 
     required = _parse_bool(os.environ.get("TRIGGER_NEXT_JOB_REQUIRED"), default=True)
-    trigger_containerapp_job_start(job_name=next_job, required=required)
+    
+    # Support multiple comma-separated jobs
+    next_jobs = [j.strip() for j in raw_next_jobs.split(",") if j.strip()]
+    
+    for job_name in next_jobs:
+        trigger_containerapp_job_start(job_name=job_name, required=required)

@@ -49,7 +49,7 @@ properties:
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: TRIGGER_NEXT_JOB_NAME
-        value: ${GOLD_MARKET_JOB}
+        value: ${GOLD_MARKET_JOB}, ${GOLD_CANDLESTICKS_JOB}
       - name: TRIGGER_NEXT_JOB_REQUIRED
         value: "true"
       - name: AZURE_STORAGE_ACCOUNT_NAME

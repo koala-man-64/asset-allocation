@@ -1,0 +1,51 @@
+export interface Stock {
+  id: string;
+  symbol: string;
+  name: string;
+  sector: string;
+  industry: string;
+  marketCap: number;
+  price: number;
+  priceChange1Y: number;
+  pe: number | null;
+  pb: number | null;
+  ps: number | null;
+  pegRatio: number | null;
+  dividendYield: number | null;
+  beta: number;
+  volume: number;
+  avgVolume: number;
+  high52W: number;
+  low52W: number;
+  roe: number | null;
+  roa: number | null;
+  profitMargin: number | null;
+  revenueGrowth: number | null;
+  earningsGrowth: number | null;
+  debtToEquity: number | null;
+  freeCashFlow: number | null;
+  exchange: string;
+  country: string;
+  ipoDate: string;
+  description: string;
+  employees: number;
+  website: string;
+  esgScore: number | null;
+  analystRating: 'Buy' | 'Strong Buy' | 'Hold' | 'Sell' | 'Strong Sell' | null;
+  analystCount: number;
+  volatility52W: number;
+  rsi14: number;
+  evToEbitda: number | null;
+  highVolatility: boolean;
+  negativeEarnings: boolean;
+  lowLiquidity: boolean;
+  priceHistory: {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    price: number; // Duplicated for simple line charts
+  }[];
+}

@@ -1,0 +1,10 @@
+node_modules
+dist
+.vite
+.pnpm-store
+coverage
+.eslintcache
+pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+.DS_Store
