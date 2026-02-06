@@ -42,6 +42,7 @@ env:
   GOLD_FINANCE_JOB: gold-finance-job
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
   GOLD_EARNINGS_JOB: gold-earnings-job
+  GOLD_CANDLESTICKS_JOB: gold-candlesticks-job
 
   SILVER_MARKET_JOB: silver-market-job
   SILVER_FINANCE_JOB: silver-finance-job
@@ -269,6 +270,16 @@ jobs:
               - "tasks/market_data/materialize_gold_market_by_date.py"
               - "deploy/job_gold_market_data.yaml"
               - ".github/workflows/deploy.yml"
+            gold_candlesticks:
+              - "Dockerfile"
+              - "pyproject.toml"
+              - "requirements.lock.txt"
+              - "core/**"
+              - "services/**"
+              - "tasks/common/**"
+              - "tasks/candlesticks/**"
+              - "deploy/job_gold_candlesticks.yaml"
+              - ".github/workflows/deploy.yml"
 
       - name: Detect Finance Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
@@ -431,6 +442,7 @@ jobs:
           echo "bronze_market=${{ steps.market_changes.outputs.bronze_market }}"
           echo "silver_market=${{ steps.market_changes.outputs.silver_market }}"
           echo "gold_market=${{ steps.market_changes.outputs.gold_market }}"
+          echo "gold_candlesticks=${{ steps.market_changes.outputs.gold_candlesticks }}"
           echo "bronze_finance=${{ steps.finance_changes.outputs.bronze_finance }}"
           echo "silver_finance=${{ steps.finance_changes.outputs.silver_finance }}"
           echo "gold_finance=${{ steps.finance_changes.outputs.gold_finance }}"
@@ -1149,6 +1161,77 @@ jobs:
 
             az containerapp job update \
               --name ${{ env.GOLD_MARKET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp"
+          fi
+
+      - name: Check Candlesticks Gold Job Exists
+        id: candlesticks_gold_job_check
+        run: |
+          if az containerapp job show --name ${{ env.GOLD_CANDLESTICKS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "job_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "job_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Log Candlesticks Gold Job check
+        run: |
+          echo "candlesticks_gold_job_exists=${{ steps.candlesticks_gold_job_check.outputs.job_exists }}"
+      - name: Update Candlesticks Gold Job
+        if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.gold_candlesticks == 'true' || steps.candlesticks_gold_job_check.outputs.job_exists == 'false'
+        env:
+          NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
+          CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
+        run: |
+          set -euo pipefail
+          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${JOB_IMAGE:?JOB_IMAGE is required}"
+
+          echo "Deploying Gold Candlesticks Job from YAML..."
+          tmp="deploy/job_gold_candlesticks.tmp.yaml"
+          envsubst < deploy/job_gold_candlesticks.yaml > "$tmp"
+          echo "Rendered YAML (secrets redacted):"
+          awk '
+            {
+              line=$0
+              match(line, /^ */)
+              indent=RLENGTH
+              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
+              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
+              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
+              print line
+            }
+          ' "$tmp"
+          
+          if ! az containerapp job show --name ${{ env.GOLD_CANDLESTICKS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Job ${{ env.GOLD_CANDLESTICKS_JOB }} not found. Creating..."
+            az containerapp job create \
+              --name ${{ env.GOLD_CANDLESTICKS_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
+              --yaml "$tmp"
+          else
+            echo "Ensuring managed identity is assigned (for ACR pull)..."
+            if ! az containerapp job identity show --name ${{ env.GOLD_CANDLESTICKS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
+              az containerapp job identity assign \
+                --name ${{ env.GOLD_CANDLESTICKS_JOB }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+                --only-show-errors
+            fi
+
+            echo "Ensuring job registry uses managed identity (clears username/password)..."
+            az containerapp job registry set \
+              --name ${{ env.GOLD_CANDLESTICKS_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --server "${{ env.ACR_NAME }}.azurecr.io" \
+              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
+              --only-show-errors
+
+            az containerapp job update \
+              --name ${{ env.GOLD_CANDLESTICKS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi

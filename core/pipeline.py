@@ -31,7 +31,18 @@ class DataPaths:
         return "market_by_date"
 
     @staticmethod
+    def get_technical_analysis_path(ticker: str) -> str:
+        """Per-ticker technical analysis indicator table path."""
+        return f"technical-analysis/{ticker}"
+
+    @staticmethod
+    def get_technical_analysis_by_date_path() -> str:
+        """Cross-sectional (by-date) technical analysis indicator table path."""
+        return "technical_analysis_by_date"
+
+    @staticmethod
     def get_gold_earnings_path(ticker: str) -> str:
+
         return f"earnings/{ticker}"
 
     @staticmethod
