@@ -35,6 +35,11 @@ The UI calls the FastAPI service under `/api/*` (see `api/API_ENDPOINTS.md`). Co
 - `GET /api/system/health`
 - `WS /api/ws/updates`
 
+Swagger/OpenAPI docs in browser:
+- `GET /api/docs` (Swagger UI)
+- `GET /api/openapi.json` (OpenAPI spec)
+- `GET /docs` (redirects to the active API docs path)
+
 ## Runtime Config & Debug Symbols (DB-Backed)
 
 This repo supports DB-backed runtime configuration so operational knobs can be changed without redeploying.

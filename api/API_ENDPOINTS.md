@@ -2,11 +2,15 @@
   
 ```text
 API Root
+├── /docs [GET] (app.docs_redirect) - Redirects to active Swagger UI path :: api/service/app.py
+├── /openapi.json [GET] (app.openapi_redirect) - Redirects to active OpenAPI JSON path :: api/service/app.py
 ├── /healthz [GET] (app.healthz) - K8s Liveness Probe (Returns 200 OK) :: api/service/app.py
 ├── /readyz [GET] (app.readyz) - K8s Readiness Probe (Checks DB connectivity) :: api/service/app.py
 ├── /config.js [GET] (app.serve_runtime_config) - Serves runtime env vars to UI :: api/service/app.py <== ui/src/config.ts (implicit)
 ├── /api/ws/updates [WEBSOCKET] (app.websocket_endpoint) - Real-time updates for UI :: api/service/app.py
 └── /api
+    ├── /docs [GET] (app.swagger_ui) - Browser Swagger UI docs :: api/service/app.py
+    ├── /openapi.json [GET] (app.openapi_json) - OpenAPI spec payload :: api/service/app.py
     ├── /ws/updates [WebSocket] (app.websocket_endpoint) - Real-time updates (system health/alerts) :: api/service/app.py <== ui/src/hooks/useRealtime.ts
     
     # System & Health (Matches ui/src/hooks/useDataQueries.ts)
