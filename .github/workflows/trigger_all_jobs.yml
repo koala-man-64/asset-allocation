@@ -19,27 +19,6 @@ env:
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
   BRONZE_EARNINGS_JOB: bronze-earnings-job
-name: Manual Job Trigger
-
-on:
-  workflow_dispatch:
-    inputs:
-      job:
-        description: Job to start (use job key or `all` to trigger everything)
-        required: false
-        default: all
-
-permissions:
-  id-token: write
-  contents: read
-
-env:
-  RESOURCE_GROUP: AssetAllocationRG
-  # Bronze
-  BRONZE_MARKET_JOB: bronze-market-job
-  BRONZE_FINANCE_JOB: bronze-finance-job
-  BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
-  BRONZE_EARNINGS_JOB: bronze-earnings-job
   # Silver
   SILVER_MARKET_JOB: silver-market-job
   SILVER_FINANCE_JOB: silver-finance-job
@@ -50,10 +29,15 @@ env:
   GOLD_FINANCE_JOB: gold-finance-job
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
   GOLD_EARNINGS_JOB: gold-earnings-job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_price_target' || github.event.inputs.job == 'gold_price_target_by_date' }}
+
+jobs:
+  trigger-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Price Target Gold Job
+        if: "${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_price_target' || github.event.inputs.job == 'gold_price_target_by_date' }}"
         run: az containerapp job start --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
 
       - name: Trigger Earnings Gold Job
-        if: ${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_earnings' || github.event.inputs.job == 'gold_earnings_by_date' }}
+        if: "${{ github.event.inputs.job == 'all' || github.event.inputs.job == 'gold_earnings' || github.event.inputs.job == 'gold_earnings_by_date' }}"
         run: az containerapp job start --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }}
-
