@@ -19,6 +19,8 @@ from core.core import write_line, write_warning
 from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
 
+_DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("Date", "date")
+
 
 @dataclass(frozen=True)
 class MaterializeConfig:
@@ -108,6 +110,25 @@ def _try_load_tickers_from_silver_container(container: str) -> Optional[List[str
         return None
 
 
+def _resolve_container(container_raw: Optional[str]) -> str:
+    container_raw = container_raw or os.environ.get("AZURE_CONTAINER_SILVER")
+    if container_raw is None or not str(container_raw).strip():
+        raise ValueError("Missing silver container. Set AZURE_CONTAINER_SILVER or pass --container.")
+    return str(container_raw).strip()
+
+
+def _load_first_available_date_projection(
+    *, container: str, src_path: str
+) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
+    for date_col in _DATE_COLUMN_CANDIDATES:
+        df = load_delta(container, src_path, columns=[date_col])
+        if df is None:
+            continue
+        if date_col in df.columns:
+            return date_col, df
+    return None, None
+
+
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
         description="Materialize Silver market data into a cross-sectional Delta table (partitioned by date)."
@@ -122,10 +143,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
     args = parser.parse_args(argv)
 
-    container_raw = args.container or os.environ.get("AZURE_CONTAINER_SILVER")
-    if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing silver container. Set AZURE_CONTAINER_SILVER or pass --container.")
-    container = str(container_raw).strip()
+    container = _resolve_container(args.container)
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
     if max_tickers is not None and max_tickers <= 0:
@@ -137,6 +155,44 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
         output_path=str(args.output_path).strip().lstrip("/"),
         max_tickers=max_tickers,
     )
+
+
+def discover_year_months_from_data(
+    *, container: Optional[str] = None, max_tickers: Optional[int] = None
+) -> List[str]:
+    container = _resolve_container(container)
+    tickers_from_container = _try_load_tickers_from_silver_container(container)
+    if tickers_from_container is None:
+        tickers = _load_ticker_universe()
+        ticker_source = "symbol_universe"
+    else:
+        tickers = tickers_from_container
+        ticker_source = "silver_container"
+
+    if max_tickers is not None:
+        tickers = tickers[: max_tickers]
+
+    if not tickers:
+        write_line(f"No Silver market-data tables found (source={ticker_source}); no year_months discovered.")
+        return []
+
+    year_months: set[str] = set()
+    for ticker in tickers:
+        src_path = DataPaths.get_market_data_path(ticker)
+        date_col, df = _load_first_available_date_projection(container=container, src_path=src_path)
+        if date_col is None or df is None or df.empty:
+            continue
+
+        dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
+        if dates.empty:
+            continue
+        for value in dates.dt.strftime("%Y-%m").unique().tolist():
+            if value:
+                year_months.add(str(value))
+
+    discovered = sorted(year_months)
+    write_line(f"Discovered {len(discovered)} year_month(s) from silver market data in {container}.")
+    return discovered
 
 
 def materialize_silver_market_by_date(cfg: MaterializeConfig) -> int:
