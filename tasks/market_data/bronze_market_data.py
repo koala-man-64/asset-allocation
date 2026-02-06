@@ -293,9 +293,8 @@ if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env
 
     job_name = "bronze-market-job"
-    with mdc.JobLock("alpha_vantage", wait_timeout_seconds=None):
-        with mdc.JobLock(job_name):
-            exit_code = main()
-            if exit_code == 0:
-                trigger_next_job_from_env()
-            raise SystemExit(exit_code)
+    with mdc.JobLock(job_name):
+        exit_code = main()
+        if exit_code == 0:
+            trigger_next_job_from_env()
+        raise SystemExit(exit_code)

@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from alpha_vantage import AlphaVantageError, AlphaVantageInvalidSymbolError, AlphaVantageThrottleError
-from api.service.alpha_vantage_gateway import AlphaVantageGateway, AlphaVantageNotConfiguredError, FinanceReport
+from api.service.alpha_vantage_gateway import (
+    AlphaVantageGateway,
+    AlphaVantageNotConfiguredError,
+    FinanceReport,
+    alpha_vantage_caller_context,
+)
 from api.service.dependencies import validate_auth
 
 logger = logging.getLogger("asset-allocation.api.alpha_vantage")
@@ -48,6 +53,13 @@ def _handle_alpha_vantage_error(exc: Exception) -> None:
     raise HTTPException(status_code=500, detail=f"Unexpected error: {type(exc).__name__}: {exc}") from exc
 
 
+def _caller_context(request: Request):
+    return alpha_vantage_caller_context(
+        caller_job=request.headers.get("X-Caller-Job"),
+        caller_execution=request.headers.get("X-Caller-Execution"),
+    )
+
+
 @router.get("/listing-status")
 def get_listing_status(
     request: Request,
@@ -61,7 +73,8 @@ def get_listing_status(
     if normalized_state not in {"active", "delisted"}:
         raise HTTPException(status_code=400, detail="state must be 'active' or 'delisted'.")
     try:
-        csv_text = gateway.get_listing_status_csv(state=normalized_state, date=parsed_date)
+        with _caller_context(request):
+            csv_text = gateway.get_listing_status_csv(state=normalized_state, date=parsed_date)
     except Exception as exc:
         _handle_alpha_vantage_error(exc)
         raise
@@ -84,7 +97,8 @@ def get_daily_time_series(
     if out not in {"compact", "full"}:
         raise HTTPException(status_code=400, detail="outputsize must be 'compact' or 'full'.")
     try:
-        csv_text = gateway.get_daily_time_series_csv(symbol=sym, outputsize=out, adjusted=bool(adjusted))
+        with _caller_context(request):
+            csv_text = gateway.get_daily_time_series_csv(symbol=sym, outputsize=out, adjusted=bool(adjusted))
     except Exception as exc:
         _handle_alpha_vantage_error(exc)
         raise
@@ -102,7 +116,8 @@ def get_earnings(
     if not sym:
         raise HTTPException(status_code=400, detail="symbol is required.")
     try:
-        payload = gateway.get_earnings(symbol=sym)
+        with _caller_context(request):
+            payload = gateway.get_earnings(symbol=sym)
     except Exception as exc:
         _handle_alpha_vantage_error(exc)
         raise
@@ -121,9 +136,9 @@ def get_finance_report(
     if not sym:
         raise HTTPException(status_code=400, detail="symbol is required.")
     try:
-        payload = gateway.get_finance_report(symbol=sym, report=report)
+        with _caller_context(request):
+            payload = gateway.get_finance_report(symbol=sym, report=report)
     except Exception as exc:
         _handle_alpha_vantage_error(exc)
         raise
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
-

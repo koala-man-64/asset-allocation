@@ -39,7 +39,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Union
 
 import httpx
 
@@ -64,9 +64,16 @@ class AlphaVantageClient:
         connection settings.
     """
 
-    def __init__(self, config: AlphaVantageConfig, *, http_client: Optional[httpx.Client] = None) -> None:
+    def __init__(
+        self,
+        config: AlphaVantageConfig,
+        *,
+        http_client: Optional[httpx.Client] = None,
+        caller_provider: Optional[Callable[[], str]] = None,
+    ) -> None:
         self.config = config
         self._rate_limiter = RateLimiter(config.rate_limit_per_min)
+        self._caller_provider = caller_provider
         # httpx will attempt to use proxy settings from the environment by
         # default.  In containerized deployments this can result in an
         # ImportError when the optional ``socksio`` dependency is not
@@ -85,6 +92,7 @@ class AlphaVantageClient:
             "success": 0,
             "failed": 0,
             "retries": 0,
+            "rate_wait_timeouts": 0,
             "throttle_payloads": 0,
             "invalid_symbols": 0,
             "http_status_errors": 0,
@@ -108,7 +116,19 @@ class AlphaVantageClient:
             av_max_retries=int(getattr(config, "max_retries", 0)),
             av_backoff_base_seconds=float(getattr(config, "backoff_base_seconds", 0.0)),
             av_api_key_set=bool(getattr(config, "api_key", "")),
+            av_caller_provider=bool(caller_provider),
         )
+
+    def _resolve_caller(self) -> Optional[str]:
+        provider = self._caller_provider
+        if provider is None:
+            return None
+        try:
+            resolved = provider()
+        except Exception:
+            return None
+        text = str(resolved or "").strip()
+        return text or None
 
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -238,6 +258,7 @@ class AlphaVantageClient:
             av_success=int(snapshot.get("success") or 0),
             av_failed=int(snapshot.get("failed") or 0),
             av_retries=int(snapshot.get("retries") or 0),
+            av_rate_wait_timeouts=int(snapshot.get("rate_wait_timeouts") or 0),
             av_throttle_payloads=int(snapshot.get("throttle_payloads") or 0),
             av_invalid_symbols=int(snapshot.get("invalid_symbols") or 0),
             av_http_status_errors=int(snapshot.get("http_status_errors") or 0),
@@ -307,6 +328,8 @@ class AlphaVantageClient:
         function = str(params.get("function") or "")
         symbol = params.get("symbol")
         safe_params = self._sanitize_params_for_log(params)
+        caller = self._resolve_caller()
+        rate_wait_timeout_seconds = getattr(self.config, "rate_wait_timeout_seconds", None)
 
         self._record_metric("logical_requests", 1)
         self._log(
@@ -318,13 +341,32 @@ class AlphaVantageClient:
             av_symbol=symbol,
             av_raw=bool(raw),
             av_max_retries=max_retries,
+            av_caller=caller,
+            av_rate_wait_timeout_seconds=rate_wait_timeout_seconds,
             av_params=safe_params,
         )
 
         try:
             for attempt in range(max_retries + 1):
                 wait_started = time.monotonic()
-                self._rate_limiter.wait()
+                try:
+                    self._rate_limiter.wait(caller=caller, timeout_seconds=rate_wait_timeout_seconds)
+                except TimeoutError as exc:
+                    self._record_metric("rate_wait_timeouts", 1)
+                    if attempt < max_retries:
+                        self._record_metric("retries", 1)
+                        self._sleep_backoff(
+                            attempt,
+                            req_id=req_id,
+                            function=function or None,
+                            symbol=str(symbol) if symbol is not None else None,
+                            reason="rate_wait_timeout",
+                        )
+                        continue
+                    raise AlphaVantageThrottleError(
+                        "Timed out waiting for Alpha Vantage rate-limit capacity.",
+                        payload={"caller": caller, "rate_wait_timeout_seconds": rate_wait_timeout_seconds},
+                    ) from exc
                 rate_wait_ms = (time.monotonic() - wait_started) * 1000.0
 
                 query_params = dict(params)
@@ -341,6 +383,7 @@ class AlphaVantageClient:
                     av_symbol=symbol,
                     av_raw=bool(raw),
                     av_attempt=attempt,
+                    av_caller=caller,
                     av_rate_wait_ms=round(rate_wait_ms, 1),
                     av_params=safe_params,
                 )
@@ -403,6 +446,7 @@ class AlphaVantageClient:
                                     av_function=function,
                                     av_symbol=str(symbol) if symbol is not None else None,
                                     av_attempt=attempt,
+                                    av_caller=caller,
                                     av_note=note,
                                 )
                                 self._sleep_backoff(
@@ -477,6 +521,7 @@ class AlphaVantageClient:
                                 av_function=function,
                                 av_symbol=str(symbol) if symbol is not None else None,
                                 av_attempt=attempt,
+                                av_caller=caller,
                                 av_note=note,
                             )
                             self._sleep_backoff(
@@ -520,6 +565,7 @@ class AlphaVantageClient:
                     av_symbol=str(symbol) if symbol is not None else None,
                     av_raw=False,
                     av_attempt=attempt,
+                    av_caller=caller,
                     av_status_code=int(response.status_code),
                     av_elapsed_ms=round(elapsed_ms, 1),
                     av_payload_keys=payload_keys,
@@ -550,6 +596,7 @@ class AlphaVantageClient:
                 av_symbol=str(symbol) if symbol is not None else None,
                 av_raw=bool(raw),
                 av_attempt=attempt_no,
+                av_caller=caller,
                 av_max_retries=max_retries,
                 av_error_type=type(exc).__name__,
                 av_error=str(exc),

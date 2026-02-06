@@ -124,6 +124,12 @@ class AlphaVantageGatewayClient:
         headers: dict[str, str] = {}
         if self.config.api_key:
             headers[str(self.config.api_key_header)] = str(self.config.api_key)
+        caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
+        caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))
+        if caller_job:
+            headers["X-Caller-Job"] = str(caller_job)
+        if caller_execution:
+            headers["X-Caller-Execution"] = str(caller_execution)
         return headers
 
     def _extract_detail(self, response: httpx.Response) -> str:
@@ -198,4 +204,3 @@ class AlphaVantageGatewayClient:
     def get_finance_report(self, *, symbol: str, report: str) -> dict[str, Any]:
         resp = self._request(f"/api/providers/alpha-vantage/finance/{report}", params={"symbol": symbol})
         return resp.json()
-

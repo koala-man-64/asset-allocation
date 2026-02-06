@@ -4,8 +4,10 @@ import hashlib
 import logging
 import os
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Iterator, Literal, Optional
 
 from alpha_vantage import (
     AlphaVantageClient,
@@ -31,6 +33,7 @@ class _ClientSnapshot:
     max_workers: int
     max_retries: int
     backoff_base_seconds: float
+    rate_wait_timeout_seconds: float | None
 
 
 def _strip_or_none(value: object) -> Optional[str]:
@@ -66,6 +69,41 @@ def _hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+_CALLER_JOB: ContextVar[str] = ContextVar("alpha_vantage_caller_job", default="api")
+_CALLER_EXECUTION: ContextVar[str] = ContextVar("alpha_vantage_caller_execution", default="")
+
+
+def _normalize_caller_component(value: object, *, default: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return default
+    if len(text) > 128:
+        return text[:128]
+    return text
+
+
+def _get_current_caller_job() -> str:
+    return _normalize_caller_component(_CALLER_JOB.get(), default="api")
+
+
+def get_current_caller_context() -> tuple[str, str]:
+    return (
+        _normalize_caller_component(_CALLER_JOB.get(), default="api"),
+        _normalize_caller_component(_CALLER_EXECUTION.get(), default=""),
+    )
+
+
+@contextmanager
+def alpha_vantage_caller_context(*, caller_job: Optional[str], caller_execution: Optional[str] = None) -> Iterator[None]:
+    job_token = _CALLER_JOB.set(_normalize_caller_component(caller_job, default="api"))
+    execution_token = _CALLER_EXECUTION.set(_normalize_caller_component(caller_execution, default=""))
+    try:
+        yield
+    finally:
+        _CALLER_JOB.reset(job_token)
+        _CALLER_EXECUTION.reset(execution_token)
+
+
 class AlphaVantageGateway:
     """
     Process-local gateway for Alpha Vantage calls.
@@ -96,6 +134,7 @@ class AlphaVantageGateway:
             max_workers=_env_int("ALPHA_VANTAGE_MAX_WORKERS", 32),
             max_retries=_env_int("ALPHA_VANTAGE_MAX_RETRIES", 5),
             backoff_base_seconds=_env_float("ALPHA_VANTAGE_BACKOFF_BASE_SECONDS", 0.5),
+            rate_wait_timeout_seconds=_env_float("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", 120.0),
         )
 
         snapshot = _ClientSnapshot(
@@ -106,6 +145,9 @@ class AlphaVantageGateway:
             max_workers=int(cfg.max_workers),
             max_retries=int(cfg.max_retries),
             backoff_base_seconds=float(cfg.backoff_base_seconds),
+            rate_wait_timeout_seconds=(
+                float(cfg.rate_wait_timeout_seconds) if cfg.rate_wait_timeout_seconds is not None else None
+            ),
         )
         return snapshot, cfg
 
@@ -114,7 +156,7 @@ class AlphaVantageGateway:
         with self._lock:
             if self._client is None or self._snapshot != snapshot:
                 old = self._client
-                self._client = AlphaVantageClient(cfg)
+                self._client = AlphaVantageClient(cfg, caller_provider=_get_current_caller_job)
                 self._snapshot = snapshot
                 if old is not None:
                     try:

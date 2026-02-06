@@ -45,6 +45,10 @@ class AlphaVantageConfig:
     timeout:
         Timeout in seconds for individual HTTP requests. Requests taking longer
         than this will raise an exception.
+
+    rate_wait_timeout_seconds:
+        Optional timeout for waiting on a local rate-limit slot. ``None`` waits
+        indefinitely.
     """
 
     api_key: str
@@ -54,6 +58,7 @@ class AlphaVantageConfig:
     timeout: float = 10.0
     max_retries: int = 5
     backoff_base_seconds: float = 0.5
+    rate_wait_timeout_seconds: float | None = 120.0
 
     def get_query_url(self) -> str:
         """Return the full query endpoint for the API."""
