@@ -97,6 +97,8 @@ properties:
         value: "${UI_API_BASE_URL}"
       - name: LOG_FORMAT
         value: "JSON"
+      - name: LOG_LEVEL
+        value: "${LOG_LEVEL}"
       - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID
         value: "${AZURE_SUBSCRIPTION_ID}"
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
