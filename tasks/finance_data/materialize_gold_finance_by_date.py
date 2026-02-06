@@ -30,6 +30,22 @@ class MaterializeConfig:
     max_tickers: Optional[int]
 
 
+def _normalize_object_columns(df: pd.DataFrame, *, exclude: set[str]) -> pd.DataFrame:
+    """
+    Delta/Arrow writes can fail when pandas object columns are fully-null or mixed.
+    Normalize object-ish columns to pandas string dtype to avoid Arrow Null inference.
+    """
+
+    out = df.copy()
+    for col in out.columns:
+        if col in exclude:
+            continue
+        series = out[col]
+        if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
+            out[col] = series.astype("string")
+    return out
+
+
 def _parse_year_month_bounds(year_month: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
     try:
         start = pd.Timestamp(f"{year_month}-01")
@@ -246,6 +262,12 @@ def materialize_finance_by_date(cfg: MaterializeConfig) -> int:
     if out.empty:
         write_line(f"No rows remain after year_month filter for {cfg.year_month}; nothing to materialize.")
         return 0
+
+    if "Symbol" in out.columns:
+        out["Symbol"] = out["Symbol"].astype("string")
+    if "symbol" in out.columns:
+        out["symbol"] = out["symbol"].astype("string")
+    out = _normalize_object_columns(out, exclude={"date", "year_month", "Symbol", "symbol"})
 
     predicate = f"year_month = '{cfg.year_month}'"
     store_delta(
