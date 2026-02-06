@@ -17,6 +17,8 @@ from core.core import write_line, write_warning
 from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
 
+_DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("obs_date", "date")
+
 
 @dataclass(frozen=True)
 class MaterializeConfig:
@@ -117,6 +119,45 @@ def _resolve_container(container_raw: Optional[str]) -> str:
     return str(container_raw).strip()
 
 
+def _load_first_available_date_projection(
+    *, container: str, src_path: str
+) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
+    """
+    Load only one candidate date column at a time.
+
+    Some tables have `obs_date` while others expose `date`. Probing one column
+    per call avoids projection failures from requesting both at once.
+    """
+
+    for date_col in _DATE_COLUMN_CANDIDATES:
+        df = load_delta(container, src_path, columns=[date_col])
+        if df is None:
+            continue
+        if date_col in df.columns:
+            return date_col, df
+    return None, None
+
+
+def _load_first_available_date_range(
+    *, container: str, src_path: str, start: pd.Timestamp, end: pd.Timestamp
+) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
+    """
+    Load rows for a month window by probing one candidate date filter at a time.
+    """
+
+    for date_col in _DATE_COLUMN_CANDIDATES:
+        df = load_delta(
+            container,
+            src_path,
+            filters=[(date_col, ">=", start.to_pydatetime()), (date_col, "<", end.to_pydatetime())],
+        )
+        if df is None:
+            continue
+        if date_col in df.columns:
+            return date_col, df
+    return None, None
+
+
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
         description="Materialize price target features into a cross-sectional Delta table (partitioned by date)."
@@ -169,17 +210,11 @@ def discover_year_months_from_data(
     year_months: set[str] = set()
     for ticker in tickers:
         src_path = DataPaths.get_gold_price_targets_path(ticker)
-        df = load_delta(container, src_path, columns=["date", "obs_date"])
-        if df is None or df.empty:
+        date_col, df = _load_first_available_date_projection(container=container, src_path=src_path)
+        if date_col is None or df is None or df.empty:
             continue
 
-        if "date" in df.columns:
-            dates = pd.to_datetime(df["date"], errors="coerce")
-        elif "obs_date" in df.columns:
-            dates = pd.to_datetime(df["obs_date"], errors="coerce")
-        else:
-            continue
-
+        dates = pd.to_datetime(df[date_col], errors="coerce")
         dates = dates.dropna()
         if dates.empty:
             continue
@@ -220,16 +255,15 @@ def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
     frames = []
     for ticker in tickers:
         src_path = DataPaths.get_gold_price_targets_path(ticker)
-        df = load_delta(
-            cfg.container,
-            src_path,
-            filters=[("obs_date", ">=", start.to_pydatetime()), ("obs_date", "<", end.to_pydatetime())],
+        date_col, df = _load_first_available_date_range(
+            container=cfg.container, src_path=src_path, start=start, end=end
         )
-        if df is None or df.empty:
+        if date_col is None or df is None or df.empty:
             continue
 
-        if "date" not in df.columns and "obs_date" in df.columns:
-            df["date"] = pd.to_datetime(df["obs_date"], errors="coerce").dt.normalize()
+        if "date" not in df.columns and date_col in df.columns:
+            df = df.copy()
+            df["date"] = pd.to_datetime(df[date_col], errors="coerce").dt.normalize()
             
         if "symbol" not in df.columns and "Symbol" not in df.columns:
             df["symbol"] = ticker

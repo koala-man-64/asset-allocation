@@ -38,3 +38,4 @@ PyYAML==6.0.3
 pydantic==2.12.5
 sqlalchemy==2.0.32
 psycopg2-binary
+ruff

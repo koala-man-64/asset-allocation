@@ -6,9 +6,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from api.endpoints import alpha_vantage, data, system, postgres
 from api.service.auth import AuthManager
@@ -218,7 +220,14 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
-    app = FastAPI(title="Asset Allocation API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Asset Allocation API",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     logger.info("Service application starting")
 
     content_security_policy = (os.environ.get("API_CSP") or "").strip()
@@ -260,6 +269,74 @@ def create_app() -> FastAPI:
     api_prefixes = ["/api"]
     if api_root_prefix:
         api_prefixes.append(f"{api_root_prefix}/api")
+
+    def _get_openapi_schema() -> dict:
+        if app.openapi_schema is None:
+            app.openapi_schema = get_openapi(
+                title=app.title,
+                version=app.version,
+                routes=app.routes,
+            )
+        return app.openapi_schema
+
+    def _register_docs_routes(api_prefix: str) -> None:
+        docs_path = f"{api_prefix}/docs"
+        openapi_path = f"{api_prefix}/openapi.json"
+        oauth2_redirect_path = f"{docs_path}/oauth2-redirect"
+
+        async def openapi_json() -> JSONResponse:
+            return JSONResponse(_get_openapi_schema())
+
+        async def swagger_ui() -> Response:
+            return get_swagger_ui_html(
+                openapi_url=openapi_path,
+                title=f"{app.title} - Swagger UI",
+                oauth2_redirect_url=oauth2_redirect_path,
+            )
+
+        async def swagger_ui_redirect() -> Response:
+            return get_swagger_ui_oauth2_redirect_html()
+
+        app.add_api_route(
+            openapi_path,
+            openapi_json,
+            methods=["GET"],
+            include_in_schema=False,
+            name=f"openapi:{api_prefix}",
+        )
+        app.add_api_route(
+            docs_path,
+            swagger_ui,
+            methods=["GET"],
+            include_in_schema=False,
+            name=f"swagger:{api_prefix}",
+        )
+        app.add_api_route(
+            oauth2_redirect_path,
+            swagger_ui_redirect,
+            methods=["GET"],
+            include_in_schema=False,
+            name=f"swagger-oauth2:{api_prefix}",
+        )
+
+    for api_prefix in api_prefixes:
+        _register_docs_routes(api_prefix)
+
+    primary_api_prefix = f"{api_root_prefix}/api" if api_root_prefix else "/api"
+
+    @app.get("/docs", include_in_schema=False)
+    def docs_redirect() -> RedirectResponse:
+        return RedirectResponse(
+            url=f"{primary_api_prefix}/docs",
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
+
+    @app.get("/openapi.json", include_in_schema=False)
+    def openapi_redirect() -> RedirectResponse:
+        return RedirectResponse(
+            url=f"{primary_api_prefix}/openapi.json",
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
 
     for api_prefix in api_prefixes:
         app.include_router(data.router, prefix=f"{api_prefix}/data", tags=["Data"])

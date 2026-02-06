@@ -369,11 +369,11 @@ export function StatusOverview({
         </div>
         <div className="flex flex-1 items-center gap-6 min-w-0">
           <div className="hidden lg:flex flex-1 items-center justify-center rounded-[1.2rem] border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-2 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-            <div className="flex flex-nowrap items-stretch justify-center gap-2 overflow-x-auto">
+            <div className="flex w-full flex-nowrap items-stretch gap-2 overflow-x-auto">
               {medallionMetrics.map((metric) => (
                 <Tooltip key={metric.layer}>
                   <TooltipTrigger asChild>
-                    <div className="w-[240px] shrink-0 overflow-hidden rounded-[1rem] border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-2">
+                    <div className="min-w-[260px] shrink-0 flex-1 overflow-hidden rounded-[1rem] border-2 border-mcm-walnut/25 bg-mcm-paper px-3 py-2">
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-[10px] font-black uppercase tracking-widest text-mcm-walnut">
                           {metric.layer}

@@ -25,6 +25,14 @@ class MaterializeConfig:
     output_path: str
     max_tickers: Optional[int]
 
+_DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("Date", "date")
+_KNOWN_TYPES: Tuple[Tuple[str, str], ...] = (
+    ("Income Statement", "quarterly_financials"),
+    ("Balance Sheet", "quarterly_balance-sheet"),
+    ("Cash Flow", "quarterly_cash-flow"),
+    ("Valuation", "quarterly_valuation_measures"),
+)
+
 
 def _normalize_object_columns(df: pd.DataFrame, *, exclude: set[str]) -> pd.DataFrame:
     """
@@ -119,6 +127,25 @@ def _try_load_finance_table_roots_from_container(container: str) -> Optional[set
         return None
 
 
+def _resolve_container(container_raw: Optional[str]) -> str:
+    container_raw = container_raw or os.environ.get("AZURE_CONTAINER_SILVER")
+    if container_raw is None or not str(container_raw).strip():
+        raise ValueError("Missing silver container. Set AZURE_CONTAINER_SILVER or pass --container.")
+    return str(container_raw).strip()
+
+
+def _load_first_available_date_projection(
+    *, container: str, src_path: str
+) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
+    for date_col in _DATE_COLUMN_CANDIDATES:
+        df = load_delta(container, src_path, columns=[date_col])
+        if df is None:
+            continue
+        if date_col in df.columns:
+            return date_col, df
+    return None, None
+
+
 def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
         description="Materialize Silver finance data into a cross-sectional Delta table (partitioned by date)."
@@ -133,10 +160,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser.add_argument("--max-tickers", type=int, default=None, help="Optional limit for debugging.")
     args = parser.parse_args(argv)
 
-    container_raw = args.container or os.environ.get("AZURE_CONTAINER_SILVER")
-    if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing silver container. Set AZURE_CONTAINER_SILVER or pass --container.")
-    container = str(container_raw).strip()
+    container = _resolve_container(args.container)
 
     max_tickers = int(args.max_tickers) if args.max_tickers is not None else None
     if max_tickers is not None and max_tickers <= 0:
@@ -148,6 +172,53 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
         output_path=str(args.output_path).strip().lstrip("/"),
         max_tickers=max_tickers,
     )
+
+
+def discover_year_months_from_data(
+    *, container: Optional[str] = None, max_tickers: Optional[int] = None
+) -> List[str]:
+    container = _resolve_container(container)
+    available_table_roots = _try_load_finance_table_roots_from_container(container)
+
+    if available_table_roots is None:
+        tickers = _load_ticker_universe()
+        if max_tickers is not None:
+            tickers = tickers[: max_tickers]
+
+        table_roots = [
+            DataPaths.get_finance_path(folder_name, ticker, suffix)
+            for ticker in tickers
+            for folder_name, suffix in _KNOWN_TYPES
+        ]
+        source = "symbol_universe"
+    else:
+        table_roots = sorted(available_table_roots)
+        source = "container_listing"
+        if max_tickers is not None:
+            keep_tickers = sorted({root.split("/")[2].split("_", 1)[0] for root in table_roots})[:max_tickers]
+            keep_ticker_set = set(keep_tickers)
+            table_roots = [root for root in table_roots if root.split("/")[2].split("_", 1)[0] in keep_ticker_set]
+
+    if not table_roots:
+        write_line(f"No Silver finance tables found (source={source}); no year_months discovered.")
+        return []
+
+    year_months: set[str] = set()
+    for src_path in table_roots:
+        date_col, df = _load_first_available_date_projection(container=container, src_path=src_path)
+        if date_col is None or df is None or df.empty:
+            continue
+
+        dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
+        if dates.empty:
+            continue
+        for value in dates.dt.strftime("%Y-%m").unique().tolist():
+            if value:
+                year_months.add(str(value))
+
+    discovered = sorted(year_months)
+    write_line(f"Discovered {len(discovered)} year_month(s) from silver finance data in {container}.")
+    return discovered
 
 
 def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
@@ -210,16 +281,9 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
     #     Filter by Date Range
     #     Append to frames
     
-    known_types = [
-        ("Income Statement", "quarterly_financials"),
-        ("Balance Sheet", "quarterly_balance-sheet"),
-        ("Cash Flow", "quarterly_cash-flow"),
-        ("Valuation", "quarterly_valuation_measures")
-    ]
-    
     for ticker in tickers:
         ticker_frames = []
-        for folder_name, suffix in known_types:
+        for folder_name, suffix in _KNOWN_TYPES:
             src_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
             if available_table_roots is not None and src_path not in available_table_roots:
                 continue

@@ -123,7 +123,7 @@ export const apiService = {
   // --- Data Endpoints ---
 
   getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
-    return request<MarketData[]>(`/data/market/${ticker}`, { params: { layer } });
+    return request<MarketData[]>(`/data/${layer}/market`, { params: { ticker } });
   },
 
   getFinanceData(
@@ -131,7 +131,9 @@ export const apiService = {
     subDomain: string,
     layer: 'silver' | 'gold' = 'silver'
   ): Promise<FinanceData[]> {
-    return request<FinanceData[]>(`/data/finance/${ticker}/${subDomain}`, { params: { layer } });
+    return request<FinanceData[]>(`/data/${layer}/finance/${encodeURIComponent(subDomain)}`, {
+      params: { ticker }
+    });
   },
 
   getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {

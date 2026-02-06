@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useLineageQuery, useSystemHealthQuery } from '@/hooks/useDataQueries';
 import type { DataDomain, DataLayer } from '@/types/strategy';
-import { backtestApi } from '@/services/backtestApi';
+import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Badge } from '@/app/components/ui/badge';
@@ -322,7 +322,7 @@ export function DataQualityPage() {
       if ((layer === 'silver' || layer === 'gold') && domain === 'market') {
         const id = `probe:${layer}:market`;
         await runProbe(id, `Market (${layer})`, async () => {
-          const data = await backtestApi.getMarketData(resolvedTicker, layer);
+          const data = await DataService.getMarketData(resolvedTicker, layer);
           const count = Array.isArray(data) ? data.length : 0;
           return {
             ok: count > 0,
@@ -336,7 +336,7 @@ export function DataQualityPage() {
       if ((layer === 'silver' || layer === 'gold') && domain === 'finance') {
         const id = `probe:${layer}:finance:${financeSubDomain}`;
         await runProbe(id, `Finance (${layer})`, async () => {
-          const data = await backtestApi.getFinanceData(resolvedTicker, financeSubDomain, layer);
+          const data = await DataService.getFinanceData(resolvedTicker, financeSubDomain, layer);
           const count = Array.isArray(data) ? data.length : 0;
           return {
             ok: count > 0,
@@ -353,7 +353,7 @@ export function DataQualityPage() {
       ) {
         const id = `probe:${layer}:${domain}`;
         await runProbe(id, `${domain} (${layer})`, async () => {
-          const data = await backtestApi.getDomainData(resolvedTicker, domain, layer);
+          const data = await DataService.getGenericData(layer, domain, resolvedTicker);
           const count = Array.isArray(data) ? data.length : 0;
           const sampleKeys =
             count > 0 && data && typeof data[0] === 'object' && data[0] !== null

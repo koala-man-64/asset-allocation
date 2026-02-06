@@ -61,6 +61,7 @@ env:
   AZURE_CONTAINER_COMMON: common
   SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
   DEBUG_SYMBOLS: ${{ vars.DEBUG_SYMBOLS || '' }}
+  LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
 
   # Alpha Vantage tunables (defaults match core/config.py)
   ALPHA_VANTAGE_RATE_LIMIT_PER_MIN: ${{ vars.ALPHA_VANTAGE_RATE_LIMIT_PER_MIN || '300' }}
@@ -109,6 +110,7 @@ jobs:
           API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
           UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
@@ -207,6 +209,11 @@ jobs:
           auth_mode = aliases.get(auth_mode_raw)
           if auth_mode is None:
               print("::error::API_AUTH_MODE must be one of: none|api_key|oidc|api_key_or_oidc")
+              sys.exit(1)
+
+          log_level = (os.environ.get("LOG_LEVEL") or "").strip().upper()
+          if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+              print("::error::LOG_LEVEL must be one of: DEBUG|INFO|WARNING|ERROR|CRITICAL")
               sys.exit(1)
 
           if auth_mode == "api_key":
@@ -611,6 +618,7 @@ jobs:
           API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
           UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
@@ -745,7 +753,7 @@ jobs:
             current_registry_identity="$(az containerapp show \
               --name ${{ env.API_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
+              --query "properties.configuration.registries[?server=='${{ env.ACR_NAME }}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
 
             if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
               bootstrap_app_image "${{ env.API_APP_NAME }}" || true
@@ -891,7 +899,7 @@ jobs:
             current_registry_identity="$(az containerapp show \
               --name ${{ env.UI_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
+              --query "properties.configuration.registries[?server=='${{ env.ACR_NAME }}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
 
             if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
               bootstrap_app_image "${{ env.UI_APP_NAME }}" || true
