@@ -742,7 +742,7 @@ jobs:
             current_registry_identity="$(az containerapp show \
               --name ${{ env.API_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.registries[?server=='${{ env.ACR_NAME }}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
+              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
 
             if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
               bootstrap_app_image "${{ env.API_APP_NAME }}" || true
@@ -888,7 +888,7 @@ jobs:
             current_registry_identity="$(az containerapp show \
               --name ${{ env.UI_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.registries[?server=='${{ env.ACR_NAME }}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
+              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
 
             if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
               bootstrap_app_image "${{ env.UI_APP_NAME }}" || true
