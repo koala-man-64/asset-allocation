@@ -2,7 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 import { ValidationReport } from '@/services/apiService';
 import { cn } from '@/app/components/ui/utils';
-import { AlertCircle, CheckCircle, Loader2, Table as TableIcon } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle,
+  FileBox,
+  LayoutTemplate,
+  Loader2,
+  Table as TableIcon
+} from 'lucide-react';
 import './DataPipelinePanel.css';
 
 // --- Types ---
