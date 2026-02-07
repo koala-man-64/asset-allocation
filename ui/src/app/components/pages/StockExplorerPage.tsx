@@ -91,8 +91,11 @@ export function StockExplorerPage() {
       ),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
-      const nextOffset = lastPage.offset + (lastPage.rows?.length ?? 0);
-      if (nextOffset >= lastPage.total) return undefined;
+      // Cast to any because the infinite query type inference is struggling with the response structure
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const page = lastPage as any;
+      const nextOffset = page.offset + (page.rows?.length ?? 0);
+      if (nextOffset >= page.total) return undefined;
       return nextOffset;
     },
     staleTime: 15_000,
@@ -104,8 +107,9 @@ export function StockExplorerPage() {
     return pages.flatMap((page) => page.rows ?? []) as StockScreenerRow[];
   }, [screenerQuery.data]);
 
-  const total = screenerQuery.data?.pages?.[0]?.total ?? 0;
-  const resolvedAsOf = screenerQuery.data?.pages?.[0]?.asOf ?? null;
+  const firstPage = screenerQuery.data?.pages?.[0] as StockScreenerResponse | undefined;
+  const total = firstPage?.total ?? 0;
+  const resolvedAsOf = firstPage?.asOf ?? null;
   const showing = rows.length;
 
   const onToggleSort = (nextSort: string) => {

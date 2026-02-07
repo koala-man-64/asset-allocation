@@ -15,6 +15,26 @@ export const PostgresExplorerPage: React.FC = () => {
   const [metadataLoading, setMetadataLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch Data
+  const fetchData = useCallback(async () => {
+    if (!selectedSchema || !selectedTable) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await PostgresService.queryTable({
+        schema_name: selectedSchema,
+        table_name: selectedTable,
+        limit
+      });
+      setData(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedSchema, selectedTable, limit]);
+
   // Initial Load: Fetch Schemas
   useEffect(() => {
     const loadSchemas = async () => {
@@ -53,25 +73,7 @@ export const PostgresExplorerPage: React.FC = () => {
     loadTables();
   }, [selectedSchema]);
 
-  // Fetch Data
-  const fetchData = useCallback(async () => {
-    if (!selectedSchema || !selectedTable) return;
 
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await PostgresService.queryTable({
-        schema_name: selectedSchema,
-        table_name: selectedTable,
-        limit
-      });
-      setData(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedSchema, selectedTable, limit]);
 
   // Cleanup keys function to infer columns if empty
   // DataTable usually handles this, so passing data directly is fine.

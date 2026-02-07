@@ -1,4 +1,4 @@
-type HeadersInit = Headers | string[][] | Record<string, string>;
+type HeadersInit = Headers | [string, string][] | Record<string, string>;
 
 export type AccessTokenProvider = () => Promise<string | null>;
 
@@ -31,7 +31,8 @@ export function setAccessTokenProvider(provider: AccessTokenProvider | null): vo
 }
 
 export async function appendAuthHeaders(headersInput?: HeadersInit): Promise<Headers> {
-  const headers = new Headers(headersInput);
+  // Fix for TS2345: Argument of type 'HeadersInit | undefined' is not assignable...
+  const headers = new Headers(headersInput as HeadersInit);
 
   if (accessTokenProvider && !headers.has('Authorization')) {
     const token = await accessTokenProvider();
