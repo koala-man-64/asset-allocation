@@ -113,9 +113,12 @@ def _try_load_tickers_from_container(container: str, root_prefix: str) -> Option
 
 
 def _resolve_container(container_raw: Optional[str]) -> str:
-    container_raw = container_raw or os.environ.get("AZURE_FOLDER_MARKET")
+    container_raw = container_raw or os.environ.get("AZURE_CONTAINER_GOLD") or os.environ.get("AZURE_FOLDER_MARKET")
     if container_raw is None or not str(container_raw).strip():
-        raise ValueError("Missing market container. Set AZURE_FOLDER_MARKET or pass --container.")
+        raise ValueError(
+            "Missing market container. Set AZURE_CONTAINER_GOLD (preferred), "
+            "AZURE_FOLDER_MARKET, or pass --container."
+        )
     return str(container_raw).strip()
 
 
@@ -123,7 +126,10 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     parser = argparse.ArgumentParser(
         description="Materialize market features into a cross-sectional Delta table (partitioned by date)."
     )
-    parser.add_argument("--container", help="Market features container (default: AZURE_FOLDER_MARKET).")
+    parser.add_argument(
+        "--container",
+        help="Market features container (default: AZURE_CONTAINER_GOLD, fallback AZURE_FOLDER_MARKET).",
+    )
     parser.add_argument("--year-month", required=True, help="Year-month partition to materialize (YYYY-MM).")
     parser.add_argument(
         "--output-path",
@@ -147,9 +153,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     )
 
 
-def discover_year_months_from_data(
-    *, container: Optional[str] = None, max_tickers: Optional[int] = None
-) -> List[str]:
+def discover_year_months_from_data(*, container: Optional[str] = None, max_tickers: Optional[int] = None) -> List[str]:
     container = _resolve_container(container)
     tickers_from_container = _try_load_tickers_from_container(container, root_prefix="market")
     if tickers_from_container is None:
@@ -160,12 +164,10 @@ def discover_year_months_from_data(
         ticker_source = "container_listing"
 
     if max_tickers is not None:
-        tickers = tickers[: max_tickers]
+        tickers = tickers[:max_tickers]
 
     if not tickers:
-        write_line(
-            f"No per-ticker market feature tables found (source={ticker_source}); no year_months discovered."
-        )
+        write_line(f"No per-ticker market feature tables found (source={ticker_source}); no year_months discovered.")
         return []
 
     year_months: set[str] = set()
@@ -183,9 +185,7 @@ def discover_year_months_from_data(
                 year_months.add(str(value))
 
     discovered = sorted(year_months)
-    write_line(
-        f"Discovered {len(discovered)} year_month(s) from gold market data in {container}."
-    )
+    write_line(f"Discovered {len(discovered)} year_month(s) from gold market data in {container}.")
     return discovered
 
 

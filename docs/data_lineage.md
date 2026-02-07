@@ -36,6 +36,7 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
 - Container: `AZURE_CONTAINER_GOLD`
 - Feature engineering jobs (examples):
   - Market features: `tasks/market_data/gold_market_data.py` → `market/<ticker>` and `market_by_date`
+    - Includes technical features such as candlestick patterns, Heikin-Ashi (`ha_*`), and Ichimoku (`ichimoku_*`) columns.
   - Finance features: `tasks/finance_data/gold_finance_data.py` → `finance/<ticker>` and `finance_by_date`
   - Earnings features: `tasks/earnings_data/gold_earnings_data.py` → `earnings/<ticker>` and `earnings_by_date`
   - Price target features: `tasks/price_target_data/gold_price_target_data.py` → `targets/<ticker>` and `targets_by_date`

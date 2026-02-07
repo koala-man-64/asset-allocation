@@ -89,6 +89,98 @@ def _approx_equal(a: pd.Series, b: pd.Series, tol: pd.Series) -> pd.Series:
     return (a - b).abs() <= tol
 
 
+def add_heikin_ashi_and_ichimoku(df: pd.DataFrame) -> pd.DataFrame:
+    """Add Heikin-Ashi and Ichimoku indicator component columns.
+
+    Notes
+    -----
+    - Output is aligned to the row's as-of date.
+    - Shifted Ichimoku variants use positive shifts only to avoid look-ahead leakage.
+    """
+
+    out = df.copy()
+
+    required = {"date", "open", "high", "low", "close", "symbol"}
+    missing = required.difference(out.columns)
+    if missing:
+        out = _snake_case_columns(out)
+        missing = required.difference(out.columns)
+        if missing:
+            raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    if not pd.api.types.is_datetime64_any_dtype(out["date"]):
+        out["date"] = _coerce_datetime(out["date"])
+
+    out["symbol"] = out["symbol"].astype(str)
+    for col in ["open", "high", "low", "close"]:
+        if not pd.api.types.is_numeric_dtype(out[col]):
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    out = out.dropna(subset=["date"]).sort_values(["symbol", "date"]).reset_index(drop=True)
+
+    for _, group in out.groupby("symbol", sort=False):
+        idx = group.index
+        o = group["open"]
+        h = group["high"]
+        l = group["low"]
+        c = group["close"]
+
+        # Heikin-Ashi
+        ha_close = (o + h + l + c) / 4.0
+        ha_open_values = np.full(len(group), np.nan, dtype=float)
+        if len(group) > 0:
+            first_open = o.iloc[0]
+            first_close = c.iloc[0]
+            if pd.notna(first_open) and pd.notna(first_close):
+                ha_open_values[0] = float(first_open + first_close) / 2.0
+
+            for i in range(1, len(group)):
+                prev_open = ha_open_values[i - 1]
+                prev_close = ha_close.iloc[i - 1]
+                if np.isnan(prev_open) or pd.isna(prev_close):
+                    ha_open_values[i] = np.nan
+                else:
+                    ha_open_values[i] = float(prev_open + prev_close) / 2.0
+
+        ha_open = pd.Series(ha_open_values, index=idx, dtype=float)
+        ha_high = pd.concat([h, ha_open, ha_close], axis=1).max(axis=1)
+        ha_low = pd.concat([l, ha_open, ha_close], axis=1).min(axis=1)
+
+        out.loc[idx, "ha_open"] = ha_open
+        out.loc[idx, "ha_high"] = ha_high
+        out.loc[idx, "ha_low"] = ha_low
+        out.loc[idx, "ha_close"] = ha_close
+
+        # Ichimoku
+        high_9 = h.rolling(window=9, min_periods=9).max()
+        low_9 = l.rolling(window=9, min_periods=9).min()
+        tenkan = (high_9 + low_9) / 2.0
+
+        high_26 = h.rolling(window=26, min_periods=26).max()
+        low_26 = l.rolling(window=26, min_periods=26).min()
+        kijun = (high_26 + low_26) / 2.0
+
+        high_52 = h.rolling(window=52, min_periods=52).max()
+        low_52 = l.rolling(window=52, min_periods=52).min()
+        senkou_b = (high_52 + low_52) / 2.0
+
+        senkou_a = (tenkan + kijun) / 2.0
+        senkou_a_26 = senkou_a.shift(26)
+        senkou_b_26 = senkou_b.shift(26)
+        chikou_26 = c.shift(26)
+
+        out.loc[idx, "ichimoku_tenkan_sen_9"] = tenkan
+        out.loc[idx, "ichimoku_kijun_sen_26"] = kijun
+        out.loc[idx, "ichimoku_senkou_span_a"] = senkou_a
+        out.loc[idx, "ichimoku_senkou_span_b"] = senkou_b
+        out.loc[idx, "ichimoku_senkou_span_a_26"] = senkou_a_26
+        out.loc[idx, "ichimoku_senkou_span_b_26"] = senkou_b_26
+        out.loc[idx, "ichimoku_chikou_span_26"] = chikou_26
+
+    out = out.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
 def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     """Compute candlestick indicator features from OHLCV data."""
 
@@ -109,13 +201,13 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     # Ensure types
     if not pd.api.types.is_datetime64_any_dtype(out["date"]):
         out["date"] = _coerce_datetime(out["date"])
-    
+
     out["symbol"] = out["symbol"].astype(str)
     for col in ["open", "high", "low", "close", "volume"]:
         if not pd.api.types.is_numeric_dtype(out[col]):
             out[col] = pd.to_numeric(out[col], errors="coerce")
 
-    # Only sort if not monotonic to preserve caller's intent if possible, 
+    # Only sort if not monotonic to preserve caller's intent if possible,
     # but indicators strictly require time-ordering.
     if not out["date"].is_monotonic_increasing:
         out = out.sort_values(["symbol", "date"]).reset_index(drop=True)
@@ -203,25 +295,37 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     # (Shadow comparisons are body-scaled to avoid range=0 edge cases.)
     body = out["body"].replace(0, np.nan)
     out["pat_spinning_top"] = (
-        (out["body_to_range"] > doji_max_body_to_range)
-        & (out["body_to_range"] <= spinning_max_body_to_range)
-        & (out["upper_shadow"] >= 0.5 * body)
-        & (out["lower_shadow"] >= 0.5 * body)
-    ).fillna(False).astype(int)
+        (
+            (out["body_to_range"] > doji_max_body_to_range)
+            & (out["body_to_range"] <= spinning_max_body_to_range)
+            & (out["upper_shadow"] >= 0.5 * body)
+            & (out["lower_shadow"] >= 0.5 * body)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # Marubozu (directional)
     out["pat_bullish_marubozu"] = (
-        (c > o)
-        & (out["body_to_range"] >= marubozu_min_body_to_range)
-        & (out["upper_to_range"] <= marubozu_max_shadow_to_range)
-        & (out["lower_to_range"] <= marubozu_max_shadow_to_range)
-    ).fillna(False).astype(int)
+        (
+            (c > o)
+            & (out["body_to_range"] >= marubozu_min_body_to_range)
+            & (out["upper_to_range"] <= marubozu_max_shadow_to_range)
+            & (out["lower_to_range"] <= marubozu_max_shadow_to_range)
+        )
+        .fillna(False)
+        .astype(int)
+    )
     out["pat_bearish_marubozu"] = (
-        (c < o)
-        & (out["body_to_range"] >= marubozu_min_body_to_range)
-        & (out["upper_to_range"] <= marubozu_max_shadow_to_range)
-        & (out["lower_to_range"] <= marubozu_max_shadow_to_range)
-    ).fillna(False).astype(int)
+        (
+            (c < o)
+            & (out["body_to_range"] >= marubozu_min_body_to_range)
+            & (out["upper_to_range"] <= marubozu_max_shadow_to_range)
+            & (out["lower_to_range"] <= marubozu_max_shadow_to_range)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # Star (gap) candle relative to previous real body.
     prev_o = o.groupby(out["symbol"]).shift(1)
@@ -260,18 +364,26 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
 
     # Dragonfly / Gravestone doji (doji subtypes)
     out["pat_dragonfly_doji"] = (
-        (out["pat_doji"] == 1)
-        & (out["upper_to_range"] <= 0.10)
-        & (out["lower_to_range"] >= 0.60)
-        & _downtrend_before(offset=1)
-    ).fillna(False).astype(int)
+        (
+            (out["pat_doji"] == 1)
+            & (out["upper_to_range"] <= 0.10)
+            & (out["lower_to_range"] >= 0.60)
+            & _downtrend_before(offset=1)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_gravestone_doji"] = (
-        (out["pat_doji"] == 1)
-        & (out["lower_to_range"] <= 0.10)
-        & (out["upper_to_range"] >= 0.60)
-        & _uptrend_before(offset=1)
-    ).fillna(False).astype(int)
+        (
+            (out["pat_doji"] == 1)
+            & (out["lower_to_range"] <= 0.10)
+            & (out["upper_to_range"] >= 0.60)
+            & _uptrend_before(offset=1)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # Bullish/Bearish spinning tops (context-specific variants)
     out["pat_bullish_spinning_top"] = ((out["pat_spinning_top"] == 1) & _downtrend_before(offset=1)).astype(int)
@@ -296,20 +408,12 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
 
     # Engulfing (real body engulf)
     out["pat_bullish_engulfing"] = (
-        downtrend_before_2
-        & candle1_bear
-        & candle2_bull
-        & (o <= c1)
-        & (c >= o1)
-    ).fillna(False).astype(int)
+        (downtrend_before_2 & candle1_bear & candle2_bull & (o <= c1) & (c >= o1)).fillna(False).astype(int)
+    )
 
     out["pat_bearish_engulfing"] = (
-        uptrend_before_2
-        & candle1_bull
-        & candle2_bear
-        & (o >= c1)
-        & (c <= o1)
-    ).fillna(False).astype(int)
+        (uptrend_before_2 & candle1_bull & candle2_bear & (o >= c1) & (c <= o1)).fillna(False).astype(int)
+    )
 
     # Harami (body inside prior body)
     body1_hi = pd.concat([o1, c1], axis=1).max(axis=1)
@@ -318,58 +422,56 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     body2_lo = pd.concat([o, c], axis=1).min(axis=1)
 
     out["pat_bullish_harami"] = (
-        downtrend_before_2
-        & candle1_bear
-        & candle2_bull
-        & (body2_lo > body1_lo)
-        & (body2_hi < body1_hi)
-    ).fillna(False).astype(int)
+        (downtrend_before_2 & candle1_bear & candle2_bull & (body2_lo > body1_lo) & (body2_hi < body1_hi))
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_bearish_harami"] = (
-        uptrend_before_2
-        & candle1_bull
-        & candle2_bear
-        & (body2_lo > body1_lo)
-        & (body2_hi < body1_hi)
-    ).fillna(False).astype(int)
+        (uptrend_before_2 & candle1_bull & candle2_bear & (body2_lo > body1_lo) & (body2_hi < body1_hi))
+        .fillna(False)
+        .astype(int)
+    )
 
     # Piercing line
     midpoint_1 = (o1 + c1) / 2.0
     out["pat_piercing_line"] = (
-        downtrend_before_2
-        & candle1_bear
-        & (body1 / (h1 - l1).replace(0, np.nan) >= long_body_min_body_to_range)
-        & candle2_bull
-        & (o < c1)
-        & (c > midpoint_1)
-        & (c < o1)
-    ).fillna(False).astype(int)
+        (
+            downtrend_before_2
+            & candle1_bear
+            & (body1 / (h1 - l1).replace(0, np.nan) >= long_body_min_body_to_range)
+            & candle2_bull
+            & (o < c1)
+            & (c > midpoint_1)
+            & (c < o1)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # Dark cloud line
     out["pat_dark_cloud_line"] = (
-        uptrend_before_2
-        & candle1_bull
-        & (body1 / (h1 - l1).replace(0, np.nan) >= long_body_min_body_to_range)
-        & candle2_bear
-        & (o > c1)
-        & (c < midpoint_1)
-        & (c > o1)
-    ).fillna(False).astype(int)
+        (
+            uptrend_before_2
+            & candle1_bull
+            & (body1 / (h1 - l1).replace(0, np.nan) >= long_body_min_body_to_range)
+            & candle2_bear
+            & (o > c1)
+            & (c < midpoint_1)
+            & (c > o1)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # Tweezers
     tol = out["_eq_tol"]
     out["pat_tweezer_bottom"] = (
-        downtrend_before_2
-        & _approx_equal(l1, l, tol)
-        & candle1_bear
-        & candle2_bull
-    ).fillna(False).astype(int)
+        (downtrend_before_2 & _approx_equal(l1, l, tol) & candle1_bear & candle2_bull).fillna(False).astype(int)
+    )
     out["pat_tweezer_top"] = (
-        uptrend_before_2
-        & _approx_equal(h1, h, tol)
-        & candle1_bull
-        & candle2_bear
-    ).fillna(False).astype(int)
+        (uptrend_before_2 & _approx_equal(h1, h, tol) & candle1_bull & candle2_bear).fillna(False).astype(int)
+    )
 
     # Kickers (gap + strong reversal candle)
     # Bullish: bearish candle followed by bullish candle gapping above prior real body.
@@ -377,19 +479,27 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     prior_body_lo = body1_lo
     gap_tol_kicker = gap_tol_star
     out["pat_bullish_kicker"] = (
-        downtrend_before_2
-        & candle1_bear
-        & candle2_bull
-        & (body_lo > (prior_body_hi + gap_tol_kicker))
-        & (body2 / out["range"].replace(0, np.nan) >= long_body_min_body_to_range)
-    ).fillna(False).astype(int)
+        (
+            downtrend_before_2
+            & candle1_bear
+            & candle2_bull
+            & (body_lo > (prior_body_hi + gap_tol_kicker))
+            & (body2 / out["range"].replace(0, np.nan) >= long_body_min_body_to_range)
+        )
+        .fillna(False)
+        .astype(int)
+    )
     out["pat_bearish_kicker"] = (
-        uptrend_before_2
-        & candle1_bull
-        & candle2_bear
-        & (body_hi < (prior_body_lo - gap_tol_kicker))
-        & (body2 / out["range"].replace(0, np.nan) >= long_body_min_body_to_range)
-    ).fillna(False).astype(int)
+        (
+            uptrend_before_2
+            & candle1_bull
+            & candle2_bear
+            & (body_hi < (prior_body_lo - gap_tol_kicker))
+            & (body2 / out["range"].replace(0, np.nan) >= long_body_min_body_to_range)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # --- Triple-candle patterns (flag on candle 3) ---
     # Shifted candles: t-2, t-1, t
@@ -413,13 +523,13 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     c_mid = c1
     rng_mid = (h1 - l1).replace(0, np.nan)
     body_mid = body1
-    small_mid = (body_mid / rng_mid <= spinning_max_body_to_range)
-    mid_is_doji = (body_mid / rng_mid <= doji_max_body_to_range)
+    small_mid = body_mid / rng_mid <= spinning_max_body_to_range
+    mid_is_doji = body_mid / rng_mid <= doji_max_body_to_range
 
     # Candle 1 (t-2)
     c1_bear = c2 < o2
     c1_bull = c2 > o2
-    c1_long = (body_c1 / rng_c1 >= long_body_min_body_to_range)
+    c1_long = body_c1 / rng_c1 >= long_body_min_body_to_range
     midpoint_c1 = (o2 + c2) / 2.0
 
     # Candle 3 (t)
@@ -427,47 +537,31 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     c3_bear = c3 < o3
     body_c3 = (c3 - o3).abs()
     rng_c3 = (h - l).replace(0, np.nan)
-    c3_long = (body_c3 / rng_c3 >= long_body_min_body_to_range)
+    c3_long = body_c3 / rng_c3 >= long_body_min_body_to_range
 
     out["pat_morning_star"] = (
-        downtrend_before_3
-        & c1_bear
-        & c1_long
-        & small_mid
-        & c3_bull
-        & c3_long
-        & (c3 > midpoint_c1)
-    ).fillna(False).astype(int)
+        (downtrend_before_3 & c1_bear & c1_long & small_mid & c3_bull & c3_long & (c3 > midpoint_c1))
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_morning_doji_star"] = (
-        downtrend_before_3
-        & c1_bear
-        & c1_long
-        & mid_is_doji
-        & c3_bull
-        & c3_long
-        & (c3 > midpoint_c1)
-    ).fillna(False).astype(int)
+        (downtrend_before_3 & c1_bear & c1_long & mid_is_doji & c3_bull & c3_long & (c3 > midpoint_c1))
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_evening_star"] = (
-        uptrend_before_3
-        & c1_bull
-        & c1_long
-        & small_mid
-        & c3_bear
-        & c3_long
-        & (c3 < midpoint_c1)
-    ).fillna(False).astype(int)
+        (uptrend_before_3 & c1_bull & c1_long & small_mid & c3_bear & c3_long & (c3 < midpoint_c1))
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_evening_doji_star"] = (
-        uptrend_before_3
-        & c1_bull
-        & c1_long
-        & mid_is_doji
-        & c3_bear
-        & c3_long
-        & (c3 < midpoint_c1)
-    ).fillna(False).astype(int)
+        (uptrend_before_3 & c1_bull & c1_long & mid_is_doji & c3_bear & c3_long & (c3 < midpoint_c1))
+        .fillna(False)
+        .astype(int)
+    )
 
     # Abandoned baby requires gaps around the doji.
     # Use real-body gaps (more robust than high/low gaps across assets).
@@ -488,11 +582,11 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     gap2_down = c3_body_hi < (mid_body_lo - gap_tol_01)
 
     out["pat_bullish_abandoned_baby"] = (
-        downtrend_before_3 & c1_bear & mid_is_doji & gap1_down & gap2_up & c3_bull
-    ).fillna(False).astype(int)
+        (downtrend_before_3 & c1_bear & mid_is_doji & gap1_down & gap2_up & c3_bull).fillna(False).astype(int)
+    )
     out["pat_bearish_abandoned_baby"] = (
-        uptrend_before_3 & c1_bull & mid_is_doji & gap1_up & gap2_down & c3_bear
-    ).fillna(False).astype(int)
+        (uptrend_before_3 & c1_bull & mid_is_doji & gap1_up & gap2_down & c3_bear).fillna(False).astype(int)
+    )
 
     # Three white soldiers / three black crows
     # Shifted for three candles ending at t: t-2, t-1, t
@@ -522,22 +616,12 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     open0_in_body1 = (open_t0 >= body1_lo) & (open_t0 <= body1_hi)
 
     out["pat_three_white_soldiers"] = (
-        bull_t2
-        & bull_t1
-        & bull_t0
-        & rising_closes
-        & open1_in_body2
-        & open0_in_body1
-    ).fillna(False).astype(int)
+        (bull_t2 & bull_t1 & bull_t0 & rising_closes & open1_in_body2 & open0_in_body1).fillna(False).astype(int)
+    )
 
     out["pat_three_black_crows"] = (
-        bear_t2
-        & bear_t1
-        & bear_t0
-        & falling_closes
-        & open1_in_body2
-        & open0_in_body1
-    ).fillna(False).astype(int)
+        (bear_t2 & bear_t1 & bear_t0 & falling_closes & open1_in_body2 & open0_in_body1).fillna(False).astype(int)
+    )
 
     # --- 4-candle patterns: Three Line Strike (flag on candle 4) ---
     o3p = o.groupby(out["symbol"]).shift(3)
@@ -566,26 +650,34 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     downtrend_before_4 = _downtrend_before(offset=4)
 
     out["pat_bullish_three_line_strike"] = (
-        uptrend_before_4
-        & bull_3
-        & bull_2
-        & bull_1
-        & rising_3
-        & (c0p < o0p)  # 4th candle bearish
-        & (o0p >= c1p)
-        & (c0p < o3p)
-    ).fillna(False).astype(int)
+        (
+            uptrend_before_4
+            & bull_3
+            & bull_2
+            & bull_1
+            & rising_3
+            & (c0p < o0p)  # 4th candle bearish
+            & (o0p >= c1p)
+            & (c0p < o3p)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_bearish_three_line_strike"] = (
-        downtrend_before_4
-        & bear_3
-        & bear_2
-        & bear_1
-        & falling_3
-        & (c0p > o0p)  # 4th candle bullish
-        & (o0p <= c1p)
-        & (c0p > o3p)
-    ).fillna(False).astype(int)
+        (
+            downtrend_before_4
+            & bear_3
+            & bear_2
+            & bear_1
+            & falling_3
+            & (c0p > o0p)  # 4th candle bullish
+            & (o0p <= c1p)
+            & (c0p > o3p)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     # --- Confirmations (3 candles, flag on candle 3) ---
     # Three Inside/Outside Up/Down
@@ -597,38 +689,47 @@ def add_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     bullish_engulfing_prev = out.groupby("symbol")["pat_bullish_engulfing"].shift(1).fillna(0).astype(int)
     bearish_engulfing_prev = out.groupby("symbol")["pat_bearish_engulfing"].shift(1).fillna(0).astype(int)
     out["pat_three_inside_up"] = (
-        downtrend_before_3
-        & c1_bear
-        & c1_long
-        & (bullish_harami_prev == 1)  # harami on candle2
-        & c3_bull
-        & (c3 > o2)
-    ).fillna(False).astype(int)
+        (
+            downtrend_before_3
+            & c1_bear
+            & c1_long
+            & (bullish_harami_prev == 1)  # harami on candle2
+            & c3_bull
+            & (c3 > o2)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_three_outside_up"] = (
-        downtrend_before_3
-        & c1_bear
-        & (bullish_engulfing_prev == 1)  # engulfing on candle2
-        & c3_bull
-        & (c3 > c1)
-    ).fillna(False).astype(int)
+        (
+            downtrend_before_3
+            & c1_bear
+            & (bullish_engulfing_prev == 1)  # engulfing on candle2
+            & c3_bull
+            & (c3 > c1)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_three_inside_down"] = (
-        uptrend_before_3
-        & c1_bull
-        & c1_long
-        & (bearish_harami_prev == 1)
-        & c3_bear
-        & (c3 < o2)
-    ).fillna(False).astype(int)
+        (uptrend_before_3 & c1_bull & c1_long & (bearish_harami_prev == 1) & c3_bear & (c3 < o2))
+        .fillna(False)
+        .astype(int)
+    )
 
     out["pat_three_outside_down"] = (
-        uptrend_before_3
-        & c1_bull
-        & (bearish_engulfing_prev == 1)  # engulfing on candle2
-        & c3_bear
-        & (c3 < c1)
-    ).fillna(False).astype(int)
+        (
+            uptrend_before_3
+            & c1_bull
+            & (bearish_engulfing_prev == 1)  # engulfing on candle2
+            & c3_bear
+            & (c3 < c1)
+        )
+        .fillna(False)
+        .astype(int)
+    )
 
     out = out.replace([np.inf, -np.inf], np.nan)
     return out

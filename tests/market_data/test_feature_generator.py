@@ -56,6 +56,17 @@ def test_compute_features_adds_expected_columns():
         "volume_pct_rank_252d",
         "pat_doji",
         "atr_14d",
+        "ha_open",
+        "ha_high",
+        "ha_low",
+        "ha_close",
+        "ichimoku_tenkan_sen_9",
+        "ichimoku_kijun_sen_26",
+        "ichimoku_senkou_span_a",
+        "ichimoku_senkou_span_b",
+        "ichimoku_senkou_span_a_26",
+        "ichimoku_senkou_span_b_26",
+        "ichimoku_chikou_span_26",
     }
 
     assert expected.issubset(set(out.columns))

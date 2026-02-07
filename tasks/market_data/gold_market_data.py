@@ -10,7 +10,11 @@ import numpy as np
 import pandas as pd
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
-from tasks.technical_analysis.technical_indicators import add_candlestick_patterns
+from tasks.technical_analysis.technical_indicators import (
+    add_candlestick_patterns,
+    add_heikin_ashi_and_ichimoku,
+)
+
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
@@ -149,19 +153,16 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     high_20 = high.rolling(window=20, min_periods=20).max()
     low_20 = low.rolling(window=20, min_periods=20).min()
     out["range_20"] = _safe_div((high_20 - low_20), close)
-    out["compression_score"] = out["range_20"].rolling(window=252, min_periods=1).apply(
-        _percentile_rank_last, raw=True
-    )
+    out["compression_score"] = out["range_20"].rolling(window=252, min_periods=1).apply(_percentile_rank_last, raw=True)
 
     # Volume: z-score (20d) and percentile rank (252d)
     vol_mean_20 = volume.rolling(window=20, min_periods=20).mean()
     vol_std_20 = volume.rolling(window=20, min_periods=20).std()
     out["volume_z_20d"] = _safe_div((volume - vol_mean_20), vol_std_20)
-    out["volume_pct_rank_252d"] = volume.rolling(window=252, min_periods=1).apply(
-        _percentile_rank_last, raw=True
-    )
+    out["volume_pct_rank_252d"] = volume.rolling(window=252, min_periods=1).apply(_percentile_rank_last, raw=True)
 
     out = add_candlestick_patterns(out)
+    out = add_heikin_ashi_and_ichimoku(out)
 
     out = out.replace([np.inf, -np.inf], np.nan)
     return out

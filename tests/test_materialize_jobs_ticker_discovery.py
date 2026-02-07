@@ -1,6 +1,24 @@
 import pandas as pd
 
 
+def test_materialize_gold_market_resolve_container_prefers_gold_env(monkeypatch):
+    from tasks.market_data import materialize_gold_market_by_date as job
+
+    monkeypatch.setenv("AZURE_CONTAINER_GOLD", "gold-container")
+    monkeypatch.setenv("AZURE_FOLDER_MARKET", "market-folder")
+
+    assert job._resolve_container(None) == "gold-container"
+
+
+def test_materialize_gold_market_resolve_container_falls_back_to_market_env(monkeypatch):
+    from tasks.market_data import materialize_gold_market_by_date as job
+
+    monkeypatch.delenv("AZURE_CONTAINER_GOLD", raising=False)
+    monkeypatch.setenv("AZURE_FOLDER_MARKET", "market-folder")
+
+    assert job._resolve_container(None) == "market-folder"
+
+
 def test_materialize_gold_market_by_date_prefers_container_listing(monkeypatch):
     from tasks.market_data import materialize_gold_market_by_date as job
 
