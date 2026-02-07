@@ -83,9 +83,15 @@ describe('DataQualityPage', () => {
         stale: false
       }
     });
-    vi.mocked(DataService.getMarketData).mockResolvedValue([{ symbol: 'SPY' }] as unknown as MarketData[]);
-    vi.mocked(DataService.getFinanceData).mockResolvedValue([{ symbol: 'SPY' }] as unknown as FinanceData[]);
-    vi.mocked(DataService.getGenericData).mockResolvedValue([{ symbol: 'SPY' }] as unknown as Record<string, unknown>[]);
+    vi.mocked(DataService.getMarketData).mockResolvedValue([
+      { symbol: 'SPY' }
+    ] as unknown as MarketData[]);
+    vi.mocked(DataService.getFinanceData).mockResolvedValue([
+      { symbol: 'SPY' }
+    ] as unknown as FinanceData[]);
+    vi.mocked(DataService.getGenericData).mockResolvedValue([
+      { symbol: 'SPY' }
+    ] as unknown as Record<string, unknown>[]);
   });
 
   it('renders main dashboard sections', async () => {

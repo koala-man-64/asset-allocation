@@ -1,4 +1,4 @@
-
+type HeadersInit = Headers | string[][] | Record<string, string>;
 
 export type AccessTokenProvider = () => Promise<string | null>;
 

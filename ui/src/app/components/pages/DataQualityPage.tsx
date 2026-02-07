@@ -689,12 +689,14 @@ export function DataQualityPage() {
           </div>
         </header>
 
+        <DataPipelinePanel />
+
         <section className="dq-panel dq-panel-pad">
           <div className="dq-kicker">DRIFT</div>
           <div className="dq-title text-lg">Cross-Layer Lag</div>
           <p className="dq-subtitle mt-1 text-sm">
-            Largest observed timestamp spread across layers (best-effort, based on folder/table
-            last modified).
+            Largest observed timestamp spread across layers (best-effort, based on folder/table last
+            modified).
           </p>
 
           <div className="mt-4 space-y-2">
@@ -740,7 +742,6 @@ export function DataQualityPage() {
             )}
           </div>
         </section>
-
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
@@ -995,7 +996,7 @@ export function DataQualityPage() {
             <div className="mt-2 dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
           )}
         </section>
-      </div >
-    </div >
+      </div>
+    </div>
   );
 }

@@ -165,8 +165,6 @@ export interface RuntimeConfigCatalogResponse {
   items: RuntimeConfigCatalogItem[];
 }
 
-
-
 export interface RuntimeConfigItem {
   scope: string;
   key: string;
