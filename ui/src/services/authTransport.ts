@@ -1,4 +1,4 @@
-/* global Headers, HeadersInit */
+
 
 export type AccessTokenProvider = () => Promise<string | null>;
 
