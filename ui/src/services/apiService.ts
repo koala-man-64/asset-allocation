@@ -165,6 +165,8 @@ export interface RuntimeConfigCatalogResponse {
   items: RuntimeConfigCatalogItem[];
 }
 
+
+
 export interface RuntimeConfigItem {
   scope: string;
   key: string;
@@ -178,6 +180,26 @@ export interface RuntimeConfigItem {
 export interface RuntimeConfigListResponse {
   scope: string;
   items: RuntimeConfigItem[];
+}
+
+export interface ValidationColumnStat {
+  name: string;
+  type: string;
+  total: number;
+  unique: number;
+  notNull: number;
+  null: number;
+}
+
+export interface ValidationReport {
+  layer: string;
+  domain: string;
+  status: string;
+  rowCount: number;
+  columns: ValidationColumnStat[];
+  timestamp: string;
+  error?: string;
+  sampleLimit?: number;
 }
 
 export const apiService = {
@@ -267,6 +289,14 @@ export const apiService = {
       params: { ticker, limit },
       signal
     });
+  },
+
+  getDataQualityValidation(
+    layer: string,
+    domain: string,
+    signal?: AbortSignal
+  ): Promise<ValidationReport> {
+    return request<ValidationReport>(`/data/quality/${layer}/${domain}/validation`, { signal });
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeResponse> {

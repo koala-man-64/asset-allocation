@@ -48,6 +48,7 @@ import {
   Timer,
   TriangleAlert
 } from 'lucide-react';
+import { DataPipelinePanel } from '@/app/components/pages/data-quality/DataPipelinePanel';
 
 type ProbeStatus = 'idle' | 'running' | 'pass' | 'warn' | 'fail';
 
@@ -605,11 +606,6 @@ export function DataQualityPage() {
                 </Button>
               )}
             </div>
-          </div>
-        </header>
-
-        <div className="dq-grid">
-          <section className="dq-panel dq-panel-pad">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="dq-kicker">TARGET</div>
@@ -690,60 +686,61 @@ export function DataQualityPage() {
                 </div>
               </div>
             </div>
-          </section>
+          </div>
+        </header>
 
-          <section className="dq-panel dq-panel-pad">
-            <div className="dq-kicker">DRIFT</div>
-            <div className="dq-title text-lg">Cross-Layer Lag</div>
-            <p className="dq-subtitle mt-1 text-sm">
-              Largest observed timestamp spread across layers (best-effort, based on folder/table
-              last modified).
-            </p>
+        <section className="dq-panel dq-panel-pad">
+          <div className="dq-kicker">DRIFT</div>
+          <div className="dq-title text-lg">Cross-Layer Lag</div>
+          <p className="dq-subtitle mt-1 text-sm">
+            Largest observed timestamp spread across layers (best-effort, based on folder/table
+            last modified).
+          </p>
 
-            <div className="mt-4 space-y-2">
-              {(drift || []).slice(0, 6).map((item) => {
-                const minutes = Math.round(item.lagSeconds / 60);
-                const label = minutes >= 120 ? `${Math.round(minutes / 60)}h` : `${minutes}m`;
-                const severity: ProbeStatus =
-                  typeof item.slaSeconds === 'number' && Number.isFinite(item.slaSeconds)
-                    ? item.lagSeconds > item.slaSeconds
-                      ? 'fail'
-                      : item.lagSeconds > Math.round(item.slaSeconds * 0.5)
-                        ? 'warn'
-                        : 'pass'
-                    : minutes >= 24 * 60
-                      ? 'fail'
-                      : minutes >= 6 * 60
-                        ? 'warn'
-                        : 'pass';
-                return (
-                  <div key={item.domain} className="dq-drift-row">
-                    <div className="dq-drift-left">
-                      <div className="dq-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">
-                        {item.domain}
-                      </div>
-                      <div className="dq-drift-path">
-                        {item.from} → {item.to}
-                      </div>
+          <div className="mt-4 space-y-2">
+            {(drift || []).slice(0, 6).map((item) => {
+              const minutes = Math.round(item.lagSeconds / 60);
+              const label = minutes >= 120 ? `${Math.round(minutes / 60)}h` : `${minutes}m`;
+              const severity: ProbeStatus =
+                typeof item.slaSeconds === 'number' && Number.isFinite(item.slaSeconds)
+                  ? item.lagSeconds > item.slaSeconds
+                    ? 'fail'
+                    : item.lagSeconds > Math.round(item.slaSeconds * 0.5)
+                      ? 'warn'
+                      : 'pass'
+                  : minutes >= 24 * 60
+                    ? 'fail'
+                    : minutes >= 6 * 60
+                      ? 'warn'
+                      : 'pass';
+              return (
+                <div key={item.domain} className="dq-drift-row">
+                  <div className="dq-drift-left">
+                    <div className="dq-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">
+                      {item.domain}
                     </div>
-                    <div className="dq-drift-right">
-                      <ProbePill status={severity} />
-                      <div className="dq-mono text-xs text-muted-foreground">{label}</div>
+                    <div className="dq-drift-path">
+                      {item.from} → {item.to}
                     </div>
                   </div>
-                );
-              })}
-              {drift.length === 0 && (
-                <div className="dq-empty">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <div className="dq-mono text-sm">
-                    No cross-layer lag detected from available timestamps.
+                  <div className="dq-drift-right">
+                    <ProbePill status={severity} />
+                    <div className="dq-mono text-xs text-muted-foreground">{label}</div>
                   </div>
                 </div>
-              )}
-            </div>
-          </section>
-        </div>
+              );
+            })}
+            {drift.length === 0 && (
+              <div className="dq-empty">
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <div className="dq-mono text-sm">
+                  No cross-layer lag detected from available timestamps.
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
@@ -998,7 +995,7 @@ export function DataQualityPage() {
             <div className="mt-2 dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
           )}
         </section>
-      </div>
-    </div>
+      </div >
+    </div >
   );
 }

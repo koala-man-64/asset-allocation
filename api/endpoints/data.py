@@ -13,7 +13,9 @@ from api.service.dependencies import get_settings, validate_auth
 from core.delta_core import load_delta
 from core.pipeline import DataPaths
 from core.postgres import PostgresError, connect
+
 from ..data_service import DataService
+from api.service.validation_service import ValidationService
 
 router = APIRouter()
 logger = logging.getLogger("asset-allocation.api.data")
@@ -406,4 +408,37 @@ def get_finance_data(
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quality/{layer}/{domain}/validation")
+def get_validation_report(
+    layer: str,
+    domain: str,
+    request: Request,
+):
+    """
+    Returns a data quality validation report for the specified layer and domain.
+    Computed on-demand by ValidationService.
+    """
+    request_id = request.headers.get("x-request-id", "")
+    logger.info(
+        "Validation report request: layer=%s domain=%s request_id=%s",
+        layer,
+        domain,
+        request_id or "-"
+    )
+    validate_auth(request)
+    
+    # Basic validation of inputs
+    if layer not in ["bronze", "silver", "gold"]:
+         raise HTTPException(status_code=400, detail="Layer must be 'bronze', 'silver', or 'gold'")
+
+    try:
+        report = ValidationService.get_validation_report(layer, domain)
+        return report
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Validation report failed")
         raise HTTPException(status_code=500, detail=str(e))
