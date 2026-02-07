@@ -61,8 +61,7 @@ type ProbeResult = {
   meta?: Record<string, unknown>;
 };
 
-const DEFAULT_TICKER = 'SPY';
-const DEFAULT_FINANCE_SUBDOMAIN = 'balance_sheet';
+
 const PROBE_TIMEOUT_MS = 20_000;
 const RUN_ALL_CONCURRENCY = 3;
 
@@ -118,8 +117,8 @@ export function DataQualityPage() {
   const health = useSystemHealthQuery();
   const lineage = useLineageQuery();
 
-  const [ticker, setTicker] = useState(DEFAULT_TICKER);
-  const [financeSubDomain, setFinanceSubDomain] = useState(DEFAULT_FINANCE_SUBDOMAIN);
+  const [ticker, setTicker] = useState('');
+  const [financeSubDomain, setFinanceSubDomain] = useState('');
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
   const [isForceRefreshing, setIsForceRefreshing] = useState(false);
@@ -296,7 +295,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+            `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -309,7 +308,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+            `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -385,7 +384,7 @@ export function DataQualityPage() {
       setProbeResults((prev) => ({
         ...prev,
         [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-        `row:${domainKey(row)}`]: {
+          `row:${domainKey(row)}`]: {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),
@@ -649,13 +648,13 @@ export function DataQualityPage() {
                       <Button
                         variant="outline"
                         className="dq-btn-icon"
-                        onClick={() => setTicker(DEFAULT_TICKER)}
-                        aria-label="Reset ticker"
+                        onClick={() => setTicker('')}
+                        aria-label="Clear ticker"
                       >
                         <Timer className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Reset to {DEFAULT_TICKER}</TooltipContent>
+                    <TooltipContent>Clear ticker</TooltipContent>
                   </Tooltip>
                 </div>
                 {!tickerIsValid && (

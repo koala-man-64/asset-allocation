@@ -3,6 +3,7 @@ import { fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
 import { DataService, type MarketData, type FinanceData } from '@/services/DataService';
+import type { SystemHealth } from '@/types/strategy';
 
 const { mockUseSystemHealthQuery, mockUseLineageQuery, mockGetLastSystemHealthMeta } = vi.hoisted(
   () => ({
@@ -30,7 +31,7 @@ vi.mock('@/services/DataService', () => ({
   }
 }));
 
-function makeHealthData() {
+function makeHealthData(): SystemHealth {
   return {
     overall: 'healthy',
     dataLayers: [
@@ -53,7 +54,9 @@ function makeHealthData() {
           }
         ]
       }
-    ]
+    ],
+    recentJobs: [],
+    alerts: []
   };
 }
 
@@ -115,9 +118,12 @@ describe('DataQualityPage', () => {
 
   it('sanitizes unsafe outbound links', async () => {
     const healthData = makeHealthData();
-    healthData.dataLayers[0].domains[0].portalUrl = 'javascript:alert(1)';
-    healthData.dataLayers[0].domains[0].jobUrl = 'data:text/html,foo';
-    healthData.dataLayers[0].domains[0].triggerUrl = 'https://evil.example.com';
+    const layer = healthData.dataLayers[0];
+    if (layer && layer.domains && layer.domains[0]) {
+      layer.domains[0].portalUrl = 'javascript:alert(1)';
+      layer.domains[0].jobUrl = 'data:text/html,foo';
+      layer.domains[0].triggerUrl = 'https://evil.example.com';
+    }
 
     mockUseSystemHealthQuery.mockReturnValue({
       data: healthData,

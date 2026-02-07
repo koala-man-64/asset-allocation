@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
@@ -60,7 +61,7 @@ export const queryKeys = {
  */
 
 export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
-  return useQuery<SystemHealth>({
+  const query = useQuery<SystemHealth>({
     queryKey: queryKeys.systemHealth(),
     queryFn: async () => {
       queryInfo('[useSystemHealthQuery] fetch start');
@@ -84,45 +85,61 @@ export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
       }
     },
     retry: (failureCount, error) => (isApiNotFoundError(error) ? false : failureCount < 3),
-    refetchInterval: systemHealthRefetchInterval,
-    onSuccess: (data) => {
+    refetchInterval: systemHealthRefetchInterval
+  });
+
+  useEffect(() => {
+    if (query.data) {
       queryInfo('[Query] systemHealth success', {
-        overall: data.overall,
-        alerts: data.alerts?.length ?? 0,
+        overall: query.data.overall,
+        alerts: query.data.alerts?.length ?? 0,
         requestId: lastSystemHealthMeta?.requestId,
         cacheHint: lastSystemHealthMeta?.cacheHint,
         stale: lastSystemHealthMeta?.stale
       });
-    },
-    onError: (err) => {
+    }
+  }, [query.data]);
+
+  useEffect(() => {
+    if (query.error) {
       console.error('[Query] systemHealth error', {
-        error: err instanceof Error ? err.message : String(err)
+        error: query.error instanceof Error ? query.error.message : String(query.error)
       });
     }
-  });
+  }, [query.error]);
+
+  return query;
 }
 
 export function useLineageQuery() {
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.lineage(),
     queryFn: async () => {
       queryInfo('[Query] lineage fetch');
       return DataService.getLineage();
     },
     staleTime: 5 * 60 * 1000,
-    refetchInterval: 60 * 1000,
-    onSuccess: (data) => {
-      const impacts = (data as { impactsByDomain?: unknown })?.impactsByDomain;
+    refetchInterval: 60 * 1000
+  });
+
+  useEffect(() => {
+    if (query.data) {
+      const impacts = (query.data as { impactsByDomain?: unknown })?.impactsByDomain;
       queryInfo('[Query] lineage success', {
         domains: impacts && typeof impacts === 'object' ? Object.keys(impacts as object).length : 0
       });
-    },
-    onError: (err) => {
+    }
+  }, [query.data]);
+
+  useEffect(() => {
+    if (query.error) {
       console.error('[Query] lineage error', {
-        error: err instanceof Error ? err.message : String(err)
+        error: query.error instanceof Error ? query.error.message : String(query.error)
       });
     }
-  });
+  }, [query.error]);
+
+  return query;
 }
 
 export function useDebugSymbolsQuery() {
