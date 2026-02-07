@@ -1,16 +1,21 @@
 import React, { useMemo } from 'react';
 
-interface DataTableProps {
-  data: Record<string, unknown>[];
+interface DataTableProps<T> {
+  data: T[];
   className?: string;
   emptyMessage?: string;
+  columns?: { header: string; accessorKey: keyof T | string }[];
+  onRowClick?: (item: T) => void;
 }
 
-export const DataTable: React.FC<DataTableProps> = ({ data, className = '', emptyMessage = 'No data available.' }) => {
-  const columns = useMemo(() => {
+export const DataTable = <T extends Record<string, any>>({ data, className = '', emptyMessage = 'No data available.', columns: propColumns, onRowClick }: DataTableProps<T>) => {
+  const tableColumns = useMemo(() => {
+    if (propColumns) {
+      return propColumns;
+    }
     if (!data || data.length === 0) return [];
-    return Object.keys(data[0]);
-  }, [data]);
+    return Object.keys(data[0]).map((key) => ({ header: key, accessorKey: key }));
+  }, [data, propColumns]);
 
   if (!data || data.length === 0) {
     return (
@@ -30,24 +35,28 @@ export const DataTable: React.FC<DataTableProps> = ({ data, className = '', empt
             <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70 w-12">
               #
             </th>
-            {columns.map((col) => (
+            {tableColumns.map((col) => (
               <th
-                key={col}
+                key={String(col.accessorKey)}
                 className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70 whitespace-nowrap"
               >
-                {col}
+                {col.header}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {data.map((row, idx) => (
-            <tr key={idx} className="group transition-colors hover:[&>td]:bg-mcm-cream">
+            <tr
+              key={idx}
+              className={`group transition-colors hover:[&>td]:bg-mcm-cream ${onRowClick ? 'cursor-pointer' : ''}`}
+              onClick={() => onRowClick?.(row)}
+            >
               <td className="px-3 py-2 text-mcm-olive bg-mcm-cream border-y-2 border-mcm-walnut/40 border-l-2 border-mcm-walnut/40 rounded-l-2xl text-right select-none text-[11px] font-semibold">
                 {idx + 1}
               </td>
-              {columns.map((col) => {
-                const val = row[col];
+              {tableColumns.map((col) => {
+                const val = row[col.accessorKey as keyof T];
                 let displayVal: React.ReactNode = '-';
 
                 if (val !== null && val !== undefined) {
@@ -62,7 +71,7 @@ export const DataTable: React.FC<DataTableProps> = ({ data, className = '', empt
 
                 return (
                   <td
-                    key={col}
+                    key={String(col.accessorKey)}
                     className="px-3 py-2 text-mcm-walnut border-y-2 border-mcm-walnut/40 bg-mcm-paper whitespace-nowrap lowercase last:border-r-2 last:border-mcm-walnut/40 last:rounded-r-2xl"
                   >
                     {displayVal}
