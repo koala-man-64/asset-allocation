@@ -19,6 +19,7 @@ import { StockDetailPage } from '@/app/components/pages/StockDetailPage';
 import { PostgresExplorerPage } from '@/app/components/pages/PostgresExplorerPage';
 import { DebugSymbolsPage } from '@/app/components/pages/DebugSymbolsPage';
 import { RuntimeConfigPage } from '@/app/components/pages/RuntimeConfigPage';
+import { StrategyConfigPage } from '@/app/components/pages/StrategyConfigPage';
 
 function AppContent() {
   // Enable real-time updates from backend
@@ -40,6 +41,7 @@ function AppContent() {
               <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
               <Route path="/runtime-config" element={<RuntimeConfigPage />} />
               <Route path="/stock-explorer" element={<StockExplorerPage />} />
+              <Route path="/strategies" element={<StrategyConfigPage />} />
               <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
               <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
