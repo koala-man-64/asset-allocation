@@ -21,6 +21,9 @@ properties:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
     - image: assetallocationacr.azurecr.io/asset-allocation-ui:${IMAGE_TAG}
+      env:
+      - name: API_UPSTREAM
+        value: "asset-allocation-api"
       imageType: ContainerImage
       name: asset-allocation-ui
       resources:

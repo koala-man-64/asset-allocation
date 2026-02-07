@@ -1,114 +1,139 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
-import { DataQualityPage } from '../components/pages/DataQualityPage';
-import * as DataQueries from '@/hooks/useDataQueries';
+import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
+import { DataService } from '@/services/DataService';
 
-// Mock hooks
-vi.mock('@/hooks/useDataQueries', () => ({
-  useSystemHealthQuery: vi.fn(),
-  useLineageQuery: vi.fn()
+const {
+  mockUseSystemHealthQuery,
+  mockUseLineageQuery,
+  mockGetLastSystemHealthMeta
+} = vi.hoisted(() => ({
+  mockUseSystemHealthQuery: vi.fn(),
+  mockUseLineageQuery: vi.fn(),
+  mockGetLastSystemHealthMeta: vi.fn(() => null)
 }));
 
-describe('DataQualityPage', () => {
-  const mockHealthData = {
+vi.mock('@/hooks/useDataQueries', () => ({
+  useSystemHealthQuery: mockUseSystemHealthQuery,
+  useLineageQuery: mockUseLineageQuery,
+  getLastSystemHealthMeta: mockGetLastSystemHealthMeta,
+  queryKeys: {
+    systemHealth: () => ['systemHealth']
+  }
+}));
+
+vi.mock('@/services/DataService', () => ({
+  DataService: {
+    getSystemHealthWithMeta: vi.fn(),
+    getMarketData: vi.fn(),
+    getFinanceData: vi.fn(),
+    getGenericData: vi.fn()
+  }
+}));
+
+function makeHealthData() {
+  return {
     overall: 'healthy',
     dataLayers: [
       {
         name: 'silver',
         status: 'healthy',
+        description: '',
+        lastUpdated: '2026-02-06T00:00:00Z',
+        refreshFrequency: 'Daily',
         domains: [
-          { name: 'market', status: 'healthy' },
-          { name: 'finance', status: 'healthy' }
-        ],
-        portalUrl: 'http://test.com'
+          {
+            name: 'market',
+            type: 'delta',
+            path: 'market-data-by-date',
+            lastUpdated: '2026-02-06T00:00:00Z',
+            status: 'healthy',
+            portalUrl: 'https://portal.azure.com/#resource/foo',
+            jobUrl: 'https://portal.azure.com/#resource/bar',
+            triggerUrl: 'https://portal.azure.com/#resource/baz'
+          }
+        ]
       }
     ]
   };
+}
 
-  const mockLineageData = {
-    impactsByDomain: {
-      market: ['strategy-1']
-    }
-  };
-
+describe('DataQualityPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-
-    const useSystemHealthQueryMock = DataQueries.useSystemHealthQuery as unknown as ReturnType<
-      typeof vi.fn
-    >;
-    useSystemHealthQueryMock.mockReturnValue({
-      data: mockHealthData,
+    mockUseSystemHealthQuery.mockReturnValue({
+      data: makeHealthData(),
+      isLoading: false,
+      error: null,
+      isFetching: false,
+      dataUpdatedAt: Date.now()
+    });
+    mockUseLineageQuery.mockReturnValue({
+      data: { impactsByDomain: { market: ['strategy-1'] } },
       isLoading: false,
       error: null
     });
-
-    const useLineageQueryMock = DataQueries.useLineageQuery as unknown as ReturnType<typeof vi.fn>;
-    useLineageQueryMock.mockReturnValue({
-      data: mockLineageData,
-      isLoading: false,
-      error: null
+    vi.mocked(DataService.getSystemHealthWithMeta).mockResolvedValue({
+      data: makeHealthData(),
+      meta: {
+        requestId: 'req-test-1',
+        status: 200,
+        durationMs: 25,
+        url: '/api/system/health',
+        cacheHint: 'miss',
+        stale: false
+      }
     });
+    vi.mocked(DataService.getMarketData).mockResolvedValue([{ symbol: 'SPY' }] as any);
+    vi.mocked(DataService.getFinanceData).mockResolvedValue([{ symbol: 'SPY' }] as any);
+    vi.mocked(DataService.getGenericData).mockResolvedValue([{ symbol: 'SPY' }] as any);
   });
 
-  it('renders the dashboard with correct summary stats', async () => {
+  it('renders main dashboard sections', async () => {
     renderWithProviders(<DataQualityPage />);
-
-    // Check for main section headers using role
-    expect(await screen.findByRole('heading', { name: /Data Quality/i })).toBeInTheDocument();
-    // expect(await screen.findByText(/Health Score/i)).toBeInTheDocument();
-    // expect(await screen.findByText(/Drift/i)).toBeInTheDocument();
-
-    // With all healthy, score should be 100
-    // expect(await screen.findByText('100')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /data quality/i })).toBeInTheDocument();
+    expect(screen.getByText(/validation ledger/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/cross-layer lag/i).length).toBeGreaterThan(0);
   });
 
-  it('renders domain rows correctly', async () => {
-    renderWithProviders(<DataQualityPage />);
-
-    // We expect 'market' and 'finance' from our mock data
-    expect(await screen.findByText(/market/i)).toBeInTheDocument();
-    // Since we mock case-insensitively or normalized, check for presence
-    const silverElements = screen.getAllByText(/silver/i);
-    expect(silverElements.length).toBeGreaterThan(0);
-    expect(silverElements[0]).toBeInTheDocument();
-  });
-
-  it('handles interaction with "Run All" button', () => {
-    renderWithProviders(<DataQualityPage />);
-
-    const runButton = screen.getByText('Run All Supported');
-    expect(runButton).toBeDefined();
-
-    // We can't easily test the internal probe interaction without deeper mocking of the component's internal useCallback
-    // But verifying the button renders confirms the control is present
-    expect(runButton).not.toBeDisabled();
-  });
-
-  it('displays loading state initially', () => {
-    vi.spyOn(DataQueries, 'useSystemHealthQuery').mockReturnValue({
+  it('renders loading state', () => {
+    mockUseSystemHealthQuery.mockReturnValue({
       data: null,
       isLoading: true,
-      error: null
-    } as unknown as ReturnType<typeof DataQueries.useSystemHealthQuery>);
+      error: null,
+      isFetching: false,
+      dataUpdatedAt: 0
+    });
+    renderWithProviders(<DataQualityPage />);
+    expect(screen.getByText(/loading validation ledger/i)).toBeInTheDocument();
+  });
+
+  it('sanitizes unsafe outbound links', async () => {
+    const healthData = makeHealthData();
+    healthData.dataLayers[0].domains[0].portalUrl = 'javascript:alert(1)';
+    healthData.dataLayers[0].domains[0].jobUrl = 'data:text/html,foo';
+    healthData.dataLayers[0].domains[0].triggerUrl = 'https://evil.example.com';
+
+    mockUseSystemHealthQuery.mockReturnValue({
+      data: healthData,
+      isLoading: false,
+      error: null,
+      isFetching: false,
+      dataUpdatedAt: Date.now()
+    });
 
     renderWithProviders(<DataQualityPage />);
+    expect(await screen.findByRole('heading', { name: /data quality/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /open portal/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /open job/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /trigger/i })).toBeNull();
+  });
 
-    // If loading, we expect a spinner or at least emptiness, but our page might just show partials
-    // The DataQualityPage has a specific loading return
-    // You might need to check if your render implements a loading spinner class
-
-    // Based on code:
-    // if (health.isLoading) return ... <RefreshCw .../>
-    // RefreshCw is an icon, accessible by role or class.
-    // Or we can check that "Data Quality" header (which is inside the main block) is NOT present yet
-    // Wait, the header "Data Quality" is inside the dashboard logic? No, let's check code.
-
-    const loader = document.querySelector('.animate-spin');
-    if (!loader) {
-      // Fallback expectation if DOM querry fails
-    }
-    // Actually, let's just assert safe behavior: it shouldn't crash
+  it('forces refresh with refresh=true on click', async () => {
+    renderWithProviders(<DataQualityPage />);
+    const refreshButton = await screen.findByRole('button', { name: /^refresh$/i });
+    fireEvent.click(refreshButton);
+    expect(DataService.getSystemHealthWithMeta).toHaveBeenCalledWith({ refresh: true });
   });
 });

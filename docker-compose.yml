@@ -22,6 +22,8 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
+    environment:
+      - API_UPSTREAM=asset-allocation-api:8000
     ports:
       - "8080:80"
     depends_on:

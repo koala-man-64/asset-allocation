@@ -88,3 +88,31 @@ async def test_bronze_finance_endpoint_allows_missing_ticker(monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == [{"ok": True}]
     assert calls == [("bronze", "balance_sheet", None)]
+
+
+@pytest.mark.asyncio
+async def test_data_endpoint_rejects_invalid_ticker():
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/silver/market?ticker=BAD/TICKER")
+
+    assert resp.status_code == 400
+    assert "Invalid ticker format" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_data_endpoint_normalizes_ticker_to_uppercase(monkeypatch):
+    calls = []
+
+    def fake_get_data(layer: str, domain: str, ticker: str | None = None):
+        calls.append((layer, domain, ticker))
+        return [{"ok": True}]
+
+    monkeypatch.setattr(data_endpoints.DataService, "get_data", fake_get_data)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/silver/market?ticker=aapl")
+
+    assert resp.status_code == 200
+    assert calls == [("silver", "market", "AAPL")]

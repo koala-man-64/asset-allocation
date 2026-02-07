@@ -1,6 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
-import { useLineageQuery, useSystemHealthQuery } from '@/hooks/useDataQueries';
-import type { DataDomain, DataLayer } from '@/types/strategy';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  getLastSystemHealthMeta,
+  queryKeys,
+  useLineageQuery,
+  useSystemHealthQuery
+} from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -16,6 +21,21 @@ import {
 } from '@/app/components/ui/table';
 import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getStatusConfig } from './system-status/SystemStatusHelpers';
+import { sanitizeExternalUrl } from '@/utils/urlSecurity';
+import type { RequestMeta } from '@/services/apiService';
+import {
+  clampInt,
+  computeLayerDrift,
+  domainKey,
+  formatDurationMs,
+  getProbeIdForRow,
+  isValidTickerSymbol,
+  normalizeDomainName,
+  normalizeLayerName,
+  parseImpactsByDomain,
+  scoreFromStatus,
+  type DomainRow
+} from './data-quality/dataQualityUtils';
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -40,15 +60,10 @@ type ProbeResult = {
   meta?: Record<string, unknown>;
 };
 
-type DomainRow = {
-  layerName: string;
-  layerStatus: string;
-  layerPortalUrl?: string;
-  domain: DataDomain;
-};
-
 const DEFAULT_TICKER = 'SPY';
 const DEFAULT_FINANCE_SUBDOMAIN = 'balance_sheet';
+const PROBE_TIMEOUT_MS = 20_000;
+const RUN_ALL_CONCURRENCY = 3;
 
 const FINANCE_SUBDOMAINS: Array<{ value: string; label: string }> = [
   { value: 'balance_sheet', label: 'Balance Sheet' },
@@ -59,21 +74,6 @@ const FINANCE_SUBDOMAINS: Array<{ value: string; label: string }> = [
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function clampInt(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Math.trunc(value)));
-}
-
-function scoreFromStatus(status: string): number {
-  const s = String(status || '').toLowerCase();
-  if (['idle', 'pass'].includes(s)) return 0;
-  if (['warn'].includes(s)) return 6;
-  if (['fail'].includes(s)) return 14;
-  if (['healthy', 'success'].includes(s)) return 0;
-  if (['warning', 'degraded', 'stale', 'pending', 'running'].includes(s)) return 6;
-  if (['critical', 'error', 'failed'].includes(s)) return 14;
-  return 8;
 }
 
 function ProbePill({ status }: { status: ProbeStatus }) {
@@ -112,72 +112,8 @@ function ProbePill({ status }: { status: ProbeStatus }) {
   );
 }
 
-function formatDurationMs(ms?: number): string {
-  if (!ms || !Number.isFinite(ms)) return '';
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(2)}s`;
-  const minutes = seconds / 60;
-  return `${minutes.toFixed(1)}m`;
-}
-
-function computeLayerDrift(
-  layers: DataLayer[]
-): Array<{ domain: string; lagSeconds: number; from: string; to: string }> {
-  const byDomain = new Map<string, Array<{ layer: string; ts: number }>>();
-  for (const layer of layers || []) {
-    for (const domain of layer.domains || []) {
-      const name = String(domain?.name || '').trim();
-      const lastUpdated = domain?.lastUpdated ? Date.parse(domain.lastUpdated) : NaN;
-      if (!name || !Number.isFinite(lastUpdated)) continue;
-      const bucket = byDomain.get(name) || [];
-      bucket.push({ layer: layer.name, ts: lastUpdated });
-      byDomain.set(name, bucket);
-    }
-  }
-
-  const drift: Array<{ domain: string; lagSeconds: number; from: string; to: string }> = [];
-  for (const [domain, points] of byDomain.entries()) {
-    if (points.length < 2) continue;
-    const sorted = [...points].sort((a, b) => a.ts - b.ts);
-    const lagMs = sorted[sorted.length - 1].ts - sorted[0].ts;
-    drift.push({
-      domain,
-      lagSeconds: Math.max(0, Math.round(lagMs / 1000)),
-      from: sorted[0].layer,
-      to: sorted[sorted.length - 1].layer
-    });
-  }
-
-  return drift.sort((a, b) => b.lagSeconds - a.lagSeconds);
-}
-
-function normalizeLayerName(layerName: string): 'silver' | 'gold' | 'platinum' | 'bronze' | null {
-  const key = String(layerName || '')
-    .trim()
-    .toLowerCase();
-  if (key === 'silver') return 'silver';
-  if (key === 'gold') return 'gold';
-  if (key === 'platinum') return 'platinum';
-  if (key === 'bronze') return 'bronze';
-  return null;
-}
-
-function normalizeDomainName(
-  domainName: string
-): 'market' | 'finance' | 'earnings' | 'price-target' | string {
-  const key = String(domainName || '')
-    .trim()
-    .toLowerCase();
-  if (key === 'price-target' || key === 'price_target') return 'price-target';
-  return key;
-}
-
-function domainKey(row: DomainRow): string {
-  return `${row.layerName}:${row.domain.name}:${row.domain.type}:${row.domain.path}`;
-}
-
 export function DataQualityPage() {
+  const queryClient = useQueryClient();
   const health = useSystemHealthQuery();
   const lineage = useLineageQuery();
 
@@ -185,6 +121,31 @@ export function DataQualityPage() {
   const [financeSubDomain, setFinanceSubDomain] = useState(DEFAULT_FINANCE_SUBDOMAIN);
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
+  const [isForceRefreshing, setIsForceRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const [healthMeta, setHealthMeta] = useState<RequestMeta | null>(null);
+  const [isRunningAll, setIsRunningAll] = useState(false);
+  const [runAllStatusMessage, setRunAllStatusMessage] = useState<string | null>(null);
+  const runAllCancelledRef = useRef(false);
+  const runAllControllersRef = useRef<Set<AbortController>>(new Set());
+
+  useEffect(() => {
+    if (health.dataUpdatedAt) {
+      setLastRefreshedAt(new Date(health.dataUpdatedAt).toISOString());
+    }
+    setHealthMeta(getLastSystemHealthMeta());
+  }, [health.dataUpdatedAt]);
+
+  useEffect(
+    () => () => {
+      runAllCancelledRef.current = true;
+      for (const controller of runAllControllersRef.current) {
+        controller.abort();
+      }
+      runAllControllersRef.current.clear();
+    },
+    []
+  );
 
   const rows: DomainRow[] = useMemo(() => {
     const payload = health.data;
@@ -194,8 +155,6 @@ export function DataQualityPage() {
       for (const domain of layer.domains || []) {
         out.push({
           layerName: layer.name,
-          layerStatus: layer.status,
-          layerPortalUrl: layer.portalUrl,
           domain
         });
       }
@@ -213,8 +172,7 @@ export function DataQualityPage() {
       lineage.data && typeof lineage.data === 'object'
         ? (lineage.data as { impactsByDomain?: unknown }).impactsByDomain
         : null;
-    if (!raw || typeof raw !== 'object') return {};
-    return raw as Record<string, string[]>;
+    return parseImpactsByDomain(raw);
   }, [lineage.data]);
 
   const summary = useMemo(() => {
@@ -255,9 +213,14 @@ export function DataQualityPage() {
     async (
       id: string,
       title: string,
-      fn: () => Promise<{ ok: boolean; detail?: string; meta?: Record<string, unknown> }>
+      fn: (
+        signal: AbortSignal
+      ) => Promise<{ ok: boolean; detail?: string; meta?: Record<string, unknown> }>
     ) => {
       const started = performance.now();
+      const controller = new AbortController();
+      runAllControllersRef.current.add(controller);
+      const timeoutHandle = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
       setProbeResults((prev) => ({
         ...prev,
         [id]: {
@@ -268,9 +231,15 @@ export function DataQualityPage() {
       }));
 
       try {
-        const result = await fn();
+        const result = await fn(controller.signal);
         const ms = performance.now() - started;
         const status: ProbeStatus = result.ok ? 'pass' : 'fail';
+        console.info('[DataQualityProbe] completed', {
+          probeId: id,
+          title,
+          status,
+          durationMs: Math.round(ms)
+        });
         setProbeResults((prev) => ({
           ...prev,
           [id]: {
@@ -284,7 +253,20 @@ export function DataQualityPage() {
         }));
       } catch (err: unknown) {
         const ms = performance.now() - started;
-        const message = err instanceof Error ? err.message : String(err);
+        const isAbort = controller.signal.aborted;
+        const message = isAbort
+          ? runAllCancelledRef.current
+            ? 'Probe cancelled.'
+            : `Probe timed out after ${Math.round(PROBE_TIMEOUT_MS / 1000)}s.`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+        console.warn('[DataQualityProbe] failed', {
+          probeId: id,
+          title,
+          durationMs: Math.round(ms),
+          reason: message
+        });
         setProbeResults((prev) => ({
           ...prev,
           [id]: {
@@ -295,6 +277,9 @@ export function DataQualityPage() {
             detail: message
           }
         }));
+      } finally {
+        window.clearTimeout(timeoutHandle);
+        runAllControllersRef.current.delete(controller);
       }
     },
     []
@@ -309,7 +294,7 @@ export function DataQualityPage() {
       if (!resolvedTicker) {
         setProbeResults((prev) => ({
           ...prev,
-          [`row:${domainKey(row)}`]: {
+          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -318,11 +303,23 @@ export function DataQualityPage() {
         }));
         return;
       }
+      if (!isValidTickerSymbol(resolvedTicker)) {
+        setProbeResults((prev) => ({
+          ...prev,
+          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`]: {
+            status: 'fail',
+            title: 'Probe',
+            at: nowIso(),
+            detail: 'Ticker must match ^[A-Z][A-Z0-9.-]{0,9}$.'
+          }
+        }));
+        return;
+      }
 
       if ((layer === 'silver' || layer === 'gold') && domain === 'market') {
         const id = `probe:${layer}:market`;
-        await runProbe(id, `Market (${layer})`, async () => {
-          const data = await DataService.getMarketData(resolvedTicker, layer);
+        await runProbe(id, `Market (${layer})`, async (signal) => {
+          const data = await DataService.getMarketData(resolvedTicker, layer, signal);
           const count = Array.isArray(data) ? data.length : 0;
           return {
             ok: count > 0,
@@ -335,8 +332,13 @@ export function DataQualityPage() {
 
       if ((layer === 'silver' || layer === 'gold') && domain === 'finance') {
         const id = `probe:${layer}:finance:${financeSubDomain}`;
-        await runProbe(id, `Finance (${layer})`, async () => {
-          const data = await DataService.getFinanceData(resolvedTicker, financeSubDomain, layer);
+        await runProbe(id, `Finance (${layer})`, async (signal) => {
+          const data = await DataService.getFinanceData(
+            resolvedTicker,
+            financeSubDomain,
+            layer,
+            signal
+          );
           const count = Array.isArray(data) ? data.length : 0;
           return {
             ok: count > 0,
@@ -352,8 +354,14 @@ export function DataQualityPage() {
         (domain === 'earnings' || domain === 'price-target')
       ) {
         const id = `probe:${layer}:${domain}`;
-        await runProbe(id, `${domain} (${layer})`, async () => {
-          const data = await DataService.getGenericData(layer, domain, resolvedTicker);
+        await runProbe(id, `${domain} (${layer})`, async (signal) => {
+          const data = await DataService.getGenericData(
+            layer,
+            domain,
+            resolvedTicker,
+            undefined,
+            signal
+          );
           const count = Array.isArray(data) ? data.length : 0;
           const sampleKeys =
             count > 0 && data && typeof data[0] === 'object' && data[0] !== null
@@ -373,7 +381,7 @@ export function DataQualityPage() {
 
       setProbeResults((prev) => ({
         ...prev,
-        [`row:${domainKey(row)}`]: {
+        [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`]: {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),
@@ -385,27 +393,86 @@ export function DataQualityPage() {
   );
 
   const runAll = useCallback(async () => {
+    if (isRunningAll) return;
     const supported = rows.filter((row) => {
       const layer = normalizeLayerName(row.layerName);
       const domain = normalizeDomainName(row.domain.name);
-      if (layer === 'silver' || layer === 'gold') {
-        return ['market', 'finance', 'earnings', 'price-target'].includes(domain);
+      return (layer === 'silver' || layer === 'gold') &&
+        ['market', 'finance', 'earnings', 'price-target'].includes(domain);
+    });
+    if (supported.length === 0) {
+      setRunAllStatusMessage('No supported probes found in current ledger.');
+      return;
+    }
+
+    runAllCancelledRef.current = false;
+    setRunAllStatusMessage(null);
+    setIsRunningAll(true);
+    const queue = [...supported];
+    const workers = Array.from({ length: Math.min(RUN_ALL_CONCURRENCY, queue.length) }, async () => {
+      while (!runAllCancelledRef.current) {
+        const row = queue.shift();
+        if (!row) {
+          return;
+        }
+        await probeForRow(row);
       }
-      return false;
     });
 
-    for (const row of supported) {
-      await probeForRow(row);
+    try {
+      await Promise.all(workers);
+      setRunAllStatusMessage(runAllCancelledRef.current ? 'Probe run cancelled.' : 'Probe run complete.');
+    } finally {
+      setIsRunningAll(false);
     }
-  }, [probeForRow, rows]);
+  }, [isRunningAll, probeForRow, rows]);
+
+  const cancelRunAll = useCallback(() => {
+    if (!isRunningAll) return;
+    runAllCancelledRef.current = true;
+    for (const controller of runAllControllersRef.current) {
+      controller.abort();
+    }
+    setRunAllStatusMessage('Cancelling probes...');
+  }, [isRunningAll]);
+
+  const forceRefresh = useCallback(async () => {
+    if (isForceRefreshing) return;
+    setIsForceRefreshing(true);
+    setRunAllStatusMessage(null);
+    try {
+      const response = await DataService.getSystemHealthWithMeta({ refresh: true });
+      queryClient.setQueryData(queryKeys.systemHealth(), response.data);
+      setHealthMeta(response.meta);
+      setLastRefreshedAt(nowIso());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRunAllStatusMessage(`Refresh failed: ${message}`);
+    } finally {
+      setIsForceRefreshing(false);
+    }
+  }, [isForceRefreshing, queryClient]);
 
   const filteredRows = useMemo(() => {
     if (!onlyIssues) return rows;
     return rows.filter((row) => {
       const status = String(row.domain.status || '').toLowerCase();
-      return ['warning', 'degraded', 'stale', 'critical', 'error', 'failed'].includes(status);
+      const domainIssue = ['warning', 'degraded', 'stale', 'critical', 'error', 'failed'].includes(
+        status
+      );
+      const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain);
+      const probeStatus = probeId ? probeResults[probeId]?.status : undefined;
+      const probeIssue = probeStatus === 'warn' || probeStatus === 'fail';
+      return domainIssue || probeIssue;
     });
-  }, [onlyIssues, rows]);
+  }, [financeSubDomain, onlyIssues, probeResults, rows]);
+
+  const tickerCandidate = ticker.trim().toUpperCase();
+  const tickerIsValid = tickerCandidate.length === 0 || isValidTickerSymbol(tickerCandidate);
+  const safeExternalHosts = useMemo(
+    () => [window.location.hostname, 'portal.azure.com', '*.portal.azure.com'].filter(Boolean),
+    []
+  );
 
   const headerStatus = getStatusConfig(summary.overall);
 
@@ -502,20 +569,28 @@ export function DataQualityPage() {
               <Button
                 variant="outline"
                 className="dq-btn"
-                onClick={() => void health.refetch()}
-                disabled={health.isFetching}
+                onClick={() => void forceRefresh()}
+                disabled={health.isFetching || isForceRefreshing || isRunningAll}
               >
-                <RefreshCw className={cn('h-4 w-4', health.isFetching && 'animate-spin')} />
+                <RefreshCw
+                  className={cn('h-4 w-4', (health.isFetching || isForceRefreshing) && 'animate-spin')}
+                />
                 Refresh
               </Button>
               <Button
                 className="dq-btn-primary"
                 onClick={() => void runAll()}
-                disabled={health.isFetching}
+                disabled={health.isFetching || isRunningAll}
               >
-                <ScanSearch className="h-4 w-4" />
-                Run Probes
+                <ScanSearch className={cn('h-4 w-4', isRunningAll && 'animate-spin')} />
+                {isRunningAll ? 'Running…' : 'Run Probes'}
               </Button>
+              {isRunningAll && (
+                <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
+                  <CircleSlash2 className="h-4 w-4" />
+                  Cancel
+                </Button>
+              )}
             </div>
           </div>
         </header>
@@ -555,7 +630,7 @@ export function DataQualityPage() {
                   <Input
                     id="dq-ticker"
                     value={ticker}
-                    onChange={(e) => setTicker(e.target.value)}
+                    onChange={(e) => setTicker(e.target.value.toUpperCase())}
                     placeholder="SPY"
                     className="dq-input font-mono uppercase"
                     spellCheck={false}
@@ -574,6 +649,11 @@ export function DataQualityPage() {
                     <TooltipContent>Reset to {DEFAULT_TICKER}</TooltipContent>
                   </Tooltip>
                 </div>
+                {!tickerIsValid && (
+                  <div className="mt-1 dq-mono text-[11px] text-rose-500">
+                    Ticker format is invalid (example: AAPL, BRK.B).
+                  </div>
+                )}
               </div>
 
               <div>
@@ -611,7 +691,18 @@ export function DataQualityPage() {
               {(drift || []).slice(0, 6).map((item) => {
                 const minutes = Math.round(item.lagSeconds / 60);
                 const label = minutes >= 120 ? `${Math.round(minutes / 60)}h` : `${minutes}m`;
-                const severity = minutes >= 24 * 60 ? 'fail' : minutes >= 6 * 60 ? 'warn' : 'pass';
+                const severity: ProbeStatus =
+                  typeof item.slaSeconds === 'number' && Number.isFinite(item.slaSeconds)
+                    ? item.lagSeconds > item.slaSeconds
+                      ? 'fail'
+                      : item.lagSeconds > Math.round(item.slaSeconds * 0.5)
+                        ? 'warn'
+                        : 'pass'
+                    : minutes >= 24 * 60
+                      ? 'fail'
+                      : minutes >= 6 * 60
+                        ? 'warn'
+                        : 'pass';
                 return (
                   <div key={item.domain} className="dq-drift-row">
                     <div className="dq-drift-left">
@@ -623,7 +714,7 @@ export function DataQualityPage() {
                       </div>
                     </div>
                     <div className="dq-drift-right">
-                      <ProbePill status={severity as ProbeStatus} />
+                      <ProbePill status={severity} />
                       <div className="dq-mono text-xs text-muted-foreground">{label}</div>
                     </div>
                   </div>
@@ -677,29 +768,20 @@ export function DataQualityPage() {
                   const layerKey = normalizeLayerName(row.layerName) || row.layerName;
                   const domainName = normalizeDomainName(row.domain.name);
                   const status = getStatusConfig(row.domain.status);
-
-                  const probeId = (() => {
-                    if (layerKey === 'silver' && domainName === 'market')
-                      return `probe:silver:market`;
-                    if (layerKey === 'gold' && domainName === 'market') return `probe:gold:market`;
-                    if (layerKey === 'silver' && domainName === 'finance')
-                      return `probe:silver:finance:${financeSubDomain}`;
-                    if (layerKey === 'gold' && domainName === 'finance')
-                      return `probe:gold:finance:${financeSubDomain}`;
-                    if (layerKey === 'silver' && domainName === 'earnings')
-                      return `probe:silver:earnings`;
-                    if (layerKey === 'gold' && domainName === 'earnings')
-                      return `probe:gold:earnings`;
-                    if (layerKey === 'silver' && domainName === 'price-target')
-                      return `probe:silver:price-target`;
-                    if (layerKey === 'gold' && domainName === 'price-target')
-                      return `probe:gold:price-target`;
-                    return null;
-                  })();
+                  const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain);
 
                   const probe = probeId ? probeResults[probeId] : undefined;
                   const probeStatus = probe?.status || 'idle';
-                  const impactedStrategies = impactsByDomain[domainName] || [];
+                  const impactedStrategies = impactsByDomain[String(domainName).toLowerCase()] || [];
+                  const safePortalUrl = sanitizeExternalUrl(row.domain.portalUrl, {
+                    allowedHosts: safeExternalHosts
+                  });
+                  const safeJobUrl = sanitizeExternalUrl(row.domain.jobUrl, {
+                    allowedHosts: safeExternalHosts
+                  });
+                  const safeTriggerUrl = sanitizeExternalUrl(row.domain.triggerUrl, {
+                    allowedHosts: safeExternalHosts
+                  });
 
                   return (
                     <TableRow key={domainKey(row)} className="dq-tr">
@@ -778,7 +860,7 @@ export function DataQualityPage() {
                                   variant="outline"
                                   className="dq-btn-icon"
                                   onClick={() => void probeForRow(row)}
-                                  disabled={probeStatus === 'running'}
+                                  disabled={probeStatus === 'running' || isRunningAll}
                                   aria-label={`Probe ${row.layerName} ${row.domain.name}`}
                                 >
                                   <ScanSearch
@@ -799,12 +881,12 @@ export function DataQualityPage() {
 
                       <TableCell className="dq-td text-right">
                         <div className="dq-links">
-                          {row.domain.portalUrl ? (
+                          {safePortalUrl ? (
                             <a
                               className="dq-link"
-                              href={row.domain.portalUrl}
+                              href={safePortalUrl}
                               target="_blank"
-                              rel="noreferrer"
+                              rel="noopener noreferrer"
                             >
                               <ExternalLink className="h-4 w-4" />
                               <span className="sr-only">Open portal</span>
@@ -815,12 +897,12 @@ export function DataQualityPage() {
                             </span>
                           )}
 
-                          {row.domain.jobUrl ? (
+                          {safeJobUrl ? (
                             <a
                               className="dq-link"
-                              href={row.domain.jobUrl}
+                              href={safeJobUrl}
                               target="_blank"
-                              rel="noreferrer"
+                              rel="noopener noreferrer"
                             >
                               <ArrowUpRight className="h-4 w-4" />
                               <span className="sr-only">Open job</span>
@@ -831,12 +913,12 @@ export function DataQualityPage() {
                             </span>
                           )}
 
-                          {row.domain.triggerUrl ? (
+                          {safeTriggerUrl ? (
                             <a
                               className="dq-link"
-                              href={row.domain.triggerUrl}
+                              href={safeTriggerUrl}
                               target="_blank"
-                              rel="noreferrer"
+                              rel="noopener noreferrer"
                             >
                               <CheckCircle2 className="h-4 w-4" />
                               <span className="sr-only">Trigger</span>
@@ -857,19 +939,45 @@ export function DataQualityPage() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="dq-mono text-xs text-muted-foreground">
-              Last refresh: {health.data ? nowIso().slice(0, 19).replace('T', ' ') : '—'} UTC
+              Last refresh: {lastRefreshedAt ? lastRefreshedAt.slice(0, 19).replace('T', ' ') : '—'} UTC
+              {healthMeta && (
+                <>
+                  {' '}
+                  • Cache: {healthMeta.cacheHint || 'n/a'}
+                  {healthMeta.stale ? ' • STALE SNAPSHOT' : ''}
+                  {healthMeta.requestId ? ` • Req ${healthMeta.requestId.slice(0, 8)}` : ''}
+                </>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" className="dq-btn" onClick={() => setProbeResults({})}>
+              <Button
+                variant="outline"
+                className="dq-btn"
+                onClick={() => setProbeResults({})}
+                disabled={isRunningAll}
+              >
                 <ShieldAlert className="h-4 w-4" />
                 Clear Probes
               </Button>
-              <Button className="dq-btn-primary" onClick={() => void runAll()}>
+              <Button
+                className="dq-btn-primary"
+                onClick={() => void runAll()}
+                disabled={health.isFetching || isRunningAll}
+              >
                 <ScanSearch className="h-4 w-4" />
-                Run All Supported
+                {isRunningAll ? 'Running…' : 'Run All Supported'}
               </Button>
+              {isRunningAll && (
+                <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
+                  <CircleSlash2 className="h-4 w-4" />
+                  Cancel
+                </Button>
+              )}
             </div>
           </div>
+          {runAllStatusMessage && (
+            <div className="mt-2 dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
+          )}
         </section>
       </div>
     </div>

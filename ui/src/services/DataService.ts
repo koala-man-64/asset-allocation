@@ -14,6 +14,7 @@ import type {
   JobLogsResponse,
   PurgeRequest,
   PurgeResponse,
+  ResponseWithMeta,
   RuntimeConfigCatalogResponse,
   RuntimeConfigItem,
   RuntimeConfigListResponse
@@ -23,24 +24,46 @@ import { apiService } from '@/services/apiService';
 
 export type { FinanceData, MarketData };
 
+const ENABLE_DATA_SERVICE_LOGS =
+  import.meta.env.DEV ||
+  ['1', 'true', 'yes', 'y', 'on'].includes(
+    String(import.meta.env.VITE_DEBUG_API ?? '')
+      .trim()
+      .toLowerCase()
+  );
+
+function dataServiceInfo(message: string, meta: Record<string, unknown> = {}): void {
+  if (!ENABLE_DATA_SERVICE_LOGS) return;
+  if (Object.keys(meta).length > 0) {
+    console.info(message, meta);
+    return;
+  }
+  console.info(message);
+}
+
 export const DataService = {
-  getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
-    return apiService.getMarketData(ticker, layer);
+  getMarketData(
+    ticker: string,
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal
+  ): Promise<MarketData[]> {
+    return apiService.getMarketData(ticker, layer, signal);
   },
 
   getFinanceData(
     ticker: string,
     subDomain: string,
-    layer: 'silver' | 'gold' = 'silver'
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal
   ): Promise<FinanceData[]> {
-    return apiService.getFinanceData(ticker, subDomain, layer);
+    return apiService.getFinanceData(ticker, subDomain, layer, signal);
   },
 
   async getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {
-    console.info('[DataService] getSystemHealth');
+    dataServiceInfo('[DataService] getSystemHealth');
     try {
       const data = await apiService.getSystemHealth(params);
-      console.info('[DataService] getSystemHealth success', {
+      dataServiceInfo('[DataService] getSystemHealth success', {
         overall: data?.overall,
         layers: data?.dataLayers?.length ?? 0,
         alerts: data?.alerts?.length ?? 0
@@ -48,6 +71,29 @@ export const DataService = {
       return data;
     } catch (error) {
       console.error('[DataService] getSystemHealth error', error);
+      throw error;
+    }
+  },
+
+  async getSystemHealthWithMeta(
+    params: { refresh?: boolean } = {}
+  ): Promise<ResponseWithMeta<SystemHealth>> {
+    dataServiceInfo('[DataService] getSystemHealthWithMeta');
+    try {
+      const response = await apiService.getSystemHealthWithMeta(params);
+      dataServiceInfo('[DataService] getSystemHealthWithMeta success', {
+        overall: response.data?.overall,
+        layers: response.data?.dataLayers?.length ?? 0,
+        alerts: response.data?.alerts?.length ?? 0,
+        status: response.meta.status,
+        durationMs: response.meta.durationMs,
+        cacheHint: response.meta.cacheHint,
+        stale: response.meta.stale,
+        requestId: response.meta.requestId
+      });
+      return response;
+    } catch (error) {
+      console.error('[DataService] getSystemHealthWithMeta error', error);
       throw error;
     }
   },
@@ -114,9 +160,10 @@ export const DataService = {
     layer: 'bronze' | 'silver' | 'gold',
     domain: string,
     ticker?: string,
-    limit?: number
+    limit?: number,
+    signal?: AbortSignal
   ): Promise<Record<string, unknown>[]> {
-    return apiService.getGenericData(layer, domain, ticker, limit);
+    return apiService.getGenericData(layer, domain, ticker, limit, signal);
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeResponse> {

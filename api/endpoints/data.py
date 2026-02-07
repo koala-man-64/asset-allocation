@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Sequence
 
@@ -14,6 +16,8 @@ from core.postgres import PostgresError, connect
 from ..data_service import DataService
 
 router = APIRouter()
+logger = logging.getLogger("asset-allocation.api.data")
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
 
 
 def _strip_or_none(value: object) -> Optional[str]:
@@ -64,6 +68,20 @@ def _safe_numeric(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _validate_ticker(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip().upper()
+    if not normalized:
+        return None
+    if not _TICKER_RE.fullmatch(normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid ticker format. Expected pattern: ^[A-Z][A-Z0-9.-]{0,9}$",
+        )
+    return normalized
 
 
 def _find_latest_market_date(
@@ -328,6 +346,15 @@ def get_data_generic(
     Delegates to DataService for logic.
     """
     # Validation
+    request_id = request.headers.get("x-request-id", "")
+    ticker_normalized = _validate_ticker(ticker)
+    logger.info(
+        "Data generic request: layer=%s domain=%s ticker=%s request_id=%s",
+        layer,
+        domain,
+        ticker_normalized or "-",
+        request_id or "-",
+    )
     validate_auth(request)
     if layer not in ["bronze", "silver", "gold"]:
         raise HTTPException(
@@ -337,8 +364,8 @@ def get_data_generic(
     
     try:
         if limit is None:
-            return DataService.get_data(layer, domain, ticker)
-        return DataService.get_data(layer, domain, ticker, limit=limit)
+            return DataService.get_data(layer, domain, ticker_normalized)
+        return DataService.get_data(layer, domain, ticker_normalized, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:
@@ -357,14 +384,23 @@ def get_finance_data(
     """
     Specialized endpoint for Finance data.
     """
+    request_id = request.headers.get("x-request-id", "")
+    ticker_normalized = _validate_ticker(ticker)
+    logger.info(
+        "Finance data request: layer=%s sub_domain=%s ticker=%s request_id=%s",
+        layer,
+        sub_domain,
+        ticker_normalized or "-",
+        request_id or "-",
+    )
     validate_auth(request)
     if layer not in ["bronze", "silver", "gold"]:
         raise HTTPException(status_code=400, detail="Layer must be 'bronze', 'silver', or 'gold'")
 
     try:
         if limit is None:
-            return DataService.get_finance_data(layer, sub_domain, ticker)
-        return DataService.get_finance_data(layer, sub_domain, ticker, limit=limit)
+            return DataService.get_finance_data(layer, sub_domain, ticker_normalized)
+        return DataService.get_finance_data(layer, sub_domain, ticker_normalized, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:
