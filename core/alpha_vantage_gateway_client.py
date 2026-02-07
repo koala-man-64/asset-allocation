@@ -9,6 +9,7 @@ from typing import Any, Optional
 import httpx
 
 logger = logging.getLogger(__name__)
+_MIN_API_GATEWAY_TIMEOUT_SECONDS = 600.0
 
 
 class AlphaVantageGatewayError(RuntimeError):
@@ -102,8 +103,16 @@ class AlphaVantageGatewayClient:
         )
 
         timeout_seconds = _env_float(
-            "ASSET_ALLOCATION_API_TIMEOUT_SECONDS", _env_float("ALPHA_VANTAGE_TIMEOUT_SECONDS", 120.0)
+            "ASSET_ALLOCATION_API_TIMEOUT_SECONDS",
+            _env_float("ALPHA_VANTAGE_TIMEOUT_SECONDS", _MIN_API_GATEWAY_TIMEOUT_SECONDS),
         )
+        if timeout_seconds < _MIN_API_GATEWAY_TIMEOUT_SECONDS:
+            logger.warning(
+                "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=%s is too low for Alpha Vantage cooldown waits; using %s.",
+                timeout_seconds,
+                _MIN_API_GATEWAY_TIMEOUT_SECONDS,
+            )
+            timeout_seconds = _MIN_API_GATEWAY_TIMEOUT_SECONDS
 
         return AlphaVantageGatewayClient(
             AlphaVantageGatewayClientConfig(

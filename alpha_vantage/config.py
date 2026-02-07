@@ -49,6 +49,11 @@ class AlphaVantageConfig:
     rate_wait_timeout_seconds:
         Optional timeout for waiting on a local rate-limit slot. ``None`` waits
         indefinitely.
+
+    throttle_cooldown_seconds:
+        Cooldown window (seconds) enforced after provider throttle signals
+        (payload Note/Information or HTTP 429). During this window the client
+        suppresses additional outbound calls.
     """
 
     api_key: str
@@ -59,6 +64,7 @@ class AlphaVantageConfig:
     max_retries: int = 5
     backoff_base_seconds: float = 0.5
     rate_wait_timeout_seconds: float | None = 120.0
+    throttle_cooldown_seconds: float = 60.0
 
     def get_query_url(self) -> str:
         """Return the full query endpoint for the API."""

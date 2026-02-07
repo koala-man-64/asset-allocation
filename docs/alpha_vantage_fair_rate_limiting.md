@@ -22,8 +22,9 @@ The following non-secret keys can be set from env or DB runtime-config:
 
 1. `ALPHA_VANTAGE_RATE_LIMIT_PER_MIN` (default `300`)
 2. `ALPHA_VANTAGE_TIMEOUT_SECONDS` (default `15`)
-3. `ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS` (default `120`, set `<=0` to disable timeout)
-4. `ALPHA_VANTAGE_MAX_WORKERS` (default `32`)
+3. `ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS` (default `600`, set `<=0` to disable timeout)
+4. `ALPHA_VANTAGE_THROTTLE_COOLDOWN_SECONDS` (default `60`, minimum enforced value is `60`)
+5. `ALPHA_VANTAGE_MAX_WORKERS` (default `32`)
 
 ## Verification
 

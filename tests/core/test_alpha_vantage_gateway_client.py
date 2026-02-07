@@ -18,3 +18,14 @@ def test_build_headers_includes_caller_context(monkeypatch):
     assert headers["X-API-Key"] == "test"
     assert headers["X-Caller-Job"] == "bronze-market-job"
     assert headers["X-Caller-Execution"] == "bronze-market-job-abc123"
+
+
+def test_from_env_enforces_long_timeout_floor(monkeypatch):
+    monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_TIMEOUT_SECONDS", "120")
+
+    client = AlphaVantageGatewayClient.from_env()
+    try:
+        assert client.config.timeout_seconds >= 600.0
+    finally:
+        client.close()

@@ -34,6 +34,7 @@ class _ClientSnapshot:
     max_retries: int
     backoff_base_seconds: float
     rate_wait_timeout_seconds: float | None
+    throttle_cooldown_seconds: float
 
 
 def _strip_or_none(value: object) -> Optional[str]:
@@ -127,9 +128,16 @@ class AlphaVantageGateway:
             raise AlphaVantageNotConfiguredError("ALPHA_VANTAGE_API_KEY is not configured for the API service.")
 
         base_url = _strip_or_none(os.environ.get("ALPHA_VANTAGE_BASE_URL")) or "https://www.alphavantage.co"
-        rate_wait_timeout_seconds = _env_float("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", 120.0)
+        rate_wait_timeout_seconds = _env_float("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", 600.0)
         if rate_wait_timeout_seconds <= 0:
             rate_wait_timeout_seconds = None
+        throttle_cooldown_seconds = _env_float("ALPHA_VANTAGE_THROTTLE_COOLDOWN_SECONDS", 60.0)
+        if throttle_cooldown_seconds < 60.0:
+            logger.warning(
+                "ALPHA_VANTAGE_THROTTLE_COOLDOWN_SECONDS=%s is too low; enforcing 60 seconds.",
+                throttle_cooldown_seconds,
+            )
+            throttle_cooldown_seconds = 60.0
 
         cfg = AlphaVantageConfig(
             api_key=api_key,
@@ -140,6 +148,7 @@ class AlphaVantageGateway:
             max_retries=_env_int("ALPHA_VANTAGE_MAX_RETRIES", 5),
             backoff_base_seconds=_env_float("ALPHA_VANTAGE_BACKOFF_BASE_SECONDS", 0.5),
             rate_wait_timeout_seconds=rate_wait_timeout_seconds,
+            throttle_cooldown_seconds=throttle_cooldown_seconds,
         )
 
         snapshot = _ClientSnapshot(
@@ -153,6 +162,7 @@ class AlphaVantageGateway:
             rate_wait_timeout_seconds=(
                 float(cfg.rate_wait_timeout_seconds) if cfg.rate_wait_timeout_seconds is not None else None
             ),
+            throttle_cooldown_seconds=float(cfg.throttle_cooldown_seconds),
         )
         return snapshot, cfg
 

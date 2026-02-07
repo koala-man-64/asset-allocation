@@ -559,7 +559,11 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     },
     "ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS": {
         "description": "Max wait time for API-side Alpha Vantage rate-limit queue before returning throttle (float seconds).",
-        "example": "120",
+        "example": "600",
+    },
+    "ALPHA_VANTAGE_THROTTLE_COOLDOWN_SECONDS": {
+        "description": "Cooldown after Alpha Vantage throttle signals; outbound requests are paused for this duration (minimum 60 seconds).",
+        "example": "60",
     },
     "ALPHA_VANTAGE_MAX_WORKERS": {
         "description": "Alpha Vantage concurrency (max worker threads) for ingestion jobs (integer).",

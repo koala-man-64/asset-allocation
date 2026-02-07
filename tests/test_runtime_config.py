@@ -17,6 +17,10 @@ def test_normalize_env_override_alpha_vantage_rate_wait_timeout_float():
     assert normalize_env_override("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", "120.5") == "120.5"
 
 
+def test_normalize_env_override_alpha_vantage_throttle_cooldown_float():
+    assert normalize_env_override("ALPHA_VANTAGE_THROTTLE_COOLDOWN_SECONDS", "60.5") == "60.5"
+
+
 def test_normalize_env_override_required_nonempty_rejects_blank():
     try:
         normalize_env_override("SYSTEM_HEALTH_TTL_SECONDS", "")

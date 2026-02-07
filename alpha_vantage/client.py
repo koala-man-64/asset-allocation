@@ -99,10 +99,13 @@ class AlphaVantageClient:
             "network_errors": 0,
             "invalid_json": 0,
             "total_success_ms": 0.0,
+            "throttle_cooldown_waits": 0,
         }
         self._summary_interval_seconds = 60.0
         self._started_monotonic = time.monotonic()
         self._last_summary_monotonic = self._started_monotonic
+        self._throttle_cooldown_lock = threading.Lock()
+        self._throttle_cooldown_until_monotonic = 0.0
 
         self._log(
             logging.INFO,
@@ -115,6 +118,7 @@ class AlphaVantageClient:
             av_max_workers=int(getattr(config, "max_workers", 0)),
             av_max_retries=int(getattr(config, "max_retries", 0)),
             av_backoff_base_seconds=float(getattr(config, "backoff_base_seconds", 0.0)),
+            av_throttle_cooldown_seconds=float(getattr(config, "throttle_cooldown_seconds", 60.0)),
             av_api_key_set=bool(getattr(config, "api_key", "")),
             av_caller_provider=bool(caller_provider),
         )
@@ -264,8 +268,76 @@ class AlphaVantageClient:
             av_http_status_errors=int(snapshot.get("http_status_errors") or 0),
             av_network_errors=int(snapshot.get("network_errors") or 0),
             av_invalid_json=int(snapshot.get("invalid_json") or 0),
+            av_throttle_cooldown_waits=int(snapshot.get("throttle_cooldown_waits") or 0),
             av_avg_success_ms=round(avg_ms, 1),
         )
+
+    def _get_throttle_cooldown_seconds(self) -> float:
+        try:
+            raw = float(getattr(self.config, "throttle_cooldown_seconds", 60.0))
+        except Exception:
+            raw = 60.0
+        return max(0.0, raw)
+
+    def _arm_throttle_cooldown(
+        self,
+        *,
+        req_id: int,
+        function: Optional[str],
+        symbol: Optional[str],
+        reason: str,
+    ) -> None:
+        cooldown_seconds = self._get_throttle_cooldown_seconds()
+        if cooldown_seconds <= 0:
+            return
+
+        now = time.monotonic()
+        with self._throttle_cooldown_lock:
+            previous_until = self._throttle_cooldown_until_monotonic
+            cooldown_until = max(previous_until, now + cooldown_seconds)
+            self._throttle_cooldown_until_monotonic = cooldown_until
+
+        if cooldown_until > previous_until:
+            self._log(
+                logging.WARNING,
+                "Alpha Vantage throttle cooldown armed",
+                av_event="throttle_cooldown_set",
+                av_request_id=req_id,
+                av_function=function,
+                av_symbol=symbol,
+                av_reason=reason,
+                av_cooldown_seconds=round(cooldown_seconds, 3),
+                av_resume_in_seconds=round(max(0.0, cooldown_until - now), 3),
+            )
+
+    def _wait_for_throttle_cooldown(
+        self,
+        *,
+        req_id: int,
+        function: Optional[str],
+        symbol: Optional[str],
+        attempt: int,
+        caller: Optional[str],
+    ) -> None:
+        with self._throttle_cooldown_lock:
+            remaining = self._throttle_cooldown_until_monotonic - time.monotonic()
+        if remaining <= 0:
+            return
+
+        self._record_metric("throttle_cooldown_waits", 1)
+        level = logging.WARNING if attempt == 0 else logging.DEBUG
+        self._log(
+            level,
+            "Alpha Vantage throttle cooldown active; waiting before outbound request",
+            av_event="throttle_cooldown_wait",
+            av_request_id=req_id,
+            av_function=function,
+            av_symbol=symbol,
+            av_attempt=attempt,
+            av_caller=caller,
+            av_sleep_seconds=round(float(remaining), 3),
+        )
+        time.sleep(max(0.0, float(remaining)))
 
     def _sleep_backoff(
         self,
@@ -277,10 +349,14 @@ class AlphaVantageClient:
         reason: str,
         status_code: Optional[int] = None,
     ) -> None:
-        base = max(0.0, float(getattr(self.config, "backoff_base_seconds", 0.5)))
-        # Exponential backoff with jitter; cap at 60s to avoid runaway sleeps.
-        sleep_seconds = min(60.0, base * (2.0**attempt))
-        sleep_seconds += random.uniform(0.0, min(1.0, sleep_seconds * 0.2))
+        throttle_reasons = {"throttle_payload", "http_429"}
+        if reason in throttle_reasons:
+            sleep_seconds = self._get_throttle_cooldown_seconds()
+        else:
+            base = max(0.0, float(getattr(self.config, "backoff_base_seconds", 0.5)))
+            # Exponential backoff with jitter; cap at 60s to avoid runaway sleeps.
+            sleep_seconds = min(60.0, base * (2.0**attempt))
+            sleep_seconds += random.uniform(0.0, min(1.0, sleep_seconds * 0.2))
 
         warn_reasons = {"throttle_payload", "http_429"}
         level = logging.WARNING if (attempt == 0 and reason in warn_reasons) else logging.DEBUG
@@ -348,6 +424,14 @@ class AlphaVantageClient:
 
         try:
             for attempt in range(max_retries + 1):
+                self._wait_for_throttle_cooldown(
+                    req_id=req_id,
+                    function=function or None,
+                    symbol=str(symbol) if symbol is not None else None,
+                    attempt=attempt,
+                    caller=caller,
+                )
+
                 wait_started = time.monotonic()
                 try:
                     self._rate_limiter.wait(caller=caller, timeout_seconds=rate_wait_timeout_seconds)
@@ -368,6 +452,14 @@ class AlphaVantageClient:
                         payload={"caller": caller, "rate_wait_timeout_seconds": rate_wait_timeout_seconds},
                     ) from exc
                 rate_wait_ms = (time.monotonic() - wait_started) * 1000.0
+
+                self._wait_for_throttle_cooldown(
+                    req_id=req_id,
+                    function=function or None,
+                    symbol=str(symbol) if symbol is not None else None,
+                    attempt=attempt,
+                    caller=caller,
+                )
 
                 query_params = dict(params)
                 query_params["apikey"] = self.config.api_key
@@ -396,6 +488,13 @@ class AlphaVantageClient:
                     status = exc.response.status_code
                     # Retry 429/5xx; fail fast on other 4xx.
                     if status == 429 or status >= 500:
+                        if status == 429:
+                            self._arm_throttle_cooldown(
+                                req_id=req_id,
+                                function=function or None,
+                                symbol=str(symbol) if symbol is not None else None,
+                                reason="http_429",
+                            )
                         if attempt < max_retries:
                             self._record_metric("retries", 1)
                             self._sleep_backoff(
@@ -431,6 +530,12 @@ class AlphaVantageClient:
                         if classified is not None:
                             if isinstance(classified, AlphaVantageThrottleError):
                                 self._record_metric("throttle_payloads", 1)
+                                self._arm_throttle_cooldown(
+                                    req_id=req_id,
+                                    function=function or None,
+                                    symbol=str(symbol) if symbol is not None else None,
+                                    reason="throttle_payload",
+                                )
                             if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
                                 self._record_metric("retries", 1)
                                 # Log throttling at warning once per request; subsequent retries are debug noise.
@@ -507,6 +612,12 @@ class AlphaVantageClient:
                     if classified is not None:
                         if isinstance(classified, AlphaVantageThrottleError):
                             self._record_metric("throttle_payloads", 1)
+                            self._arm_throttle_cooldown(
+                                req_id=req_id,
+                                function=function or None,
+                                symbol=str(symbol) if symbol is not None else None,
+                                reason="throttle_payload",
+                            )
                         if isinstance(classified, AlphaVantageThrottleError) and attempt < max_retries:
                             self._record_metric("retries", 1)
                             level = logging.WARNING if attempt == 0 else logging.DEBUG
