@@ -294,7 +294,8 @@ export function DataQualityPage() {
       if (!resolvedTicker) {
         setProbeResults((prev) => ({
           ...prev,
-          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`]: {
+          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
+          `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -306,7 +307,8 @@ export function DataQualityPage() {
       if (!isValidTickerSymbol(resolvedTicker)) {
         setProbeResults((prev) => ({
           ...prev,
-          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`]: {
+          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
+          `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -381,7 +383,8 @@ export function DataQualityPage() {
 
       setProbeResults((prev) => ({
         ...prev,
-        [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`]: {
+        [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
+        `row:${domainKey(row)}`]: {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),
@@ -397,8 +400,10 @@ export function DataQualityPage() {
     const supported = rows.filter((row) => {
       const layer = normalizeLayerName(row.layerName);
       const domain = normalizeDomainName(row.domain.name);
-      return (layer === 'silver' || layer === 'gold') &&
-        ['market', 'finance', 'earnings', 'price-target'].includes(domain);
+      return (
+        (layer === 'silver' || layer === 'gold') &&
+        ['market', 'finance', 'earnings', 'price-target'].includes(domain)
+      );
     });
     if (supported.length === 0) {
       setRunAllStatusMessage('No supported probes found in current ledger.');
@@ -409,19 +414,24 @@ export function DataQualityPage() {
     setRunAllStatusMessage(null);
     setIsRunningAll(true);
     const queue = [...supported];
-    const workers = Array.from({ length: Math.min(RUN_ALL_CONCURRENCY, queue.length) }, async () => {
-      while (!runAllCancelledRef.current) {
-        const row = queue.shift();
-        if (!row) {
-          return;
+    const workers = Array.from(
+      { length: Math.min(RUN_ALL_CONCURRENCY, queue.length) },
+      async () => {
+        while (!runAllCancelledRef.current) {
+          const row = queue.shift();
+          if (!row) {
+            return;
+          }
+          await probeForRow(row);
         }
-        await probeForRow(row);
       }
-    });
+    );
 
     try {
       await Promise.all(workers);
-      setRunAllStatusMessage(runAllCancelledRef.current ? 'Probe run cancelled.' : 'Probe run complete.');
+      setRunAllStatusMessage(
+        runAllCancelledRef.current ? 'Probe run cancelled.' : 'Probe run complete.'
+      );
     } finally {
       setIsRunningAll(false);
     }
@@ -573,7 +583,10 @@ export function DataQualityPage() {
                 disabled={health.isFetching || isForceRefreshing || isRunningAll}
               >
                 <RefreshCw
-                  className={cn('h-4 w-4', (health.isFetching || isForceRefreshing) && 'animate-spin')}
+                  className={cn(
+                    'h-4 w-4',
+                    (health.isFetching || isForceRefreshing) && 'animate-spin'
+                  )}
                 />
                 Refresh
               </Button>
@@ -768,11 +781,16 @@ export function DataQualityPage() {
                   const layerKey = normalizeLayerName(row.layerName) || row.layerName;
                   const domainName = normalizeDomainName(row.domain.name);
                   const status = getStatusConfig(row.domain.status);
-                  const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain);
+                  const probeId = getProbeIdForRow(
+                    row.layerName,
+                    row.domain.name,
+                    financeSubDomain
+                  );
 
                   const probe = probeId ? probeResults[probeId] : undefined;
                   const probeStatus = probe?.status || 'idle';
-                  const impactedStrategies = impactsByDomain[String(domainName).toLowerCase()] || [];
+                  const impactedStrategies =
+                    impactsByDomain[String(domainName).toLowerCase()] || [];
                   const safePortalUrl = sanitizeExternalUrl(row.domain.portalUrl, {
                     allowedHosts: safeExternalHosts
                   });
@@ -939,7 +957,8 @@ export function DataQualityPage() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="dq-mono text-xs text-muted-foreground">
-              Last refresh: {lastRefreshedAt ? lastRefreshedAt.slice(0, 19).replace('T', ' ') : '—'} UTC
+              Last refresh: {lastRefreshedAt ? lastRefreshedAt.slice(0, 19).replace('T', ' ') : '—'}{' '}
+              UTC
               {healthMeta && (
                 <>
                   {' '}

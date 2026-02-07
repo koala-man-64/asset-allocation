@@ -30,7 +30,9 @@ export function getLastSystemHealthMeta(): RequestMeta | null {
   return lastSystemHealthMeta;
 }
 
-function systemHealthRefetchInterval(query: { state: { error: unknown; data: unknown } }): false | number {
+function systemHealthRefetchInterval(query: {
+  state: { error: unknown; data: unknown };
+}): false | number {
   if (isApiNotFoundError(query.state.error)) {
     return false;
   }

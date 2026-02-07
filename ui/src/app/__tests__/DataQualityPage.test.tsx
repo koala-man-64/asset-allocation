@@ -4,15 +4,13 @@ import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
 import { DataService } from '@/services/DataService';
 
-const {
-  mockUseSystemHealthQuery,
-  mockUseLineageQuery,
-  mockGetLastSystemHealthMeta
-} = vi.hoisted(() => ({
-  mockUseSystemHealthQuery: vi.fn(),
-  mockUseLineageQuery: vi.fn(),
-  mockGetLastSystemHealthMeta: vi.fn(() => null)
-}));
+const { mockUseSystemHealthQuery, mockUseLineageQuery, mockGetLastSystemHealthMeta } = vi.hoisted(
+  () => ({
+    mockUseSystemHealthQuery: vi.fn(),
+    mockUseLineageQuery: vi.fn(),
+    mockGetLastSystemHealthMeta: vi.fn(() => null)
+  })
+);
 
 vi.mock('@/hooks/useDataQueries', () => ({
   useSystemHealthQuery: mockUseSystemHealthQuery,
