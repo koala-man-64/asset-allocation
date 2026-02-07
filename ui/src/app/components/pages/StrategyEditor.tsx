@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, Path } from 'react-hook-form';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -83,7 +83,7 @@ export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorP
 
     // Helper for Select components since they don't integrate directly with register
     const handleSelectChange = (key: string, value: string) => {
-        setValue(key as any, value);
+        setValue(key as Path<Strategy>, value);
     };
 
     return (

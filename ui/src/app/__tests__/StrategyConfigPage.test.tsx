@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, Mock } from 'vitest';
 import { StrategyConfigPage } from '@/app/components/pages/StrategyConfigPage';
 import { strategyApi } from '@/services/strategyApi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -38,7 +38,7 @@ describe('StrategyConfigPage', () => {
     });
 
     it('renders loading state initially', () => {
-        (strategyApi.listStrategies as any).mockReturnValue(new Promise(() => { })); // pending promise
+        (strategyApi.listStrategies as Mock).mockReturnValue(new Promise(() => { })); // pending promise
 
         render(
             <QueryClientProvider client={queryClient}>
@@ -54,7 +54,7 @@ describe('StrategyConfigPage', () => {
             { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' },
             { name: 'strat-2', type: 'code-based', description: 'desc 2', updated_at: '2023-01-02' }
         ];
-        (strategyApi.listStrategies as any).mockResolvedValue(mockStrategies);
+        (strategyApi.listStrategies as Mock).mockResolvedValue(mockStrategies);
 
         render(
             <QueryClientProvider client={queryClient}>
@@ -69,7 +69,7 @@ describe('StrategyConfigPage', () => {
     });
 
     it('opens editor when New Strategy button is clicked', async () => {
-        (strategyApi.listStrategies as any).mockResolvedValue([]);
+        (strategyApi.listStrategies as Mock).mockResolvedValue([]);
 
         render(
             <QueryClientProvider client={queryClient}>
