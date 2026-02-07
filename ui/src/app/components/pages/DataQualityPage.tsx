@@ -296,7 +296,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+            `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -309,7 +309,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+            `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -385,7 +385,7 @@ export function DataQualityPage() {
       setProbeResults((prev) => ({
         ...prev,
         [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-        `row:${domainKey(row)}`]: {
+          `row:${domainKey(row)}`]: {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),
@@ -688,6 +688,8 @@ export function DataQualityPage() {
             </div>
           </div>
         </header>
+
+        <DataPipelinePanel />
 
         <section className="dq-panel dq-panel-pad">
           <div className="dq-kicker">DRIFT</div>

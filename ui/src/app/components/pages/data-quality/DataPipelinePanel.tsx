@@ -5,9 +5,6 @@ import { cn } from '@/app/components/ui/utils';
 import {
   AlertCircle,
   CheckCircle,
-  Database,
-  FileBox,
-  LayoutTemplate,
   Loader2,
   Table as TableIcon
 } from 'lucide-react';
