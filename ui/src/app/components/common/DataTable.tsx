@@ -3,9 +3,10 @@ import React, { useMemo } from 'react';
 interface DataTableProps {
   data: Record<string, unknown>[];
   className?: string;
+  emptyMessage?: string;
 }
 
-export const DataTable: React.FC<DataTableProps> = ({ data, className = '' }) => {
+export const DataTable: React.FC<DataTableProps> = ({ data, className = '', emptyMessage = 'No data available.' }) => {
   const columns = useMemo(() => {
     if (!data || data.length === 0) return [];
     return Object.keys(data[0]);
@@ -14,7 +15,7 @@ export const DataTable: React.FC<DataTableProps> = ({ data, className = '' }) =>
   if (!data || data.length === 0) {
     return (
       <div className={`mcm-panel p-4 text-xs text-mcm-olive font-body italic ${className}`}>
-        No data available.
+        {emptyMessage}
       </div>
     );
   }

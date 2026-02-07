@@ -11,7 +11,7 @@ export type DataDomain = 'market' | 'earnings' | 'price-target';
 
 // Define config interface locally to avoid circular dependencies if needed, or just extend Window
 interface WindowWithConfig extends Window {
-  __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string };
+  __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string; debugApi?: string };
 }
 const runtimeConfig = (window as WindowWithConfig).__BACKTEST_UI_CONFIG__ || {};
 const debugApi = (() => {
