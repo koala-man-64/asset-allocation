@@ -48,6 +48,7 @@ import {
   Timer,
   TriangleAlert
 } from 'lucide-react';
+import { DataPipelinePanel } from '@/app/components/pages/data-quality/DataPipelinePanel';
 
 type ProbeStatus = 'idle' | 'running' | 'pass' | 'warn' | 'fail';
 
@@ -592,11 +593,6 @@ export function DataQualityPage() {
                 </Button>
               )}
             </div>
-          </div>
-        </header>
-
-        <div className="dq-grid">
-          <section className="dq-panel dq-panel-pad">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="dq-kicker">TARGET</div>
@@ -730,256 +726,256 @@ export function DataQualityPage() {
               )}
             </div>
           </section>
+      </div >
+
+      <section className="dq-panel dq-panel-pad mt-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="dq-kicker">CONTAINERS & FOLDERS</div>
+            <div className="dq-title text-lg">Validation Ledger</div>
+            <p className="dq-subtitle mt-1 text-sm">
+              Each row is a folder/table probe target emitted by `/api/system/health` with
+              optional active checks.
+            </p>
+          </div>
+          <div className="dq-ledger-meta">
+            <div className="dq-mono text-xs text-muted-foreground">
+              Rows: {filteredRows.length.toLocaleString()}
+            </div>
+          </div>
         </div>
 
-        <section className="dq-panel dq-panel-pad mt-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="dq-kicker">CONTAINERS & FOLDERS</div>
-              <div className="dq-title text-lg">Validation Ledger</div>
-              <p className="dq-subtitle mt-1 text-sm">
-                Each row is a folder/table probe target emitted by `/api/system/health` with
-                optional active checks.
-              </p>
-            </div>
-            <div className="dq-ledger-meta">
-              <div className="dq-mono text-xs text-muted-foreground">
-                Rows: {filteredRows.length.toLocaleString()}
-              </div>
-            </div>
+        <div className="mt-4 dq-ledger-table">
+          <Table className="dq-table">
+            <TableHeader>
+              <TableRow className="dq-table-head">
+                <TableHead className="dq-th">Layer</TableHead>
+                <TableHead className="dq-th">Domain</TableHead>
+                <TableHead className="dq-th">Type</TableHead>
+                <TableHead className="dq-th">Path</TableHead>
+                <TableHead className="dq-th text-center">Freshness</TableHead>
+                <TableHead className="dq-th text-center">Last Updated</TableHead>
+                <TableHead className="dq-th text-center">Probe</TableHead>
+                <TableHead className="dq-th text-right">Links</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredRows.map((row) => {
+                const layerKey = normalizeLayerName(row.layerName) || row.layerName;
+                const domainName = normalizeDomainName(row.domain.name);
+                const status = getStatusConfig(row.domain.status);
+                const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain);
+
+                const probe = probeId ? probeResults[probeId] : undefined;
+                const probeStatus = probe?.status || 'idle';
+                const impactedStrategies = impactsByDomain[String(domainName).toLowerCase()] || [];
+                const safePortalUrl = sanitizeExternalUrl(row.domain.portalUrl, {
+                  allowedHosts: safeExternalHosts
+                });
+                const safeJobUrl = sanitizeExternalUrl(row.domain.jobUrl, {
+                  allowedHosts: safeExternalHosts
+                });
+                const safeTriggerUrl = sanitizeExternalUrl(row.domain.triggerUrl, {
+                  allowedHosts: safeExternalHosts
+                });
+
+                return (
+                  <TableRow key={domainKey(row)} className="dq-tr">
+                    <TableCell className="dq-td">
+                      <div className="dq-layer-cell">
+                        <div className="dq-layer-tag">{String(layerKey).toUpperCase()}</div>
+                        <div className="dq-layer-dot" style={{ background: status.text }} />
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="dq-td">
+                      <div className="dq-domain-cell">
+                        <div className="dq-domain-name">{row.domain.name}</div>
+                        {impactedStrategies.length > 0 && (
+                          <div className="dq-domain-meta">
+                            <span className="dq-mono text-[11px] text-muted-foreground">
+                              Impacts: {impactedStrategies.slice(0, 2).join(', ')}
+                              {impactedStrategies.length > 2
+                                ? ` +${impactedStrategies.length - 2}`
+                                : ''}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="dq-td">
+                      <Badge variant="outline" className="dq-badge">
+                        {row.domain.type}
+                      </Badge>
+                    </TableCell>
+
+                    <TableCell className="dq-td">
+                      <div className="dq-path">
+                        <span className="dq-mono">{row.domain.path}</span>
+                        {row.domain.version !== undefined && row.domain.version !== null && (
+                          <span className="dq-path-meta">v{row.domain.version}</span>
+                        )}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="dq-td text-center">
+                      <Badge
+                        variant="outline"
+                        className="dq-badge"
+                        style={{
+                          borderColor: status.border,
+                          color: status.text,
+                          backgroundColor: status.bg
+                        }}
+                      >
+                        {String(row.domain.status).toUpperCase()}
+                      </Badge>
+                    </TableCell>
+
+                    <TableCell className="dq-td text-center">
+                      <div className="dq-mono text-[11px] text-muted-foreground">
+                        {row.domain.lastUpdated
+                          ? `${formatTimeAgo(row.domain.lastUpdated)} ago`
+                          : '—'}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="dq-td text-center">
+                      <div className="dq-probe-cell">
+                        <ProbePill status={probeStatus} />
+                        {probe?.ms !== undefined && (
+                          <div className="dq-mono text-[10px] text-muted-foreground">
+                            {formatDurationMs(probe.ms)}
+                          </div>
+                        )}
+                        {probeId && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className="dq-btn-icon"
+                                onClick={() => void probeForRow(row)}
+                                disabled={probeStatus === 'running' || isRunningAll}
+                                aria-label={`Probe ${row.layerName} ${row.domain.name}`}
+                              >
+                                <ScanSearch
+                                  className={cn(
+                                    'h-4 w-4',
+                                    probeStatus === 'running' && 'animate-spin'
+                                  )}
+                                />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {probe?.detail ? `${probe.title}: ${probe.detail}` : 'Run probe'}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="dq-td text-right">
+                      <div className="dq-links">
+                        {safePortalUrl ? (
+                          <a
+                            className="dq-link"
+                            href={safePortalUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            <span className="sr-only">Open portal</span>
+                          </a>
+                        ) : (
+                          <span className="dq-link dq-link-muted" aria-hidden="true">
+                            <ExternalLink className="h-4 w-4" />
+                          </span>
+                        )}
+
+                        {safeJobUrl ? (
+                          <a
+                            className="dq-link"
+                            href={safeJobUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <ArrowUpRight className="h-4 w-4" />
+                            <span className="sr-only">Open job</span>
+                          </a>
+                        ) : (
+                          <span className="dq-link dq-link-muted" aria-hidden="true">
+                            <ArrowUpRight className="h-4 w-4" />
+                          </span>
+                        )}
+
+                        {safeTriggerUrl ? (
+                          <a
+                            className="dq-link"
+                            href={safeTriggerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span className="sr-only">Trigger</span>
+                          </a>
+                        ) : (
+                          <span className="dq-link dq-link-muted" aria-hidden="true">
+                            <CheckCircle2 className="h-4 w-4" />
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="dq-mono text-xs text-muted-foreground">
+            Last refresh: {lastRefreshedAt ? lastRefreshedAt.slice(0, 19).replace('T', ' ') : '—'} UTC
+            {healthMeta && (
+              <>
+                {' '}
+                • Cache: {healthMeta.cacheHint || 'n/a'}
+                {healthMeta.stale ? ' • STALE SNAPSHOT' : ''}
+                {healthMeta.requestId ? ` • Req ${healthMeta.requestId.slice(0, 8)}` : ''}
+              </>
+            )}
           </div>
-
-          <div className="mt-4 dq-ledger-table">
-            <Table className="dq-table">
-              <TableHeader>
-                <TableRow className="dq-table-head">
-                  <TableHead className="dq-th">Layer</TableHead>
-                  <TableHead className="dq-th">Domain</TableHead>
-                  <TableHead className="dq-th">Type</TableHead>
-                  <TableHead className="dq-th">Path</TableHead>
-                  <TableHead className="dq-th text-center">Freshness</TableHead>
-                  <TableHead className="dq-th text-center">Last Updated</TableHead>
-                  <TableHead className="dq-th text-center">Probe</TableHead>
-                  <TableHead className="dq-th text-right">Links</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredRows.map((row) => {
-                  const layerKey = normalizeLayerName(row.layerName) || row.layerName;
-                  const domainName = normalizeDomainName(row.domain.name);
-                  const status = getStatusConfig(row.domain.status);
-                  const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain);
-
-                  const probe = probeId ? probeResults[probeId] : undefined;
-                  const probeStatus = probe?.status || 'idle';
-                  const impactedStrategies = impactsByDomain[String(domainName).toLowerCase()] || [];
-                  const safePortalUrl = sanitizeExternalUrl(row.domain.portalUrl, {
-                    allowedHosts: safeExternalHosts
-                  });
-                  const safeJobUrl = sanitizeExternalUrl(row.domain.jobUrl, {
-                    allowedHosts: safeExternalHosts
-                  });
-                  const safeTriggerUrl = sanitizeExternalUrl(row.domain.triggerUrl, {
-                    allowedHosts: safeExternalHosts
-                  });
-
-                  return (
-                    <TableRow key={domainKey(row)} className="dq-tr">
-                      <TableCell className="dq-td">
-                        <div className="dq-layer-cell">
-                          <div className="dq-layer-tag">{String(layerKey).toUpperCase()}</div>
-                          <div className="dq-layer-dot" style={{ background: status.text }} />
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="dq-td">
-                        <div className="dq-domain-cell">
-                          <div className="dq-domain-name">{row.domain.name}</div>
-                          {impactedStrategies.length > 0 && (
-                            <div className="dq-domain-meta">
-                              <span className="dq-mono text-[11px] text-muted-foreground">
-                                Impacts: {impactedStrategies.slice(0, 2).join(', ')}
-                                {impactedStrategies.length > 2
-                                  ? ` +${impactedStrategies.length - 2}`
-                                  : ''}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="dq-td">
-                        <Badge variant="outline" className="dq-badge">
-                          {row.domain.type}
-                        </Badge>
-                      </TableCell>
-
-                      <TableCell className="dq-td">
-                        <div className="dq-path">
-                          <span className="dq-mono">{row.domain.path}</span>
-                          {row.domain.version !== undefined && row.domain.version !== null && (
-                            <span className="dq-path-meta">v{row.domain.version}</span>
-                          )}
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="dq-td text-center">
-                        <Badge
-                          variant="outline"
-                          className="dq-badge"
-                          style={{
-                            borderColor: status.border,
-                            color: status.text,
-                            backgroundColor: status.bg
-                          }}
-                        >
-                          {String(row.domain.status).toUpperCase()}
-                        </Badge>
-                      </TableCell>
-
-                      <TableCell className="dq-td text-center">
-                        <div className="dq-mono text-[11px] text-muted-foreground">
-                          {row.domain.lastUpdated
-                            ? `${formatTimeAgo(row.domain.lastUpdated)} ago`
-                            : '—'}
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="dq-td text-center">
-                        <div className="dq-probe-cell">
-                          <ProbePill status={probeStatus} />
-                          {probe?.ms !== undefined && (
-                            <div className="dq-mono text-[10px] text-muted-foreground">
-                              {formatDurationMs(probe.ms)}
-                            </div>
-                          )}
-                          {probeId && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  className="dq-btn-icon"
-                                  onClick={() => void probeForRow(row)}
-                                  disabled={probeStatus === 'running' || isRunningAll}
-                                  aria-label={`Probe ${row.layerName} ${row.domain.name}`}
-                                >
-                                  <ScanSearch
-                                    className={cn(
-                                      'h-4 w-4',
-                                      probeStatus === 'running' && 'animate-spin'
-                                    )}
-                                  />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {probe?.detail ? `${probe.title}: ${probe.detail}` : 'Run probe'}
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="dq-td text-right">
-                        <div className="dq-links">
-                          {safePortalUrl ? (
-                            <a
-                              className="dq-link"
-                              href={safePortalUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                              <span className="sr-only">Open portal</span>
-                            </a>
-                          ) : (
-                            <span className="dq-link dq-link-muted" aria-hidden="true">
-                              <ExternalLink className="h-4 w-4" />
-                            </span>
-                          )}
-
-                          {safeJobUrl ? (
-                            <a
-                              className="dq-link"
-                              href={safeJobUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <ArrowUpRight className="h-4 w-4" />
-                              <span className="sr-only">Open job</span>
-                            </a>
-                          ) : (
-                            <span className="dq-link dq-link-muted" aria-hidden="true">
-                              <ArrowUpRight className="h-4 w-4" />
-                            </span>
-                          )}
-
-                          {safeTriggerUrl ? (
-                            <a
-                              className="dq-link"
-                              href={safeTriggerUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <CheckCircle2 className="h-4 w-4" />
-                              <span className="sr-only">Trigger</span>
-                            </a>
-                          ) : (
-                            <span className="dq-link dq-link-muted" aria-hidden="true">
-                              <CheckCircle2 className="h-4 w-4" />
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="dq-mono text-xs text-muted-foreground">
-              Last refresh: {lastRefreshedAt ? lastRefreshedAt.slice(0, 19).replace('T', ' ') : '—'} UTC
-              {healthMeta && (
-                <>
-                  {' '}
-                  • Cache: {healthMeta.cacheHint || 'n/a'}
-                  {healthMeta.stale ? ' • STALE SNAPSHOT' : ''}
-                  {healthMeta.requestId ? ` • Req ${healthMeta.requestId.slice(0, 8)}` : ''}
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                className="dq-btn"
-                onClick={() => setProbeResults({})}
-                disabled={isRunningAll}
-              >
-                <ShieldAlert className="h-4 w-4" />
-                Clear Probes
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="dq-btn"
+              onClick={() => setProbeResults({})}
+              disabled={isRunningAll}
+            >
+              <ShieldAlert className="h-4 w-4" />
+              Clear Probes
+            </Button>
+            <Button
+              className="dq-btn-primary"
+              onClick={() => void runAll()}
+              disabled={health.isFetching || isRunningAll}
+            >
+              <ScanSearch className="h-4 w-4" />
+              {isRunningAll ? 'Running…' : 'Run All Supported'}
+            </Button>
+            {isRunningAll && (
+              <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
+                <CircleSlash2 className="h-4 w-4" />
+                Cancel
               </Button>
-              <Button
-                className="dq-btn-primary"
-                onClick={() => void runAll()}
-                disabled={health.isFetching || isRunningAll}
-              >
-                <ScanSearch className="h-4 w-4" />
-                {isRunningAll ? 'Running…' : 'Run All Supported'}
-              </Button>
-              {isRunningAll && (
-                <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
-                  <CircleSlash2 className="h-4 w-4" />
-                  Cancel
-                </Button>
-              )}
-            </div>
+            )}
           </div>
-          {runAllStatusMessage && (
-            <div className="mt-2 dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
-          )}
-        </section>
-      </div>
-    </div>
+        </div>
+        {runAllStatusMessage && (
+          <div className="mt-2 dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
+        )}
+      </section>
+    </div >
+    </div >
   );
 }

@@ -17,7 +17,8 @@ import type {
   ResponseWithMeta,
   RuntimeConfigCatalogResponse,
   RuntimeConfigItem,
-  RuntimeConfigListResponse
+  RuntimeConfigListResponse,
+  ValidationReport
 } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
@@ -164,6 +165,14 @@ export const DataService = {
     signal?: AbortSignal
   ): Promise<Record<string, unknown>[]> {
     return apiService.getGenericData(layer, domain, ticker, limit, signal);
+  },
+
+  getDataQualityValidation(
+    layer: string,
+    domain: string,
+    signal?: AbortSignal
+  ): Promise<ValidationReport> {
+    return apiService.getDataQualityValidation(layer, domain, signal);
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
