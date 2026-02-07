@@ -22,9 +22,10 @@ export function sanitizeExternalUrl(
   const raw = String(value ?? '').trim();
   if (!raw) return '';
 
-  const allowedProtocols = (options.allowedProtocols && options.allowedProtocols.length > 0
-    ? options.allowedProtocols
-    : ['https:']
+  const allowedProtocols = (
+    options.allowedProtocols && options.allowedProtocols.length > 0
+      ? options.allowedProtocols
+      : ['https:']
   ).map((item) => String(item).trim().toLowerCase());
   const allowedHosts = (options.allowedHosts || [])
     .map((item) => String(item).trim().toLowerCase())

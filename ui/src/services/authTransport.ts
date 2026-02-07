@@ -1,5 +1,3 @@
-
-
 export type AccessTokenProvider = () => Promise<string | null>;
 
 let accessTokenProvider: AccessTokenProvider | null = null;

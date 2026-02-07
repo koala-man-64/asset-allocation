@@ -165,8 +165,6 @@ export interface RuntimeConfigCatalogResponse {
   items: RuntimeConfigCatalogItem[];
 }
 
-
-
 export interface RuntimeConfigItem {
   scope: string;
   key: string;
@@ -229,7 +227,9 @@ export const apiService = {
     return request<SystemHealth>('/system/health', { params });
   },
 
-  getSystemHealthWithMeta(params: { refresh?: boolean } = {}): Promise<ResponseWithMeta<SystemHealth>> {
+  getSystemHealthWithMeta(
+    params: { refresh?: boolean } = {}
+  ): Promise<ResponseWithMeta<SystemHealth>> {
     return requestWithMeta<SystemHealth>('/system/health', { params });
   },
 

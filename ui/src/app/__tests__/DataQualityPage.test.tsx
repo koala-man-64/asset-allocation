@@ -4,15 +4,13 @@ import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
 import { DataService, type MarketData, type FinanceData } from '@/services/DataService';
 
-const {
-  mockUseSystemHealthQuery,
-  mockUseLineageQuery,
-  mockGetLastSystemHealthMeta
-} = vi.hoisted(() => ({
-  mockUseSystemHealthQuery: vi.fn(),
-  mockUseLineageQuery: vi.fn(),
-  mockGetLastSystemHealthMeta: vi.fn(() => null)
-}));
+const { mockUseSystemHealthQuery, mockUseLineageQuery, mockGetLastSystemHealthMeta } = vi.hoisted(
+  () => ({
+    mockUseSystemHealthQuery: vi.fn(),
+    mockUseLineageQuery: vi.fn(),
+    mockGetLastSystemHealthMeta: vi.fn(() => null)
+  })
+);
 
 vi.mock('@/hooks/useDataQueries', () => ({
   useSystemHealthQuery: mockUseSystemHealthQuery,
@@ -85,9 +83,15 @@ describe('DataQualityPage', () => {
         stale: false
       }
     });
-    vi.mocked(DataService.getMarketData).mockResolvedValue([{ symbol: 'SPY' }] as unknown as MarketData[]);
-    vi.mocked(DataService.getFinanceData).mockResolvedValue([{ symbol: 'SPY' }] as unknown as FinanceData[]);
-    vi.mocked(DataService.getGenericData).mockResolvedValue([{ symbol: 'SPY' }] as unknown as Record<string, unknown>[]);
+    vi.mocked(DataService.getMarketData).mockResolvedValue([
+      { symbol: 'SPY' }
+    ] as unknown as MarketData[]);
+    vi.mocked(DataService.getFinanceData).mockResolvedValue([
+      { symbol: 'SPY' }
+    ] as unknown as FinanceData[]);
+    vi.mocked(DataService.getGenericData).mockResolvedValue([
+      { symbol: 'SPY' }
+    ] as unknown as Record<string, unknown>[]);
   });
 
   it('renders main dashboard sections', async () => {

@@ -112,9 +112,7 @@ export function parseImpactsByDomain(raw: unknown): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!Array.isArray(value)) continue;
-    const cleaned = value
-      .map((item) => String(item).trim())
-      .filter((item) => item.length > 0);
+    const cleaned = value.map((item) => String(item).trim()).filter((item) => item.length > 0);
     out[String(key).trim().toLowerCase()] = cleaned;
   }
   return out;
@@ -145,7 +143,8 @@ export function getProbeIdForRow(
   }
   if (layerKey === 'silver' && normalizedDomain === 'earnings') return 'probe:silver:earnings';
   if (layerKey === 'gold' && normalizedDomain === 'earnings') return 'probe:gold:earnings';
-  if (layerKey === 'silver' && normalizedDomain === 'price-target') return 'probe:silver:price-target';
+  if (layerKey === 'silver' && normalizedDomain === 'price-target')
+    return 'probe:silver:price-target';
   if (layerKey === 'gold' && normalizedDomain === 'price-target') return 'probe:gold:price-target';
   return null;
 }
