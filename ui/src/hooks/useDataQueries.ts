@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 import type { RequestMeta } from '@/services/apiService';
@@ -59,7 +59,7 @@ export const queryKeys = {
  * System & Health Queries
  */
 
-export function useSystemHealthQuery() {
+export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
   return useQuery<SystemHealth>({
     queryKey: queryKeys.systemHealth(),
     queryFn: async () => {
