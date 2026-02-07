@@ -165,61 +165,7 @@ export interface RuntimeConfigCatalogResponse {
   items: RuntimeConfigCatalogItem[];
 }
 
-export interface RuntimeConfigItem {
-  scope: string;
-  key: string;
-  enabled: boolean;
 
-export interface JobLogsResponse {
-  logs: string[];
-  offset: number;
-  hasMore: boolean;
-}
-
-export interface StockScreenerResponse {
-  items: unknown[];
-  total: number;
-  offset: number;
-  limit: number;
-}
-
-export interface PurgeRequest {
-  scope: 'layer-domain' | 'layer' | 'domain';
-  layer?: string;
-  domain?: string;
-  confirm: boolean;
-}
-
-export interface PurgeResponse {
-  scope: string;
-  layer?: string | null;
-  domain?: string | null;
-  totalDeleted: number;
-  targets: Array<{
-    container: string;
-    prefix?: string | null;
-    layer?: string | null;
-    domain?: string | null;
-    deleted: number;
-  }>;
-}
-
-export interface DebugSymbolsResponse {
-  enabled: boolean;
-  symbols: string;
-  updatedAt?: string | null;
-  updatedBy?: string | null;
-}
-
-export interface RuntimeConfigCatalogItem {
-  key: string;
-  description: string;
-  example: string;
-}
-
-export interface RuntimeConfigCatalogResponse {
-  items: RuntimeConfigCatalogItem[];
-}
 
 export interface RuntimeConfigItem {
   scope: string;
