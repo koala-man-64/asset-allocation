@@ -68,3 +68,31 @@ def test_workflow_run_scripts_do_not_embed_github_expr_in_quoted_query() -> None
         "Use shell env vars (for example, $ACR_NAME) inside the quoted string instead.\n"
         + "\n".join(violations)
     )
+
+
+def test_run_tests_workflow_ui_step_enforces_format_and_lint() -> None:
+    """Guards the UI quality gate so formatting/lint regressions fail CI early."""
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow_file = repo_root / ".github" / "workflows" / "run_tests.yml"
+    doc = yaml.safe_load(workflow_file.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), "run_tests.yml must parse to a workflow document object."
+
+    target_script = None
+    for job_name, step_name, script in _iter_workflow_run_steps(doc):
+        if job_name == "test" and step_name == "Build UI (ui)":
+            target_script = script
+            break
+
+    assert target_script, "run_tests.yml must define job 'test' step 'Build UI (ui)' with a run script."
+
+    compact_script = " ".join(target_script.split())
+    format_check_cmd = "pnpm format:check"
+    lint_cmd = "pnpm lint"
+
+    assert format_check_cmd in compact_script, (
+        "UI build step must run Prettier format checks before tests/build."
+    )
+    assert lint_cmd in compact_script, "UI build step must run ESLint checks before tests/build."
+    assert compact_script.index(format_check_cmd) < compact_script.index(lint_cmd), (
+        "UI build step should run format:check before lint so style failures are surfaced first."
+    )
