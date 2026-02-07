@@ -26,6 +26,24 @@ python3 -m pytest -q
 
 
 
+## UI (Vite) local dev
+
+### Prerequisites
+- Node.js + `pnpm` (see `ui/package.json` `packageManager`)
+
+### Run UI only
+```bash
+cd ui
+pnpm install
+pnpm dev
+```
+
+### Run UI + API (VS Code)
+- Run the task `dev: ui+api` (it runs `pnpm install` for the UI first).
+
+### Troubleshooting
+- If you see `'vite' is not recognized...`, run `pnpm install` in `ui/` (or delete `ui/node_modules` and reinstall).
+
 ## Backend API (UI)
 
 The UI calls the FastAPI service under `/api/*` (see `api/API_ENDPOINTS.md`). Common endpoints:

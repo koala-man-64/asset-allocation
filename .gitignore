@@ -42,6 +42,8 @@ tmp/
 # --- Node / Frontend ---
 node_modules/
 **/node_modules/
+package-lock.json
+**/package-lock.json
 ui/dist/
 ui/.vite/
 ui/.pnpm-store/
