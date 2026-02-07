@@ -4,6 +4,7 @@ import { FinanceData, MarketData } from '@/types/data';
 import { DomainMetadata, SystemHealth } from '@/types/strategy';
 import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
 import { config as uiConfig } from '@/config';
+import { appendAuthHeaders } from '@/services/authTransport';
 
 interface WindowWithConfig extends Window {
   __API_UI_CONFIG__?: { apiBaseUrl?: string };
@@ -15,7 +16,31 @@ export interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
 }
 
-export async function request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
+export interface RequestMeta {
+  requestId: string;
+  status: number;
+  durationMs: number;
+  url: string;
+  cacheHint?: string;
+  stale?: boolean;
+}
+
+export interface ResponseWithMeta<T> {
+  data: T;
+  meta: RequestMeta;
+}
+
+function createRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function performRequest<T>(
+  endpoint: string,
+  config: RequestConfig = {}
+): Promise<ResponseWithMeta<T>> {
   const { params, headers, ...customConfig } = config;
 
   let url = `${API_BASE_URL}${endpoint}`;
@@ -32,25 +57,61 @@ export async function request<T>(endpoint: string, config: RequestConfig = {}): 
     }
   }
 
+  const requestHeaders = new Headers(headers);
+  const hasBody = customConfig.body !== undefined && customConfig.body !== null;
+  if (hasBody && !requestHeaders.has('Content-Type')) {
+    requestHeaders.set('Content-Type', 'application/json');
+  }
+  if (!requestHeaders.has('X-Request-ID')) {
+    requestHeaders.set('X-Request-ID', createRequestId());
+  }
+  const authHeaders = await appendAuthHeaders(requestHeaders);
+
+  const startedAt = performance.now();
   const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers
-    },
+    headers: authHeaders,
     ...customConfig
   });
+  const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+  const requestId = authHeaders.get('X-Request-ID') || '';
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBody}`);
+    throw new Error(
+      `API Error: ${response.status} ${response.statusText} [requestId=${requestId}] - ${errorBody}`
+    );
   }
 
-  // Handle void response
+  let data: T;
   if (response.status === 204) {
-    return {} as T;
+    data = {} as T;
+  } else {
+    data = (await response.json()) as T;
   }
 
-  return response.json();
+  return {
+    data,
+    meta: {
+      requestId,
+      status: response.status,
+      durationMs,
+      url: response.url || url,
+      cacheHint: response.headers.get('X-System-Health-Cache') || undefined,
+      stale: response.headers.get('X-System-Health-Stale') === '1'
+    }
+  };
+}
+
+export async function request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
+  const result = await performRequest<T>(endpoint, config);
+  return result.data;
+}
+
+export async function requestWithMeta<T>(
+  endpoint: string,
+  config: RequestConfig = {}
+): Promise<ResponseWithMeta<T>> {
+  return performRequest<T>(endpoint, config);
 }
 
 export interface JobLogsResponse {
@@ -122,22 +183,32 @@ export interface RuntimeConfigListResponse {
 export const apiService = {
   // --- Data Endpoints ---
 
-  getMarketData(ticker: string, layer: 'silver' | 'gold' = 'silver'): Promise<MarketData[]> {
-    return request<MarketData[]>(`/data/${layer}/market`, { params: { ticker } });
+  getMarketData(
+    ticker: string,
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal
+  ): Promise<MarketData[]> {
+    return request<MarketData[]>(`/data/${layer}/market`, { params: { ticker }, signal });
   },
 
   getFinanceData(
     ticker: string,
     subDomain: string,
-    layer: 'silver' | 'gold' = 'silver'
+    layer: 'silver' | 'gold' = 'silver',
+    signal?: AbortSignal
   ): Promise<FinanceData[]> {
     return request<FinanceData[]>(`/data/${layer}/finance/${encodeURIComponent(subDomain)}`, {
-      params: { ticker }
+      params: { ticker },
+      signal
     });
   },
 
   getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {
     return request<SystemHealth>('/system/health', { params });
+  },
+
+  getSystemHealthWithMeta(params: { refresh?: boolean } = {}): Promise<ResponseWithMeta<SystemHealth>> {
+    return requestWithMeta<SystemHealth>('/system/health', { params });
   },
 
   getDomainMetadata(
@@ -186,11 +257,13 @@ export const apiService = {
     layer: 'bronze' | 'silver' | 'gold',
     domain: string,
     ticker?: string,
-    limit?: number
+    limit?: number,
+    signal?: AbortSignal
   ): Promise<Record<string, unknown>[]> {
     const endpoint = `/data/${layer}/${domain}`;
     return request<Record<string, unknown>[]>(endpoint, {
-      params: { ticker, limit }
+      params: { ticker, limit },
+      signal
     });
   },
 

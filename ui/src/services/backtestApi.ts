@@ -2,14 +2,12 @@
 import type { FinanceData, MarketData } from '@/types/data';
 import type { SystemHealth } from '@/types/strategy';
 import { config } from '@/config';
+import { appendAuthHeaders, setAccessTokenProvider } from '@/services/authTransport';
+export { setAccessTokenProvider };
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
 export type DataDomain = 'market' | 'earnings' | 'price-target';
-
-type AccessTokenProvider = () => Promise<string | null>;
-
-let accessTokenProvider: AccessTokenProvider | null = null;
 
 // Define config interface locally to avoid circular dependencies if needed, or just extend Window
 interface WindowWithConfig extends Window {
@@ -66,10 +64,6 @@ if (debugApi) {
     envBaseUrl: import.meta.env.VITE_BACKTEST_API_BASE_URL || import.meta.env.VITE_API_BASE_URL,
     origin: window.location.origin
   });
-}
-
-export function setAccessTokenProvider(provider: AccessTokenProvider | null): void {
-  accessTokenProvider = provider;
 }
 
 export class ApiError extends Error {
@@ -277,25 +271,6 @@ function getBaseUrl(): string {
   return config.apiBaseUrl;
 }
 
-function getApiKey(): string {
-  // NOTE: Do not rely on this for production secrets. This is intended for local/dev only.
-  return (import.meta.env.VITE_BACKTEST_API_KEY ?? '').trim();
-}
-
-function shouldSendApiKey(): boolean {
-  const mode = String(import.meta.env.VITE_AUTH_MODE ?? '')
-    .trim()
-    .toLowerCase();
-  if (mode === 'api_key') return true;
-
-  const explicitOverride = String(import.meta.env.VITE_ALLOW_BROWSER_API_KEY ?? '')
-    .trim()
-    .toLowerCase();
-  if (explicitOverride === 'true') return true;
-
-  return Boolean(import.meta.env.DEV);
-}
-
 function buildQuery(params: Record<string, string | number | boolean | undefined | null>): string {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -324,20 +299,9 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json');
   }
+  const authHeaders = await appendAuthHeaders(headers);
 
-  if (accessTokenProvider && !headers.has('Authorization')) {
-    const token = await accessTokenProvider();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-    }
-  }
-
-  const apiKey = getApiKey();
-  if (apiKey && shouldSendApiKey() && !headers.has('X-API-Key')) {
-    headers.set('X-API-Key', apiKey);
-  }
-
-  const resp = await fetch(url, { ...init, headers });
+  const resp = await fetch(url, { ...init, headers: authHeaders });
   console.info('[backtestApi] response', {
     method,
     url: resp.url,

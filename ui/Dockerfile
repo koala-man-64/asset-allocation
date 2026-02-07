@@ -38,7 +38,7 @@ COPY --from=builder /app/dist .
 
 # Nginx reverse proxy for UI + API (single origin).
 # See ui/nginx.conf for /api and /config.js proxy rules.
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 EXPOSE 80
 

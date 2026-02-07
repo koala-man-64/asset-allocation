@@ -120,12 +120,14 @@ def _get_actor(request: Request) -> Optional[str]:
 
 @router.get("/health")
 def system_health(request: Request, refresh: bool = Query(False)) -> JSONResponse:
+    request_id = request.headers.get("x-request-id", "")
     logger.info(
-        "System health request: refresh=%s path=%s host=%s fwd=%s",
+        "System health request: refresh=%s path=%s host=%s fwd=%s request_id=%s",
         refresh,
         request.url.path,
         request.headers.get("host", ""),
         request.headers.get("x-forwarded-for", ""),
+        request_id,
     )
     validate_auth(request)
     settings = get_settings(request)

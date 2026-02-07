@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import type { AccountInfo, AuthenticationResult } from '@azure/msal-browser';
 import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/msal-browser';
 
-import { setAccessTokenProvider } from '@/services/backtestApi';
+import { setAccessTokenProvider } from '@/services/authTransport';
 
 type AuthMode = 'none' | 'oidc' | 'api_key';
 
