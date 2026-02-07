@@ -16,7 +16,7 @@ import {
   TableHeader,
   TableRow
 } from '@/app/components/ui/table';
-import type { StockScreenerRow } from '@/services/backtestApi';
+import type { StockScreenerRow, StockScreenerResponse } from '@/services/backtestApi';
 import { DataService } from '@/services/DataService';
 import { cn } from '@/app/components/ui/utils';
 

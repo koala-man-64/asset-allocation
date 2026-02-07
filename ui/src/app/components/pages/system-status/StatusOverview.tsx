@@ -268,6 +268,7 @@ export function StatusOverview({
       })();
 
       const jobConfig = getStatusConfig(jobStatusKey);
+
       const jobLabel = (() => {
         const key = String(jobStatusKey || '').toLowerCase();
         if (total === 0) return 'N/A';
