@@ -73,8 +73,6 @@ export const PostgresExplorerPage: React.FC = () => {
     loadTables();
   }, [selectedSchema]);
 
-
-
   // Cleanup keys function to infer columns if empty
   // DataTable usually handles this, so passing data directly is fine.
 

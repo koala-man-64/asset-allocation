@@ -6,7 +6,11 @@ interface DataTableProps {
   emptyMessage?: string;
 }
 
-export const DataTable: React.FC<DataTableProps> = ({ data, className = '', emptyMessage = 'No data available.' }) => {
+export const DataTable: React.FC<DataTableProps> = ({
+  data,
+  className = '',
+  emptyMessage = 'No data available.'
+}) => {
   const columns = useMemo(() => {
     if (!data || data.length === 0) return [];
     return Object.keys(data[0]);
