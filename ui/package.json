@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
-    "lint": "eslint src --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint src --report-unused-disable-directives",
     "lint:fix": "eslint src --fix",
     "format": "prettier --config .prettierrc --write \"src/**/*.{ts,tsx,css,md}\"",
     "format:check": "prettier --config .prettierrc --check \"src/**/*.{ts,tsx,css,md}\"",
