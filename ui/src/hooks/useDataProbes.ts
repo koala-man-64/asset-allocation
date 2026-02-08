@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { DataService } from '@/services/DataService';
 import {
-    domainKey,
     getProbeIdForRow,
     isValidTickerSymbol,
     normalizeDomainName,
@@ -24,15 +23,19 @@ const PROBE_TIMEOUT_MS = 20_000;
 const RUN_ALL_CONCURRENCY = 3;
 
 interface UseDataProbesProps {
-    financeSubDomain: string;
     ticker: string;
     rows: DomainRow[];
 }
 
-export function useDataProbes({ financeSubDomain, ticker, rows }: UseDataProbesProps) {
+export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
     const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
     const [isRunningAll, setIsRunningAll] = useState(false);
     const [runAllStatusMessage, setRunAllStatusMessage] = useState<string | null>(null);
+
+    const normalizedTicker = String(ticker || '')
+        .trim()
+        .toUpperCase();
+    const hasValidTicker = isValidTickerSymbol(normalizedTicker);
 
     const runAllCancelledRef = useRef(false);
     const runAllControllersRef = useRef<Set<AbortController>>(new Set());
@@ -130,130 +133,74 @@ export function useDataProbes({ financeSubDomain, ticker, rows }: UseDataProbesP
 
     const probeForRow = useCallback(
         async (row: DomainRow) => {
+            if (!hasValidTicker) {
+                setRunAllStatusMessage('Enter a valid symbol (e.g., AAPL) to run probes.');
+                return;
+            }
             const layer = normalizeLayerName(row.layerName);
             const domain = normalizeDomainName(row.domain.name);
-            const resolvedTicker = ticker.trim().toUpperCase();
+            const probeId = getProbeIdForRow(row.layerName, row.domain.name, normalizedTicker);
 
-            const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) || `row:${domainKey(row)}`;
+            if (!layer || !domain || !probeId) {
+                return;
+            }
 
-            if (!resolvedTicker) {
+            if (layer === 'platinum') {
                 setProbeResults((prev) => ({
                     ...prev,
                     [probeId]: {
-                        status: 'fail',
-                        title: 'Probe',
+                        status: 'warn',
+                        title: `${domain} (${layer})`,
                         at: new Date().toISOString(),
-                        detail: 'Ticker is required.'
+                        detail: 'Validation endpoint currently supports bronze/silver/gold only.'
                     }
                 }));
                 return;
             }
 
-            if (!isValidTickerSymbol(resolvedTicker)) {
-                setProbeResults((prev) => ({
-                    ...prev,
-                    [probeId]: {
-                        status: 'fail',
-                        title: 'Probe',
-                        at: new Date().toISOString(),
-                        detail: 'Ticker must match ^[A-Z][A-Z0-9.-]{0,9}$.'
-                    }
-                }));
-                return;
-            }
-
-            const marketCheck = async (signal: AbortSignal) => {
-                const data = await DataService.getMarketData(resolvedTicker, layer, signal);
-                const count = Array.isArray(data) ? data.length : 0;
-                return {
-                    ok: count > 0,
-                    detail: count > 0 ? `Rows: ${count.toLocaleString()}` : 'No rows returned.',
-                    meta: { count }
-                };
-            };
-
-            const financeCheck = async (signal: AbortSignal) => {
-                const data = await DataService.getFinanceData(
-                    resolvedTicker,
-                    financeSubDomain,
-                    layer,
-                    signal
-                );
-                const count = Array.isArray(data) ? data.length : 0;
-                return {
-                    ok: count > 0,
-                    detail: count > 0 ? `Rows: ${count.toLocaleString()}` : 'No rows returned.',
-                    meta: { count, subDomain: financeSubDomain }
-                };
-            };
-
-            const genericCheck = async (signal: AbortSignal) => {
-                const data = await DataService.getGenericData(
+            await runProbe(probeId, `${domain} (${layer})`, async (signal: AbortSignal) => {
+                const report = await DataService.getDataQualityValidation(
                     layer,
                     domain,
-                    resolvedTicker,
-                    undefined,
+                    normalizedTicker,
                     signal
                 );
-                const count = Array.isArray(data) ? data.length : 0;
-                const sampleKeys =
-                    count > 0 && data && typeof data[0] === 'object' && data[0] !== null
-                        ? Object.keys(data[0] as object).slice(0, 8)
-                        : [];
+                const status = String(report.status || '').toLowerCase();
+                const rowCount = Number(report.rowCount || 0);
+                const isError = status === 'error';
+                const detail = isError
+                    ? report.error || 'Validation endpoint returned an error.'
+                    : status === 'empty'
+                        ? 'Dataset reachable • 0 rows (empty).'
+                        : `Rows: ${rowCount.toLocaleString()} • Status: ${status || 'healthy'}`;
+
                 return {
-                    ok: count > 0,
-                    detail:
-                        count > 0
-                            ? `Rows: ${count.toLocaleString()} • Keys: ${sampleKeys.join(', ') || '—'}`
-                            : 'No rows returned.',
-                    meta: { count, sampleKeys }
+                    ok: !isError,
+                    detail,
+                    meta: {
+                        layer,
+                        domain,
+                        ticker: normalizedTicker,
+                        status,
+                        rowCount,
+                        sampleLimit: report.sampleLimit ?? null
+                    }
                 };
-            };
-
-            if ((layer === 'silver' || layer === 'gold') && domain === 'market') {
-                await runProbe(`probe:${layer}:market`, `Market (${layer})`, marketCheck);
-                return;
-            }
-
-            if ((layer === 'silver' || layer === 'gold') && domain === 'finance') {
-                await runProbe(`probe:${layer}:finance:${financeSubDomain}`, `Finance (${layer})`, financeCheck);
-                return;
-            }
-
-            if (
-                (layer === 'silver' || layer === 'gold') &&
-                (domain === 'earnings' || domain === 'price-target')
-            ) {
-                await runProbe(`probe:${layer}:${domain}`, `${domain} (${layer})`, genericCheck);
-                return;
-            }
-
-            setProbeResults((prev) => ({
-                ...prev,
-                [probeId]: {
-                    status: 'warn',
-                    title: 'Probe',
-                    at: new Date().toISOString(),
-                    detail: 'No active probe is defined for this container/folder.'
-                }
-            }));
+            });
         },
-        [financeSubDomain, runProbe, ticker]
+        [hasValidTicker, normalizedTicker, runProbe]
     );
 
     const runAll = useCallback(async () => {
         if (isRunningAll) return;
-        const supported = rows.filter((row) => {
-            const layer = normalizeLayerName(row.layerName);
-            const domain = normalizeDomainName(row.domain.name);
-            return (
-                (layer === 'silver' || layer === 'gold') &&
-                ['market', 'finance', 'earnings', 'price-target'].includes(domain)
-            );
-        });
+        if (!hasValidTicker) {
+            setRunAllStatusMessage('Enter a valid symbol (e.g., AAPL) to run probes.');
+            return;
+        }
+        const supported = rows.filter((row) => normalizeLayerName(row.layerName) !== null);
 
         if (supported.length === 0) {
-            setRunAllStatusMessage('No supported probes found in current ledger.');
+            setRunAllStatusMessage('No probe targets found in current ledger.');
             return;
         }
 
@@ -283,7 +230,7 @@ export function useDataProbes({ financeSubDomain, ticker, rows }: UseDataProbesP
         } finally {
             setIsRunningAll(false);
         }
-    }, [isRunningAll, probeForRow, rows]);
+    }, [hasValidTicker, isRunningAll, probeForRow, rows]);
 
     const cancelRunAll = useCallback(() => {
         if (!isRunningAll) return;

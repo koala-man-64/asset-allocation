@@ -128,23 +128,19 @@ export function isValidTickerSymbol(value: string): boolean {
 export function getProbeIdForRow(
   layerName: string,
   domainName: string,
-  financeSubDomain: string
+  ticker?: string
 ): string | null {
-  const layerKey = normalizeLayerName(layerName) || layerName;
+  const layerKey = normalizeLayerName(layerName);
   const normalizedDomain = normalizeDomainName(domainName);
+  if (!layerKey || !normalizedDomain) return null;
 
-  if (layerKey === 'silver' && normalizedDomain === 'market') return 'probe:silver:market';
-  if (layerKey === 'gold' && normalizedDomain === 'market') return 'probe:gold:market';
-  if (layerKey === 'silver' && normalizedDomain === 'finance') {
-    return `probe:silver:finance:${financeSubDomain}`;
+  const normalizedTicker = String(ticker || '')
+    .trim()
+    .toUpperCase();
+  if (normalizedTicker) {
+    if (!isValidTickerSymbol(normalizedTicker)) return null;
+    return `probe:${layerKey}:${normalizedDomain}:${normalizedTicker}`;
   }
-  if (layerKey === 'gold' && normalizedDomain === 'finance') {
-    return `probe:gold:finance:${financeSubDomain}`;
-  }
-  if (layerKey === 'silver' && normalizedDomain === 'earnings') return 'probe:silver:earnings';
-  if (layerKey === 'gold' && normalizedDomain === 'earnings') return 'probe:gold:earnings';
-  if (layerKey === 'silver' && normalizedDomain === 'price-target')
-    return 'probe:silver:price-target';
-  if (layerKey === 'gold' && normalizedDomain === 'price-target') return 'probe:gold:price-target';
-  return null;
+
+  return `probe:${layerKey}:${normalizedDomain}`;
 }

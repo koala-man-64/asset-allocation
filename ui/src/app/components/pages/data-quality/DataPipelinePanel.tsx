@@ -1,10 +1,17 @@
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DataService } from '@/services/DataService';
 import { ValidationReport } from '@/services/apiService';
 import { cn } from '@/app/components/ui/utils';
 import {
+  normalizeDomainName,
+  normalizeLayerName,
+  type DomainRow
+} from '@/app/components/pages/data-quality/dataQualityUtils';
+import {
   AlertCircle,
   CheckCircle,
+  ChevronDown,
   FileBox,
   LayoutTemplate,
   Loader2,
@@ -26,10 +33,19 @@ interface PipelineNodeProps {
   layer: 'bronze' | 'silver' | 'gold';
   domain: string;
   label: string;
+  lastUpdated?: string;
 }
 
 interface DataPipelinePanelProps {
   drift: DriftItem[];
+  rows: DomainRow[];
+}
+
+function formatLastUpdated(lastUpdated?: string): string {
+  if (!lastUpdated) return '—';
+  const parsed = Date.parse(lastUpdated);
+  if (!Number.isFinite(parsed)) return lastUpdated;
+  return new Date(parsed).toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
 }
 
 // --- Components ---
@@ -88,7 +104,8 @@ function StatusIcon({ status }: { status: string }) {
   return <div className="h-2 w-2 rounded-full bg-slate-300" />;
 }
 
-function PipelineNode({ layer, domain, label }: PipelineNodeProps) {
+function PipelineNode({ layer, domain, label, lastUpdated }: PipelineNodeProps) {
+  const [isColumnsOpen, setIsColumnsOpen] = useState(false);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['data-quality', 'validation', layer, domain],
     queryFn: ({ signal }) => DataService.getDataQualityValidation(layer, domain, signal),
@@ -127,6 +144,7 @@ function PipelineNode({ layer, domain, label }: PipelineNodeProps) {
   }
 
   const report = data as ValidationReport;
+  const columnsPanelId = `dq-columns-${layer}-${domain}`;
   const statusColor =
     report.status === 'error'
       ? 'text-rose-600'
@@ -147,98 +165,148 @@ function PipelineNode({ layer, domain, label }: PipelineNodeProps) {
           )}
           <span className="dq-node-title">{label}</span>
         </div>
-        <StatusIcon status={report.status} />
+        <div className="dq-node-header-right">
+          <span className="dq-node-header-time-label">Updated</span>
+          <span className="dq-node-header-time">{formatLastUpdated(lastUpdated)}</span>
+          <StatusIcon status={report.status} />
+        </div>
       </div>
 
-      <div className="flex justify-between items-baseline mb-2">
-        <span className="text-xs text-muted-foreground uppercase tracking-wider">Rows</span>
-        <span className={cn('font-mono font-medium', statusColor)}>
-          {report.rowCount?.toLocaleString() ?? 0}
-        </span>
+      <div className="dq-node-kpis">
+        <div className="dq-node-kpi">
+          <span className="dq-node-meta-label">Rows</span>
+          <span className={cn('dq-node-kpi-value font-mono font-medium', statusColor)}>
+            {report.rowCount?.toLocaleString() ?? 0}
+          </span>
+        </div>
+        {report.columns && report.columns.length > 0 && (
+          <button
+            type="button"
+            className="dq-node-columns-toggle dq-node-columns-toggle-inline"
+            aria-expanded={isColumnsOpen}
+            aria-controls={columnsPanelId}
+            onClick={() => setIsColumnsOpen((open) => !open)}
+          >
+            <span>Column Stats</span>
+            <ChevronDown className={cn('h-3.5 w-3.5', isColumnsOpen && 'dq-chevron-open')} />
+          </button>
+        )}
       </div>
 
-      {report.columns && report.columns.length > 0 && (
-        <div className="dq-detail-overlay hidden group-hover:block absolute top-[100%] left-0 right-0 z-10 shadow-lg ring-1 ring-border">
-          <div className="text-[10px] font-semibold uppercase text-muted-foreground mb-1">
-            Column Stats
-          </div>
-          {report.columns.map((col) => (
-            <div key={col.name} className="dq-col-row">
-              <span className="text-xs">{col.name}</span>
-              <span className="font-mono text-[10px] text-muted-foreground">
-                {col.unique} unique / {col.null} null
-              </span>
+      {report.columns && report.columns.length > 0 && isColumnsOpen && (
+        <div className="dq-node-columns">
+          <div id={columnsPanelId} className="dq-node-columns-panel" role="region">
+            <div className="dq-node-columns-scroll">
+              <table className="dq-node-columns-table">
+                <thead>
+                  <tr>
+                    <th>Column</th>
+                    <th>Not Null</th>
+                    <th>Null %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.columns.map((col) => (
+                    <tr key={col.name}>
+                      <td title={col.name}>{col.name}</td>
+                      <td>{col.notNull.toLocaleString()}</td>
+                      <td>{Number.isFinite(col.nullPct) ? col.nullPct.toFixed(1) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-export function DataPipelinePanel({ drift }: DataPipelinePanelProps) {
+export function DataPipelinePanel({ drift, rows }: DataPipelinePanelProps) {
   const domains = [
     { id: 'market', label: 'Market Data' },
     { id: 'finance', label: 'Financials' },
     { id: 'earnings', label: 'Earnings' },
     { id: 'price-target', label: 'Price Targets' }
   ];
+  const lastUpdatedByLayerDomain = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const row of rows) {
+      const layer = normalizeLayerName(row.layerName);
+      const domain = normalizeDomainName(row.domain.name);
+      if (!layer || !domain || !row.domain.lastUpdated) continue;
+      result.set(`${layer}:${domain}`, row.domain.lastUpdated);
+    }
+    return result;
+  }, [rows]);
 
   return (
     <div className="dq-pipeline-wrapper">
       <div className="dq-pipeline-container">
-        {/* Bronze Stage */}
-        <div className="dq-pipeline-stage dq-stage-bronze">
-          <div className="dq-stage-header">
+        <div className="dq-pipeline-header-row">
+          <div className="dq-stage-header dq-stage-bronze">
             <div className="dq-stage-dot" />
             <div className="dq-stage-title">Bronze (Raw)</div>
           </div>
-          {domains.map((d) => {
-            const lagItem = drift.find(
-              (item) => item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
-            ) || drift.find(
-              // Match by label or case-insensitive ID to ensure coverage
-              (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'bronze' && item.to === 'silver'
-            );
-
-            return (
-              <div key={d.id} className="relative">
-                <PipelineNode layer="bronze" domain={d.id} label={d.label} />
-                <LagIndicator drift={lagItem} />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Silver Stage */}
-        <div className="dq-pipeline-stage dq-stage-silver">
-          <div className="dq-stage-header">
+          <div className="dq-stage-header dq-stage-silver">
             <div className="dq-stage-dot" />
             <div className="dq-stage-title">Silver (Cleaned)</div>
           </div>
-          {domains.map((d) => {
-            const lagItem = drift.find(
-              (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'silver' && item.to === 'gold'
-            );
-            return (
-              <div key={d.id} className="relative">
-                <PipelineNode layer="silver" domain={d.id} label={d.label} />
-                <LagIndicator drift={lagItem} />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Gold Stage */}
-        <div className="dq-pipeline-stage dq-stage-gold">
-          <div className="dq-stage-header">
+          <div className="dq-stage-header dq-stage-gold">
             <div className="dq-stage-dot" />
             <div className="dq-stage-title">Gold (Features)</div>
           </div>
-          {domains.map((d) => (
-            <PipelineNode key={d.id} layer="gold" domain={d.id} label={d.label} />
-          ))}
         </div>
+        {domains.map((d) => {
+          const bronzeLag =
+            drift.find(
+              (item) => item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
+            ) ||
+            drift.find(
+              (item) =>
+                item.domain.toLowerCase() === d.id.toLowerCase() &&
+                item.from === 'bronze' &&
+                item.to === 'silver'
+            );
+          const silverLag = drift.find(
+            (item) =>
+              item.domain.toLowerCase() === d.id.toLowerCase() &&
+              item.from === 'silver' &&
+              item.to === 'gold'
+          );
+
+          return (
+            <div key={d.id} className="dq-pipeline-domain-row">
+              <div className="dq-pipeline-cell dq-stage-bronze relative">
+                <PipelineNode
+                  layer="bronze"
+                  domain={d.id}
+                  label={d.label}
+                  lastUpdated={lastUpdatedByLayerDomain.get(`bronze:${d.id}`)}
+                />
+                <LagIndicator drift={bronzeLag} />
+              </div>
+              <div className="dq-pipeline-cell dq-stage-silver relative">
+                <PipelineNode
+                  layer="silver"
+                  domain={d.id}
+                  label={d.label}
+                  lastUpdated={lastUpdatedByLayerDomain.get(`silver:${d.id}`)}
+                />
+                <LagIndicator drift={silverLag} />
+              </div>
+              <div className="dq-pipeline-cell dq-stage-gold">
+                <PipelineNode
+                  layer="gold"
+                  domain={d.id}
+                  label={d.label}
+                  lastUpdated={lastUpdatedByLayerDomain.get(`gold:${d.id}`)}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

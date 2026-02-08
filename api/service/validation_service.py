@@ -13,7 +13,7 @@ class ValidationService:
     """
 
     @staticmethod
-    def get_validation_report(layer: str, domain: str) -> Dict[str, Any]:
+    def get_validation_report(layer: str, domain: str, ticker: str | None = None) -> Dict[str, Any]:
         """
         Generates a validation report for a specific layer and domain.
         Returns a dictionary containing file counts, validation stats, and health checks.
@@ -21,7 +21,13 @@ class ValidationService:
         layer_key = str(layer or "").strip().lower()
         domain_key = str(domain or "").strip().lower()
 
-        logger.info(f"Generating validation report for {layer_key}/{domain_key}")
+        ticker_key = str(ticker or "").strip().upper() or None
+        logger.info(
+            "Generating validation report for %s/%s (ticker=%s)",
+            layer_key,
+            domain_key,
+            ticker_key or "-",
+        )
 
         # 1. basic metadata (re-using existing domain metadata logic if possible, 
         # but for now we'll fetch data to compute stats manually as per plan)
@@ -30,7 +36,7 @@ class ValidationService:
              # In a real heavy-load scenario, we might want to use pre-computed stats from Delta Log
              # or a dedicated stats job. For this implementation, we process loaded data.
              # Limit to 1000 rows for performance safety during on-demand check.
-            data = DataService.get_data(layer_key, domain_key, limit=1000)
+            data = DataService.get_data(layer_key, domain_key, ticker=ticker_key, limit=1000)
         except Exception as e:
             logger.error(f"Failed to fetch data for validation: {e}")
             return {
@@ -62,20 +68,15 @@ class ValidationService:
                 # Count Not Null
                 not_null_count = sum(1 for v in values if v is not None and v != "")
                 
-                # Count Unique
-                try:
-                    unique_count = len(set(v for v in values if v is not None))
-                except TypeError:
-                    # Handle unhashable types (lists, dicts) by converting to str
-                    unique_count = len(set(str(v) for v in values if v is not None))
+                null_count = len(data) - not_null_count
+                null_pct = round((null_count / len(data)) * 100, 2) if len(data) > 0 else 0.0
 
                 columns_stats.append({
                     "name": col,
                     "type": type(values[0]).__name__ if values else "unknown",
                     "total": len(data),
-                    "unique": unique_count,
                     "notNull": not_null_count,
-                    "null": len(data) - not_null_count
+                    "nullPct": null_pct,
                 })
 
         # 3. Construct Final Report

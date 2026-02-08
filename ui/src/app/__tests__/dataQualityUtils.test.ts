@@ -70,9 +70,10 @@ describe('dataQualityUtils', () => {
     expect(isValidTickerSymbol('')).toBe(false);
   });
 
-  it('maps probe IDs by layer and domain', () => {
-    expect(getProbeIdForRow('silver', 'market', 'balance_sheet')).toBe('probe:silver:market');
-    expect(getProbeIdForRow('gold', 'finance', 'cash_flow')).toBe('probe:gold:finance:cash_flow');
-    expect(getProbeIdForRow('platinum', 'market', 'balance_sheet')).toBeNull();
+  it('maps probe IDs by layer/domain and optional ticker', () => {
+    expect(getProbeIdForRow('silver', 'market')).toBe('probe:silver:market');
+    expect(getProbeIdForRow('gold', 'finance', 'aapl')).toBe('probe:gold:finance:AAPL');
+    expect(getProbeIdForRow('platinum', 'market', 'SPY')).toBe('probe:platinum:market:SPY');
+    expect(getProbeIdForRow('silver', 'market', 'bad/ticker')).toBeNull();
   });
 });

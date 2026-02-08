@@ -215,9 +215,8 @@ export interface ValidationColumnStat {
   name: string;
   type: string;
   total: number;
-  unique: number;
   notNull: number;
-  null: number;
+  nullPct: number;
 }
 
 export interface ValidationReport {
@@ -323,9 +322,16 @@ export const apiService = {
   getDataQualityValidation(
     layer: string,
     domain: string,
+    tickerOrSignal?: string | AbortSignal,
     signal?: AbortSignal
   ): Promise<ValidationReport> {
-    return request<ValidationReport>(`/data/quality/${layer}/${domain}/validation`, { signal });
+    const ticker = typeof tickerOrSignal === 'string' ? tickerOrSignal : undefined;
+    const resolvedSignal =
+      tickerOrSignal instanceof AbortSignal ? tickerOrSignal : signal;
+    return request<ValidationReport>(`/data/quality/${layer}/${domain}/validation`, {
+      params: { ticker },
+      signal: resolvedSignal
+    });
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeResponse> {

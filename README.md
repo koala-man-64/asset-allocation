@@ -43,6 +43,9 @@ pnpm dev
 
 ### Troubleshooting
 - If you see `'vite' is not recognized...`, run `pnpm install` in `ui/` (or delete `ui/node_modules` and reinstall).
+- If UI loads but API calls do not respond, check for API port conflicts:
+  - `python3 scripts/run_api_dev.py` (or use VS Code task `api: dev`).
+  - If it reports `Port ... is already in use`, free that port or set matching values for `API_PORT` and `VITE_API_PROXY_TARGET` in `.env` / `.env.local`.
 
 ## Backend API (UI)
 

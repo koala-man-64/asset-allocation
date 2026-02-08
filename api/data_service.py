@@ -134,6 +134,13 @@ class DataService:
                 path = DataPaths.get_market_data_path(ticker) if is_raw else DataPaths.get_gold_features_path(ticker)
             else:
                 path = DataPaths.get_market_data_by_date_path() if is_raw else DataPaths.get_gold_features_by_date_path()
+        elif resolved_domain == "finance":
+            if is_raw:
+                # Silver finance probing defaults to the by-date dataset (all symbols/sub-domains).
+                path = DataPaths.get_finance_by_date_path()
+            else:
+                # Gold supports per-ticker and by-date datasets.
+                path = DataPaths.get_gold_finance_path(ticker) if ticker else DataPaths.get_gold_finance_by_date_path()
         elif resolved_domain == "earnings":
             if ticker:
                 path = DataPaths.get_earnings_path(ticker) if is_raw else DataPaths.get_gold_earnings_path(ticker)
@@ -268,6 +275,46 @@ class DataService:
                 container,
                 blob_path,
                 kind="json",
+                limit=limit,
+                client=client,
+            )
+
+        if domain == "finance":
+            if symbol:
+                symbol_prefixes = [
+                    f"finance-data/balance_sheet/{symbol}_",
+                    f"finance-data/income_statement/{symbol}_",
+                    f"finance-data/cash_flow/{symbol}_",
+                    f"finance-data/valuation/{symbol}_",
+                ]
+                blob_path = ""
+                for prefix in symbol_prefixes:
+                    try:
+                        blob_path = DataService._first_bronze_blob_path(
+                            client,
+                            container=container,
+                            prefix=prefix,
+                            allowed_suffixes=(".csv",),
+                        )
+                        break
+                    except FileNotFoundError:
+                        continue
+                if not blob_path:
+                    raise FileNotFoundError(
+                        f"No Bronze finance blobs found for symbol={symbol!r} under {container}/finance-data/"
+                    )
+            else:
+                blob_path = DataService._first_bronze_blob_path(
+                    client,
+                    container=container,
+                    prefix="finance-data",
+                    allowed_suffixes=(".csv",),
+                )
+
+            return DataService._read_bronze_raw(
+                container,
+                blob_path,
+                kind="csv",
                 limit=limit,
                 client=client,
             )

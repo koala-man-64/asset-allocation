@@ -170,9 +170,10 @@ export const DataService = {
   getDataQualityValidation(
     layer: string,
     domain: string,
+    tickerOrSignal?: string | AbortSignal,
     signal?: AbortSignal
   ): Promise<ValidationReport> {
-    return apiService.getDataQualityValidation(layer, domain, signal);
+    return apiService.getDataQualityValidation(layer, domain, tickerOrSignal, signal);
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeResponse> {

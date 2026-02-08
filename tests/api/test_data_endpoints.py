@@ -116,3 +116,40 @@ async def test_data_endpoint_normalizes_ticker_to_uppercase(monkeypatch):
 
     assert resp.status_code == 200
     assert calls == [("silver", "market", "AAPL")]
+
+
+@pytest.mark.asyncio
+async def test_validation_endpoint_calls_service_with_normalized_ticker(monkeypatch):
+    calls = []
+
+    def fake_get_validation_report(layer: str, domain: str, ticker: str | None = None):
+        calls.append((layer, domain, ticker))
+        return {
+            "layer": layer,
+            "domain": domain,
+            "status": "healthy",
+            "rowCount": 1,
+            "columns": [],
+            "timestamp": "2026-02-08T00:00:00Z",
+        }
+
+    monkeypatch.setattr(
+        data_endpoints.ValidationService, "get_validation_report", fake_get_validation_report
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/quality/silver/market/validation?ticker=msft")
+
+    assert resp.status_code == 200
+    assert calls == [("silver", "market", "MSFT")]
+
+
+@pytest.mark.asyncio
+async def test_validation_endpoint_rejects_invalid_ticker():
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/quality/silver/market/validation?ticker=BAD/TICKER")
+
+    assert resp.status_code == 400
+    assert "Invalid ticker format" in resp.text

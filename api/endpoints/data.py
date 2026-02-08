@@ -416,16 +416,19 @@ def get_validation_report(
     layer: str,
     domain: str,
     request: Request,
+    ticker: Optional[str] = Query(default=None),
 ):
     """
     Returns a data quality validation report for the specified layer and domain.
     Computed on-demand by ValidationService.
     """
     request_id = request.headers.get("x-request-id", "")
+    ticker_normalized = _validate_ticker(ticker)
     logger.info(
-        "Validation report request: layer=%s domain=%s request_id=%s",
+        "Validation report request: layer=%s domain=%s ticker=%s request_id=%s",
         layer,
         domain,
+        ticker_normalized or "-",
         request_id or "-"
     )
     validate_auth(request)
@@ -435,7 +438,7 @@ def get_validation_report(
          raise HTTPException(status_code=400, detail="Layer must be 'bronze', 'silver', or 'gold'")
 
     try:
-        report = ValidationService.get_validation_report(layer, domain)
+        report = ValidationService.get_validation_report(layer, domain, ticker_normalized)
         return report
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

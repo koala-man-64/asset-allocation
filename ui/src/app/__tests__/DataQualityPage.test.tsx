@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
-import { DataService, type MarketData, type FinanceData } from '@/services/DataService';
+import { DataService } from '@/services/DataService';
 import type { SystemHealth } from '@/types/strategy';
 
 const { mockUseSystemHealthQuery, mockUseLineageQuery, mockGetLastSystemHealthMeta } = vi.hoisted(
@@ -25,9 +25,7 @@ vi.mock('@/hooks/useDataQueries', () => ({
 vi.mock('@/services/DataService', () => ({
   DataService: {
     getSystemHealthWithMeta: vi.fn(),
-    getMarketData: vi.fn(),
-    getFinanceData: vi.fn(),
-    getGenericData: vi.fn()
+    getDataQualityValidation: vi.fn()
   }
 }));
 
@@ -86,15 +84,15 @@ describe('DataQualityPage', () => {
         stale: false
       }
     });
-    vi.mocked(DataService.getMarketData).mockResolvedValue([
-      { symbol: 'SPY' }
-    ] as unknown as MarketData[]);
-    vi.mocked(DataService.getFinanceData).mockResolvedValue([
-      { symbol: 'SPY' }
-    ] as unknown as FinanceData[]);
-    vi.mocked(DataService.getGenericData).mockResolvedValue([
-      { symbol: 'SPY' }
-    ] as unknown as Record<string, unknown>[]);
+    vi.mocked(DataService.getDataQualityValidation).mockResolvedValue({
+      layer: 'silver',
+      domain: 'market',
+      status: 'healthy',
+      rowCount: 42,
+      columns: [],
+      timestamp: '2026-02-06T00:00:00Z',
+      sampleLimit: 1000
+    });
   });
 
   it('renders main dashboard sections', async () => {
@@ -146,5 +144,22 @@ describe('DataQualityPage', () => {
     const refreshButton = await screen.findByRole('button', { name: /^refresh$/i });
     fireEvent.click(refreshButton);
     expect(DataService.getSystemHealthWithMeta).toHaveBeenCalledWith({ refresh: true });
+  });
+
+  it('requires a valid symbol before enabling probe actions', async () => {
+    renderWithProviders(<DataQualityPage />);
+
+    const runButtons = await screen.findAllByRole('button', { name: /run probes/i });
+    expect(runButtons.length).toBeGreaterThan(0);
+    for (const button of runButtons) {
+      expect(button).toBeDisabled();
+    }
+
+    const symbolInput = screen.getByLabelText(/symbol/i);
+    fireEvent.change(symbolInput, { target: { value: 'AAPL' } });
+
+    for (const button of runButtons) {
+      expect(button).toBeEnabled();
+    }
   });
 });

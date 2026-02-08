@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getLastSystemHealthMeta,
@@ -8,9 +8,8 @@ import {
 } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
-import { Input } from '@/app/components/ui/input';
 import { Badge } from '@/app/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { Input } from '@/app/components/ui/input';
 import {
   Table,
   TableBody,
@@ -24,7 +23,6 @@ import { formatTimeAgo, getStatusConfig } from './system-status/SystemStatusHelp
 import { sanitizeExternalUrl } from '@/utils/urlSecurity';
 import type { RequestMeta } from '@/services/apiService';
 import {
-  clampInt,
   computeLayerDrift,
   domainKey,
   formatDurationMs,
@@ -33,7 +31,6 @@ import {
   normalizeDomainName,
   normalizeLayerName,
   parseImpactsByDomain,
-  scoreFromStatus,
   type DomainRow
 } from './data-quality/dataQualityUtils';
 import {
@@ -44,20 +41,11 @@ import {
   FlaskConical,
   RefreshCw,
   ScanSearch,
-  ShieldAlert,
-  Timer,
-  TriangleAlert
+  ShieldAlert
 } from 'lucide-react';
 import { DataPipelinePanel } from '@/app/components/pages/data-quality/DataPipelinePanel';
 
-import { useDataProbes, ProbeStatus, ProbeResult } from '@/hooks/useDataProbes';
-
-const FINANCE_SUBDOMAINS: Array<{ value: string; label: string }> = [
-  { value: 'balance_sheet', label: 'Balance Sheet' },
-  { value: 'income_statement', label: 'Income Statement' },
-  { value: 'cash_flow', label: 'Cash Flow' },
-  { value: 'valuation', label: 'Valuation' }
-];
+import { useDataProbes, ProbeStatus } from '@/hooks/useDataProbes';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -104,12 +92,18 @@ export function DataQualityPage() {
   const health = useSystemHealthQuery();
   const lineage = useLineageQuery();
 
-  const [ticker, setTicker] = useState('');
-  const [financeSubDomain, setFinanceSubDomain] = useState('');
-  const [onlyIssues, setOnlyIssues] = useState(false);
   const [isForceRefreshing, setIsForceRefreshing] = useState(false);
+  const [probeSymbol, setProbeSymbol] = useState('');
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [healthMeta, setHealthMeta] = useState<RequestMeta | null>(null);
+  const normalizedProbeSymbol = useMemo(
+    () =>
+      String(probeSymbol || '')
+        .trim()
+        .toUpperCase(),
+    [probeSymbol]
+  );
+  const hasValidProbeSymbol = isValidTickerSymbol(normalizedProbeSymbol);
 
   useEffect(() => {
     if (health.dataUpdatedAt) {
@@ -146,22 +140,27 @@ export function DataQualityPage() {
     return parseImpactsByDomain(raw);
   }, [lineage.data]);
 
+  const {
+    probeResults,
+    setProbeResults,
+    runAll,
+    cancelRunAll,
+    isRunningAll,
+    runAllStatusMessage,
+    setRunAllStatusMessage
+  } = useDataProbes({
+    ticker: normalizedProbeSymbol,
+    rows
+  });
+
+  useEffect(() => {
+    setProbeResults({});
+    setRunAllStatusMessage(null);
+  }, [normalizedProbeSymbol, setProbeResults, setRunAllStatusMessage]);
+
   const summary = useMemo(() => {
     const payload = health.data;
     const overall = payload?.overall || 'unknown';
-    const layerPenalty = (payload?.dataLayers || []).reduce(
-      (acc, layer) => acc + scoreFromStatus(layer.status),
-      0
-    );
-    const domainPenalty = rows.reduce((acc, row) => acc + scoreFromStatus(row.domain.status), 0);
-    const probePenalty = Object.values(probeResults).reduce(
-      (acc, probe) => acc + scoreFromStatus(probe.status),
-      0
-    );
-
-    const penalty =
-      layerPenalty + Math.round(domainPenalty * 0.6) + Math.round(probePenalty * 1.25);
-    const score = clampInt(100 - penalty, 0, 100);
 
     const failures = rows.filter((r) =>
       ['error', 'critical', 'failed'].includes(String(r.domain.status).toLowerCase())
@@ -173,25 +172,11 @@ export function DataQualityPage() {
 
     return {
       overall,
-      score,
       failures,
       stales,
       probesFailing
     };
   }, [health.data, rows, probeResults]);
-
-  const {
-    probeResults,
-    runAll,
-    cancelRunAll,
-    isRunningAll,
-    runAllStatusMessage,
-    setRunAllStatusMessage
-  } = useDataProbes({
-    financeSubDomain,
-    ticker,
-    rows
-  });
 
   const forceRefresh = useCallback(async () => {
     if (isForceRefreshing) return;
@@ -208,24 +193,8 @@ export function DataQualityPage() {
     } finally {
       setIsForceRefreshing(false);
     }
-  }, [isForceRefreshing, queryClient]);
+  }, [isForceRefreshing, queryClient, setRunAllStatusMessage]);
 
-  const filteredRows = useMemo(() => {
-    if (!onlyIssues) return rows;
-    return rows.filter((row) => {
-      const status = String(row.domain.status || '').toLowerCase();
-      const domainIssue = ['warning', 'degraded', 'stale', 'critical', 'error', 'failed'].includes(
-        status
-      );
-      const probeId = getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain);
-      const probeStatus = probeId ? probeResults[probeId]?.status : undefined;
-      const probeIssue = probeStatus === 'warn' || probeStatus === 'fail';
-      return domainIssue || probeIssue;
-    });
-  }, [financeSubDomain, onlyIssues, probeResults, rows]);
-
-  const tickerCandidate = ticker.trim().toUpperCase();
-  const tickerIsValid = tickerCandidate.length === 0 || isValidTickerSymbol(tickerCandidate);
   const safeExternalHosts = useMemo(
     () => [window.location.hostname, 'portal.azure.com', '*.portal.azure.com'].filter(Boolean),
     []
@@ -271,171 +240,141 @@ export function DataQualityPage() {
   return (
     <div className="dq min-h-[calc(100vh-6rem)]">
       <div className="dq-shell">
-        <header className="dq-hero">
-          <div className="dq-hero-left">
+        <header className="dq-panel dq-panel-pad dq-hero">
+          <div className="dq-hero-brand">
             <div className="dq-kicker flex items-center gap-2">
               <FlaskConical className="h-4 w-4" />
               VALIDATION HARNESS
             </div>
-            <div className="flex items-end gap-4">
+            <div className="dq-hero-title-row">
               <h1 className="dq-title">Data Quality</h1>
-              <div
-                className="dq-stamp"
-                data-status={summary.score >= 85 ? 'pass' : summary.score >= 65 ? 'warn' : 'fail'}
-              >
-                SCORE {summary.score}
-              </div>
             </div>
-            <p className="dq-subtitle">
+            <p className="dq-subtitle dq-hero-subtitle">
               Cross-check freshness, structure, and API reachability across the container/folder
               topology.
             </p>
           </div>
 
-          <div className="dq-hero-right">
-            <div className="dq-scorecard">
+          <div className="dq-hero-rail">
+            <div className="dq-scorecard dq-hero-health">
               <div className="dq-scorecard-top">
                 <headerStatus.icon className="h-5 w-5" style={{ color: headerStatus.text }} />
                 <div className="dq-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">
                   SYSTEM
                 </div>
-              </div>
-              <div className="dq-scorecard-main">
                 <div className="dq-scorecard-label">Overall</div>
                 <div className="dq-scorecard-value" style={{ color: headerStatus.text }}>
                   {String(summary.overall).toUpperCase()}
                 </div>
               </div>
-              <div className="dq-scorecard-grid">
-                <div className="dq-metric">
-                  <div className="dq-metric-label">Failures</div>
-                  <div className="dq-metric-value">{summary.failures}</div>
+              <div className="dq-count-strip">
+                <div className="dq-count-item">
+                  <span className="dq-count-label">Failures</span>
+                  <span className="dq-count-value">{summary.failures}</span>
                 </div>
-                <div className="dq-metric">
-                  <div className="dq-metric-label">Stale/Warn</div>
-                  <div className="dq-metric-value">{summary.stales}</div>
+                <div className="dq-count-item">
+                  <span className="dq-count-label">Stale/Warn</span>
+                  <span className="dq-count-value">{summary.stales}</span>
                 </div>
-                <div className="dq-metric">
-                  <div className="dq-metric-label">Probes Failed</div>
-                  <div className="dq-metric-value">{summary.probesFailing}</div>
+                <div className="dq-count-item">
+                  <span className="dq-count-label">Probes Failed</span>
+                  <span className="dq-count-value">{summary.probesFailing}</span>
                 </div>
               </div>
             </div>
 
-            <div className="dq-actions">
-              <Button
-                variant="outline"
-                className="dq-btn"
-                onClick={() => void forceRefresh()}
-                disabled={health.isFetching || isForceRefreshing || isRunningAll}
-              >
-                <RefreshCw
-                  className={cn(
-                    'h-4 w-4',
-                    (health.isFetching || isForceRefreshing) && 'animate-spin'
-                  )}
-                />
-                Refresh
-              </Button>
-              <Button
-                className="dq-btn-primary"
-                onClick={() => void runAll()}
-                disabled={health.isFetching || isRunningAll}
-              >
-                <ScanSearch className={cn('h-4 w-4', isRunningAll && 'animate-spin')} />
-                {isRunningAll ? 'Running…' : 'Run Probes'}
-              </Button>
-              {isRunningAll && (
-                <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
-                  <CircleSlash2 className="h-4 w-4" />
-                  Cancel
-                </Button>
-              )}
-            </div>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="dq-kicker">TARGET</div>
-                <div className="dq-title text-lg">Probe Config</div>
-                <p className="dq-subtitle mt-1 text-sm">
-                  Pick one symbol; we’ll use it to validate per-ticker partitions in Silver/Gold.
-                </p>
-              </div>
-              <div className="dq-toggle">
-                <button
-                  type="button"
-                  onClick={() => setOnlyIssues((v) => !v)}
-                  className={cn('dq-toggle-btn', onlyIssues && 'dq-toggle-btn-on')}
+            <div className="dq-hero-controls">
+              <div className="dq-actions">
+                <Button
+                  variant="outline"
+                  className="dq-btn"
+                  onClick={() => void forceRefresh()}
+                  disabled={health.isFetching || isForceRefreshing || isRunningAll}
                 >
-                  {onlyIssues ? (
-                    <TriangleAlert className="h-4 w-4" />
-                  ) : (
-                    <CircleSlash2 className="h-4 w-4" />
-                  )}
-                  {onlyIssues ? 'Issues only' : 'All rows'}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="dq-field-label" htmlFor="dq-ticker">
-                  Probe Ticker
-                </label>
-                <div className="mt-1 flex items-center gap-2">
-                  <Input
-                    id="dq-ticker"
-                    value={ticker}
-                    onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                    placeholder="SPY"
-                    className="dq-input font-mono uppercase"
-                    spellCheck={false}
+                  <RefreshCw
+                    className={cn(
+                      'h-4 w-4',
+                      (health.isFetching || isForceRefreshing) && 'animate-spin'
+                    )}
                   />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="dq-btn-icon"
-                        onClick={() => setTicker('')}
-                        aria-label="Clear ticker"
-                      >
-                        <Timer className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Clear ticker</TooltipContent>
-                  </Tooltip>
-                </div>
-                {!tickerIsValid && (
-                  <div className="mt-1 dq-mono text-[11px] text-rose-500">
-                    Ticker format is invalid (example: AAPL, BRK.B).
-                  </div>
+                  Refresh
+                </Button>
+                <Button
+                  className="dq-btn-primary"
+                  onClick={() => void runAll()}
+                  disabled={health.isFetching || isRunningAll || !hasValidProbeSymbol}
+                >
+                  <ScanSearch className={cn('h-4 w-4', isRunningAll && 'animate-spin')} />
+                  {isRunningAll ? 'Running…' : 'Run Probes'}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="dq-btn"
+                  onClick={() => setProbeResults({})}
+                  disabled={isRunningAll}
+                >
+                  <ShieldAlert className="h-4 w-4" />
+                  Clear
+                </Button>
+                {isRunningAll && (
+                  <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
+                    <CircleSlash2 className="h-4 w-4" />
+                    Cancel
+                  </Button>
                 )}
               </div>
-
-              <div>
-                <label className="dq-field-label" htmlFor="dq-finance">
-                  Finance View
-                </label>
-                <div className="mt-1 grid grid-cols-2 gap-2">
-                  {FINANCE_SUBDOMAINS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      className={cn(
-                        'dq-pill-btn',
-                        financeSubDomain === opt.value && 'dq-pill-btn-on'
-                      )}
-                      onClick={() => setFinanceSubDomain(opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+              <div className="dq-probe-inline">
+                <div className="dq-probe-copy">
+                  <div className="dq-kicker">PROBE MODE</div>
+                  <p className="dq-subtitle text-sm">
+                    Probes always run across all datasets for the symbol you enter.
+                  </p>
+                </div>
+                <div className="dq-symbol-field">
+                  <div className="dq-kicker">PROBE INPUT</div>
+                  <label htmlFor="probe-symbol-input" className="dq-field-label">
+                    Symbol
+                  </label>
+                  <Input
+                    id="probe-symbol-input"
+                    className="dq-input mt-1 font-mono uppercase tracking-[0.08em]"
+                    placeholder="AAPL"
+                    value={probeSymbol}
+                    onChange={(event) => setProbeSymbol(event.target.value)}
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-invalid={probeSymbol.length > 0 && !hasValidProbeSymbol}
+                  />
+                  <div className="mt-1 dq-mono text-[11px] text-muted-foreground">
+                    {probeSymbol.length === 0
+                      ? 'Required to run probes.'
+                      : hasValidProbeSymbol
+                        ? `Will probe symbol ${normalizedProbeSymbol}.`
+                        : 'Use ticker format: AAPL, BRK.B, or SPY.'}
+                  </div>
                 </div>
               </div>
+              {runAllStatusMessage && (
+                <div className="dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
+              )}
             </div>
           </div>
         </header>
 
-        <DataPipelinePanel drift={drift} />
+        <section className="dq-panel dq-panel-pad mt-6">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <div className="dq-kicker">PIPELINE FLOW</div>
+              <div className="dq-title text-lg">Medallion Validation Graph</div>
+              <p className="dq-subtitle mt-1 text-sm">
+                Each node probes a full dataset and shows the latest recorded update timestamp for
+                that medallion-domain.
+              </p>
+            </div>
+          </div>
+          <DataPipelinePanel drift={drift} rows={rows} />
+        </section>
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
@@ -449,7 +388,7 @@ export function DataQualityPage() {
             </div>
             <div className="dq-ledger-meta">
               <div className="dq-mono text-xs text-muted-foreground">
-                Rows: {filteredRows.length.toLocaleString()}
+                Rows: {rows.length.toLocaleString()}
               </div>
             </div>
           </div>
@@ -469,14 +408,14 @@ export function DataQualityPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredRows.map((row) => {
+                {rows.map((row) => {
                   const layerKey = normalizeLayerName(row.layerName) || row.layerName;
                   const domainName = normalizeDomainName(row.domain.name);
                   const status = getStatusConfig(row.domain.status);
                   const probeId = getProbeIdForRow(
                     row.layerName,
                     row.domain.name,
-                    financeSubDomain
+                    normalizedProbeSymbol
                   );
 
                   const probe = probeId ? probeResults[probeId] : undefined;
@@ -563,29 +502,7 @@ export function DataQualityPage() {
                               {formatDurationMs(probe.ms)}
                             </div>
                           )}
-                          {probeId && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  className="dq-btn-icon"
-                                  onClick={() => void probeForRow(row)}
-                                  disabled={probeStatus === 'running' || isRunningAll}
-                                  aria-label={`Probe ${row.layerName} ${row.domain.name}`}
-                                >
-                                  <ScanSearch
-                                    className={cn(
-                                      'h-4 w-4',
-                                      probeStatus === 'running' && 'animate-spin'
-                                    )}
-                                  />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {probe?.detail ? `${probe.title}: ${probe.detail}` : 'Run probe'}
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
+                          {!probeId && <span className="dq-mono text-[10px] text-muted-foreground">—</span>}
                         </div>
                       </TableCell>
 
@@ -660,35 +577,7 @@ export function DataQualityPage() {
                 </>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                className="dq-btn"
-                onClick={() => setProbeResults({})}
-                disabled={isRunningAll}
-              >
-                <ShieldAlert className="h-4 w-4" />
-                Clear Probes
-              </Button>
-              <Button
-                className="dq-btn-primary"
-                onClick={() => void runAll()}
-                disabled={health.isFetching || isRunningAll}
-              >
-                <ScanSearch className="h-4 w-4" />
-                {isRunningAll ? 'Running…' : 'Run All Supported'}
-              </Button>
-              {isRunningAll && (
-                <Button variant="outline" className="dq-btn" onClick={cancelRunAll}>
-                  <CircleSlash2 className="h-4 w-4" />
-                  Cancel
-                </Button>
-              )}
-            </div>
           </div>
-          {runAllStatusMessage && (
-            <div className="mt-2 dq-mono text-xs text-muted-foreground">{runAllStatusMessage}</div>
-          )}
         </section>
       </div>
     </div>
