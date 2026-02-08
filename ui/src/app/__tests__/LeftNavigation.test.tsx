@@ -2,6 +2,15 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { LeftNavigation } from '../components/layout/LeftNavigation';
 import { BrowserRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+    },
+  },
+});
 
 // Mock lucide-react to avoid issues with icon rendering in tests
 vi.mock('lucide-react', () => ({
@@ -34,9 +43,11 @@ vi.mock('lucide-react', () => ({
 describe('LeftNavigation', () => {
   it('renders navigation sections and items', () => {
     render(
-      <BrowserRouter>
-        <LeftNavigation />
-      </BrowserRouter>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <LeftNavigation />
+        </BrowserRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('Stock Explorer')).toBeDefined();
@@ -46,9 +57,11 @@ describe('LeftNavigation', () => {
 
   it('toggles collapsed state when clicking the button', () => {
     render(
-      <BrowserRouter>
-        <LeftNavigation />
-      </BrowserRouter>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <LeftNavigation />
+        </BrowserRouter>
+      </QueryClientProvider>
     );
 
     const toggleButton = screen.getByRole('button', { name: /icon-(left|right)/i });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getLastSystemHealthMeta,
@@ -11,6 +11,7 @@ import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Badge } from '@/app/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { Skeleton } from '@/app/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -48,7 +49,8 @@ import {
   Timer,
   TriangleAlert
 } from 'lucide-react';
-import { DataPipelinePanel } from '@/app/components/pages/data-quality/DataPipelinePanel';
+// Lazy load DataPipelinePanel
+const DataPipelinePanel = lazy(() => import('@/app/components/pages/data-quality/DataPipelinePanel').then(m => ({ default: m.DataPipelinePanel })));
 
 import { useDataProbes, ProbeStatus, ProbeResult } from '@/hooks/useDataProbes';
 
@@ -435,7 +437,9 @@ export function DataQualityPage() {
           </div>
         </header>
 
-        <DataPipelinePanel drift={drift} />
+        <Suspense fallback={<Skeleton className="h-[200px] w-full rounded-xl bg-muted/20" />}>
+          <DataPipelinePanel drift={drift} />
+        </Suspense>
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
