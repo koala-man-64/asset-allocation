@@ -70,7 +70,11 @@ env:
   ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS || '7' }}
   ALPHA_VANTAGE_FINANCE_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_FINANCE_FRESH_DAYS || '28' }}
   # Massive tunables (defaults match .env.template / provider config)
+  MASSIVE_BASE_URL: ${{ vars.MASSIVE_BASE_URL || 'https://api.massive.com' }}
   MASSIVE_TIMEOUT_SECONDS: ${{ vars.MASSIVE_TIMEOUT_SECONDS || '30' }}
+  MASSIVE_PREFER_OFFICIAL_SDK: ${{ vars.MASSIVE_PREFER_OFFICIAL_SDK || 'true' }}
+  MASSIVE_MAX_WORKERS: ${{ vars.MASSIVE_MAX_WORKERS || '32' }}
+  MASSIVE_FINANCE_FRESH_DAYS: ${{ vars.MASSIVE_FINANCE_FRESH_DAYS || '28' }}
 
 jobs:
   tests:
@@ -598,6 +602,7 @@ jobs:
         env:
           API_KEY: ${{ secrets.API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
@@ -686,6 +691,23 @@ jobs:
           echo "Deploying API app from YAML..."
           tmp="deploy/app_api.tmp.yaml"
           envsubst < deploy/app_api.yaml > "$tmp"
+
+          # MASSIVE_API_KEY is optional. If absent, remove Massive secret wiring so
+          # Container Apps does not reject an empty secret value.
+          if [ -z "${MASSIVE_API_KEY:-}" ]; then
+            echo "MASSIVE_API_KEY is empty; removing Massive secret/env bindings from API manifest."
+            awk '
+              # Remove secret entry:
+              /^[[:space:]]*- name: massive-api-key[[:space:]]*$/ { skip=1; next }
+              skip == 1 && /^[[:space:]]*value:[[:space:]]*/ { skip=0; next }
+              # Remove env secretRef:
+              /^[[:space:]]*- name: MASSIVE_API_KEY[[:space:]]*$/ { skip=2; next }
+              skip == 2 && /^[[:space:]]*secretRef:[[:space:]]*massive-api-key[[:space:]]*$/ { skip=0; next }
+              { print }
+            ' "$tmp" > "${tmp}.filtered"
+            mv "${tmp}.filtered" "$tmp"
+          fi
+
           echo "Rendered YAML (secrets redacted):"
           awk '
             {
