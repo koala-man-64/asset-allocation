@@ -46,17 +46,15 @@
 }
 
 .dq-stage-bronze .dq-stage-dot {
-  background-color: #d97706;
+  background-color: var(--amber-600);
 }
 
-/* Amber 600 */
 .dq-stage-silver .dq-stage-dot {
-  background-color: #64748b;
+  background-color: var(--slate-500);
 }
 
-/* Slate 500 */
 .dq-stage-gold .dq-stage-dot {
-  background-color: #eab308;
+  background-color: var(--yellow-500);
 }
 
 /* Yellow 500 */

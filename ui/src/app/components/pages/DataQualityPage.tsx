@@ -50,19 +50,7 @@ import {
 } from 'lucide-react';
 import { DataPipelinePanel } from '@/app/components/pages/data-quality/DataPipelinePanel';
 
-type ProbeStatus = 'idle' | 'running' | 'pass' | 'warn' | 'fail';
-
-type ProbeResult = {
-  status: ProbeStatus;
-  at: string;
-  ms?: number;
-  title: string;
-  detail?: string;
-  meta?: Record<string, unknown>;
-};
-
-const PROBE_TIMEOUT_MS = 20_000;
-const RUN_ALL_CONCURRENCY = 3;
+import { useDataProbes, ProbeStatus, ProbeResult } from '@/hooks/useDataProbes';
 
 const FINANCE_SUBDOMAINS: Array<{ value: string; label: string }> = [
   { value: 'balance_sheet', label: 'Balance Sheet' },
@@ -119,14 +107,9 @@ export function DataQualityPage() {
   const [ticker, setTicker] = useState('');
   const [financeSubDomain, setFinanceSubDomain] = useState('');
   const [onlyIssues, setOnlyIssues] = useState(false);
-  const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
   const [isForceRefreshing, setIsForceRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [healthMeta, setHealthMeta] = useState<RequestMeta | null>(null);
-  const [isRunningAll, setIsRunningAll] = useState(false);
-  const [runAllStatusMessage, setRunAllStatusMessage] = useState<string | null>(null);
-  const runAllCancelledRef = useRef(false);
-  const runAllControllersRef = useRef<Set<AbortController>>(new Set());
 
   useEffect(() => {
     if (health.dataUpdatedAt) {
@@ -134,17 +117,6 @@ export function DataQualityPage() {
     }
     setHealthMeta(getLastSystemHealthMeta());
   }, [health.dataUpdatedAt]);
-
-  useEffect(
-    () => () => {
-      runAllCancelledRef.current = true;
-      for (const controller of runAllControllersRef.current) {
-        controller.abort();
-      }
-      runAllControllersRef.current.clear();
-    },
-    []
-  );
 
   const rows: DomainRow[] = useMemo(() => {
     const payload = health.data;
@@ -208,242 +180,18 @@ export function DataQualityPage() {
     };
   }, [health.data, rows, probeResults]);
 
-  const runProbe = useCallback(
-    async (
-      id: string,
-      title: string,
-      fn: (
-        signal: AbortSignal
-      ) => Promise<{ ok: boolean; detail?: string; meta?: Record<string, unknown> }>
-    ) => {
-      const started = performance.now();
-      const controller = new AbortController();
-      runAllControllersRef.current.add(controller);
-      const timeoutHandle = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-      setProbeResults((prev) => ({
-        ...prev,
-        [id]: {
-          status: 'running',
-          title,
-          at: nowIso()
-        }
-      }));
-
-      try {
-        const result = await fn(controller.signal);
-        const ms = performance.now() - started;
-        const status: ProbeStatus = result.ok ? 'pass' : 'fail';
-        console.info('[DataQualityProbe] completed', {
-          probeId: id,
-          title,
-          status,
-          durationMs: Math.round(ms)
-        });
-        setProbeResults((prev) => ({
-          ...prev,
-          [id]: {
-            status,
-            title,
-            at: nowIso(),
-            ms,
-            detail: result.detail,
-            meta: result.meta
-          }
-        }));
-      } catch (err: unknown) {
-        const ms = performance.now() - started;
-        const isAbort = controller.signal.aborted;
-        const message = isAbort
-          ? runAllCancelledRef.current
-            ? 'Probe cancelled.'
-            : `Probe timed out after ${Math.round(PROBE_TIMEOUT_MS / 1000)}s.`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-        console.warn('[DataQualityProbe] failed', {
-          probeId: id,
-          title,
-          durationMs: Math.round(ms),
-          reason: message
-        });
-        setProbeResults((prev) => ({
-          ...prev,
-          [id]: {
-            status: 'fail',
-            title,
-            at: nowIso(),
-            ms,
-            detail: message
-          }
-        }));
-      } finally {
-        window.clearTimeout(timeoutHandle);
-        runAllControllersRef.current.delete(controller);
-      }
-    },
-    []
-  );
-
-  const probeForRow = useCallback(
-    async (row: DomainRow) => {
-      const layer = normalizeLayerName(row.layerName);
-      const domain = normalizeDomainName(row.domain.name);
-      const resolvedTicker = ticker.trim().toUpperCase();
-
-      if (!resolvedTicker) {
-        setProbeResults((prev) => ({
-          ...prev,
-          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-            `row:${domainKey(row)}`]: {
-            status: 'fail',
-            title: 'Probe',
-            at: nowIso(),
-            detail: 'Ticker is required.'
-          }
-        }));
-        return;
-      }
-      if (!isValidTickerSymbol(resolvedTicker)) {
-        setProbeResults((prev) => ({
-          ...prev,
-          [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-            `row:${domainKey(row)}`]: {
-            status: 'fail',
-            title: 'Probe',
-            at: nowIso(),
-            detail: 'Ticker must match ^[A-Z][A-Z0-9.-]{0,9}$.'
-          }
-        }));
-        return;
-      }
-
-      if ((layer === 'silver' || layer === 'gold') && domain === 'market') {
-        const id = `probe:${layer}:market`;
-        await runProbe(id, `Market (${layer})`, async (signal) => {
-          const data = await DataService.getMarketData(resolvedTicker, layer, signal);
-          const count = Array.isArray(data) ? data.length : 0;
-          return {
-            ok: count > 0,
-            detail: count > 0 ? `Rows: ${count.toLocaleString()}` : 'No rows returned.',
-            meta: { count }
-          };
-        });
-        return;
-      }
-
-      if ((layer === 'silver' || layer === 'gold') && domain === 'finance') {
-        const id = `probe:${layer}:finance:${financeSubDomain}`;
-        await runProbe(id, `Finance (${layer})`, async (signal) => {
-          const data = await DataService.getFinanceData(
-            resolvedTicker,
-            financeSubDomain,
-            layer,
-            signal
-          );
-          const count = Array.isArray(data) ? data.length : 0;
-          return {
-            ok: count > 0,
-            detail: count > 0 ? `Rows: ${count.toLocaleString()}` : 'No rows returned.',
-            meta: { count, subDomain: financeSubDomain }
-          };
-        });
-        return;
-      }
-
-      if (
-        (layer === 'silver' || layer === 'gold') &&
-        (domain === 'earnings' || domain === 'price-target')
-      ) {
-        const id = `probe:${layer}:${domain}`;
-        await runProbe(id, `${domain} (${layer})`, async (signal) => {
-          const data = await DataService.getGenericData(
-            layer,
-            domain,
-            resolvedTicker,
-            undefined,
-            signal
-          );
-          const count = Array.isArray(data) ? data.length : 0;
-          const sampleKeys =
-            count > 0 && data && typeof data[0] === 'object' && data[0] !== null
-              ? Object.keys(data[0] as object).slice(0, 8)
-              : [];
-          return {
-            ok: count > 0,
-            detail:
-              count > 0
-                ? `Rows: ${count.toLocaleString()} • Keys: ${sampleKeys.join(', ') || '—'}`
-                : 'No rows returned.',
-            meta: { count, sampleKeys }
-          };
-        });
-        return;
-      }
-
-      setProbeResults((prev) => ({
-        ...prev,
-        [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
-          status: 'warn',
-          title: 'Probe',
-          at: nowIso(),
-          detail: 'No active probe is defined for this container/folder.'
-        }
-      }));
-    },
-    [financeSubDomain, runProbe, ticker]
-  );
-
-  const runAll = useCallback(async () => {
-    if (isRunningAll) return;
-    const supported = rows.filter((row) => {
-      const layer = normalizeLayerName(row.layerName);
-      const domain = normalizeDomainName(row.domain.name);
-      return (
-        (layer === 'silver' || layer === 'gold') &&
-        ['market', 'finance', 'earnings', 'price-target'].includes(domain)
-      );
-    });
-    if (supported.length === 0) {
-      setRunAllStatusMessage('No supported probes found in current ledger.');
-      return;
-    }
-
-    runAllCancelledRef.current = false;
-    setRunAllStatusMessage(null);
-    setIsRunningAll(true);
-    const queue = [...supported];
-    const workers = Array.from(
-      { length: Math.min(RUN_ALL_CONCURRENCY, queue.length) },
-      async () => {
-        while (!runAllCancelledRef.current) {
-          const row = queue.shift();
-          if (!row) {
-            return;
-          }
-          await probeForRow(row);
-        }
-      }
-    );
-
-    try {
-      await Promise.all(workers);
-      setRunAllStatusMessage(
-        runAllCancelledRef.current ? 'Probe run cancelled.' : 'Probe run complete.'
-      );
-    } finally {
-      setIsRunningAll(false);
-    }
-  }, [isRunningAll, probeForRow, rows]);
-
-  const cancelRunAll = useCallback(() => {
-    if (!isRunningAll) return;
-    runAllCancelledRef.current = true;
-    for (const controller of runAllControllersRef.current) {
-      controller.abort();
-    }
-    setRunAllStatusMessage('Cancelling probes...');
-  }, [isRunningAll]);
+  const {
+    probeResults,
+    runAll,
+    cancelRunAll,
+    isRunningAll,
+    runAllStatusMessage,
+    setRunAllStatusMessage
+  } = useDataProbes({
+    financeSubDomain,
+    ticker,
+    rows
+  });
 
   const forceRefresh = useCallback(async () => {
     if (isForceRefreshing) return;
