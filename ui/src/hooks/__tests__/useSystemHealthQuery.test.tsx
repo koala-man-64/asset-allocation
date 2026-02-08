@@ -18,8 +18,8 @@ describe('useSystemHealthQuery', () => {
 
   it('stops polling when the endpoint returns 404', async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, 'info').mockImplementation(() => { });
-    vi.spyOn(console, 'error').mockImplementation(() => { });
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const getSystemHealthSpy = vi
       .spyOn(DataService, 'getSystemHealthWithMeta')
