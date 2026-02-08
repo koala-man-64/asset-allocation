@@ -88,10 +88,10 @@ export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorP
     mutation.mutate(data);
   };
 
-    // Helper for Select components since they don't integrate directly with register
-    const handleSelectChange = (key: string, value: string) => {
-        setValue(key as Path<Strategy>, value);
-    };
+  // Helper for Select components since they don't integrate directly with register
+  const handleSelectChange = (key: string, value: string) => {
+    setValue(key as Path<Strategy>, value);
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

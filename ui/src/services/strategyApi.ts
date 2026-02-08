@@ -1,4 +1,4 @@
-import { apiService } from '@/services/apiService';
+import { request } from '@/services/apiService';
 
 export interface StrategyConfig {
   universe: string;
@@ -21,18 +21,20 @@ export interface Strategy {
 
 export const strategyApi = {
   async listStrategies(signal?: AbortSignal): Promise<Strategy[]> {
-    return apiService.get<Strategy[]>('/strategies', { signal });
+    return request<Strategy[]>('/strategies', { signal });
   },
 
   async getStrategy(name: string, signal?: AbortSignal): Promise<StrategyConfig> {
-    return apiService.get<StrategyConfig>(`/strategies/${encodeURIComponent(name)}`, { signal });
+    return request<StrategyConfig>(`/strategies/${encodeURIComponent(name)}`, { signal });
   },
 
   async saveStrategy(
     strategy: Strategy,
     signal?: AbortSignal
   ): Promise<{ status: string; message: string }> {
-    return apiService.post<{ status: string; message: string }>('/strategies', strategy, {
+    return request<{ status: string; message: string }>('/strategies', {
+      method: 'POST',
+      body: JSON.stringify(strategy),
       signal
     });
   }

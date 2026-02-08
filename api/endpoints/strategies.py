@@ -1,9 +1,9 @@
 import logging
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from api.service.dependencies import validate_auth
-from api.service.auth import AuthManager
+
 
 from core.strategy_repository import StrategyRepository
 

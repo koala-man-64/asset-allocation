@@ -38,8 +38,8 @@ describe('StrategyConfigPage', () => {
     vi.clearAllMocks();
   });
 
-    it('renders loading state initially', () => {
-        (strategyApi.listStrategies as Mock).mockReturnValue(new Promise(() => { })); // pending promise
+  it('renders loading state initially', () => {
+    (strategyApi.listStrategies as Mock).mockReturnValue(new Promise(() => {})); // pending promise
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -50,12 +50,12 @@ describe('StrategyConfigPage', () => {
     expect(screen.getByText(/loading strategies/i)).toBeInTheDocument();
   });
 
-    it('renders strategies list when data is available', async () => {
-        const mockStrategies = [
-            { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' },
-            { name: 'strat-2', type: 'code-based', description: 'desc 2', updated_at: '2023-01-02' }
-        ];
-        (strategyApi.listStrategies as Mock).mockResolvedValue(mockStrategies);
+  it('renders strategies list when data is available', async () => {
+    const mockStrategies = [
+      { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' },
+      { name: 'strat-2', type: 'code-based', description: 'desc 2', updated_at: '2023-01-02' }
+    ];
+    (strategyApi.listStrategies as Mock).mockResolvedValue(mockStrategies);
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -69,8 +69,8 @@ describe('StrategyConfigPage', () => {
     });
   });
 
-    it('opens editor when New Strategy button is clicked', async () => {
-        (strategyApi.listStrategies as Mock).mockResolvedValue([]);
+  it('opens editor when New Strategy button is clicked', async () => {
+    (strategyApi.listStrategies as Mock).mockResolvedValue([]);
 
     render(
       <QueryClientProvider client={queryClient}>
