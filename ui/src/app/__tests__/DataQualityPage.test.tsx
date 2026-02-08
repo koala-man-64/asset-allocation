@@ -97,12 +97,28 @@ describe('DataQualityPage', () => {
     ] as unknown as Record<string, unknown>[]);
   });
 
+  vi.mock('@/app/components/pages/data-quality/DataPipelinePanel', () => ({
+    DataPipelinePanel: () => <div data-testid="mock-data-pipeline-panel">Mock Pipeline Panel</div>
+  }));
+
   it('renders main dashboard sections', async () => {
     renderWithProviders(<DataQualityPage />);
     expect(await screen.findByRole('heading', { name: /data quality/i })).toBeInTheDocument();
-    expect(screen.getByText(/validation ledger/i)).toBeInTheDocument();
-    // Drift panel reduced to indicators in pipeline; check for pipeline headers instead
-    expect(screen.getByText(/Bronze \(Raw\)/i)).toBeInTheDocument();
+
+    // Header score
+    expect(screen.getByText(/SCORE 100/i)).toBeInTheDocument();
+
+    // Status card
+    expect(screen.getByText(/Overall/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/HEALTHY/i)[0]).toBeInTheDocument();
+
+    // DataPipelinePanel (Mocked - Lazy Loaded)
+    expect(await screen.findByTestId('mock-data-pipeline-panel')).toBeInTheDocument();
+
+    // Ledger Table (Inline)
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByText(/Layer/i)).toBeInTheDocument();
+    expect(screen.getByText(/Domain/i)).toBeInTheDocument();
   });
 
   it('renders loading state', () => {

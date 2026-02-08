@@ -148,6 +148,19 @@ export function DataQualityPage() {
     return parseImpactsByDomain(raw);
   }, [lineage.data]);
 
+  const {
+    probeResults,
+    runAll,
+    cancelRunAll,
+    isRunningAll,
+    runAllStatusMessage,
+    setRunAllStatusMessage
+  } = useDataProbes({
+    financeSubDomain,
+    ticker,
+    rows
+  });
+
   const summary = useMemo(() => {
     const payload = health.data;
     const overall = payload?.overall || 'unknown';
@@ -181,19 +194,6 @@ export function DataQualityPage() {
       probesFailing
     };
   }, [health.data, rows, probeResults]);
-
-  const {
-    probeResults,
-    runAll,
-    cancelRunAll,
-    isRunningAll,
-    runAllStatusMessage,
-    setRunAllStatusMessage
-  } = useDataProbes({
-    financeSubDomain,
-    ticker,
-    rows
-  });
 
   const forceRefresh = useCallback(async () => {
     if (isForceRefreshing) return;

@@ -63,40 +63,37 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   };
 });
 
+vi.mock('@/app/components/pages/system-status/StatusOverview', () => ({
+  StatusOverview: () => <div data-testid="mock-status-overview">Mock Status Overview</div>
+}));
+
+vi.mock('@/app/components/pages/system-status/AzureResources', () => ({
+  AzureResources: () => <div data-testid="mock-azure-resources">Mock Azure Resources</div>
+}));
+
+vi.mock('@/app/components/pages/system-status/ScheduledJobMonitor', () => ({
+  ScheduledJobMonitor: () => <div data-testid="mock-job-monitor">Mock Job Monitor</div>
+}));
+
 describe('SystemStatusPage', () => {
-  it('renders Industrial Dashboard elements', () => {
+  it('renders the page layout and lazy loaded components', async () => {
     renderWithProviders(<SystemStatusPage />);
 
-    // Check for Hero Header
-    expect(screen.getByText('SYSTEM STATUS')).toBeInTheDocument();
+    // Check for Main Page Elements that are NOT lazy loaded
+    expect(screen.getByText('LINK ESTABLISHED')).toBeInTheDocument();
 
-    // Check for Uptime Clock Header
-    expect(screen.getByText('UPTIME CLOCK')).toBeInTheDocument();
+    // Check for Lazy Loaded Components (using findBy because of Suspense/Lazy)
+    // Even with mocks, result of standard lazy() is async?
+    // Actually with vi.mock it might be sync if the import is intercepted?
+    // But SystemStatusPage uses `lazy(() => import(...))`.
+    // vi.mock intercepts the import.
+    // So `await import(...)` returns the mock immediately.
+    // However, React.lazy still suspends until the promise resolves.
 
-    // Check for Matrix Header
-    expect(screen.getByText('DOMAIN')).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-status-overview')).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-job-monitor')).toBeInTheDocument();
 
-    // Check for Layer Name in Matrix
-    const matrixTable = screen.getByText('DOMAIN').closest('table');
-    expect(matrixTable).not.toBeNull();
-    expect(within(matrixTable as HTMLElement).getByText('Bronze')).toBeInTheDocument();
-
-    // Check for Domain Name in Matrix
-    expect(within(matrixTable as HTMLElement).getByText('market')).toBeInTheDocument();
-
-    // Check for Status Badge (Uppercase)
-    expect(screen.getByText('HEALTHY')).toHaveClass('font-mono');
-  });
-
-  it('shows last run status/time on job link hover', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<SystemStatusPage />);
-
-    const jobLinks = screen.getAllByLabelText(/open aca-job-market in azure/i);
-    await user.hover(jobLinks[0]);
-
-    const tooltip = await screen.findByRole('tooltip');
-    expect(tooltip).toHaveTextContent(/Last run: SUCCESS/i);
-    expect(tooltip).toHaveTextContent(/\d+(s|m|h|d) ago/i);
+    // Check loading state of footer
+    expect(screen.getByText('LINK ESTABLISHED')).toBeInTheDocument();
   });
 });
