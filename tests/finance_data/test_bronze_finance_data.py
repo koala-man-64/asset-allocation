@@ -13,8 +13,11 @@ def unique_ticker():
 
 def test_fetch_and_save_raw_writes_json(unique_ticker):
     symbol = unique_ticker
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = {"symbol": symbol, "quarterlyReports": [{"fiscalDateEnding": "2024-01-01"}]}
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.return_value = {
+        "symbol": symbol,
+        "quarterlyReports": [{"fiscalDateEnding": "2024-01-01"}],
+    }
 
     mock_blob_client = MagicMock()
     mock_blob_client.exists.return_value = False
@@ -32,7 +35,7 @@ def test_fetch_and_save_raw_writes_json(unique_ticker):
     ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
         mock_list_manager.is_blacklisted.return_value = False
 
-        wrote = bronze.fetch_and_save_raw(symbol, report, mock_av)
+        wrote = bronze.fetch_and_save_raw(symbol, report, mock_massive)
         assert wrote is True
 
         mock_store.assert_called_once()

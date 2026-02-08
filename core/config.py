@@ -124,6 +124,14 @@ class AppSettings(BaseSettings):
     ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: int = 7
     ALPHA_VANTAGE_FINANCE_FRESH_DAYS: int = 28
 
+    # Massive (market + fundamentals replacement at Bronze market/finance layers).
+    MASSIVE_API_KEY: Optional[str] = None
+    MASSIVE_BASE_URL: str = "https://api.massive.com"
+    MASSIVE_TIMEOUT_SECONDS: float = 30.0
+    MASSIVE_PREFER_OFFICIAL_SDK: bool = True
+    MASSIVE_MAX_WORKERS: int = 32
+    MASSIVE_FINANCE_FRESH_DAYS: int = 28
+
     # Comma-separated list for debug runs (e.g., "AAPL,MSFT"). Empty disables filtering.
     # Note: ETL jobs may override this from Postgres at startup.
     DEBUG_SYMBOLS: list[str] = Field(default_factory=list)
@@ -166,6 +174,12 @@ def _apply_settings(new_settings: AppSettings) -> None:
     global ALPHA_VANTAGE_MAX_WORKERS
     global ALPHA_VANTAGE_EARNINGS_FRESH_DAYS
     global ALPHA_VANTAGE_FINANCE_FRESH_DAYS
+    global MASSIVE_API_KEY
+    global MASSIVE_BASE_URL
+    global MASSIVE_TIMEOUT_SECONDS
+    global MASSIVE_PREFER_OFFICIAL_SDK
+    global MASSIVE_MAX_WORKERS
+    global MASSIVE_FINANCE_FRESH_DAYS
     global DEBUG_SYMBOLS
 
     settings = new_settings
@@ -189,6 +203,13 @@ def _apply_settings(new_settings: AppSettings) -> None:
     ALPHA_VANTAGE_MAX_WORKERS = settings.ALPHA_VANTAGE_MAX_WORKERS
     ALPHA_VANTAGE_EARNINGS_FRESH_DAYS = settings.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS
     ALPHA_VANTAGE_FINANCE_FRESH_DAYS = settings.ALPHA_VANTAGE_FINANCE_FRESH_DAYS
+
+    MASSIVE_API_KEY = settings.MASSIVE_API_KEY
+    MASSIVE_BASE_URL = settings.MASSIVE_BASE_URL
+    MASSIVE_TIMEOUT_SECONDS = settings.MASSIVE_TIMEOUT_SECONDS
+    MASSIVE_PREFER_OFFICIAL_SDK = settings.MASSIVE_PREFER_OFFICIAL_SDK
+    MASSIVE_MAX_WORKERS = settings.MASSIVE_MAX_WORKERS
+    MASSIVE_FINANCE_FRESH_DAYS = settings.MASSIVE_FINANCE_FRESH_DAYS
 
     DEBUG_SYMBOLS = settings.DEBUG_SYMBOLS
 

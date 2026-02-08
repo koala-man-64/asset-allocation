@@ -23,7 +23,7 @@ const PROBE_TIMEOUT_MS = 20_000;
 const RUN_ALL_CONCURRENCY = 3;
 
 interface UseDataProbesProps {
-    ticker: string;
+    ticker?: string;
     rows: DomainRow[];
 }
 
@@ -36,6 +36,9 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
         .trim()
         .toUpperCase();
     const hasValidTicker = isValidTickerSymbol(normalizedTicker);
+    const skipMessage = normalizedTicker
+        ? 'Invalid ticker format. Probes skipped.'
+        : 'No ticker provided. Probes skipped.';
 
     const runAllCancelledRef = useRef(false);
     const runAllControllersRef = useRef<Set<AbortController>>(new Set());
@@ -134,7 +137,7 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
     const probeForRow = useCallback(
         async (row: DomainRow) => {
             if (!hasValidTicker) {
-                setRunAllStatusMessage('Enter a valid symbol (e.g., AAPL) to run probes.');
+                setRunAllStatusMessage(skipMessage);
                 return;
             }
             const layer = normalizeLayerName(row.layerName);
@@ -188,13 +191,13 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
                 };
             });
         },
-        [hasValidTicker, normalizedTicker, runProbe]
+        [hasValidTicker, normalizedTicker, runProbe, skipMessage]
     );
 
     const runAll = useCallback(async () => {
         if (isRunningAll) return;
         if (!hasValidTicker) {
-            setRunAllStatusMessage('Enter a valid symbol (e.g., AAPL) to run probes.');
+            setRunAllStatusMessage(skipMessage);
             return;
         }
         const supported = rows.filter((row) => normalizeLayerName(row.layerName) !== null);
@@ -230,7 +233,7 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
         } finally {
             setIsRunningAll(false);
         }
-    }, [hasValidTicker, isRunningAll, probeForRow, rows]);
+    }, [hasValidTicker, isRunningAll, probeForRow, rows, skipMessage]);
 
     const cancelRunAll = useCallback(() => {
         if (!isRunningAll) return;

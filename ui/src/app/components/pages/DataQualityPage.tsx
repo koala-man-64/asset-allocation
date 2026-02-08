@@ -10,7 +10,6 @@ import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { Input } from '@/app/components/ui/input';
-import { Badge } from '@/app/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import {
@@ -152,8 +151,7 @@ export function DataQualityPage() {
     runAllStatusMessage,
     setRunAllStatusMessage
   } = useDataProbes({
-    financeSubDomain,
-    ticker,
+    ticker: normalizedProbeSymbol,
     rows
   });
 
@@ -301,7 +299,7 @@ export function DataQualityPage() {
                 <Button
                   className="dq-btn-primary"
                   onClick={() => void runAll()}
-                  disabled={health.isFetching || isRunningAll || !hasValidProbeSymbol}
+                  disabled={health.isFetching || isRunningAll}
                 >
                   <ScanSearch className={cn('h-4 w-4', isRunningAll && 'animate-spin')} />
                   {isRunningAll ? 'Running…' : 'Run Probes'}
@@ -347,10 +345,10 @@ export function DataQualityPage() {
                   />
                   <div className="mt-1 dq-mono text-[11px] text-muted-foreground">
                     {probeSymbol.length === 0
-                      ? 'Required to run probes.'
+                      ? 'Optional. Leave blank to skip probe calls.'
                       : hasValidProbeSymbol
                         ? `Will probe symbol ${normalizedProbeSymbol}.`
-                        : 'Use ticker format: AAPL, BRK.B, or SPY.'}
+                        : 'Invalid ticker format. Probes will be skipped.'}
                   </div>
                 </div>
               </div>

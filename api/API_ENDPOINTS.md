@@ -54,6 +54,13 @@ API Root
     │       ├── /time-series/daily [GET] (alpha_vantage.get_daily_time_series) - Alpha Vantage TIME_SERIES_DAILY CSV :: api/endpoints/alpha_vantage.py
     │       ├── /earnings [GET] (alpha_vantage.get_earnings) - Alpha Vantage EARNINGS payload :: api/endpoints/alpha_vantage.py
     │       └── /finance/{report} [GET] (alpha_vantage.get_finance_report) - Alpha Vantage finance payload :: api/endpoints/alpha_vantage.py
+    │   └── /massive
+    │       ├── /time-series/daily [GET] (massive.get_daily_time_series) - Massive OHLCV CSV normalized to Date,Open,High,Low,Close,Volume :: api/endpoints/massive.py
+    │       ├── /fundamentals/short-interest [GET] (massive.get_short_interest) - Massive short interest payload :: api/endpoints/massive.py
+    │       ├── /fundamentals/short-volume [GET] (massive.get_short_volume) - Massive short volume payload :: api/endpoints/massive.py
+    │       ├── /fundamentals/float [GET] (massive.get_float) - Massive float payload :: api/endpoints/massive.py
+    │       ├── /financials/{report} [GET] (massive.get_finance_report) - Massive financial payload :: api/endpoints/massive.py
+    │       └── /finance/{report} [GET] (massive.get_finance_report) - Backward-compatible alias for Massive financial payload :: api/endpoints/massive.py
 
     # Raw Data Layer
     ├── /data

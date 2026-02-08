@@ -579,6 +579,22 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
         "example": "28",
     },
+    "MASSIVE_TIMEOUT_SECONDS": {
+        "description": "Massive request timeout (float seconds) for API gateway and ETL callers.",
+        "example": "30",
+    },
+    "MASSIVE_MAX_WORKERS": {
+        "description": "Massive concurrency (max worker threads) for market/finance bronze ingestion jobs.",
+        "example": "32",
+    },
+    "MASSIVE_FINANCE_FRESH_DAYS": {
+        "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
+        "example": "28",
+    },
+    "MASSIVE_PREFER_OFFICIAL_SDK": {
+        "description": "When true, Massive integration prefers the official Massive SDK if installed.",
+        "example": "true",
+    },
     "BACKFILL_START_DATE": {
         "description": "Optional inclusive start date for backfill runs (YYYY-MM-DD).",
         "example": "2024-01-01",

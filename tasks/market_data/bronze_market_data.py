@@ -4,16 +4,16 @@ import asyncio
 import os
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 
 import pandas as pd
 
-from core.alpha_vantage_gateway_client import (
-    AlphaVantageGatewayClient,
-    AlphaVantageGatewayError,
-    AlphaVantageGatewayInvalidSymbolError,
-    AlphaVantageGatewayThrottleError,
+from core.massive_gateway_client import (
+    MassiveGatewayClient,
+    MassiveGatewayError,
+    MassiveGatewayNotFoundError,
+    MassiveGatewayRateLimitError,
 )
 from core import core as mdc
 from core.pipeline import ListManager
@@ -46,9 +46,9 @@ def _utc_today() -> datetime.date:
     return datetime.now(timezone.utc).date()
 
 
-def _normalize_alpha_vantage_daily_csv(csv_text: str) -> bytes:
+def _normalize_provider_daily_csv(csv_text: str) -> bytes:
     """
-    Normalize Alpha Vantage TIME_SERIES_DAILY CSV to the canonical Bronze market schema.
+    Normalize provider OHLCV CSV to the canonical Bronze market schema.
 
     Output columns:
       Date,Open,High,Low,Close,Volume
@@ -66,17 +66,17 @@ def _normalize_alpha_vantage_daily_csv(csv_text: str) -> bytes:
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
     if "Date" not in df.columns:
-        raise ValueError("Alpha Vantage CSV missing required timestamp/Date column.")
+        raise ValueError("Provider CSV missing required timestamp/Date column.")
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df = df.dropna(subset=["Date"]).copy()
     if df.empty:
-        raise ValueError("Alpha Vantage CSV contained no valid dated rows.")
+        raise ValueError("Provider CSV contained no valid dated rows.")
 
     required = ["Open", "High", "Low", "Close"]
     missing = [col for col in required if col not in df.columns]
     if missing:
-        raise ValueError(f"Alpha Vantage CSV missing required columns: {missing}")
+        raise ValueError(f"Provider CSV missing required columns: {missing}")
 
     if "Volume" not in df.columns:
         df["Volume"] = 0.0
@@ -118,28 +118,38 @@ def _prefetch_existing_last_modified() -> dict[str, datetime]:
     return existing_last_modified
 
 
-def download_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> None:
+def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> None:
     """
     Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
-    from the API-hosted Alpha Vantage gateway and stores it in Bronze.
+    from the API-hosted Massive gateway and stores it in Bronze.
     """
     if list_manager.is_blacklisted(symbol):
         return
 
-    outputsize = "compact"
+    today = _utc_today().isoformat()
     backfill_start, backfill_end = get_backfill_range()
     if backfill_start or backfill_end:
-        outputsize = "full"
+        from_date = backfill_start or "2000-01-01"
+        to_date = backfill_end or today
+    else:
+        from_date = (datetime.now(timezone.utc).date() - timedelta(days=180)).isoformat()
+        to_date = today
 
-    raw_text = av.get_daily_time_series_csv(symbol=symbol, outputsize=outputsize, adjusted=False)
+    raw_text = massive_client.get_daily_time_series_csv(
+        symbol=symbol,
+        from_date=from_date,
+        to_date=to_date,
+        adjusted=True,
+    )
+
     try:
-        raw_bytes = _normalize_alpha_vantage_daily_csv(raw_text)
+        raw_bytes = _normalize_provider_daily_csv(raw_text)
     except Exception as exc:
         snippet = raw_text.strip().replace("\n", " ")
         if len(snippet) > 200:
             snippet = snippet[:200] + "..."
-        raise AlphaVantageGatewayError(
-            f"Failed to normalize Alpha Vantage TIME_SERIES_DAILY CSV for {symbol}: {type(exc).__name__}: {exc}",
+        raise MassiveGatewayError(
+            f"Failed to normalize Massive daily CSV for {symbol}: {type(exc).__name__}: {exc}",
             payload={"snippet": snippet},
         ) from exc
 
@@ -148,6 +158,23 @@ def download_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> None:
     except Exception as exc:
         raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
     list_manager.add_to_whitelist(symbol)
+
+
+def _get_max_workers() -> int:
+    return max(
+        1,
+        int(
+            getattr(
+                cfg,
+                "MASSIVE_MAX_WORKERS",
+                getattr(cfg, "ALPHA_VANTAGE_MAX_WORKERS", 32),
+            )
+        ),
+    )
+
+
+# Backwards-compatible alias used by some tests/local tooling.
+_normalize_alpha_vantage_daily_csv = _normalize_provider_daily_csv
 
 
 async def main_async() -> int:
@@ -174,29 +201,29 @@ async def main_async() -> int:
         mdc.write_line(f"DEBUG MODE: Restricting to {cfg.DEBUG_SYMBOLS}")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
 
-    mdc.write_line(f"Starting Alpha Vantage Bronze Ingestion for {len(symbols)} symbols...")
+    mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
 
     existing_last_modified = _prefetch_existing_last_modified()
     utc_today = _utc_today()
 
-    av = AlphaVantageGatewayClient.from_env()
+    massive_client = MassiveGatewayClient.from_env()
 
     progress = {"processed": 0, "skipped": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
         if list_manager.is_blacklisted(symbol):
-            raise AlphaVantageGatewayInvalidSymbolError("Symbol is blacklisted.")
+            raise MassiveGatewayNotFoundError("Symbol is blacklisted.")
 
         if _should_skip_symbol(symbol, existing_last_modified, utc_today=utc_today):
             raise RuntimeError("SKIP_FRESH")
 
-        download_and_save_raw(symbol, av)
+        download_and_save_raw(symbol, massive_client)
 
-    max_workers = max(1, int(getattr(cfg, "ALPHA_VANTAGE_MAX_WORKERS", 32)))
+    max_workers = _get_max_workers()
     semaphore = asyncio.Semaphore(max_workers)
     loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-market")
+    executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="massive-market")
 
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
@@ -218,7 +245,7 @@ async def main_async() -> int:
                         should_log = should_log or progress["failed"] <= 20
                     if should_log:
                         mdc.write_error(f"Failed to ingest {symbol}: {exc}")
-            except AlphaVantageGatewayInvalidSymbolError as exc:
+            except MassiveGatewayNotFoundError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = debug_mode
                 async with progress_lock:
@@ -226,7 +253,7 @@ async def main_async() -> int:
                     should_log = should_log or progress["blacklisted"] <= 20
                 if should_log:
                     mdc.write_warning(f"Invalid symbol {symbol}; blacklisting. ({exc})")
-            except AlphaVantageGatewayThrottleError as exc:
+            except MassiveGatewayRateLimitError as exc:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
@@ -235,8 +262,8 @@ async def main_async() -> int:
                     note = str(exc)
                     if len(note) > 200:
                         note = note[:200] + "..."
-                    mdc.write_warning(f"Alpha Vantage throttled while processing {symbol}. ({note})")
-            except AlphaVantageGatewayError as exc:
+                    mdc.write_warning(f"Massive rate-limited while processing {symbol}. ({note})")
+            except MassiveGatewayError as exc:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
@@ -246,7 +273,7 @@ async def main_async() -> int:
                     payload = getattr(exc, "payload", None)
                     if payload:
                         details = f"{details} payload={payload}"
-                    mdc.write_error(f"Alpha Vantage gateway error while processing {symbol}. ({details})")
+                    mdc.write_error(f"Massive gateway error while processing {symbol}. ({details})")
             except Exception as exc:
                 should_log = debug_mode
                 async with progress_lock:
@@ -261,7 +288,7 @@ async def main_async() -> int:
                     progress["processed"] += 1
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
-                            "Bronze AV market progress: processed={processed} downloaded={downloaded} skipped={skipped} "
+                            "Bronze Massive market progress: processed={processed} downloaded={downloaded} skipped={skipped} "
                             "blacklisted={blacklisted} failed={failed}".format(**progress)
                         )
 
@@ -273,7 +300,7 @@ async def main_async() -> int:
         except Exception:
             pass
         try:
-            av.close()
+            massive_client.close()
         except Exception:
             pass
         try:
@@ -282,7 +309,7 @@ async def main_async() -> int:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
 
     mdc.write_line(
-        "Bronze AV market ingest complete: processed={processed} downloaded={downloaded} skipped={skipped} "
+        "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} skipped={skipped} "
         "blacklisted={blacklisted} failed={failed}".format(**progress)
     )
     return 0 if progress["failed"] == 0 else 1

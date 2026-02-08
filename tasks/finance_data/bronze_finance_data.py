@@ -8,11 +8,11 @@ from typing import Any, Optional
 
 import json
 
-from core.alpha_vantage_gateway_client import (
-    AlphaVantageGatewayClient,
-    AlphaVantageGatewayError,
-    AlphaVantageGatewayInvalidSymbolError,
-    AlphaVantageGatewayThrottleError,
+from core.massive_gateway_client import (
+    MassiveGatewayClient,
+    MassiveGatewayError,
+    MassiveGatewayNotFoundError,
+    MassiveGatewayRateLimitError,
 )
 from core import core as mdc
 from core.pipeline import ListManager
@@ -39,8 +39,8 @@ REPORTS = [
         "file_suffix": "quarterly_financials",
         "report": "income_statement",
     },
-    # Legacy "valuation measures" is not a 1:1 match in Alpha Vantage.
-    # We store the company OVERVIEW snapshot here for continuity of downstream paths.
+    # Legacy "valuation measures" is not a 1:1 match in Massive.
+    # We store a ratios snapshot here for continuity of downstream paths.
     {
         "folder": "Valuation",
         "file_suffix": "quarterly_valuation_measures",
@@ -80,9 +80,9 @@ def _serialize_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageGatewayClient) -> bool:
+def fetch_and_save_raw(symbol: str, report: dict[str, str], massive_client: MassiveGatewayClient) -> bool:
     """
-    Fetch a finance report via the API-hosted Alpha Vantage gateway and store raw JSON bytes in Bronze.
+    Fetch a finance report via the API-hosted Massive gateway and store raw JSON bytes in Bronze.
 
     Returns True when a write occurred, False when skipped (fresh/no-op).
     """
@@ -99,16 +99,26 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av: AlphaVantageGate
         blob = bronze_client.get_blob_client(blob_path)
         if blob.exists():
             props = blob.get_blob_properties()
-            if _is_fresh(props.last_modified, fresh_days=int(getattr(cfg, "ALPHA_VANTAGE_FINANCE_FRESH_DAYS", 28))):
+            if _is_fresh(
+                props.last_modified,
+                fresh_days=int(
+                    getattr(
+                        cfg,
+                        "MASSIVE_FINANCE_FRESH_DAYS",
+                        getattr(cfg, "ALPHA_VANTAGE_FINANCE_FRESH_DAYS", 28),
+                    )
+                ),
+            ):
                 list_manager.add_to_whitelist(symbol)
                 return False
     except Exception:
         pass
 
-    payload = av.get_finance_report(symbol=symbol, report=report_name)
+    payload = massive_client.get_finance_report(symbol=symbol, report=report_name)
     if not isinstance(payload, dict):
-        raise AlphaVantageGatewayError(
-            "Unexpected Alpha Vantage finance response type.", payload={"symbol": symbol, "report": report_name}
+        raise MassiveGatewayError(
+            "Unexpected Massive finance response type.",
+            payload={"symbol": symbol, "report": report_name},
         )
 
     raw = _serialize_json_bytes(payload)
@@ -139,12 +149,21 @@ async def main_async() -> int:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
 
-    mdc.write_line(f"Starting Alpha Vantage Bronze Finance Ingestion for {len(symbols)} symbols...")
+    mdc.write_line(f"Starting Massive Bronze Finance Ingestion for {len(symbols)} symbols...")
 
-    av = AlphaVantageGatewayClient.from_env()
+    massive_client = MassiveGatewayClient.from_env()
 
-    max_workers = max(1, int(getattr(cfg, "ALPHA_VANTAGE_MAX_WORKERS", 32)))
-    executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-finance")
+    max_workers = max(
+        1,
+        int(
+            getattr(
+                cfg,
+                "MASSIVE_MAX_WORKERS",
+                getattr(cfg, "ALPHA_VANTAGE_MAX_WORKERS", 32),
+            )
+        ),
+    )
+    executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="massive-finance")
     loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(max_workers)
 
@@ -154,7 +173,7 @@ async def main_async() -> int:
     def worker(symbol: str) -> int:
         wrote = 0
         for report in REPORTS:
-            if fetch_and_save_raw(symbol, report, av):
+            if fetch_and_save_raw(symbol, report, massive_client):
                 wrote += 1
         return wrote
 
@@ -167,14 +186,14 @@ async def main_async() -> int:
                         progress["written"] += 1
                     else:
                         progress["skipped"] += 1
-            except AlphaVantageGatewayInvalidSymbolError:
+            except MassiveGatewayNotFoundError:
                 list_manager.add_to_blacklist(symbol)
                 async with progress_lock:
                     progress["blacklisted"] += 1
-            except AlphaVantageGatewayThrottleError:
+            except MassiveGatewayRateLimitError:
                 async with progress_lock:
                     progress["failed"] += 1
-            except AlphaVantageGatewayError:
+            except MassiveGatewayError:
                 async with progress_lock:
                     progress["failed"] += 1
             except Exception:
@@ -185,7 +204,7 @@ async def main_async() -> int:
                     progress["processed"] += 1
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
-                            "Bronze AV finance progress: processed={processed} written={written} skipped={skipped} "
+                            "Bronze Massive finance progress: processed={processed} written={written} skipped={skipped} "
                             "blacklisted={blacklisted} failed={failed}".format(**progress)
                         )
 
@@ -197,7 +216,7 @@ async def main_async() -> int:
         except Exception:
             pass
         try:
-            av.close()
+            massive_client.close()
         except Exception:
             pass
         try:
@@ -206,7 +225,7 @@ async def main_async() -> int:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
 
     mdc.write_line(
-        "Bronze AV finance ingest complete: processed={processed} written={written} skipped={skipped} "
+        "Bronze Massive finance ingest complete: processed={processed} written={written} skipped={skipped} "
         "blacklisted={blacklisted} failed={failed}".format(**progress)
     )
     return 0 if progress["failed"] == 0 else 1

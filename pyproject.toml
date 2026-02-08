@@ -37,6 +37,14 @@ dependencies = [
     "pydantic==2.12.5",
 ]
 
+[project.optional-dependencies]
+massive-ws = [
+    "massive",
+]
+massive-flatfiles = [
+    "boto3",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
@@ -44,6 +52,7 @@ include = [
     "alpha_vantage*",
     "api*",
     "core*",
+    "massive_provider*",
     "monitoring*",
     "services*",
     "tasks*",

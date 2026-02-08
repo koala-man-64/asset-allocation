@@ -22,6 +22,8 @@ properties:
       value: "${API_KEY}"
     - name: alpha-vantage-api-key
       value: "${ALPHA_VANTAGE_API_KEY}"
+    - name: massive-api-key
+      value: "${MASSIVE_API_KEY}"
     - name: backtest-pg-dsn
       value: "${POSTGRES_DSN}"
   template:
@@ -67,6 +69,14 @@ properties:
         value: "${ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS}"
       - name: ALPHA_VANTAGE_MAX_WORKERS
         value: "${ALPHA_VANTAGE_MAX_WORKERS}"
+      - name: MASSIVE_API_KEY
+        secretRef: massive-api-key
+      - name: MASSIVE_BASE_URL
+        value: "${MASSIVE_BASE_URL}"
+      - name: MASSIVE_TIMEOUT_SECONDS
+        value: "${MASSIVE_TIMEOUT_SECONDS}"
+      - name: MASSIVE_PREFER_OFFICIAL_SDK
+        value: "${MASSIVE_PREFER_OFFICIAL_SDK}"
       - name: POSTGRES_DSN
         secretRef: backtest-pg-dsn
       - name: API_ROOT_PREFIX
