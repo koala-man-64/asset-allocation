@@ -1,24 +1,22 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useDataProbes } from '../../../../hooks/useDataProbes';
+import { useDataProbes } from '@/hooks/useDataProbes';
 import { DataService } from '@/services/DataService';
-import { DomainRow } from '../../components/pages/data-quality/dataQualityUtils';
+import { DomainRow } from '@/app/components/pages/data-quality/dataQualityUtils';
+import { vi, describe, it, expect, beforeEach, Mock } from 'vitest';
 
 // Mock DataService
-jest.mock('@/services/DataService');
+vi.mock('@/services/DataService');
 
 describe('useDataProbes', () => {
     const mockRows: DomainRow[] = [
         {
             layerName: 'Silver',
-            domain: { name: 'market', path: 'silver/market' },
-            tables: [],
-            files: [],
-            stats: { totalSize: 0, fileCount: 0, lastModified: new Date() }
+            domain: { name: 'market', path: 'silver/market', type: 'blob', lastUpdated: new Date().toISOString(), status: 'healthy' }
         }
     ];
 
     beforeEach(() => {
-        jest.clearAllMocks();
+        vi.clearAllMocks();
     });
 
     it('should initialize with idle state', () => {
@@ -31,7 +29,7 @@ describe('useDataProbes', () => {
     });
 
     it('should run a probe successfully', async () => {
-        (DataService.getMarketData as jest.Mock).mockResolvedValue(['data']);
+        (DataService.getMarketData as Mock).mockResolvedValue(['data']);
 
         const { result } = renderHook(() =>
             useDataProbes({ financeSubDomain: '', ticker: 'AAPL', rows: mockRows })
@@ -52,7 +50,7 @@ describe('useDataProbes', () => {
     });
 
     it('should handle probe failure', async () => {
-        (DataService.getMarketData as jest.Mock).mockResolvedValue([]);
+        (DataService.getMarketData as Mock).mockResolvedValue([]);
 
         const { result } = renderHook(() =>
             useDataProbes({ financeSubDomain: '', ticker: 'AAPL', rows: mockRows })
@@ -94,7 +92,7 @@ describe('useDataProbes', () => {
     });
 
     it('should run all probes', async () => {
-        (DataService.getMarketData as jest.Mock).mockResolvedValue(['data']);
+        (DataService.getMarketData as Mock).mockResolvedValue(['data']);
 
         const { result } = renderHook(() =>
             useDataProbes({ financeSubDomain: '', ticker: 'AAPL', rows: mockRows })
