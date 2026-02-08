@@ -42,6 +42,7 @@ export default [
             ...tsPlugin.configs.recommended.rules,
             ...reactPlugin.configs.recommended.rules,
             ...reactHooksPlugin.configs.recommended.rules,
+            "no-undef": "off",
             "react/react-in-jsx-scope": "off",
             "react/prop-types": "off",
             "@typescript-eslint/no-explicit-any": "warn",
@@ -49,6 +50,12 @@ export default [
             "react-hooks/rules-of-hooks": "error",
             "react-hooks/exhaustive-deps": "warn",
             ...prettierConfig.rules,
+        },
+    },
+    {
+        files: ["src/**/*.{test,spec}.{ts,tsx}", "src/**/__tests__/**/*.{ts,tsx}"],
+        rules: {
+            "@typescript-eslint/no-explicit-any": "off",
         },
     },
 ];
