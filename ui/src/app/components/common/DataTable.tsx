@@ -8,7 +8,7 @@ interface DataTableProps<T> {
   onRowClick?: (item: T) => void;
 }
 
-export const DataTable = <T extends Record<string, any>>({
+export const DataTable = <T extends Record<string, unknown>>({
   data,
   className = '',
   emptyMessage = 'No data available.',

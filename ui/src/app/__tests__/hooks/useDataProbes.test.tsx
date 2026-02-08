@@ -85,7 +85,7 @@ describe('useDataProbes', () => {
     expect(probeResult.detail).toContain('validation backend failed');
   });
 
-  it('requires a valid ticker before running probes', async () => {
+  it('skips probes when ticker is invalid', async () => {
     const { result } = renderHook(() => useDataProbes({ ticker: 'BAD/TICKER', rows: mockRows }));
 
     await act(async () => {
@@ -94,7 +94,19 @@ describe('useDataProbes', () => {
 
     expect(DataService.getDataQualityValidation).not.toHaveBeenCalled();
     expect(result.current.probeResults).toEqual({});
-    expect(result.current.runAllStatusMessage).toContain('Enter a valid symbol');
+    expect(result.current.runAllStatusMessage).toContain('Invalid ticker format. Probes skipped.');
+  });
+
+  it('skips probes when ticker is empty', async () => {
+    const { result } = renderHook(() => useDataProbes({ ticker: '', rows: mockRows }));
+
+    await act(async () => {
+      await result.current.runAll();
+    });
+
+    expect(DataService.getDataQualityValidation).not.toHaveBeenCalled();
+    expect(result.current.probeResults).toEqual({});
+    expect(result.current.runAllStatusMessage).toContain('No ticker provided. Probes skipped.');
   });
 
   it('runs all probes for the active symbol', async () => {

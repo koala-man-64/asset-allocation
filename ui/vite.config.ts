@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { loadEnv } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
@@ -71,6 +71,7 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       setupFiles: './src/test/setup.ts',
       css: false,
+      exclude: [...configDefaults.exclude, '**/.pnpm-store/**'],
     },
     plugins: [
       // The React and Tailwind plugins are both required for Make, even if

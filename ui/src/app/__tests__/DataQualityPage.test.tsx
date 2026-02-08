@@ -103,12 +103,13 @@ describe('DataQualityPage', () => {
     renderWithProviders(<DataQualityPage />);
     expect(await screen.findByRole('heading', { name: /data quality/i })).toBeInTheDocument();
 
-    // Header score
-    expect(screen.getByText(/SCORE 100/i)).toBeInTheDocument();
-
-    // Status card
+    // Header status card
+    expect(screen.getByText(/^SYSTEM$/i)).toBeInTheDocument();
     expect(screen.getByText(/Overall/i)).toBeInTheDocument();
     expect(screen.getAllByText(/HEALTHY/i)[0]).toBeInTheDocument();
+    expect(screen.getByText(/Failures/i)).toBeInTheDocument();
+    expect(screen.getByText(/Stale\/Warn/i)).toBeInTheDocument();
+    expect(screen.getByText(/Probes Failed/i)).toBeInTheDocument();
 
     // DataPipelinePanel (Mocked - Lazy Loaded)
     expect(await screen.findByTestId('mock-data-pipeline-panel')).toBeInTheDocument();
@@ -162,13 +163,13 @@ describe('DataQualityPage', () => {
     expect(DataService.getSystemHealthWithMeta).toHaveBeenCalledWith({ refresh: true });
   });
 
-  it('requires a valid symbol before enabling probe actions', async () => {
+  it('allows probe actions without requiring a symbol', async () => {
     renderWithProviders(<DataQualityPage />);
 
     const runButtons = await screen.findAllByRole('button', { name: /run probes/i });
     expect(runButtons.length).toBeGreaterThan(0);
     for (const button of runButtons) {
-      expect(button).toBeDisabled();
+      expect(button).toBeEnabled();
     }
 
     const symbolInput = screen.getByLabelText(/symbol/i);
