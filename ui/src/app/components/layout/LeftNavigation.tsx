@@ -1,5 +1,8 @@
 import { useState, useEffect, type ElementType } from 'react';
 import { NavLink } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/hooks/useDataQueries';
+import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import {
@@ -74,6 +77,7 @@ export function LeftNavigation() {
   const [collapsed, setCollapsed] = useState(false);
   const [pinnedPaths, setPinnedPaths] = useState<string[]>([]);
   const [isClient, setIsClient] = useState(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     setIsClient(true);
@@ -111,6 +115,18 @@ export function LeftNavigation() {
             <TooltipTrigger asChild>
               <NavLink
                 to={item.path}
+                onMouseEnter={() => {
+                  if (item.path === '/data-quality' || item.path === '/system-status') {
+                    queryClient.prefetchQuery({
+                      queryKey: queryKeys.systemHealth(),
+                      queryFn: async () => {
+                        const response = await DataService.getSystemHealthWithMeta();
+                        return response.data;
+                      },
+                      staleTime: 30000
+                    });
+                  }
+                }}
                 className={({ isActive }) =>
                   cn(
                     'w-full px-3 py-2 rounded-md transition-colors',

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getLastSystemHealthMeta,
@@ -10,6 +10,9 @@ import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { Input } from '@/app/components/ui/input';
+import { Badge } from '@/app/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { Skeleton } from '@/app/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -43,7 +46,8 @@ import {
   ScanSearch,
   ShieldAlert
 } from 'lucide-react';
-import { DataPipelinePanel } from '@/app/components/pages/data-quality/DataPipelinePanel';
+// Lazy load DataPipelinePanel
+const DataPipelinePanel = lazy(() => import('@/app/components/pages/data-quality/DataPipelinePanel').then(m => ({ default: m.DataPipelinePanel })));
 
 import { useDataProbes, ProbeStatus } from '@/hooks/useDataProbes';
 
@@ -142,21 +146,16 @@ export function DataQualityPage() {
 
   const {
     probeResults,
-    setProbeResults,
     runAll,
     cancelRunAll,
     isRunningAll,
     runAllStatusMessage,
     setRunAllStatusMessage
   } = useDataProbes({
-    ticker: normalizedProbeSymbol,
+    financeSubDomain,
+    ticker,
     rows
   });
-
-  useEffect(() => {
-    setProbeResults({});
-    setRunAllStatusMessage(null);
-  }, [normalizedProbeSymbol, setProbeResults, setRunAllStatusMessage]);
 
   const summary = useMemo(() => {
     const payload = health.data;
@@ -362,19 +361,9 @@ export function DataQualityPage() {
           </div>
         </header>
 
-        <section className="dq-panel dq-panel-pad mt-6">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div>
-              <div className="dq-kicker">PIPELINE FLOW</div>
-              <div className="dq-title text-lg">Medallion Validation Graph</div>
-              <p className="dq-subtitle mt-1 text-sm">
-                Each node probes a full dataset and shows the latest recorded update timestamp for
-                that medallion-domain.
-              </p>
-            </div>
-          </div>
-          <DataPipelinePanel drift={drift} rows={rows} />
-        </section>
+        <Suspense fallback={<Skeleton className="h-[200px] w-full rounded-xl bg-muted/20" />}>
+          <DataPipelinePanel drift={drift} />
+        </Suspense>
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">

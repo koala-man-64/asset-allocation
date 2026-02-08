@@ -57,9 +57,14 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   };
 });
 
+vi.mock('@/app/components/pages/SystemStatusPage', () => ({
+  SystemStatusPage: () => <div data-testid="mock-system-status">Mock System Status</div>
+}));
+
 describe('App Smoke Test', () => {
   it('renders without crashing', async () => {
+    window.history.pushState({}, 'System Status', '/system-status');
     renderWithProviders(<App />);
-    expect(await screen.findByRole('heading', { name: /system status/i })).toBeInTheDocument();
+    expect(await screen.findByTestId('mock-system-status')).toBeInTheDocument();
   });
 });

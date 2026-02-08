@@ -1,13 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
-import { StatusOverview } from './system-status/StatusOverview';
+import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
+import { Skeleton } from '@/app/components/ui/skeleton';
 
-import { AzureResources } from './system-status/AzureResources';
-// JobMonitor and DataLayerHealth are redundant with the new dense StatusOverview or can be re-added below if needed.
-// For "High Density" view, we prioritize the Matrix (StatusOverview).
-import { ScheduledJobMonitor } from './system-status/ScheduledJobMonitor';
+// Lazy load components to reduce initial bundle size of the page
+const StatusOverview = lazy(() => import('./system-status/StatusOverview').then(m => ({ default: m.StatusOverview })));
+const AzureResources = lazy(() => import('./system-status/AzureResources').then(m => ({ default: m.AzureResources })));
+const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonitor').then(m => ({ default: m.ScheduledJobMonitor })));
+
 import {
   getAzurePortalUrl,
   normalizeAzureJobName,
@@ -123,21 +125,35 @@ export function SystemStatusPage() {
   return (
     <div className="space-y-8 pb-10">
       {/* Status Matrix - The Hero Component */}
-      <StatusOverview
-        overall={overall}
-        dataLayers={dataLayers}
-        recentJobs={recentJobs}
-        jobStates={jobStates}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
-        isFetching={isFetching}
-      />
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-[300px] w-full rounded-xl bg-muted/20" />}>
+          <StatusOverview
+            overall={overall}
+            dataLayers={dataLayers}
+            recentJobs={recentJobs}
+            jobStates={jobStates}
+            onRefresh={handleRefresh}
+            isRefreshing={isRefreshing}
+            isFetching={isFetching}
+          />
+        </Suspense>
+      </ErrorBoundary>
 
       {/* Jobs */}
-      <ScheduledJobMonitor dataLayers={dataLayers} recentJobs={recentJobs} jobLinks={jobLinks} />
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-[400px] w-full rounded-xl bg-muted/20" />}>
+          <ScheduledJobMonitor dataLayers={dataLayers} recentJobs={recentJobs} jobLinks={jobLinks} />
+        </Suspense>
+      </ErrorBoundary>
 
       {/* Connectors / Resources */}
-      {resources && resources.length > 0 && <AzureResources resources={resources} />}
+      {resources && resources.length > 0 && (
+        <ErrorBoundary>
+          <Suspense fallback={<Skeleton className="h-[250px] w-full rounded-xl bg-muted/20" />}>
+            <AzureResources resources={resources} />
+          </Suspense>
+        </ErrorBoundary>
+      )}
 
       {/* Footer Status Line */}
       <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
