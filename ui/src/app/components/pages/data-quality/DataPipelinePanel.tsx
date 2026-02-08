@@ -197,10 +197,7 @@ export function DataPipelinePanel({ drift }: DataPipelinePanelProps) {
             const lagItem = drift.find(
               (item) => item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
             ) || drift.find(
-              // Fallback: match by ID if label doesn't match? 
-              // computedDrift uses "domain" from health which might match d.id or d.label. 
-              // Looking at DataQualityPage, 'rows' use 'domain.name'. 
-              // Let's match loosely or pass both.
+              // Match by label or case-insensitive ID to ensure coverage
               (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'bronze' && item.to === 'silver'
             );
 
