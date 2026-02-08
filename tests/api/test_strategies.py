@@ -1,8 +1,8 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from api.service.app import app
-from core.strategy_repository import StrategyRepository
+
 
 @pytest.fixture
 def client():
