@@ -687,7 +687,7 @@ export function DataQualityPage() {
           </div>
         </header>
 
-        <DataPipelinePanel drift={drift} />{/* Drift panel removed; integrated into pipeline */}
+        <DataPipelinePanel drift={drift} />
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
