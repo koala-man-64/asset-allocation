@@ -101,7 +101,8 @@ describe('DataQualityPage', () => {
     renderWithProviders(<DataQualityPage />);
     expect(await screen.findByRole('heading', { name: /data quality/i })).toBeInTheDocument();
     expect(screen.getByText(/validation ledger/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/cross-layer lag/i).length).toBeGreaterThan(0);
+    // Drift panel reduced to indicators in pipeline; check for pipeline headers instead
+    expect(screen.getByText(/Bronze \(Raw\)/i)).toBeInTheDocument();
   });
 
   it('renders loading state', () => {

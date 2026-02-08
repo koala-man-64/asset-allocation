@@ -47,13 +47,19 @@
 
 .dq-stage-bronze .dq-stage-dot {
   background-color: #d97706;
-} /* Amber 600 */
+}
+
+/* Amber 600 */
 .dq-stage-silver .dq-stage-dot {
   background-color: #64748b;
-} /* Slate 500 */
+}
+
+/* Slate 500 */
 .dq-stage-gold .dq-stage-dot {
   background-color: #eab308;
-} /* Yellow 500 */
+}
+
+/* Yellow 500 */
 
 /* Node Card */
 .dq-node-card {
@@ -120,15 +126,91 @@
 .dq-stat-good {
   color: var(--emerald-600);
 }
+
 .dq-stat-warn {
   color: var(--amber-600);
 }
+
 .dq-stat-bad {
   color: var(--rose-600);
 }
 
 /* Connectors */
+.dq-connector-wrapper {
+  position: absolute;
+  top: 50%;
+  right: -2rem;
+  width: 2rem;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  /* This effectively centers it vertically relative to parent? No, wait. */
+  /* Actually, the parent is relative. top: 50% puts top edge at center. 
+     We want the center of the wrapper at the center of the node? 
+     The node is the content of the parent div. The wrapper is a sibling of PipelineNode?
+     No, in my code:
+     <div className="relative">
+        <PipelineNode ... />
+        <LagIndicator ... />
+     </div>
+     PipelineNode has padding etc.
+  */
+  top: 0;
+  bottom: 0;
+  /* Reset top/right/transform */
+  width: 2rem;
+  right: -2rem;
+  transform: none;
+}
+
+.dq-connector-line {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--border);
+  transform: translateY(-50%);
+  z-index: 0;
+}
+
+.dq-connector-line::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--border);
+}
+
+.dq-lag-badge {
+  position: relative;
+  z-index: 20;
+  background: var(--background);
+  /* cutout effect */
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Legacy - can remove if not used, but LagIndicator falls back to it? 
+   No, LagIndicator uses dq-connector-wrapper now. 
+*/
 .dq-connector {
+  /* Keep for valid fallback logic if needed, or remove */
   position: absolute;
   top: 50%;
   right: -2rem;
@@ -168,6 +250,7 @@
   0% {
     bg-position: 200% 0;
   }
+
   100% {
     bg-position: -200% 0;
   }

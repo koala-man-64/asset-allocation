@@ -294,7 +294,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+            `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -307,7 +307,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+            `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -383,7 +383,7 @@ export function DataQualityPage() {
       setProbeResults((prev) => ({
         ...prev,
         [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-        `row:${domainKey(row)}`]: {
+          `row:${domainKey(row)}`]: {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),
@@ -687,59 +687,7 @@ export function DataQualityPage() {
           </div>
         </header>
 
-        <DataPipelinePanel />
-
-        <section className="dq-panel dq-panel-pad">
-          <div className="dq-kicker">DRIFT</div>
-          <div className="dq-title text-lg">Cross-Layer Lag</div>
-          <p className="dq-subtitle mt-1 text-sm">
-            Largest observed timestamp spread across layers (best-effort, based on folder/table last
-            modified).
-          </p>
-
-          <div className="mt-4 space-y-2">
-            {(drift || []).slice(0, 6).map((item) => {
-              const minutes = Math.round(item.lagSeconds / 60);
-              const label = minutes >= 120 ? `${Math.round(minutes / 60)}h` : `${minutes}m`;
-              const severity: ProbeStatus =
-                typeof item.slaSeconds === 'number' && Number.isFinite(item.slaSeconds)
-                  ? item.lagSeconds > item.slaSeconds
-                    ? 'fail'
-                    : item.lagSeconds > Math.round(item.slaSeconds * 0.5)
-                      ? 'warn'
-                      : 'pass'
-                  : minutes >= 24 * 60
-                    ? 'fail'
-                    : minutes >= 6 * 60
-                      ? 'warn'
-                      : 'pass';
-              return (
-                <div key={item.domain} className="dq-drift-row">
-                  <div className="dq-drift-left">
-                    <div className="dq-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">
-                      {item.domain}
-                    </div>
-                    <div className="dq-drift-path">
-                      {item.from} → {item.to}
-                    </div>
-                  </div>
-                  <div className="dq-drift-right">
-                    <ProbePill status={severity} />
-                    <div className="dq-mono text-xs text-muted-foreground">{label}</div>
-                  </div>
-                </div>
-              );
-            })}
-            {drift.length === 0 && (
-              <div className="dq-empty">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                <div className="dq-mono text-sm">
-                  No cross-layer lag detected from available timestamps.
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
+        <DataPipelinePanel drift={drift} />{/* Drift panel removed; integrated into pipeline */}
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
