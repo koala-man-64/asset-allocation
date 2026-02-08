@@ -8,7 +8,13 @@ interface DataTableProps<T> {
   onRowClick?: (item: T) => void;
 }
 
-export const DataTable = <T extends Record<string, any>>({ data, className = '', emptyMessage = 'No data available.', columns: propColumns, onRowClick }: DataTableProps<T>) => {
+export const DataTable = <T extends Record<string, any>>({
+  data,
+  className = '',
+  emptyMessage = 'No data available.',
+  columns: propColumns,
+  onRowClick
+}: DataTableProps<T>) => {
   const tableColumns = useMemo(() => {
     if (propColumns) {
       return propColumns;

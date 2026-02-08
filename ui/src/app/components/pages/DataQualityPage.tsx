@@ -61,7 +61,6 @@ type ProbeResult = {
   meta?: Record<string, unknown>;
 };
 
-
 const PROBE_TIMEOUT_MS = 20_000;
 const RUN_ALL_CONCURRENCY = 3;
 
@@ -295,7 +294,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-            `row:${domainKey(row)}`]: {
+          `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -308,7 +307,7 @@ export function DataQualityPage() {
         setProbeResults((prev) => ({
           ...prev,
           [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-            `row:${domainKey(row)}`]: {
+          `row:${domainKey(row)}`]: {
             status: 'fail',
             title: 'Probe',
             at: nowIso(),
@@ -384,7 +383,7 @@ export function DataQualityPage() {
       setProbeResults((prev) => ({
         ...prev,
         [getProbeIdForRow(row.layerName, row.domain.name, financeSubDomain) ||
-          `row:${domainKey(row)}`]: {
+        `row:${domainKey(row)}`]: {
           status: 'warn',
           title: 'Probe',
           at: nowIso(),

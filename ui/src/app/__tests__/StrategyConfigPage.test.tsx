@@ -6,85 +6,86 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock dependencies
 vi.mock('@/services/strategyApi', () => ({
-    strategyApi: {
-        listStrategies: vi.fn(),
-        saveStrategy: vi.fn(),
-        getStrategy: vi.fn()
-    }
+  strategyApi: {
+    listStrategies: vi.fn(),
+    saveStrategy: vi.fn(),
+    getStrategy: vi.fn()
+  }
 }));
 
 // Mock ResizeObserver for Radix UI
 global.ResizeObserver = class ResizeObserver {
-    observe() { }
-    unobserve() { }
-    disconnect() { }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
 };
 
 // Setup QueryClient
-const createTestQueryClient = () => new QueryClient({
+const createTestQueryClient = () =>
+  new QueryClient({
     defaultOptions: {
-        queries: {
-            retry: false,
-        },
-    },
-});
+      queries: {
+        retry: false
+      }
+    }
+  });
 
 describe('StrategyConfigPage', () => {
-    let queryClient: QueryClient;
+  let queryClient: QueryClient;
 
-    beforeEach(() => {
-        queryClient = createTestQueryClient();
-        vi.clearAllMocks();
+  beforeEach(() => {
+    queryClient = createTestQueryClient();
+    vi.clearAllMocks();
+  });
+
+  it('renders loading state initially', () => {
+    (strategyApi.listStrategies as Mock).mockReturnValue(new Promise(() => {})); // pending promise
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StrategyConfigPage />
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText(/loading strategies/i)).toBeInTheDocument();
+  });
+
+  it('renders strategies list when data is available', async () => {
+    const mockStrategies = [
+      { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' },
+      { name: 'strat-2', type: 'code-based', description: 'desc 2', updated_at: '2023-01-02' }
+    ];
+    (strategyApi.listStrategies as Mock).mockResolvedValue(mockStrategies);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StrategyConfigPage />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('strat-1')).toBeInTheDocument();
+      expect(screen.getByText('strat-2')).toBeInTheDocument();
+    });
+  });
+
+  it('opens editor when New Strategy button is clicked', async () => {
+    (strategyApi.listStrategies as Mock).mockResolvedValue([]);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StrategyConfigPage />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/new strategy/i)).toBeInTheDocument();
     });
 
-    it('renders loading state initially', () => {
-        (strategyApi.listStrategies as Mock).mockReturnValue(new Promise(() => { })); // pending promise
+    fireEvent.click(screen.getByText(/new strategy/i));
 
-        render(
-            <QueryClientProvider client={queryClient}>
-                <StrategyConfigPage />
-            </QueryClientProvider>
-        );
-
-        expect(screen.getByText(/loading strategies/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /^New Strategy$/ })).toBeInTheDocument();
     });
-
-    it('renders strategies list when data is available', async () => {
-        const mockStrategies = [
-            { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' },
-            { name: 'strat-2', type: 'code-based', description: 'desc 2', updated_at: '2023-01-02' }
-        ];
-        (strategyApi.listStrategies as Mock).mockResolvedValue(mockStrategies);
-
-        render(
-            <QueryClientProvider client={queryClient}>
-                <StrategyConfigPage />
-            </QueryClientProvider>
-        );
-
-        await waitFor(() => {
-            expect(screen.getByText('strat-1')).toBeInTheDocument();
-            expect(screen.getByText('strat-2')).toBeInTheDocument();
-        });
-    });
-
-    it('opens editor when New Strategy button is clicked', async () => {
-        (strategyApi.listStrategies as Mock).mockResolvedValue([]);
-
-        render(
-            <QueryClientProvider client={queryClient}>
-                <StrategyConfigPage />
-            </QueryClientProvider>
-        );
-
-        await waitFor(() => {
-            expect(screen.getByText(/new strategy/i)).toBeInTheDocument();
-        });
-
-        fireEvent.click(screen.getByText(/new strategy/i));
-
-        await waitFor(() => {
-            expect(screen.getByRole('heading', { name: /^New Strategy$/ })).toBeInTheDocument();
-        });
-    });
+  });
 });
