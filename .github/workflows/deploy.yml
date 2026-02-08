@@ -69,6 +69,8 @@ env:
   ALPHA_VANTAGE_MAX_WORKERS: ${{ vars.ALPHA_VANTAGE_MAX_WORKERS || '32' }}
   ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS || '7' }}
   ALPHA_VANTAGE_FINANCE_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_FINANCE_FRESH_DAYS || '28' }}
+  # Massive tunables (defaults match .env.template / provider config)
+  MASSIVE_TIMEOUT_SECONDS: ${{ vars.MASSIVE_TIMEOUT_SECONDS || '30' }}
 
 jobs:
   tests:
