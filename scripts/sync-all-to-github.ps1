@@ -8,22 +8,11 @@ $ErrorActionPreference = "Stop"
 $envPath = $EnvFilePath
 if ([string]::IsNullOrWhiteSpace($envPath)) {
     $repoRoot = Join-Path $PSScriptRoot ".."
-    $candidateWeb = Join-Path $repoRoot ".env.web"
-    $candidateEnv = Join-Path $repoRoot ".env"
-
-    if (Test-Path $candidateWeb) {
-        $envPath = $candidateWeb
-    }
-    elseif (Test-Path $candidateEnv) {
-        $envPath = $candidateEnv
-    }
-    else {
-        $envPath = $candidateWeb
-    }
+    $envPath = Join-Path $repoRoot ".env.web"
 }
 
 if (-not (Test-Path $envPath)) {
-    Write-Error "Error: env file not found at $envPath (create .env.web or .env, or pass -EnvFilePath)."
+    Write-Error "Error: env file not found at $envPath (create .env.web or pass -EnvFilePath)."
     exit 1
 }
 
@@ -53,6 +42,15 @@ $ConfigPatterns = @(
     "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
     "^ASSET_ALLOCATION_API_(?!KEY$)",
     "^ALPHA_VANTAGE_(?!API_KEY$)",
+    # Massive: keep runtime tuning/location values as Variables; keep credentials as Secrets.
+    "^MASSIVE_BASE_URL$",
+    "^MASSIVE_FINANCE_FRESH_DAYS$",
+    "^MASSIVE_FLATFILES_BUCKET$",
+    "^MASSIVE_FLATFILES_ENDPOINT_URL$",
+    "^MASSIVE_MAX_WORKERS$",
+    "^MASSIVE_PREFER_OFFICIAL_SDK$",
+    "^MASSIVE_TIMEOUT_SECONDS$",
+    "^MASSIVE_WS_SUBSCRIPTIONS$",
     "^SYSTEM_HEALTH_(?!LINK_TOKEN_SECRET$)",
     "^HEADLESS_MODE$",
     "^DISABLE_DOTENV$",
