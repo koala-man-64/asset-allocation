@@ -12,7 +12,7 @@ If you want to use this, install the official SDK:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, List
 
 from massive_provider.errors import MassiveNotConfiguredError
 
