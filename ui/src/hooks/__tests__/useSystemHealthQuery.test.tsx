@@ -22,19 +22,19 @@ describe('useSystemHealthQuery', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const getSystemHealthSpy = vi
-      .spyOn(DataService, 'getSystemHealth')
+      .spyOn(DataService, 'getSystemHealthWithMeta')
       .mockRejectedValue(new Error('API Error: 404 Not Found - {"detail":"Not Found"}'));
 
     renderWithProviders(<Probe />);
 
-    const waitForCall = waitFor(() => {
-      expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
-    });
+    await Promise.all([
+      waitFor(() => {
+        expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
+      }),
+      vi.advanceTimersByTimeAsync(1000)
+    ]);
 
-    await vi.advanceTimersByTimeAsync(1000);
-    await waitForCall;
-
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(60_000);
 
     expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
   });
