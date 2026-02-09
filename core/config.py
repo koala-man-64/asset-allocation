@@ -124,6 +124,12 @@ class AppSettings(BaseSettings):
     ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: int = 7
     ALPHA_VANTAGE_FINANCE_FRESH_DAYS: int = 28
 
+    # Massive Provider (reference/tickers data source).
+    MASSIVE_API_KEY: Optional[str] = None
+    MASSIVE_BASE_URL: str = "https://api.massive.com"
+    MASSIVE_TIMEOUT_SECONDS: float = 30.0
+    MASSIVE_TICKERS_PAGE_LIMIT: int = 1000
+
     # Comma-separated list for debug runs (e.g., "AAPL,MSFT"). Empty disables filtering.
     # Note: ETL jobs may override this from Postgres at startup.
     DEBUG_SYMBOLS: list[str] = Field(default_factory=list)
@@ -189,6 +195,16 @@ def _apply_settings(new_settings: AppSettings) -> None:
     ALPHA_VANTAGE_MAX_WORKERS = settings.ALPHA_VANTAGE_MAX_WORKERS
     ALPHA_VANTAGE_EARNINGS_FRESH_DAYS = settings.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS
     ALPHA_VANTAGE_FINANCE_FRESH_DAYS = settings.ALPHA_VANTAGE_FINANCE_FRESH_DAYS
+
+    global MASSIVE_API_KEY
+    global MASSIVE_BASE_URL
+    global MASSIVE_TIMEOUT_SECONDS
+    global MASSIVE_TICKERS_PAGE_LIMIT
+
+    MASSIVE_API_KEY = settings.MASSIVE_API_KEY
+    MASSIVE_BASE_URL = settings.MASSIVE_BASE_URL
+    MASSIVE_TIMEOUT_SECONDS = settings.MASSIVE_TIMEOUT_SECONDS
+    MASSIVE_TICKERS_PAGE_LIMIT = settings.MASSIVE_TICKERS_PAGE_LIMIT
 
     DEBUG_SYMBOLS = settings.DEBUG_SYMBOLS
 

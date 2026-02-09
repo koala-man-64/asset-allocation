@@ -12,6 +12,7 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from typing import Any, Union, Optional
+from core.massive_provider import get_complete_ticker_list
 
 import pandas as pd
 import numpy as np
@@ -723,67 +724,112 @@ def get_active_tickers_alpha_vantage() -> pd.DataFrame:
         return pd.DataFrame(columns=["Symbol"])
 
 
-def merge_symbol_sources(df_nasdaq: pd.DataFrame, df_alpha_vantage: pd.DataFrame) -> pd.DataFrame:
+def get_active_tickers_massive() -> pd.DataFrame:
     """
-    Merge NASDAQ + Alpha Vantage symbol universes into a single DataFrame.
+    Fetch active tickers from Massive Provider.
+    """
+    api_key = cfg.MASSIVE_API_KEY
+    if not api_key:
+        write_warning("Massive symbol fetch disabled (MASSIVE_API_KEY missing).")
+        return pd.DataFrame(columns=["Symbol"])
+
+    try:
+        df = get_complete_ticker_list(
+            api_key=api_key,
+            base_url=cfg.MASSIVE_BASE_URL,
+            timeout_seconds=cfg.MASSIVE_TIMEOUT_SECONDS,
+            page_limit=cfg.MASSIVE_TICKERS_PAGE_LIMIT,
+            active=True
+        )
+        return df
+    except Exception as exc:
+        write_error(f"Failed to get active tickers from Massive: {exc}")
+        return pd.DataFrame(columns=["Symbol"])
+
+
+def merge_symbol_sources(df_nasdaq: pd.DataFrame, df_alpha_vantage: pd.DataFrame, df_massive: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge NASDAQ + Alpha Vantage + Massive symbol universes into a single DataFrame.
 
     Precedence:
       - Prefer NASDAQ Name/sector/industry metadata when present.
-      - Use Alpha Vantage Exchange/AssetType/IPO/Delisting/Status when present.
+      - Use Massive for additional coverage and metadata.
+      - Use Alpha Vantage as fallback.
     """
     df_n = df_nasdaq.copy() if df_nasdaq is not None else pd.DataFrame()
     df_a = df_alpha_vantage.copy() if df_alpha_vantage is not None else pd.DataFrame()
+    df_m = df_massive.copy() if df_massive is not None else pd.DataFrame()
 
     if "Symbol" not in df_n.columns:
         df_n["Symbol"] = pd.Series(dtype="object")
     if "Symbol" not in df_a.columns:
         df_a["Symbol"] = pd.Series(dtype="object")
+    if "Symbol" not in df_m.columns:
+        df_m["Symbol"] = pd.Series(dtype="object")
 
     df_n["Symbol"] = df_n["Symbol"].astype(str).str.strip()
     df_a["Symbol"] = df_a["Symbol"].astype(str).str.strip()
+    df_m["Symbol"] = df_m["Symbol"].astype(str).str.strip()
+    
     df_n = df_n[df_n["Symbol"].ne("")]
     df_a = df_a[df_a["Symbol"].ne("")]
+    df_m = df_m[df_m["Symbol"].ne("")]
 
     nasdaq_cols = [c for c in ["Symbol", "Name", "Description", "Sector", "Industry", "Industry_2", "Optionable", "Country"] if c in df_n.columns]
     alpha_cols = [c for c in ["Symbol", "Name", "Exchange", "AssetType", "IpoDate", "DelistingDate", "Status"] if c in df_a.columns]
+    massive_cols = [c for c in ["Symbol", "Name", "Exchange", "AssetType", "Locale", "Market", "CurrencyName", "Active"] if c in df_m.columns]
 
     left = df_n[nasdaq_cols].drop_duplicates(subset=["Symbol"]) if nasdaq_cols else df_n[["Symbol"]].drop_duplicates(subset=["Symbol"])
-    right = df_a[alpha_cols].drop_duplicates(subset=["Symbol"]) if alpha_cols else df_a[["Symbol"]].drop_duplicates(subset=["Symbol"])
+    right_a = df_a[alpha_cols].drop_duplicates(subset=["Symbol"]) if alpha_cols else df_a[["Symbol"]].drop_duplicates(subset=["Symbol"])
+    right_m = df_m[massive_cols].drop_duplicates(subset=["Symbol"]) if massive_cols else df_m[["Symbol"]].drop_duplicates(subset=["Symbol"])
 
-    # Add explicit source markers to avoid fragile inference after merge.
+    # Add explicit source markers
     left = left.copy()
-    right = right.copy()
+    right_a = right_a.copy()
+    right_m = right_m.copy()
     left["source_nasdaq"] = True
-    right["source_alpha_vantage"] = True
+    right_a["source_alpha_vantage"] = True
+    right_m["source_massive"] = True
 
-    merged = left.merge(right, on="Symbol", how="outer", suffixes=("_nasdaq", "_av"))
+    # Merge: NASDAQ outer join Massive outer join Alpha Vantage
+    merged = left.merge(right_m, on="Symbol", how="outer", suffixes=("_nasdaq", "_massive"))
+    merged = merged.merge(right_a, on="Symbol", how="outer", suffixes=("", "_av"))
+    # Note: suffixes handling for triple merge might need adjustment if collisions occur.
+    # The first merge creates _nasdaq and _massive for colliding columns (like Name).
+    # The second merge interacts with the result.
 
-    def pick_str(primary: Any, fallback: Any) -> Any:
-        if primary is None or pd.isna(primary):
-            p = ""
-        else:
-            p = str(primary).strip()
-        if p:
-            return p
-        if fallback is None or pd.isna(fallback):
-            f = ""
-        else:
-            f = str(fallback).strip()
-        return f if f else None
+    def pick_str(*values) -> Any:
+        for v in values:
+            if v is not None and not pd.isna(v):
+                s = str(v).strip()
+                if s:
+                    return s
+        return None
 
     out = pd.DataFrame()
     out["Symbol"] = merged["Symbol"].astype(str).str.strip()
 
-    name_primary = merged["Name_nasdaq"] if "Name_nasdaq" in merged.columns else (merged["Name"] if "Name" in merged.columns else None)
-    name_fallback = merged["Name_av"] if "Name_av" in merged.columns else None
-    if name_primary is None and name_fallback is None:
-        out["Name"] = None
-    elif name_primary is None:
-        out["Name"] = name_fallback
-    elif name_fallback is None:
-        out["Name"] = name_primary
-    else:
-        out["Name"] = [pick_str(p, f) for p, f in zip(name_primary, name_fallback)]
+    # Resolve Name
+    # Priority: NASDAQ -> Massive -> Alpha Vantage
+    name_n = merged["Name_nasdaq"] if "Name_nasdaq" in merged.columns else (merged["Name"] if "Name" in merged.columns else None)
+    name_m = merged["Name_massive"] if "Name_massive" in merged.columns else None
+    name_a = merged["Name_av"] if "Name_av" in merged.columns else (merged["Name"] if "Name" in merged.columns else None) # 'Name' might obscure if not careful
+    
+    # Safe column extraction helper
+    def get_col(df, col_base, suffix):
+        if f"{col_base}{suffix}" in df.columns:
+            return df[f"{col_base}{suffix}"]
+        if col_base in df.columns and suffix == "": # Fallback/original
+             return df[col_base]
+        return None
+
+    out["Name"] = merged.apply(
+        lambda row: pick_str(
+            row.get("Name_nasdaq"), 
+            row.get("Name_massive"), 
+            row.get("Name_av") if "Name_av" in row else row.get("Name")
+        ), axis=1
+    )
 
     # NASDAQ metadata (best effort).
     for col in ["Description", "Sector", "Industry", "Industry_2", "Optionable", "Country"]:
@@ -791,17 +837,45 @@ def merge_symbol_sources(df_nasdaq: pd.DataFrame, df_alpha_vantage: pd.DataFrame
             out[col] = merged[col]
 
     # Alpha Vantage metadata (best effort).
-    for col in ["Exchange", "AssetType", "IpoDate", "DelistingDate", "Status"]:
-        if col in merged.columns:
+    for col in ["IpoDate", "DelistingDate", "Status"]:
+         if col in merged.columns:
             out[col] = merged[col]
 
-    # Source tracking (nullable booleans so failed fetches don't overwrite).
-    out["source_nasdaq"] = merged["source_nasdaq"] if "source_nasdaq" in merged.columns else None
-    out["source_alpha_vantage"] = merged["source_alpha_vantage"] if "source_alpha_vantage" in merged.columns else None
-    if "source_nasdaq" in out.columns:
-        out["source_nasdaq"] = out["source_nasdaq"].fillna(False).astype(bool)
-    if "source_alpha_vantage" in out.columns:
-        out["source_alpha_vantage"] = out["source_alpha_vantage"].fillna(False).astype(bool)
+    # Massive/Shared metadata
+    # Exchange, AssetType might exist in both Massive and AV.
+    out["Exchange"] = merged.apply(lambda row: pick_str(row.get("Exchange_massive"), row.get("Exchange_av") if "Exchange_av" in row else row.get("Exchange")), axis=1)
+    out["AssetType"] = merged.apply(lambda row: pick_str(row.get("AssetType_massive"), row.get("AssetType_av") if "AssetType_av" in row else row.get("AssetType")), axis=1)
+
+    # Massive unique
+    for col in ["Locale", "Market", "CurrencyName"]:
+        if col in merged.columns:
+             out[col] = merged[col]
+
+    # Source tracking
+    if "source_nasdaq" in merged.columns:
+        out["source_nasdaq"] = merged["source_nasdaq"].fillna(False).astype(bool)
+    else:
+        out["source_nasdaq"] = False
+        
+    if "source_massive" in merged.columns:
+         out["source_massive"] = merged["source_massive"].fillna(False).astype(bool)
+    else:
+        out["source_massive"] = False
+
+    if "source_alpha_vantage" in merged.columns:
+        out["source_alpha_vantage"] = merged["source_alpha_vantage"].fillna(False).astype(bool)
+    else:
+        out["source_alpha_vantage"] = False
+
+    # Generate summary source column
+    def _make_source_str(row):
+        parts = []
+        if row.get("source_nasdaq"): parts.append("nasdaq")
+        if row.get("source_massive"): parts.append("massive")
+        if row.get("source_alpha_vantage"): parts.append("alpha_vantage")
+        return ",".join(parts)
+    
+    out["source"] = out.apply(_make_source_str, axis=1)
 
     out = out[out["Symbol"].ne("")].drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
     return out
@@ -848,6 +922,7 @@ def _ensure_symbols_tables(cur) -> None:
         ("status", "TEXT"),
         ("source_nasdaq", "BOOLEAN"),
         ("source_alpha_vantage", "BOOLEAN"),
+        ("source", "TEXT"),
         ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
     ]
     for name, col_type in columns:
@@ -923,6 +998,7 @@ def upsert_symbols_to_db(
         "Status": "status",
         "source_nasdaq": "source_nasdaq",
         "source_alpha_vantage": "source_alpha_vantage",
+        "source": "source",
     }
 
     df_to_upload = df_symbols.copy()
@@ -940,7 +1016,7 @@ def upsert_symbols_to_db(
 
     # Convert empty strings/NaNs to NULL to avoid wiping out existing values on upsert.
     for col in df_to_upload.columns:
-        if col in {"source_nasdaq", "source_alpha_vantage"}:
+        if col in {"source_nasdaq", "source_alpha_vantage", "source"}:
             continue
         df_to_upload[col] = df_to_upload[col].apply(lambda v: None if v is None or pd.isna(v) or str(v).strip() == "" else v)
 
@@ -951,7 +1027,7 @@ def upsert_symbols_to_db(
     update_cols = [c for c in db_cols if c != "symbol"]
     set_parts = []
     for col in update_cols:
-        if col in {"source_nasdaq", "source_alpha_vantage"}:
+        if col in {"source_nasdaq", "source_alpha_vantage", "source"}:
             set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
         else:
             set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
@@ -1020,16 +1096,28 @@ def refresh_symbols_to_db_if_due() -> None:
                 if not _symbols_refresh_due(cur, interval_hours):
                     return
 
-                write_line("Refreshing symbols from NASDAQ + Alpha Vantage...")
+                write_line("Refreshing symbols from NASDAQ + Alpha Vantage + Massive...")
                 df_nasdaq = get_active_tickers()
                 df_av = get_active_tickers_alpha_vantage()
+                df_massive = get_active_tickers_massive()
 
+                now_ts = datetime.now().isoformat()
                 sources = {
-                    "nasdaq": {"rows": int(len(df_nasdaq)) if df_nasdaq is not None else 0},
-                    "alpha_vantage": {"rows": int(len(df_av)) if df_av is not None else 0},
+                    "nasdaq": {
+                        "rows": int(len(df_nasdaq)) if df_nasdaq is not None else 0,
+                        "timestamp": now_ts
+                    },
+                    "alpha_vantage": {
+                        "rows": int(len(df_av)) if df_av is not None else 0,
+                        "timestamp": now_ts
+                    },
+                    "massive": {
+                        "rows": int(len(df_massive)) if df_massive is not None else 0,
+                        "timestamp": now_ts
+                    },
                 }
 
-                df_merged = merge_symbol_sources(df_nasdaq, df_av)
+                df_merged = merge_symbol_sources(df_nasdaq, df_av, df_massive)
 
                 # Mix in manual additions before persisting.
                 tickers_to_add = cfg.TICKERS_TO_ADD
@@ -1099,6 +1187,7 @@ def get_symbols_from_db():
                 'status': 'Status',
                 'source_nasdaq': 'source_nasdaq',
                 'source_alpha_vantage': 'source_alpha_vantage',
+                'source': 'source',
                 'updated_at': 'UpdatedAt',
             }
             df.rename(columns=rename_map, inplace=True)
@@ -1181,10 +1270,11 @@ def get_symbols():
 
     # Fallback/Supplemental Logic
     if df_symbols is None or df_symbols.empty:
-        write_line("DB symbols missing or empty. Fetching from NASDAQ + Alpha Vantage...")
+        write_line("DB symbols missing or empty. Fetching from NASDAQ + Alpha Vantage + Massive...")
         df_nasdaq = get_active_tickers()
         df_av = get_active_tickers_alpha_vantage()
-        df_symbols = merge_symbol_sources(df_nasdaq, df_av)
+        df_massive = get_active_tickers_massive()
+        df_symbols = merge_symbol_sources(df_nasdaq, df_av, df_massive)
 
         # Best effort: persist immediately if Postgres is configured.
         try:

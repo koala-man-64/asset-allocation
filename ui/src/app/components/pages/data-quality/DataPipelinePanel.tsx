@@ -176,7 +176,56 @@ function PipelineNode({ layer, domain, label }: PipelineNodeProps) {
   );
 }
 
+interface SourceStatusProps {
+  sources?: {
+    nasdaq?: { timestamp?: string };
+    alpha_vantage?: { timestamp?: string };
+    massive?: { timestamp?: string };
+  };
+}
+
+function SourceStatus({ sources }: SourceStatusProps) {
+  if (!sources) return null;
+
+  const renderSource = (name: string, label: string, timestamp?: string) => {
+    if (!timestamp) return null;
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+    const isStale = diffHours > 24;
+
+    return (
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={cn("font-mono", isStale ? "text-amber-600" : "text-emerald-600")}>
+          {isStale ? "⚠ " : ""}{date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="dq-pipeline-stage dq-stage-sources border-r border-border pr-4 mr-4">
+      <div className="dq-stage-header">
+        <div className="dq-stage-dot bg-blue-500" />
+        <div className="dq-stage-title">Data Sources</div>
+      </div>
+      <div className="space-y-2">
+        {renderSource("nasdaq", "Nasdaq", sources.nasdaq?.timestamp)}
+        {renderSource("alpha_vantage", "Alpha Vantage", sources.alpha_vantage?.timestamp)}
+        {renderSource("massive", "Massive", sources.massive?.timestamp)}
+      </div>
+    </div>
+  );
+}
+
 export function DataPipelinePanel({ drift }: DataPipelinePanelProps) {
+  const { data: syncState } = useQuery({
+    queryKey: ['symbol-sync-state'],
+    queryFn: () => DataService.getSymbolSyncState(), // Assuming this exists or will be added
+    staleTime: 1000 * 60 * 5
+  });
+
   const domains = [
     { id: 'market', label: 'Market Data' },
     { id: 'finance', label: 'Financials' },
@@ -186,58 +235,63 @@ export function DataPipelinePanel({ drift }: DataPipelinePanelProps) {
 
   return (
     <div className="dq-pipeline-wrapper">
-      <div className="dq-pipeline-container">
-        {/* Bronze Stage */}
-        <div className="dq-pipeline-stage dq-stage-bronze">
-          <div className="dq-stage-header">
-            <div className="dq-stage-dot" />
-            <div className="dq-stage-title">Bronze (Raw)</div>
-          </div>
-          {domains.map((d) => {
-            const lagItem = drift.find(
-              (item) => item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
-            ) || drift.find(
-              // Match by label or case-insensitive ID to ensure coverage
-              (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'bronze' && item.to === 'silver'
-            );
+      <div className="dq-pipeline-container flex">
+        {/* Source Status */}
+        <SourceStatus sources={syncState?.last_refreshed_sources} />
 
-            return (
-              <div key={d.id} className="relative">
-                <PipelineNode layer="bronze" domain={d.id} label={d.label} />
-                <LagIndicator drift={lagItem} />
-              </div>
-            );
-          })}
-        </div>
+        <div className="flex flex-1 gap-8">
+          {/* Bronze Stage */}
+          <div className="dq-pipeline-stage dq-stage-bronze">
+            <div className="dq-stage-header">
+              <div className="dq-stage-dot" />
+              <div className="dq-stage-title">Bronze (Raw)</div>
+            </div>
+            {domains.map((d) => {
+              const lagItem = drift.find(
+                (item) => item.from === 'bronze' && item.to === 'silver' && item.domain === d.label
+              ) || drift.find(
+                // Match by label or case-insensitive ID to ensure coverage
+                (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'bronze' && item.to === 'silver'
+              );
 
-        {/* Silver Stage */}
-        <div className="dq-pipeline-stage dq-stage-silver">
-          <div className="dq-stage-header">
-            <div className="dq-stage-dot" />
-            <div className="dq-stage-title">Silver (Cleaned)</div>
+              return (
+                <div key={d.id} className="relative">
+                  <PipelineNode layer="bronze" domain={d.id} label={d.label} />
+                  <LagIndicator drift={lagItem} />
+                </div>
+              );
+            })}
           </div>
-          {domains.map((d) => {
-            const lagItem = drift.find(
-              (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'silver' && item.to === 'gold'
-            );
-            return (
-              <div key={d.id} className="relative">
-                <PipelineNode layer="silver" domain={d.id} label={d.label} />
-                <LagIndicator drift={lagItem} />
-              </div>
-            );
-          })}
-        </div>
 
-        {/* Gold Stage */}
-        <div className="dq-pipeline-stage dq-stage-gold">
-          <div className="dq-stage-header">
-            <div className="dq-stage-dot" />
-            <div className="dq-stage-title">Gold (Features)</div>
+          {/* Silver Stage */}
+          <div className="dq-pipeline-stage dq-stage-silver">
+            <div className="dq-stage-header">
+              <div className="dq-stage-dot" />
+              <div className="dq-stage-title">Silver (Cleaned)</div>
+            </div>
+            {domains.map((d) => {
+              const lagItem = drift.find(
+                (item) => item.domain.toLowerCase() === d.id.toLowerCase() && item.from === 'silver' && item.to === 'gold'
+              );
+              return (
+                <div key={d.id} className="relative">
+                  <PipelineNode layer="silver" domain={d.id} label={d.label} />
+                  <LagIndicator drift={lagItem} />
+                </div>
+              );
+            })}
           </div>
-          {domains.map((d) => (
-            <PipelineNode key={d.id} layer="gold" domain={d.id} label={d.label} />
-          ))}
+
+          {/* Gold Stage */}
+          <div className="dq-pipeline-stage dq-stage-gold">
+            <div className="dq-stage-header">
+              <div className="dq-stage-dot" />
+              <div className="dq-stage-title">Gold (Features)</div>
+            </div>
+            {domains.map((d) => (
+              <PipelineNode key={d.id} layer="gold" domain={d.id} label={d.label} />
+            ))}
+          </div>
         </div>
       </div>
     </div>

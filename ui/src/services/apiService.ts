@@ -380,5 +380,20 @@ export const apiService = {
         params: { scope }
       }
     );
+  },
+
+  getSymbolSyncState(): Promise<SymbolSyncState> {
+    return request<SymbolSyncState>('/system/symbol-sync-state');
   }
 };
+
+export interface SymbolSyncState {
+  id: number;
+  last_refreshed_at: string;
+  last_refreshed_sources: {
+    nasdaq?: { rows: number; timestamp: string };
+    alpha_vantage?: { rows: number; timestamp: string };
+    massive?: { rows: number; timestamp: string };
+  };
+  last_refresh_error?: string;
+}

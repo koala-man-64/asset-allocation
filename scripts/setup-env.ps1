@@ -6,6 +6,18 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Check for psql and install if missing
+if (-not (Get-Command "psql" -ErrorAction SilentlyContinue)) {
+    Write-Host "psql not found. Installing PostgreSQL client via winget..."
+    winget install PostgreSQL.PostgreSQL --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Winget installation may have failed or required interaction. Please verify psql is installed."
+    }
+    else {
+        Write-Host "PostgreSQL installed. You may need to restart your terminal."
+    }
+}
+
 # Determine the repo root (prefer parent of scripts/ when executed from this folder).
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = if ((Split-Path -Leaf $scriptDir) -eq "scripts") { Split-Path -Parent $scriptDir } else { (Get-Location).Path }

@@ -21,6 +21,7 @@
 - `AZURE_STORAGE_ACCOUNT_KEY` — storage account key.
 - `AZURE_STORAGE_CONNECTION_STRING` — storage account connection string.
 - `AZURE_STORAGE_SAS_TOKEN` — SAS token.
+- `MASSIVE_API_KEY` — external data provider credential.
 - `NASDAQ_API_KEY` — external data provider credential.
 - `POSTGRES_DSN` — database DSN (contains credentials).
 - `SYSTEM_HEALTH_LINK_TOKEN_SECRET` — signing secret for system health links.
@@ -68,6 +69,7 @@
 - `AZURE_SUBSCRIPTION_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_STORAGE_ACCOUNT_NAME`
+- `MASSIVE_BASE_URL`
 - `RESOURCE_GROUP` — used as a fallback in job triggering.
 - `UI_AUTH_MODE`
 - `UI_API_BASE_URL`
@@ -98,6 +100,8 @@ These are intentionally mutable and many are allowlisted in `core/runtime_config
 - `LOG_LEVEL`
 - `MATERIALIZE_YEAR_MONTH`
 - `MATERIALIZE_WINDOW_MONTHS`
+- `MASSIVE_TIMEOUT_SECONDS`
+- `MASSIVE_TICKERS_PAGE_LIMIT`
 - `MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR`
 - `RUNTIME_CONFIG_REFRESH_SECONDS`
 - `SILVER_LATEST_ONLY`
