@@ -1,7 +1,7 @@
 import os
 import sys
 import argparse
-import glob
+
 import logging
 from pathlib import Path
 

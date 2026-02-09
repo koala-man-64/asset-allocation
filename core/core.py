@@ -809,12 +809,7 @@ def merge_symbol_sources(df_nasdaq: pd.DataFrame, df_alpha_vantage: pd.DataFrame
     out = pd.DataFrame()
     out["Symbol"] = merged["Symbol"].astype(str).str.strip()
 
-    # Resolve Name
-    # Priority: NASDAQ -> Massive -> Alpha Vantage
-    name_n = merged["Name_nasdaq"] if "Name_nasdaq" in merged.columns else (merged["Name"] if "Name" in merged.columns else None)
-    name_m = merged["Name_massive"] if "Name_massive" in merged.columns else None
-    name_a = merged["Name_av"] if "Name_av" in merged.columns else (merged["Name"] if "Name" in merged.columns else None) # 'Name' might obscure if not careful
-    
+    # Name precedence: NASDAQ -> Massive -> Alpha Vantage    
     # Safe column extraction helper
     def get_col(df, col_base, suffix):
         if f"{col_base}{suffix}" in df.columns:
