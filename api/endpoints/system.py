@@ -25,6 +25,7 @@ from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 from core.blob_storage import BlobStorageClient
 from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
+from core.core import get_symbol_sync_state
 from core.postgres import PostgresError
 from core.runtime_config import (
     DEFAULT_ENV_OVERRIDE_KEYS,
@@ -204,6 +205,50 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     if result.refresh_error:
         headers["X-System-Health-Stale"] = "1"
     return JSONResponse(payload, headers=headers)
+
+
+
+class SymbolSyncStateResponse(BaseModel):
+    id: int
+    last_refreshed_at: Optional[str] = None
+    last_refreshed_sources: Optional[Dict[str, Any]] = None
+    last_refresh_error: Optional[str] = None
+
+
+@router.get("/symbol-sync-state", response_model=SymbolSyncStateResponse)
+def get_symbol_sync_state_endpoint(request: Request) -> JSONResponse:
+    validate_auth(request)
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
+    
+    try:
+        state = get_symbol_sync_state(dsn)
+    except Exception as exc:
+        logger.exception("Failed to load symbol sync state.")
+        raise HTTPException(status_code=500, detail=f"Failed to load symbol sync state: {exc}") from exc
+        
+    if not state:
+        return JSONResponse(
+            {
+                "id": 1,
+                "last_refreshed_at": None,
+                "last_refreshed_sources": None,
+                "last_refresh_error": None,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    
+    return JSONResponse(
+        {
+            "id": state["id"],
+            "last_refreshed_at": _iso(state["last_refreshed_at"]),
+            "last_refreshed_sources": state["last_refreshed_sources"],
+            "last_refresh_error": state["last_refresh_error"],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 class DomainDateRange(BaseModel):
