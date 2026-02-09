@@ -266,7 +266,7 @@ function SourceStatus({ sources }: SourceStatusProps) {
   );
 }
 
-export function DataPipelinePanel({ drift }: DataPipelinePanelProps) {
+export function DataPipelinePanel({ drift, rows }: DataPipelinePanelProps) {
   const { data: syncState } = useQuery({
     queryKey: ['symbol-sync-state'],
     queryFn: () => DataService.getSymbolSyncState(), // Assuming this exists or will be added
