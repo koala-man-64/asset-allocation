@@ -18,7 +18,8 @@ import type {
   RuntimeConfigCatalogResponse,
   RuntimeConfigItem,
   RuntimeConfigListResponse,
-  ValidationReport
+  ValidationReport,
+  SymbolSyncState
 } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
@@ -211,5 +212,9 @@ export const DataService = {
     scope: string = 'global'
   ): Promise<{ scope: string; key: string; deleted: boolean }> {
     return apiService.deleteRuntimeConfig(key, scope);
+  },
+
+  getSymbolSyncState(): Promise<SymbolSyncState> {
+    return apiService.getSymbolSyncState();
   }
 };

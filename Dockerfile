@@ -6,6 +6,7 @@ WORKDIR /app
 
 COPY requirements.lock.txt .
 # Install Python dependencies first for better layer caching.
+RUN apt-get update && apt-get install -y postgresql-client && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r requirements.lock.txt
 
 # Copy application code required by jobs.
