@@ -130,6 +130,7 @@ class AppSettings(BaseSettings):
     MASSIVE_TIMEOUT_SECONDS: float = 30.0
     MASSIVE_PREFER_OFFICIAL_SDK: bool = True
     MASSIVE_MAX_WORKERS: int = 32
+    MASSIVE_TICKERS_PAGE_LIMIT: int = 1000
     MASSIVE_FINANCE_FRESH_DAYS: int = 28
 
     # Comma-separated list for debug runs (e.g., "AAPL,MSFT"). Empty disables filtering.
@@ -179,6 +180,7 @@ def _apply_settings(new_settings: AppSettings) -> None:
     global MASSIVE_TIMEOUT_SECONDS
     global MASSIVE_PREFER_OFFICIAL_SDK
     global MASSIVE_MAX_WORKERS
+    global MASSIVE_TICKERS_PAGE_LIMIT
     global MASSIVE_FINANCE_FRESH_DAYS
     global DEBUG_SYMBOLS
 
@@ -209,6 +211,7 @@ def _apply_settings(new_settings: AppSettings) -> None:
     MASSIVE_TIMEOUT_SECONDS = settings.MASSIVE_TIMEOUT_SECONDS
     MASSIVE_PREFER_OFFICIAL_SDK = settings.MASSIVE_PREFER_OFFICIAL_SDK
     MASSIVE_MAX_WORKERS = settings.MASSIVE_MAX_WORKERS
+    MASSIVE_TICKERS_PAGE_LIMIT = settings.MASSIVE_TICKERS_PAGE_LIMIT
     MASSIVE_FINANCE_FRESH_DAYS = settings.MASSIVE_FINANCE_FRESH_DAYS
 
     DEBUG_SYMBOLS = settings.DEBUG_SYMBOLS

@@ -20,6 +20,16 @@ from massive_provider.utils import filter_none, to_jsonable
 
 logger = logging.getLogger(__name__)
 
+_ENDPOINT_OPEN_CLOSE_TEMPLATE = "/v1/open-close/{ticker}/{date}"
+_ENDPOINT_AGGS_RANGE_TEMPLATE = "/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from_}/{to}"
+_ENDPOINT_SHORT_INTEREST = "/stocks/v1/short-interest"
+_ENDPOINT_SHORT_VOLUME = "/stocks/v1/short-volume"
+_ENDPOINT_FLOAT_DEFAULT = "/stocks/vX/float"
+_ENDPOINT_FINANCIALS_INCOME = "/stocks/financials/v1/income-statements"
+_ENDPOINT_FINANCIALS_CASH_FLOW = "/stocks/financials/v1/cash-flow-statements"
+_ENDPOINT_FINANCIALS_BALANCE_SHEET = "/stocks/financials/v1/balance-sheets"
+_ENDPOINT_FINANCIALS_RATIOS = "/stocks/financials/v1/ratios"
+
 
 try:  # Optional dependency
     from massive import RESTClient as _SDKRestClient  # type: ignore
@@ -173,6 +183,21 @@ class MassiveClient:
     # OHLCV
     # ------------------------------
 
+    def get_daily_ticker_summary(self, *, ticker: str, date: str, adjusted: bool = True) -> Any:
+        """Single-day open/close summary.
+
+        REST endpoint: ``GET /v1/open-close/{stocksTicker}/{date}``.
+        """
+        sym = str(ticker or "").strip().upper()
+        day = str(date or "").strip()
+        if not sym:
+            raise ValueError("ticker is required")
+        if not day:
+            raise ValueError("date is required")
+        path = _ENDPOINT_OPEN_CLOSE_TEMPLATE.format(ticker=sym, date=day)
+        params = {"adjusted": "true" if adjusted else "false"}
+        return self._request_json(path, params=params).payload
+
     def list_ohlcv(
         self,
         *,
@@ -198,19 +223,37 @@ class MassiveClient:
 
         if self._sdk is not None:
             out: list[dict[str, Any]] = []
-            for bar in self._sdk.list_aggs(
-                ticker=sym,
-                multiplier=int(multiplier),
-                timespan=str(timespan),
-                from_=str(from_),
-                to=str(to),
-                limit=int(limit),
-            ):
+            sdk_base_kwargs = {
+                "ticker": sym,
+                "multiplier": int(multiplier),
+                "timespan": str(timespan),
+                "from_": str(from_),
+                "to": str(to),
+                "limit": int(limit),
+            }
+            try:
+                iterator = self._sdk.list_aggs(
+                    adjusted=bool(adjusted),
+                    sort=str(sort),
+                    **sdk_base_kwargs,
+                )
+            except TypeError:
+                # Backward compatibility with SDK versions that don't support
+                # `adjusted` and/or `sort` kwargs on list_aggs.
+                iterator = self._sdk.list_aggs(**sdk_base_kwargs)
+
+            for bar in iterator:
                 out.append(to_jsonable(bar))
             return out
 
         # Direct REST fallback
-        path = f"/v2/aggs/ticker/{sym}/range/{int(multiplier)}/{str(timespan)}/{str(from_)}/{str(to)}"
+        path = _ENDPOINT_AGGS_RANGE_TEMPLATE.format(
+            ticker=sym,
+            multiplier=int(multiplier),
+            timespan=str(timespan),
+            from_=str(from_),
+            to=str(to),
+        )
         params = {
             "adjusted": "true" if adjusted else "false",
             "sort": str(sort),
@@ -255,7 +298,7 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json("/stocks/v1/short-interest", params=filter_none(q)).payload
+        return self._request_json(_ENDPOINT_SHORT_INTEREST, params=filter_none(q)).payload
 
     def get_short_volume(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
         """Short volume.
@@ -266,7 +309,7 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json("/stocks/v1/short-volume", params=filter_none(q)).payload
+        return self._request_json(_ENDPOINT_SHORT_VOLUME, params=filter_none(q)).payload
 
     def get_float(self, *, ticker: str, as_of: Optional[str] = None, params: Optional[dict[str, Any]] = None) -> Any:
         """Company float (experimental).
@@ -277,7 +320,10 @@ class MassiveClient:
         q: dict[str, Any] = {"ticker": str(ticker).strip().upper(), "as_of": as_of}
         if params:
             q.update(params)
-        return self._request_json("/stocks/vX/float", params=filter_none(q)).payload
+        endpoint = str(getattr(self.config, "float_endpoint", _ENDPOINT_FLOAT_DEFAULT) or _ENDPOINT_FLOAT_DEFAULT).strip()
+        if not endpoint.startswith("/"):
+            endpoint = "/" + endpoint
+        return self._request_json(endpoint, params=filter_none(q)).payload
 
     def get_income_statement(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
         """Income statements.
@@ -288,7 +334,7 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json("/stocks/financials/v1/income-statements", params=filter_none(q)).payload
+        return self._request_json(_ENDPOINT_FINANCIALS_INCOME, params=filter_none(q)).payload
 
     def get_cash_flow_statement(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
         """Cash-flow statements.
@@ -299,7 +345,7 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json("/stocks/financials/v1/cash-flow-statements", params=filter_none(q)).payload
+        return self._request_json(_ENDPOINT_FINANCIALS_CASH_FLOW, params=filter_none(q)).payload
 
     def get_balance_sheet(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
         """Balance sheets.
@@ -310,7 +356,7 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json("/stocks/financials/v1/balance-sheets", params=filter_none(q)).payload
+        return self._request_json(_ENDPOINT_FINANCIALS_BALANCE_SHEET, params=filter_none(q)).payload
 
     def get_ratios(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
         """Financial ratios.
@@ -321,4 +367,4 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json("/stocks/financials/v1/ratios", params=filter_none(q)).payload
+        return self._request_json(_ENDPOINT_FINANCIALS_RATIOS, params=filter_none(q)).payload

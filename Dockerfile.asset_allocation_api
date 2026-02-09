@@ -13,6 +13,7 @@ COPY alpha_vantage/ alpha_vantage/
 COPY core/ core/
 COPY tasks/ tasks/
 COPY alpaca/ alpaca/
+COPY massive_provider/ massive_provider/
 COPY monitoring/ monitoring/
 COPY api/ api/
 RUN pip install --no-cache-dir .

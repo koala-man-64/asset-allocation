@@ -246,6 +246,31 @@ class MassiveGateway:
             )
         return out.getvalue()
 
+    def _normalize_daily_summary_row(self, payload: Any, *, fallback_date: str) -> Optional[dict[str, float | str]]:
+        if not isinstance(payload, dict):
+            return None
+
+        as_of = _extract_iso_date(payload) or str(fallback_date)
+        open_ = _coerce_number(payload, "open", "o", "Open")
+        high = _coerce_number(payload, "high", "h", "High")
+        low = _coerce_number(payload, "low", "l", "Low")
+        close = _coerce_number(payload, "close", "c", "Close")
+        volume = _coerce_number(payload, "volume", "v", "Volume")
+
+        if not as_of:
+            return None
+        if open_ is None or high is None or low is None or close is None:
+            return None
+
+        return {
+            "Date": str(as_of),
+            "Open": float(open_),
+            "High": float(high),
+            "Low": float(low),
+            "Close": float(close),
+            "Volume": float(volume or 0.0),
+        }
+
     def get_daily_time_series_csv(
         self,
         *,
@@ -260,6 +285,20 @@ class MassiveGateway:
 
         end_date = to_date or _utc_today_iso()
         start_date = from_date or (datetime.now(timezone.utc).date() - timedelta(days=180)).isoformat()
+
+        if str(start_date) == str(end_date):
+            try:
+                summary_payload = self.get_client().get_daily_ticker_summary(
+                    ticker=sym,
+                    date=str(start_date),
+                    adjusted=bool(adjusted),
+                )
+                row = self._normalize_daily_summary_row(summary_payload, fallback_date=str(start_date))
+                if row is not None:
+                    return self._to_csv([row])
+            except MassiveNotFoundError:
+                # Fallback to aggs endpoint below so callers still get a CSV response.
+                pass
 
         bars = self.get_client().list_ohlcv(
             ticker=sym,

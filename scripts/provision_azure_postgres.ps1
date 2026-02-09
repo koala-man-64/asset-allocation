@@ -427,7 +427,7 @@ BEGIN
     CREATE INDEX IF NOT EXISTS idx_public_symbols_status ON public.symbols(status);
     CREATE INDEX IF NOT EXISTS idx_public_symbols_exchange ON public.symbols(exchange);
     CREATE INDEX IF NOT EXISTS idx_public_symbols_updated_at ON public.symbols(updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_public_symbols_source ON public.symbols(source);
+    DROP INDEX IF EXISTS idx_public_symbols_source;
   END IF;
 
   IF to_regclass('gold.market_data') IS NOT NULL THEN
