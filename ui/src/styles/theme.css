@@ -267,6 +267,31 @@
     font-family: var(--font-body);
   }
 
+  .page-shell {
+    @apply space-y-8 pb-10;
+  }
+
+  .page-header-row {
+    @apply flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between;
+  }
+
+  .page-header {
+    @apply space-y-1;
+  }
+
+  .page-kicker {
+    @apply font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground;
+  }
+
+  .page-title {
+    @apply text-2xl font-black tracking-tight text-foreground;
+    font-family: var(--font-display);
+  }
+
+  .page-subtitle {
+    @apply max-w-[72ch] text-sm text-muted-foreground;
+  }
+
   .mcm-panel {
     @apply rounded-[1.5rem] border-2 border-mcm-walnut bg-mcm-paper shadow-[8px_8px_0px_0px_rgba(119,63,26,0.1)];
   }

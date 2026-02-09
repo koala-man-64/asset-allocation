@@ -75,28 +75,32 @@ export const PostgresExplorerPage: React.FC = () => {
 
   // Cleanup keys function to infer columns if empty
   // DataTable usually handles this, so passing data directly is fine.
+  const controlClass =
+    'h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/40';
 
   return (
-    <div className="p-6 min-h-screen bg-gray-50 flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold text-gray-800 font-mono tracking-tight uppercase flex items-center gap-2">
-          <Database className="h-6 w-6 text-blue-600" />
+    <div className="page-shell">
+      <div className="page-header">
+        <p className="page-kicker">Live Operations</p>
+        <h1 className="page-title flex items-center gap-2">
+          <Database className="h-5 w-5 text-mcm-teal" />
           Postgres Explorer
         </h1>
-        <p className="text-sm text-gray-500 font-mono">
+        <p className="page-subtitle">
           Introspect database schemas and query tables directly.
         </p>
       </div>
 
-      <div className="bg-white p-4 border border-gray-300 shadow-sm flex flex-wrap gap-4 items-end">
+      <div className="mcm-panel p-4 sm:p-5">
         {/* Schema Selector */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">Schema</label>
-          <div className="relative">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[220px_300px_160px_1fr_auto] lg:items-end">
+          <div className="space-y-2">
+            <label htmlFor="postgres-schema">Schema</label>
             <select
+              id="postgres-schema"
               value={selectedSchema}
               onChange={(e) => setSelectedSchema(e.target.value)}
-              className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-48 bg-gray-50 h-10"
+              className={controlClass}
             >
               {schemas.map((s) => (
                 <option key={s} value={s}>
@@ -105,17 +109,16 @@ export const PostgresExplorerPage: React.FC = () => {
               ))}
             </select>
           </div>
-        </div>
 
-        {/* Table Selector */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">Table</label>
-          <div className="relative">
+          {/* Table Selector */}
+          <div className="space-y-2">
+            <label htmlFor="postgres-table">Table</label>
             <select
+              id="postgres-table"
               value={selectedTable}
               onChange={(e) => setSelectedTable(e.target.value)}
               disabled={metadataLoading || tables.length === 0}
-              className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-64 bg-gray-50 h-10 disabled:opacity-50"
+              className={`${controlClass} disabled:opacity-50`}
             >
               {tables.length === 0 ? (
                 <option value="">(No tables found)</option>
@@ -128,49 +131,48 @@ export const PostgresExplorerPage: React.FC = () => {
               )}
             </select>
           </div>
-        </div>
 
-        {/* Limit Input */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">Limit</label>
-          <input
-            type="number"
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-            min={1}
-            max={1000}
-            className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-24 bg-gray-50 h-10"
-          />
-        </div>
+          {/* Limit Input */}
+          <div className="space-y-2">
+            <label htmlFor="postgres-limit">Limit</label>
+            <input
+              id="postgres-limit"
+              type="number"
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              min={1}
+              max={1000}
+              className={controlClass}
+            />
+          </div>
 
-        {/* Actions */}
-        <Button
-          onClick={fetchData}
-          disabled={loading || !selectedTable || metadataLoading}
-          className="bg-gray-800 text-white hover:bg-black h-10 px-6 font-mono"
-        >
-          {loading ? (
-            <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-          ) : (
-            <TableIcon className="h-4 w-4 mr-2" />
-          )}
-          {loading ? 'QUERYING...' : 'QUERY TABLE'}
-        </Button>
+          <div />
+
+          {/* Actions */}
+          <Button
+            onClick={fetchData}
+            disabled={loading || !selectedTable || metadataLoading}
+            className="h-10 gap-2 px-6"
+          >
+            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <TableIcon className="h-4 w-4" />}
+            {loading ? 'Querying…' : 'Query Table'}
+          </Button>
+        </div>
       </div>
 
       {error && (
-        <div className="p-4 border-l-4 border-red-500 bg-red-50 text-red-700 font-mono text-sm">
-          <strong>ERROR:</strong> {error}
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 font-mono text-sm text-destructive">
+          <strong>Error:</strong> {error}
         </div>
       )}
 
       <div className="flex-1 overflow-hidden flex flex-col min-h-[400px]">
         <DataTable
           data={data}
-          className="flex-1 shadow-sm"
+          className="flex-1"
           emptyMessage="Select a table and run query to view data."
         />
-        <div className="mt-2 text-xs text-gray-400 font-mono text-right">
+        <div className="mt-2 text-right font-mono text-xs text-muted-foreground">
           {data.length > 0 ? `Showing ${data.length} rows.` : 'Ready.'}
         </div>
       </div>

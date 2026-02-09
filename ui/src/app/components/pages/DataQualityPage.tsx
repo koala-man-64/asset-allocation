@@ -235,7 +235,7 @@ export function DataQualityPage() {
 
   return (
     <div className="dq min-h-[calc(100vh-6rem)]">
-      <div className="dq-shell">
+      <div className="dq-shell page-shell">
         <header className="dq-panel dq-panel-pad dq-hero">
           <div className="dq-hero-brand">
             <div className="dq-kicker flex items-center gap-2">
@@ -359,7 +359,7 @@ export function DataQualityPage() {
         </header>
 
         <Suspense fallback={<Skeleton className="h-[200px] w-full rounded-xl bg-muted/20" />}>
-          <DataPipelinePanel drift={drift} />
+          <DataPipelinePanel drift={drift} rows={rows} />
         </Suspense>
 
         <section className="dq-panel dq-panel-pad mt-6">

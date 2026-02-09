@@ -34,18 +34,19 @@ export function StrategyConfigPage() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Strategies</h1>
-          <p className="text-muted-foreground">Manage trading strategies and configurations.</p>
+    <div className="page-shell">
+      <div className="page-header-row">
+        <div className="page-header">
+          <p className="page-kicker">Strategy Workbench</p>
+          <h1 className="page-title">Strategies</h1>
+          <p className="page-subtitle">Manage trading strategies and execution configurations.</p>
         </div>
-        <Button onClick={handleCreate}>
+        <Button onClick={handleCreate} className="gap-2">
           <Plus className="mr-2 h-4 w-4" /> New Strategy
         </Button>
       </div>
 
-      <Card>
+      <Card className="mcm-panel">
         <CardHeader>
           <CardTitle>All Strategies</CardTitle>
         </CardHeader>

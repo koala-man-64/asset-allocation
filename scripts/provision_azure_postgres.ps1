@@ -404,6 +404,9 @@ if ($ApplyMigrations) {
   Write-Host "Applying repo-owned migrations..."
   & "$PSScriptRoot/apply_postgres_migrations.ps1" -Dsn $adminDsn -UseDockerPsql:$UseDockerPsql
 }
+else {
+  Write-Warning "Migrations were skipped. Runtime Python code no longer creates tables/schemas; run with -ApplyMigrations to provision DB objects."
+}
 
 $backtestServiceDsn = ""
 if ($CreateAppUsers) {

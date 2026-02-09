@@ -162,7 +162,7 @@ export function RuntimeConfigPage() {
       (configQuery.error instanceof Error ? configQuery.error.message : '') ||
       'Runtime config is unavailable.';
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-destructive">
+      <div className="mcm-panel rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-destructive">
         <p className="font-mono text-sm uppercase tracking-wide">Runtime Config Unavailable</p>
         <p className="mt-3 text-sm">{message}</p>
       </div>
@@ -170,15 +170,16 @@ export function RuntimeConfigPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Runtime Config</h1>
-        <p className="text-sm text-muted-foreground">
+    <div className="page-shell">
+      <div className="page-header">
+        <p className="page-kicker">Live Operations</p>
+        <h1 className="page-title">Runtime Config</h1>
+        <p className="page-subtitle">
           DB-backed overrides applied at ETL job and API startup (scope: {scope}).
         </p>
       </div>
 
-      <Card>
+      <Card className="mcm-panel">
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span>Overrides</span>

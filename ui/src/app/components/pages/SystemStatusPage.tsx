@@ -123,7 +123,7 @@ export function SystemStatusPage() {
   const { overall, dataLayers, recentJobs, resources } = data;
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="page-shell">
       {/* Status Matrix - The Hero Component */}
       <ErrorBoundary>
         <Suspense fallback={<Skeleton className="h-[300px] w-full rounded-xl bg-muted/20" />}>

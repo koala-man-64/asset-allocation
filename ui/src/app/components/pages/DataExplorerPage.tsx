@@ -1,6 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { DataService } from '@/services/DataService';
 import { DataTable } from '@/app/components/common/DataTable';
+import { Button } from '@/app/components/ui/button';
+import { Database, RefreshCw } from 'lucide-react';
 
 // Utility to debounce or just simple state for now
 export const DataExplorerPage: React.FC = () => {
@@ -45,109 +47,119 @@ export const DataExplorerPage: React.FC = () => {
     }
   };
 
+  const controlClass =
+    'h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/40';
+
   return (
-    <div className="p-6 min-h-screen bg-gray-50 flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold text-gray-800 font-mono tracking-tight uppercase">
-          Data Explorer // Top N Rows
+    <div className="page-shell">
+      <div className="page-header">
+        <p className="page-kicker">Live Operations</p>
+        <h1 className="page-title flex items-center gap-2">
+          <Database className="h-5 w-5 text-mcm-teal" />
+          Data Explorer
         </h1>
-        <p className="text-sm text-gray-500 font-mono">
+        <p className="page-subtitle">
           Direct access to generic data layers. Query by domain and limit results.
         </p>
       </div>
 
-      <div className="bg-white p-4 border border-gray-300 shadow-sm flex flex-wrap gap-4 items-end">
+      <div className="mcm-panel p-4 sm:p-5">
         {/* Layer Selector */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">Layer</label>
-          <select
-            value={layer}
-            onChange={(e) => setLayer(e.target.value as 'silver' | 'gold' | 'bronze')}
-            className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-32 bg-gray-50"
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[180px_260px_180px_140px_1fr_auto] lg:items-end">
+          <div className="space-y-2">
+            <label htmlFor="data-explorer-layer">Layer</label>
+            <select
+              id="data-explorer-layer"
+              value={layer}
+              onChange={(e) => setLayer(e.target.value as 'silver' | 'gold' | 'bronze')}
+              className={controlClass}
+            >
+              <option value="bronze">BRONZE</option>
+              <option value="silver">SILVER</option>
+              <option value="gold">GOLD</option>
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="data-explorer-domain">Domain</label>
+            <select
+              id="data-explorer-domain"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              className={controlClass}
+            >
+              <option value="market">market</option>
+              <option value="earnings">earnings</option>
+              <option value="price-target">price-target</option>
+              <option value="finance/balance_sheet">finance/balance_sheet</option>
+              <option value="finance/income_statement">finance/income_statement</option>
+              <option value="finance/cash_flow">finance/cash_flow</option>
+              <option value="finance/valuation">finance/valuation</option>
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="data-explorer-ticker">Ticker ({tickerRequired ? 'Req' : 'Opt'})</label>
+            <input
+              id="data-explorer-ticker"
+              type="text"
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value.toUpperCase())}
+              onKeyDown={handleKeyDown}
+              className={`${controlClass} uppercase`}
+              placeholder="AAPL"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="data-explorer-limit">Limit</label>
+            <input
+              id="data-explorer-limit"
+              type="number"
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              onKeyDown={handleKeyDown}
+              min={1}
+              max={10000}
+              className={controlClass}
+            />
+          </div>
+
+          <div />
+
+          <Button
+            onClick={fetchData}
+            disabled={loading || (tickerRequired && !ticker.trim())}
+            className="h-10 gap-2 px-6"
           >
-            <option value="bronze">BRONZE</option>
-            <option value="silver">SILVER</option>
-            <option value="gold">GOLD</option>
-          </select>
+            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+            {loading ? 'Loading…' : 'Fetch Data'}
+          </Button>
         </div>
-
-        {/* Domain Selector (Strict Dropdown) */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">Domain</label>
-          <select
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-48 bg-gray-50"
-          >
-            <option value="market">market</option>
-            <option value="earnings">earnings</option>
-            <option value="price-target">price-target</option>
-            <option value="finance/balance_sheet">finance/balance_sheet</option>
-            <option value="finance/income_statement">finance/income_statement</option>
-            <option value="finance/cash_flow">finance/cash_flow</option>
-            <option value="finance/valuation">finance/valuation</option>
-          </select>
-        </div>
-
-        {/* Ticker Input */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">
-            Ticker ({tickerRequired ? 'Req' : 'Opt'})
-          </label>
-          <input
-            type="text"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value.toUpperCase())}
-            onKeyDown={handleKeyDown}
-            className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-32 bg-gray-50 uppercase"
-            placeholder="AAPL"
-          />
-        </div>
-
-        {/* Limit Input */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-gray-600 font-mono uppercase">Limit (N)</label>
-          <input
-            type="number"
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-            onKeyDown={handleKeyDown}
-            min={1}
-            max={10000}
-            className="border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none w-24 bg-gray-50"
-          />
-        </div>
-
-        {/* Fetch Button */}
-        <button
-          onClick={fetchData}
-          disabled={loading || (tickerRequired && !ticker.trim())}
-          className="bg-gray-800 text-white px-6 py-2 text-sm font-bold font-mono tracking-wide hover:bg-black disabled:bg-gray-400 transition-colors shadow-sm ml-auto"
-        >
-          {loading ? 'LOADING...' : 'FETCH DATA'}
-        </button>
       </div>
 
       {tickerRequired && !ticker.trim() && (
-        <div className="text-xs text-gray-500 font-mono">Enter a ticker to query Finance data.</div>
+        <div className="text-xs font-mono text-muted-foreground">
+          Enter a ticker to query finance domains.
+        </div>
       )}
 
       {layer === 'bronze' && !tickerRequired && !ticker.trim() && (
-        <div className="text-xs text-gray-500 font-mono">
+        <div className="text-xs font-mono text-muted-foreground">
           Bronze ticker is optional. Leaving it blank returns the first matching file found for the
           selected domain.
         </div>
       )}
 
       {error && (
-        <div className="p-4 border-l-4 border-red-500 bg-red-50 text-red-700 font-mono text-sm">
-          <strong>ERROR:</strong> {error}
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 font-mono text-sm text-destructive">
+          <strong>Error:</strong> {error}
         </div>
       )}
 
       <div className="flex-1 overflow-hidden flex flex-col min-h-[400px]">
-        <DataTable data={data} className="flex-1 shadow-sm" />
-        <div className="mt-2 text-xs text-gray-400 font-mono text-right">
+        <DataTable data={data} className="flex-1" />
+        <div className="mt-2 text-right font-mono text-xs text-muted-foreground">
           Returning {data.length} rows.
         </div>
       </div>

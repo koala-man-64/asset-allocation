@@ -238,25 +238,6 @@ def _resolve_dsn(dsn: Optional[str]) -> Optional[str]:
     return value or None
 
 
-def _ensure_runtime_config_table(cur) -> None:
-    cur.execute("CREATE SCHEMA IF NOT EXISTS core;")
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS core.runtime_config (
-          scope TEXT NOT NULL DEFAULT 'global',
-          key TEXT NOT NULL,
-          enabled BOOLEAN NOT NULL DEFAULT TRUE,
-          value TEXT NOT NULL DEFAULT '',
-          description TEXT,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_by TEXT,
-          PRIMARY KEY (scope, key)
-        );
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_runtime_config_key ON core.runtime_config (key);")
-
-
 def list_runtime_config(
     dsn: Optional[str] = None,
     *,
@@ -283,7 +264,6 @@ def list_runtime_config(
 
     with connect(resolved) as conn:
         with conn.cursor() as cur:
-            _ensure_runtime_config_table(cur)
             cur.execute(
                 f"""
                 SELECT scope, key, enabled, value, description, updated_at, updated_by
@@ -363,7 +343,6 @@ def upsert_runtime_config(
 
     with connect(resolved) as conn:
         with conn.cursor() as cur:
-            _ensure_runtime_config_table(cur)
             cur.execute(
                 """
                 INSERT INTO core.runtime_config(scope, key, enabled, value, description, updated_at, updated_by)
@@ -406,7 +385,6 @@ def delete_runtime_config(*, dsn: Optional[str], scope: str, key: str) -> bool:
 
     with connect(resolved) as conn:
         with conn.cursor() as cur:
-            _ensure_runtime_config_table(cur)
             cur.execute(
                 "DELETE FROM core.runtime_config WHERE scope=%s AND key=%s;",
                 (scope_value, key_value),

@@ -89,7 +89,7 @@ export function DebugSymbolsPage() {
 
   if (debugSymbolsQuery.error) {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-destructive">
+      <div className="mcm-panel rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-destructive">
         <div className="flex items-center gap-2 font-mono text-sm uppercase">
           <ShieldAlert className="h-4 w-4" />
           Debug Symbols Unavailable
@@ -104,16 +104,17 @@ export function DebugSymbolsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Debug Symbols</h1>
-        <p className="text-sm text-muted-foreground">
+    <div className="page-shell">
+      <div className="page-header">
+        <p className="page-kicker">Live Operations</p>
+        <h1 className="page-title">Debug Symbols</h1>
+        <p className="page-subtitle">
           Control the symbol allowlist stored in Postgres and applied at ETL startup.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <Card>
+        <Card className="mcm-panel">
           <CardHeader className="space-y-2">
             <CardTitle className="flex items-center justify-between">
               <span>Configuration</span>
@@ -187,7 +188,7 @@ export function DebugSymbolsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="mcm-panel">
           <CardHeader>
             <CardTitle>Normalized Preview</CardTitle>
             <p className="text-xs text-muted-foreground">

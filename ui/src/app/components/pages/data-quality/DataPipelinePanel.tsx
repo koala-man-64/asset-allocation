@@ -232,11 +232,14 @@ export function DataPipelinePanel({ drift, rows }: DataPipelinePanelProps) {
   ];
   const lastUpdatedByLayerDomain = useMemo(() => {
     const result = new Map<string, string>();
-    for (const row of rows) {
+    const rowList = Array.isArray(rows) ? rows : [];
+    for (const row of rowList) {
+      if (!row || !row.domain) continue;
       const layer = normalizeLayerName(row.layerName);
       const domain = normalizeDomainName(row.domain.name);
-      if (!layer || !domain || !row.domain.lastUpdated) continue;
-      result.set(`${layer}:${domain}`, row.domain.lastUpdated);
+      const lastUpdated = row.domain.lastUpdated;
+      if (!layer || !domain || !lastUpdated) continue;
+      result.set(`${layer}:${domain}`, lastUpdated);
     }
     return result;
   }, [rows]);

@@ -818,60 +818,6 @@ def _get_symbols_refresh_interval_hours() -> float:
     return value
 
 
-def _ensure_symbols_tables(cur) -> None:
-    """
-    Ensure the symbols and sync metadata tables exist (best-effort).
-
-    This keeps `get_symbols()` self-healing for fresh environments.
-    """
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS public.symbols (
-          symbol TEXT PRIMARY KEY
-        );
-        """
-    )
-
-    # Ensure expected columns exist even if the table pre-dates Alpha Vantage integration.
-    columns: list[tuple[str, str]] = [
-        ("name", "TEXT"),
-        ("description", "TEXT"),
-        ("sector", "TEXT"),
-        ("industry", "TEXT"),
-        ("industry_2", "TEXT"),
-        ("optionable", "TEXT"),
-        ("country", "TEXT"),
-        ("exchange", "TEXT"),
-        ("asset_type", "TEXT"),
-        ("ipo_date", "TEXT"),
-        ("delisting_date", "TEXT"),
-        ("status", "TEXT"),
-        ("source_nasdaq", "BOOLEAN"),
-        ("source_alpha_vantage", "BOOLEAN"),
-        ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
-    ]
-    for name, col_type in columns:
-        cur.execute(f"ALTER TABLE public.symbols ADD COLUMN IF NOT EXISTS {name} {col_type};")
-
-    # Ensure a unique index exists for upserts even if the table was created without a PK.
-    try:
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS symbols_symbol_uidx ON public.symbols(symbol);")
-    except Exception as exc:
-        write_warning(f"Unable to ensure unique index for symbols.symbol. ({exc})")
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS public.symbol_sync_state (
-          id SMALLINT PRIMARY KEY,
-          last_refreshed_at TIMESTAMPTZ,
-          last_refreshed_sources JSONB,
-          last_refresh_error TEXT
-        );
-        """
-    )
-    cur.execute("INSERT INTO public.symbol_sync_state(id) VALUES (1) ON CONFLICT DO NOTHING;")
-
-
 def _symbols_refresh_due(cur, interval_hours: float) -> bool:
     # Always return True to allow refreshes whenever get_symbols() is called or job is triggered.
     return True
@@ -959,28 +905,27 @@ def upsert_symbols_to_db(
     set_clause = ", ".join(set_parts)
 
     def _execute_upsert(target_cur) -> None:
-        _ensure_symbols_tables(target_cur)
-
-        target_cur.execute("CREATE TEMP TABLE tmp_symbols (LIKE public.symbols INCLUDING DEFAULTS) ON COMMIT DROP;")
-        copy_rows(
-            target_cur,
-            table="tmp_symbols",
-            columns=db_cols,
-            rows=df_to_upload.itertuples(index=False, name=None),
-        )
-
         cols_sql = ", ".join(db_cols)
-        target_cur.execute(
+        placeholders = ", ".join(["%s"] * len(db_cols))
+        insert_sql = (
             f"""
             INSERT INTO public.symbols AS s ({cols_sql})
-            SELECT {cols_sql} FROM tmp_symbols
+            VALUES ({placeholders})
             ON CONFLICT (symbol) DO UPDATE SET {set_clause};
             """
         )
+        target_cur.executemany(insert_sql, list(df_to_upload.itertuples(index=False, name=None)))
 
         if sources is not None:
             target_cur.execute(
-                "UPDATE public.symbol_sync_state SET last_refreshed_at=now(), last_refreshed_sources=%s, last_refresh_error=NULL WHERE id=1;",
+                """
+                INSERT INTO public.symbol_sync_state(id, last_refreshed_at, last_refreshed_sources, last_refresh_error)
+                VALUES (1, now(), %s, NULL)
+                ON CONFLICT (id) DO UPDATE
+                SET last_refreshed_at = EXCLUDED.last_refreshed_at,
+                    last_refreshed_sources = EXCLUDED.last_refreshed_sources,
+                    last_refresh_error = NULL;
+                """,
                 (json.dumps(sources),),
             )
 
@@ -1010,8 +955,6 @@ def refresh_symbols_to_db_if_due() -> None:
 
     with connect(dsn) as conn:
         with conn.cursor() as cur:
-            _ensure_symbols_tables(cur)
-
             if not _try_advisory_lock_symbols_refresh(cur):
                 write_line("Symbols refresh already in progress; skipping.")
                 return
@@ -1053,7 +996,12 @@ def refresh_symbols_to_db_if_due() -> None:
             except Exception as exc:
                 try:
                     cur.execute(
-                        "UPDATE public.symbol_sync_state SET last_refresh_error=%s WHERE id=1;",
+                        """
+                        INSERT INTO public.symbol_sync_state(id, last_refresh_error)
+                        VALUES (1, %s)
+                        ON CONFLICT (id) DO UPDATE
+                        SET last_refresh_error = EXCLUDED.last_refresh_error;
+                        """,
                         (str(exc),),
                     )
                 except Exception:
@@ -1071,7 +1019,7 @@ def get_symbols_from_db():
             
         with connect(dsn) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM symbols")
+                cur.execute("SELECT * FROM public.symbols")
                 if cur.description is None:
                      return pd.DataFrame()
                 columns = [desc[0] for desc in cur.description]
@@ -1145,9 +1093,8 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
     try:
         with connect(dsn) as conn:
             with conn.cursor() as cur:
-                _ensure_symbols_tables(cur)
                 # 1. Fetch existing symbols to avoid duplicates
-                cur.execute("SELECT symbol FROM symbols")
+                cur.execute("SELECT symbol FROM public.symbols")
                 existing_symbols = set(row[0] for row in cur.fetchall())
                 
                 # 2. Filter out existing
@@ -1165,7 +1112,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
                 # 3. Insert using copy_rows
                 copy_rows(
                     cur,
-                    table="symbols",
+                    table="public.symbols",
                     columns=db_cols,
                     rows=df_new.itertuples(index=False, name=None)
                 )

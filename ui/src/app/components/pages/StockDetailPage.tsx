@@ -86,16 +86,17 @@ export function StockDetailPage() {
   const percentChange = latestPrice && prevPrice ? (priceChange / prevPrice.close) * 100 : 0;
 
   return (
-    <div className="space-y-6 container mx-auto max-w-[1600px] p-6 font-sans">
+    <div className="page-shell">
       {/* Top Bar: Search & Title */}
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between border-b border-slate-200 pb-6">
+      <div className="page-header-row border-b border-border/40 pb-6">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg">
-            <TrendingUp className="h-6 w-6 text-indigo-600" />
+          <div className="rounded-lg border border-mcm-walnut/30 bg-mcm-paper p-2">
+            <TrendingUp className="h-6 w-6 text-mcm-teal" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">LIVE MARKET DATA</h1>
-            <p className="text-xs text-slate-500 font-mono tracking-widest uppercase">
+            <p className="page-kicker">Market Intelligence</p>
+            <h1 className="page-title">Live Market Data</h1>
+            <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
               DATA LAYER: SILVER • SOURCE: BACKTEST ENGINE
             </p>
           </div>
@@ -103,7 +104,7 @@ export function StockDetailPage() {
 
         <form onSubmit={handleSearch} className="flex gap-2 w-full md:w-auto">
           <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="ENTER SYMBOL (e.g. SPY)"
               value={ticker}
@@ -118,7 +119,7 @@ export function StockDetailPage() {
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 text-red-700 border border-red-200 rounded-md flex items-center gap-2">
+        <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-4 text-destructive">
           <AlertCircle className="h-5 w-5" />
           <span>{error}</span>
         </div>
@@ -129,20 +130,20 @@ export function StockDetailPage() {
         <div className="grid grid-cols-12 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           {/* Header Stats Card */}
           <div className="col-span-12">
-            <Card className="bg-slate-900 text-white border-slate-800">
+            <Card className="mcm-panel">
               <CardContent className="p-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-4xl font-black tracking-tighter mb-1">
+                  <h2 className="mb-1 text-4xl font-black tracking-tight text-foreground">
                     {paramTicker?.toUpperCase()}
                   </h2>
-                  <div className="flex items-center gap-4 text-sm font-mono text-slate-400">
+                  <div className="flex items-center gap-4 text-sm font-mono text-muted-foreground">
                     <span>NASD</span>
                     <span>•</span>
                     <span>{stats.length} DATA POINTS</span>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-3xl font-bold font-mono">
+                  <div className="text-3xl font-bold font-mono text-foreground">
                     ${latestPrice?.close.toFixed(2)}
                   </div>
                   <div
@@ -158,17 +159,17 @@ export function StockDetailPage() {
 
           {/* Chart Section */}
           <div className="col-span-12 lg:col-span-8">
-            <Card className="h-[500px] flex flex-col">
+            <Card className="mcm-panel h-[500px] flex flex-col">
               <CardHeader className="border-b pb-3">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-slate-500">
+                  <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
                     <Activity className="h-4 w-4" /> Price Action
                   </CardTitle>
                   <div className="flex gap-2">
                     {['1M', '3M', '6M', '1Y', 'ALL'].map((range) => (
                       <button
                         key={range}
-                        className="text-[10px] font-bold text-slate-400 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-100 transition-colors"
+                        className="rounded px-2 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                       >
                         {range}
                       </button>
@@ -185,9 +186,9 @@ export function StockDetailPage() {
           {/* Side Data Panel */}
           <div className="col-span-12 lg:col-span-4 space-y-6">
             {/* Latest Quote Details */}
-            <Card>
-              <CardHeader className="border-b pb-3 bg-slate-50/50">
-                <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-slate-500">
+            <Card className="mcm-panel">
+              <CardHeader className="border-b bg-muted/20 pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
                   <TableIcon className="h-4 w-4" /> Quote Detail
                 </CardTitle>
               </CardHeader>
@@ -195,7 +196,7 @@ export function StockDetailPage() {
                 <Table>
                   <TableBody>
                     <TableRow>
-                      <TableCell className="text-xs font-bold text-slate-500 uppercase">
+                      <TableCell className="text-xs font-bold uppercase text-muted-foreground">
                         Open
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
@@ -203,7 +204,7 @@ export function StockDetailPage() {
                       </TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell className="text-xs font-bold text-slate-500 uppercase">
+                      <TableCell className="text-xs font-bold uppercase text-muted-foreground">
                         High
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
@@ -211,7 +212,7 @@ export function StockDetailPage() {
                       </TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell className="text-xs font-bold text-slate-500 uppercase">
+                      <TableCell className="text-xs font-bold uppercase text-muted-foreground">
                         Low
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
@@ -219,7 +220,7 @@ export function StockDetailPage() {
                       </TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell className="text-xs font-bold text-slate-500 uppercase">
+                      <TableCell className="text-xs font-bold uppercase text-muted-foreground">
                         Volume
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
@@ -227,7 +228,7 @@ export function StockDetailPage() {
                       </TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell className="text-xs font-bold text-slate-500 uppercase">
+                      <TableCell className="text-xs font-bold uppercase text-muted-foreground">
                         Date
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
@@ -240,9 +241,9 @@ export function StockDetailPage() {
             </Card>
 
             {/* Raw Finance Data (if any) */}
-            <Card className="flex-1">
-              <CardHeader className="border-b pb-3 bg-slate-50/50">
-                <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-slate-500">
+            <Card className="mcm-panel flex-1">
+              <CardHeader className="border-b bg-muted/20 pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
                   <TableIcon className="h-4 w-4" /> Fundamental Data
                 </CardTitle>
               </CardHeader>
@@ -263,7 +264,7 @@ export function StockDetailPage() {
                             k !== 'date' &&
                             k !== 'sub_domain' && (
                               <TableRow key={`${idx}-${k}`}>
-                                <TableCell className="text-xs font-mono text-slate-500">
+                                <TableCell className="text-xs font-mono text-muted-foreground">
                                   {k}
                                 </TableCell>
                                 <TableCell className="text-right font-mono text-xs">
@@ -276,7 +277,7 @@ export function StockDetailPage() {
                     </TableBody>
                   </Table>
                 ) : (
-                  <div className="p-6 text-center text-xs text-slate-400 font-mono">
+                  <div className="p-6 text-center text-xs font-mono text-muted-foreground">
                     NO FUNDAMENTAL DATA AVAILABLE
                   </div>
                 )}
@@ -287,9 +288,9 @@ export function StockDetailPage() {
       )}
 
       {!loading && stats.length === 0 && !error && (
-        <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50">
-          <TrendingUp className="h-12 w-12 text-slate-300 mb-4" />
-          <p className="text-slate-500 font-medium">Enter a symbol to view live market data</p>
+        <div className="mcm-panel flex h-64 flex-col items-center justify-center border-2 border-dashed border-border/50 bg-muted/20">
+          <TrendingUp className="mb-4 h-12 w-12 text-muted-foreground/60" />
+          <p className="font-medium text-muted-foreground">Enter a symbol to view live market data</p>
         </div>
       )}
     </div>

@@ -26,22 +26,6 @@ def _normalize_symbols_text(value: object) -> str:
     return ",".join(symbols)
 
 
-def _ensure_debug_symbols_table(cur) -> None:
-    cur.execute("CREATE SCHEMA IF NOT EXISTS core;")
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS core.debug_symbols (
-          id SMALLINT PRIMARY KEY,
-          enabled BOOLEAN NOT NULL DEFAULT FALSE,
-          symbols TEXT NOT NULL DEFAULT '',
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_by TEXT
-        );
-        """
-    )
-    cur.execute("INSERT INTO core.debug_symbols(id) VALUES (1) ON CONFLICT DO NOTHING;")
-
-
 def _resolve_dsn(dsn: Optional[str]) -> Optional[str]:
     raw = dsn or os.environ.get("POSTGRES_DSN")
     value = (raw or "").strip()
@@ -55,7 +39,6 @@ def read_debug_symbols_state(dsn: Optional[str] = None) -> DebugSymbolsState:
 
     with connect(resolved) as conn:
         with conn.cursor() as cur:
-            _ensure_debug_symbols_table(cur)
             cur.execute(
                 "SELECT enabled, symbols, updated_at, updated_by FROM core.debug_symbols WHERE id=1;"
             )
@@ -97,15 +80,15 @@ def update_debug_symbols_state(
 
     with connect(resolved) as conn:
         with conn.cursor() as cur:
-            _ensure_debug_symbols_table(cur)
             cur.execute(
                 """
-                UPDATE core.debug_symbols
-                SET enabled=%s,
-                    symbols=%s,
+                INSERT INTO core.debug_symbols(id, enabled, symbols, updated_at, updated_by)
+                VALUES (1, %s, %s, now(), %s)
+                ON CONFLICT (id) DO UPDATE
+                SET enabled = EXCLUDED.enabled,
+                    symbols = EXCLUDED.symbols,
                     updated_at=now(),
-                    updated_by=%s
-                WHERE id=1;
+                    updated_by=EXCLUDED.updated_by;
                 """,
                 (bool(enabled), normalized, actor),
             )

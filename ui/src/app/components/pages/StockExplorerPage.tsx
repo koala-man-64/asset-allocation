@@ -53,7 +53,7 @@ const heatClassForPercent = (value: number | null | undefined): string => {
   if (!Number.isFinite(value)) return 'text-muted-foreground';
   if (value > 0) return 'text-emerald-600 dark:text-emerald-400';
   if (value < 0) return 'text-rose-600 dark:text-rose-400';
-  return 'text-slate-600 dark:text-slate-400';
+  return 'text-muted-foreground';
 };
 
 export function StockExplorerPage() {
@@ -124,17 +124,17 @@ export function StockExplorerPage() {
   const sortChip = `${sort}${direction === 'asc' ? ' ↑' : ' ↓'}`;
 
   return (
-    <div className="h-full flex flex-col gap-4 p-6">
+    <div className="page-shell">
       {/* Design Direction: Institutional terminal (dense, honest, daily-only) */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-lg border bg-zinc-950 text-zinc-50 shadow-sm">
+              <div className="grid h-10 w-10 place-items-center rounded-lg border border-mcm-walnut/30 bg-mcm-paper text-mcm-walnut shadow-sm">
                 <Database className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-lg font-black tracking-tight">STOCK SCREENER</h1>
+                <h1 className="page-title text-xl">Stock Screener</h1>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                   <span>Daily</span>
                   <span>•</span>
@@ -197,7 +197,7 @@ export function StockExplorerPage() {
         </div>
       </div>
 
-      <Card className="flex-1 overflow-hidden">
+      <Card className="mcm-panel flex-1 overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between gap-3 border-b py-3">
           <CardTitle className="text-xs font-black uppercase tracking-widest text-muted-foreground">
             Cross-Section Snapshot
@@ -215,7 +215,7 @@ export function StockExplorerPage() {
         <CardContent className="p-0">
           <ScrollArea className="h-[calc(100vh-290px)]">
             {screenerQuery.isError ? (
-              <div className="p-6 font-mono text-xs text-rose-600">
+              <div className="p-6 font-mono text-xs text-destructive">
                 {(screenerQuery.error as Error)?.message || 'Failed to load screener.'}
                 <div className="mt-2 text-muted-foreground">
                   Requires Postgres (`core.symbols`) + Silver/Gold by-date Delta tables.
@@ -359,9 +359,7 @@ export function StockExplorerPage() {
                           </div>
                         </TableCell>
                         <TableCell className="min-w-[240px]">
-                          <div className="truncate font-medium text-slate-900 dark:text-slate-100">
-                            {row.name || '—'}
-                          </div>
+                          <div className="truncate font-medium text-foreground">{row.name || '—'}</div>
                           <div className="truncate font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
                             {row.industry || ''}
                           </div>

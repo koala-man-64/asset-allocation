@@ -3,12 +3,19 @@ import { Activity } from 'lucide-react';
 
 export function LiveTradingPage() {
   return (
-    <div className="space-y-6">
-      <Card>
+    <div className="page-shell">
+      <div className="page-header">
+        <p className="page-kicker">Live Operations</p>
+        <h1 className="page-title">Live Trading</h1>
+        <p className="page-subtitle">
+          Monitor order flow and execution health when real-time trading is enabled.
+        </p>
+      </div>
+      <Card className="mcm-panel">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5" />
-            Live Trading
+            Trading Monitor
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">

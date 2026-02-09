@@ -4,63 +4,33 @@
   --dq-accent: var(--mcm-mustard);
   --dq-danger: #b42318;
   --dq-ok: #1f7a5b;
-  --dq-panel: color-mix(in srgb, var(--mcm-paper) 92%, var(--mcm-cream));
-  --dq-panel-2: color-mix(in srgb, var(--mcm-paper) 88%, var(--mcm-cream));
-  --dq-border: color-mix(in srgb, var(--mcm-walnut) 30%, transparent);
-  --dq-grid: color-mix(in srgb, var(--mcm-walnut) 12%, transparent);
-  --dq-grid-2: color-mix(in srgb, var(--mcm-walnut) 7%, transparent);
-  --dq-shadow: 0 18px 60px rgba(119, 63, 26, 0.18);
-  --dq-radius: 20px;
+  --dq-panel: var(--mcm-paper);
+  --dq-panel-2: color-mix(in srgb, var(--mcm-paper) 92%, var(--mcm-cream));
+  --dq-border: color-mix(in srgb, var(--mcm-walnut) 45%, transparent);
+  --dq-grid: color-mix(in srgb, var(--mcm-walnut) 10%, transparent);
+  --dq-grid-2: color-mix(in srgb, var(--mcm-walnut) 6%, transparent);
+  --dq-shadow: 8px 8px 0 rgba(119, 63, 26, 0.1);
+  --dq-radius: 1.5rem;
 
   color: var(--foreground);
-  background:
-    radial-gradient(
-      900px circle at 15% 12%,
-      color-mix(in srgb, var(--mcm-mustard) 24%, transparent),
-      transparent 55%
-    ),
-    radial-gradient(
-      900px circle at 88% 18%,
-      color-mix(in srgb, var(--mcm-teal) 18%, transparent),
-      transparent 55%
-    ),
-    radial-gradient(
-      900px circle at 50% 100%,
-      color-mix(in srgb, var(--mcm-olive) 18%, transparent),
-      transparent 50%
-    ),
-    repeating-linear-gradient(
-      0deg,
-      var(--dq-grid),
-      var(--dq-grid) 1px,
-      transparent 1px,
-      transparent 28px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      var(--dq-grid-2),
-      var(--dq-grid-2) 1px,
-      transparent 1px,
-      transparent 28px
-    );
+  background: transparent;
 }
 
 .dq-shell {
   max-width: 1800px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 0;
 }
 
 .dq-panel {
   background: var(--dq-panel);
-  border: 1px solid var(--dq-border);
+  border: 2px solid var(--dq-border);
   border-radius: var(--dq-radius);
   box-shadow: var(--dq-shadow);
-  backdrop-filter: blur(12px);
 }
 
 .dq-panel-pad {
-  padding: 1.25rem;
+  padding: 1.2rem;
 }
 
 .dq-hero {
@@ -156,7 +126,7 @@
   font-family: var(--font-display);
   font-weight: 800;
   letter-spacing: 0.08em;
-  font-size: 2.25rem;
+  font-size: clamp(1.75rem, 2.4vw, 2.2rem);
   line-height: 1.05;
   text-transform: uppercase;
 }
