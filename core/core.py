@@ -1478,3 +1478,19 @@ def store_raw_bytes(
 
     client.upload_data(remote_path, data, overwrite=overwrite)
     return remote_path
+
+
+def get_symbol_sync_state(dsn: str) -> Optional[dict]:
+    """Retrieves the current symbol synchronization state from the database."""
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, last_refreshed_at, last_refreshed_sources, last_refresh_error FROM public.symbol_sync_state WHERE id=1;")
+            row = cur.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "last_refreshed_at": row[1],
+                    "last_refreshed_sources": row[2],
+                    "last_refresh_error": row[3],
+                }
+    return None
