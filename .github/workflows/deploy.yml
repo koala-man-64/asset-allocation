@@ -1038,9 +1038,21 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job start \
+          set +e
+          start_output="$(az containerapp job start \
             --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
+            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+          start_status=$?
+          set -e
+          if [ "$start_status" -eq 0 ]; then
+            [ -n "$start_output" ] && echo "$start_output"
+          elif echo "$start_output" | grep -qi "is suspended"; then
+            echo "::warning::Skipping immediate start for ${{ env.BRONZE_MARKET_JOB }} because the job is suspended."
+          else
+            [ -n "$start_output" ] && echo "$start_output"
+            echo "::error::Failed to start ${{ env.BRONZE_MARKET_JOB }}."
+            exit "$start_status"
+          fi
 
       - name: Check Market Silver Job Exists
         id: market_silver_job_check
@@ -1261,9 +1273,21 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job start \
+          set +e
+          start_output="$(az containerapp job start \
             --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
+            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+          start_status=$?
+          set -e
+          if [ "$start_status" -eq 0 ]; then
+            [ -n "$start_output" ] && echo "$start_output"
+          elif echo "$start_output" | grep -qi "is suspended"; then
+            echo "::warning::Skipping immediate start for ${{ env.BRONZE_FINANCE_JOB }} because the job is suspended."
+          else
+            [ -n "$start_output" ] && echo "$start_output"
+            echo "::error::Failed to start ${{ env.BRONZE_FINANCE_JOB }}."
+            exit "$start_status"
+          fi
 
       - name: Check Finance Silver Job Exists
         id: finance_silver_job_check
@@ -1481,9 +1505,21 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job start \
+          set +e
+          start_output="$(az containerapp job start \
             --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
+            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+          start_status=$?
+          set -e
+          if [ "$start_status" -eq 0 ]; then
+            [ -n "$start_output" ] && echo "$start_output"
+          elif echo "$start_output" | grep -qi "is suspended"; then
+            echo "::warning::Skipping immediate start for ${{ env.BRONZE_PRICE_TARGET_JOB }} because the job is suspended."
+          else
+            [ -n "$start_output" ] && echo "$start_output"
+            echo "::error::Failed to start ${{ env.BRONZE_PRICE_TARGET_JOB }}."
+            exit "$start_status"
+          fi
 
       - name: Check Price Target Silver Job Exists
         id: price_target_silver_job_check
@@ -1704,9 +1740,21 @@ jobs:
               --yaml "$tmp"
           fi
           
-          az containerapp job start \
+          set +e
+          start_output="$(az containerapp job start \
             --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }}
+            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+          start_status=$?
+          set -e
+          if [ "$start_status" -eq 0 ]; then
+            [ -n "$start_output" ] && echo "$start_output"
+          elif echo "$start_output" | grep -qi "is suspended"; then
+            echo "::warning::Skipping immediate start for ${{ env.BRONZE_EARNINGS_JOB }} because the job is suspended."
+          else
+            [ -n "$start_output" ] && echo "$start_output"
+            echo "::error::Failed to start ${{ env.BRONZE_EARNINGS_JOB }}."
+            exit "$start_status"
+          fi
 
       - name: Check Earnings Silver Job Exists
         id: earnings_silver_job_check

@@ -230,6 +230,41 @@ export interface ValidationReport {
   sampleLimit?: number;
 }
 
+export interface ContainerAppHealthCheck {
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  url?: string | null;
+  httpStatus?: number | null;
+  checkedAt?: string | null;
+  error?: string | null;
+}
+
+export interface ContainerAppStatusItem {
+  name: string;
+  resourceType?: string;
+  status: 'healthy' | 'warning' | 'error' | 'unknown';
+  details?: string;
+  provisioningState?: string | null;
+  runningState?: string | null;
+  latestReadyRevisionName?: string | null;
+  ingressFqdn?: string | null;
+  azureId?: string | null;
+  checkedAt?: string | null;
+  error?: string | null;
+  health?: ContainerAppHealthCheck | null;
+}
+
+export interface ContainerAppsStatusResponse {
+  probed: boolean;
+  apps: ContainerAppStatusItem[];
+}
+
+export interface ContainerAppControlResponse {
+  appName: string;
+  action: 'start' | 'stop';
+  provisioningState?: string | null;
+  runningState?: string | null;
+}
+
 export const apiService = {
   // --- Data Endpoints ---
 
@@ -286,6 +321,42 @@ export const apiService = {
       params,
       signal
     });
+  },
+
+  getContainerApps(
+    params: { probe?: boolean } = {},
+    signal?: AbortSignal
+  ): Promise<ContainerAppsStatusResponse> {
+    return request<ContainerAppsStatusResponse>('/system/container-apps', {
+      params: { probe: params.probe ?? true },
+      signal
+    });
+  },
+
+  startContainerApp(
+    appName: string,
+    signal?: AbortSignal
+  ): Promise<ContainerAppControlResponse> {
+    return request<ContainerAppControlResponse>(
+      `/system/container-apps/${encodeURIComponent(appName)}/start`,
+      {
+        method: 'POST',
+        signal
+      }
+    );
+  },
+
+  stopContainerApp(
+    appName: string,
+    signal?: AbortSignal
+  ): Promise<ContainerAppControlResponse> {
+    return request<ContainerAppControlResponse>(
+      `/system/container-apps/${encodeURIComponent(appName)}/stop`,
+      {
+        method: 'POST',
+        signal
+      }
+    );
   },
 
   getStockScreener(

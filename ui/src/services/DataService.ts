@@ -10,6 +10,8 @@ import type {
 } from '@/types/data';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 import type {
+  ContainerAppControlResponse,
+  ContainerAppsStatusResponse,
   DebugSymbolsResponse,
   JobLogsResponse,
   PurgeRequest,
@@ -142,6 +144,21 @@ export const DataService = {
     signal?: AbortSignal
   ): Promise<JobLogsResponse> {
     return apiService.getJobLogs(jobName, params, signal);
+  },
+
+  getContainerApps(
+    params: { probe?: boolean } = {},
+    signal?: AbortSignal
+  ): Promise<ContainerAppsStatusResponse> {
+    return apiService.getContainerApps(params, signal);
+  },
+
+  startContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
+    return apiService.startContainerApp(appName, signal);
+  },
+
+  stopContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
+    return apiService.stopContainerApp(appName, signal);
   },
 
   getStockScreener(

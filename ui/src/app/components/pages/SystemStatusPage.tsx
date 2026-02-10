@@ -9,6 +9,9 @@ import { Skeleton } from '@/app/components/ui/skeleton';
 const StatusOverview = lazy(() => import('./system-status/StatusOverview').then(m => ({ default: m.StatusOverview })));
 const AzureResources = lazy(() => import('./system-status/AzureResources').then(m => ({ default: m.AzureResources })));
 const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonitor').then(m => ({ default: m.ScheduledJobMonitor })));
+const ContainerAppsPanel = lazy(() =>
+  import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
+);
 
 import {
   getAzurePortalUrl,
@@ -143,6 +146,13 @@ export function SystemStatusPage() {
       <ErrorBoundary>
         <Suspense fallback={<Skeleton className="h-[400px] w-full rounded-xl bg-muted/20" />}>
           <ScheduledJobMonitor dataLayers={dataLayers} recentJobs={recentJobs} jobLinks={jobLinks} />
+        </Suspense>
+      </ErrorBoundary>
+
+      {/* Container App Runtime Controls */}
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-[220px] w-full rounded-xl bg-muted/20" />}>
+          <ContainerAppsPanel />
         </Suspense>
       </ErrorBoundary>
 

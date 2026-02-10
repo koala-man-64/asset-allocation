@@ -74,6 +74,10 @@ vi.mock('@/app/components/pages/system-status/ScheduledJobMonitor', () => ({
   ScheduledJobMonitor: () => <div data-testid="mock-job-monitor">Mock Job Monitor</div>
 }));
 
+vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
+  ContainerAppsPanel: () => <div data-testid="mock-container-apps-panel">Mock Container Apps Panel</div>
+}));
+
 describe('SystemStatusPage', () => {
   it('renders the page layout and lazy loaded components', async () => {
     renderWithProviders(<SystemStatusPage />);
