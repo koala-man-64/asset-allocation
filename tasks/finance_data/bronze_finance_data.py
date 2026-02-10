@@ -80,6 +80,24 @@ def _serialize_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+def _is_empty_finance_payload(payload: dict[str, Any]) -> bool:
+    """
+    Detect Massive finance payloads that are structurally present but contain no results.
+    """
+    if not payload:
+        return True
+
+    if "results" not in payload:
+        return False
+
+    results = payload.get("results")
+    if results is None:
+        return True
+    if isinstance(results, (list, tuple, set, dict, str)) and len(results) == 0:
+        return True
+    return False
+
+
 def fetch_and_save_raw(symbol: str, report: dict[str, str], massive_client: MassiveGatewayClient) -> bool:
     """
     Fetch a finance report via the API-hosted Massive gateway and store raw JSON bytes in Bronze.
@@ -119,6 +137,11 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], massive_client: Mass
         raise MassiveGatewayError(
             "Unexpected Massive finance response type.",
             payload={"symbol": symbol, "report": report_name},
+        )
+    if _is_empty_finance_payload(payload):
+        list_manager.add_to_blacklist(symbol)
+        raise MassiveGatewayNotFoundError(
+            f"Massive returned empty finance payload for {symbol} report={report_name}; blacklisting."
         )
 
     raw = _serialize_json_bytes(payload)

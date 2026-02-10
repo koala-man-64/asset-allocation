@@ -6,6 +6,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from io import StringIO
+from typing import Any
 
 import pandas as pd
 
@@ -23,6 +24,8 @@ from tasks.market_data import config as cfg
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
+
+_SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -46,7 +49,120 @@ def _utc_today() -> datetime.date:
     return datetime.now(timezone.utc).date()
 
 
-def _normalize_provider_daily_csv(csv_text: str) -> bytes:
+def _normalize_key(name: Any) -> str:
+    return "".join(ch for ch in str(name).strip().lower() if ch.isalnum())
+
+
+def _extract_payload_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        results = payload.get("results")
+        if isinstance(results, list):
+            return [row for row in results if isinstance(row, dict)]
+        if isinstance(results, dict):
+            return [results]
+        return [payload]
+    return []
+
+
+def _extract_first_numeric(payload: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    normalized = {_normalize_key(k): v for k, v in payload.items()}
+    for key in keys:
+        raw = normalized.get(_normalize_key(key))
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except Exception:
+            continue
+    return None
+
+
+def _extract_iso_date(raw: Any) -> str | None:
+    if raw is None:
+        return None
+
+    if isinstance(raw, (int, float)):
+        try:
+            ivalue = int(raw)
+            unit = "ms" if abs(ivalue) > 10_000_000_000 else "s"
+            parsed = pd.to_datetime(ivalue, unit=unit, errors="coerce", utc=True)
+            if pd.isna(parsed):
+                return None
+            return parsed.date().isoformat()
+        except Exception:
+            return None
+
+    text = str(raw).strip()
+    if not text:
+        return None
+    parsed = pd.to_datetime(text, errors="coerce", utc=True)
+    if pd.isna(parsed):
+        parsed = pd.to_datetime(text[:10], errors="coerce", utc=True)
+    if pd.isna(parsed):
+        return None
+    return parsed.date().isoformat()
+
+
+def _extract_row_date(payload: dict[str, Any]) -> str | None:
+    normalized = {_normalize_key(k): v for k, v in payload.items()}
+    for key in (
+        "date",
+        "as_of",
+        "asof",
+        "session",
+        "day",
+        "start",
+        "start_date",
+        "timestamp",
+        "t",
+        "time",
+        "window_start",
+        "report_date",
+        "calendar_date",
+    ):
+        out = _extract_iso_date(normalized.get(_normalize_key(key)))
+        if out:
+            return out
+    return None
+
+
+def _build_metric_series(
+    payload: Any,
+    *,
+    metric_column: str,
+    value_keys: tuple[str, ...],
+    fallback_date: str,
+) -> pd.DataFrame:
+    rows = _extract_payload_rows(payload)
+    out_rows: list[dict[str, Any]] = []
+
+    for row in rows:
+        value = _extract_first_numeric(row, value_keys)
+        if value is None:
+            continue
+        date_str = _extract_row_date(row) or fallback_date
+        out_rows.append({"Date": date_str, metric_column: value})
+
+    if not out_rows and isinstance(payload, dict):
+        top_level_value = _extract_first_numeric(payload, value_keys)
+        if top_level_value is not None:
+            out_rows.append({"Date": fallback_date, metric_column: top_level_value})
+
+    df_metric = pd.DataFrame(out_rows, columns=["Date", metric_column])
+    if df_metric.empty:
+        return df_metric
+    df_metric["Date"] = pd.to_datetime(df_metric["Date"], errors="coerce")
+    df_metric = df_metric.dropna(subset=["Date"]).copy()
+    if df_metric.empty:
+        return pd.DataFrame(columns=["Date", metric_column])
+    df_metric["Date"] = df_metric["Date"].dt.strftime("%Y-%m-%d")
+    df_metric = df_metric.sort_values("Date").drop_duplicates(subset=["Date"], keep="last")
+    return df_metric.reset_index(drop=True)
+
+
+def _normalize_provider_daily_df(csv_text: str) -> pd.DataFrame:
     """
     Normalize provider OHLCV CSV to the canonical Bronze market schema.
 
@@ -88,8 +204,106 @@ def _normalize_provider_daily_csv(csv_text: str) -> bytes:
     for col in ["Open", "High", "Low", "Close", "Volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
-    return df.to_csv(index=False).encode("utf-8")
+    return df
+
+
+def _merge_market_fundamentals(
+    df_daily: pd.DataFrame,
+    *,
+    short_interest_payload: Any,
+    short_volume_payload: Any,
+    float_payload: Any,
+) -> pd.DataFrame:
+    out = df_daily.copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    fallback_date = str(out["Date"].dropna().iloc[-1]) if not out.empty else _utc_today().isoformat()
+    metric_specs = (
+        (
+            "ShortInterest",
+            short_interest_payload,
+            ("short_interest", "shortinterest", "short_interest_shares", "sharesshort", "value"),
+        ),
+        (
+            "ShortVolume",
+            short_volume_payload,
+            ("short_volume", "shortvolume", "short_volume_shares", "volumeshort", "value"),
+        ),
+        (
+            "FloatShares",
+            float_payload,
+            ("float_shares", "shares_float", "sharesfloat", "float", "free_float", "value"),
+        ),
+    )
+
+    for column_name, payload, value_keys in metric_specs:
+        df_metric = _build_metric_series(
+            payload,
+            metric_column=column_name,
+            value_keys=value_keys,
+            fallback_date=fallback_date,
+        )
+        if df_metric.empty:
+            out[column_name] = pd.NA
+        else:
+            out = out.merge(df_metric, on="Date", how="left")
+            out[column_name] = pd.to_numeric(out[column_name], errors="coerce")
+        out[column_name] = out[column_name].ffill().bfill()
+
+    for column_name in _SUPPLEMENTAL_MARKET_COLUMNS:
+        if column_name not in out.columns:
+            out[column_name] = pd.NA
+        out[column_name] = pd.to_numeric(out[column_name], errors="coerce")
+
+    return out
+
+
+def _serialize_market_csv(df_daily: pd.DataFrame) -> bytes:
+    out = df_daily.copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.dropna(subset=["Date"]).copy()
+    out = out.sort_values("Date").reset_index(drop=True)
+    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
+    ordered_columns = ["Date", "Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS]
+    return out[[c for c in ordered_columns if c in out.columns]].to_csv(index=False).encode("utf-8")
+
+
+def _normalize_provider_daily_csv(csv_text: str) -> bytes:
+    return _serialize_market_csv(_normalize_provider_daily_df(csv_text))
+
+
+def _is_header_only_provider_daily_csv(csv_text: str) -> bool:
+    """
+    Detect CSV payloads that contain only the header row and no usable data rows.
+
+    Example payload:
+      Date,Open,High,Low,Close,Volume
+    """
+    raw = str(csv_text or "")
+    if not raw.strip():
+        return False
+
+    lines = [line.strip() for line in raw.replace("\r\n", "\n").split("\n")]
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines:
+        return False
+
+    header = lines[0].strip().strip("'").strip('"').lower()
+    valid_headers = {
+        "date,open,high,low,close,volume",
+        "timestamp,open,high,low,close,volume",
+    }
+    if header not in valid_headers:
+        return False
+
+    # Any non-empty/meaningful line after the header counts as data.
+    for line in lines[1:]:
+        cleaned = line.strip().strip("'").strip('"').strip(",").strip()
+        if cleaned:
+            return False
+
+    return True
 
 
 def _should_skip_symbol(symbol: str, existing_last_modified: dict[str, datetime], *, utc_today: datetime.date) -> bool:
@@ -134,7 +348,6 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
     else:
         from_date = (datetime.now(timezone.utc).date() - timedelta(days=180)).isoformat()
         to_date = today
-
     raw_text = massive_client.get_daily_time_series_csv(
         symbol=symbol,
         from_date=from_date,
@@ -142,14 +355,41 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
         adjusted=True,
     )
 
+    if _is_header_only_provider_daily_csv(raw_text):
+        list_manager.add_to_blacklist(symbol)
+        raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
+
     try:
-        raw_bytes = _normalize_provider_daily_csv(raw_text)
+        df_daily = _normalize_provider_daily_df(raw_text)
+
+        try:
+            short_interest_payload = massive_client.get_short_interest(symbol=symbol)
+        except MassiveGatewayNotFoundError:
+            short_interest_payload = {}
+        try:
+            short_volume_payload = massive_client.get_short_volume(symbol=symbol)
+        except MassiveGatewayNotFoundError:
+            short_volume_payload = {}
+        try:
+            float_payload = massive_client.get_float(symbol=symbol)
+        except MassiveGatewayNotFoundError:
+            float_payload = {}
+
+        df_daily = _merge_market_fundamentals(
+            df_daily,
+            short_interest_payload=short_interest_payload,
+            short_volume_payload=short_volume_payload,
+            float_payload=float_payload,
+        )
+        raw_bytes = _serialize_market_csv(df_daily)
+    except (MassiveGatewayRateLimitError, MassiveGatewayError):
+        raise
     except Exception as exc:
         snippet = raw_text.strip().replace("\n", " ")
         if len(snippet) > 200:
             snippet = snippet[:200] + "..."
         raise MassiveGatewayError(
-            f"Failed to normalize Massive daily CSV for {symbol}: {type(exc).__name__}: {exc}",
+            f"Failed to build Massive daily+fundamentals CSV for {symbol}: {type(exc).__name__}: {exc}",
             payload={"snippet": snippet},
         ) from exc
 
@@ -182,6 +422,9 @@ async def main_async() -> int:
     _validate_environment()
 
     list_manager.load()
+    mdc.write_line(
+        f"Bronze market blacklist loaded with {len(list_manager.blacklist)} symbols (excluded from scheduling)."
+    )
 
     mdc.write_line("Fetching symbol universe...")
     df_symbols = mdc.get_symbols()
@@ -209,6 +452,7 @@ async def main_async() -> int:
     massive_client = MassiveGatewayClient.from_env()
 
     progress = {"processed": 0, "skipped": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
+    retry_next_run: set[str] = set()
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
@@ -229,22 +473,10 @@ async def main_async() -> int:
         async with semaphore:
             try:
                 if debug_mode:
-                    mdc.write_line(f"Downloading OHLCV for {symbol}...")
+                    mdc.write_line(f"Downloading OHLCV+fundamentals for {symbol}...")
                 await loop.run_in_executor(executor, worker, symbol)
                 async with progress_lock:
                     progress["downloaded"] += 1
-            except RuntimeError as exc:
-                if str(exc) == "SKIP_FRESH":
-                    list_manager.add_to_whitelist(symbol)
-                    async with progress_lock:
-                        progress["skipped"] += 1
-                else:
-                    should_log = debug_mode
-                    async with progress_lock:
-                        progress["failed"] += 1
-                        should_log = should_log or progress["failed"] <= 20
-                    if should_log:
-                        mdc.write_error(f"Failed to ingest {symbol}: {exc}")
             except MassiveGatewayNotFoundError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = debug_mode
@@ -257,6 +489,7 @@ async def main_async() -> int:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
+                    retry_next_run.add(symbol)
                     should_log = should_log or progress["failed"] <= 20
                 if should_log:
                     note = str(exc)
@@ -267,6 +500,7 @@ async def main_async() -> int:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
+                    retry_next_run.add(symbol)
                     should_log = should_log or progress["failed"] <= 20
                 if should_log:
                     details = f"status={getattr(exc, 'status_code', 'unknown')} message={exc}"
@@ -274,10 +508,24 @@ async def main_async() -> int:
                     if payload:
                         details = f"{details} payload={payload}"
                     mdc.write_error(f"Massive gateway error while processing {symbol}. ({details})")
+            except RuntimeError as exc:
+                if str(exc) == "SKIP_FRESH":
+                    list_manager.add_to_whitelist(symbol)
+                    async with progress_lock:
+                        progress["skipped"] += 1
+                else:
+                    should_log = debug_mode
+                    async with progress_lock:
+                        progress["failed"] += 1
+                        retry_next_run.add(symbol)
+                        should_log = should_log or progress["failed"] <= 20
+                    if should_log:
+                        mdc.write_error(f"Failed to ingest {symbol}: {exc}")
             except Exception as exc:
                 should_log = debug_mode
                 async with progress_lock:
                     progress["failed"] += 1
+                    retry_next_run.add(symbol)
                     should_log = should_log or progress["failed"] <= 20
                 if should_log:
                     mdc.write_error(
@@ -312,6 +560,12 @@ async def main_async() -> int:
         "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} skipped={skipped} "
         "blacklisted={blacklisted} failed={failed}".format(**progress)
     )
+    if retry_next_run:
+        preview = ", ".join(sorted(retry_next_run)[:50])
+        suffix = " ..." if len(retry_next_run) > 50 else ""
+        mdc.write_line(
+            f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
+        )
     return 0 if progress["failed"] == 0 else 1
 
 

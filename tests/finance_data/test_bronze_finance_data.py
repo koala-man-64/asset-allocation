@@ -42,3 +42,31 @@ def test_fetch_and_save_raw_writes_json(unique_ticker):
         args, kwargs = mock_store.call_args
         assert args[1] == f"finance-data/Balance Sheet/{symbol}_quarterly_balance-sheet.json"
         assert b"quarterlyReports" in args[0]
+
+
+def test_fetch_and_save_raw_blacklists_empty_results_payload(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.return_value = {"status": "OK", "results": []}
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+
+    report = {
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "report": "balance_sheet",
+    }
+
+    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
+        "tasks.finance_data.bronze_finance_data.list_manager"
+    ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        with pytest.raises(bronze.MassiveGatewayNotFoundError):
+            bronze.fetch_and_save_raw(symbol, report, mock_massive)
+
+        mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
+        mock_store.assert_not_called()

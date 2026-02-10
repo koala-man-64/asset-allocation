@@ -64,3 +64,31 @@ def test_silver_processing_accepts_alpha_vantage_timestamp(unique_ticker):
         silver.process_file(blob_name)
 
         mock_store_delta.assert_called_once()
+
+
+def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
+    symbol = unique_ticker
+    blob_name = f"market-data/{symbol}.csv"
+    csv_content = (
+        b"Date,Open,High,Low,Close,Volume,short_interest,short_volume,float_shares\n"
+        b"2024-01-03,10.5,12,10,11.0,150,1200,500,1000000\n"
+    )
+
+    with patch("core.core.read_raw_bytes") as mock_read, patch(
+        "core.delta_core.store_delta"
+    ) as mock_store_delta, patch("core.delta_core.load_delta") as mock_load_delta:
+        mock_read.return_value = csv_content
+        mock_load_delta.return_value = None
+
+        silver.process_file(blob_name)
+
+        mock_store_delta.assert_called_once()
+        args, _ = mock_store_delta.call_args
+        df_saved = args[0]
+
+        assert "ShortInterest" in df_saved.columns
+        assert "ShortVolume" in df_saved.columns
+        assert "FloatShares" in df_saved.columns
+        assert float(df_saved.iloc[0]["ShortInterest"]) == pytest.approx(1200.0)
+        assert float(df_saved.iloc[0]["ShortVolume"]) == pytest.approx(500.0)
+        assert float(df_saved.iloc[0]["FloatShares"]) == pytest.approx(1_000_000.0)

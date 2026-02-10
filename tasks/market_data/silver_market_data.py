@@ -15,6 +15,75 @@ from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
+_SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
+
+
+def _normalize_col_name(name: str) -> str:
+    return "".join(ch for ch in str(name).strip().lower() if ch.isalnum())
+
+
+def _rename_market_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    # Normalize common OHLCV casing for defensive parsing.
+    canonical_map = {
+        "date": "Date",
+        "timestamp": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    }
+    rename_map = {src: dest for src, dest in canonical_map.items() if src in out.columns and dest not in out.columns}
+    if rename_map:
+        out = out.rename(columns=rename_map)
+
+    # Normalize supplemental metric aliases from Bronze market payloads.
+    supplemental_aliases = {
+        "shortinterest": "ShortInterest",
+        "shortinterestshares": "ShortInterest",
+        "sharesshort": "ShortInterest",
+        "shortvolume": "ShortVolume",
+        "shortvolumeshares": "ShortVolume",
+        "volumeshort": "ShortVolume",
+        "floatshares": "FloatShares",
+        "sharesfloat": "FloatShares",
+        "freefloat": "FloatShares",
+        "float": "FloatShares",
+    }
+    normalized_cols = {_normalize_col_name(col): col for col in out.columns}
+    alias_renames: dict[str, str] = {}
+    for alias_key, canonical in supplemental_aliases.items():
+        source_col = normalized_cols.get(alias_key)
+        if source_col and source_col != canonical and canonical not in out.columns:
+            alias_renames[source_col] = canonical
+    if alias_renames:
+        out = out.rename(columns=alias_renames)
+
+    return out
+
+
+def _ensure_numeric_market_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    for col in ("Open", "High", "Low", "Close"):
+        if col not in out.columns:
+            out[col] = pd.NA
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    if "Volume" not in out.columns:
+        out["Volume"] = 0.0
+    out["Volume"] = pd.to_numeric(out["Volume"], errors="coerce")
+
+    for col in _SUPPLEMENTAL_MARKET_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    return out
+
+
 def process_file(blob_name: str) -> bool:
     """
     Backwards-compatible wrapper (tests/local tooling) that processes a blob by name.
@@ -66,19 +135,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     if "Adj Close" in df_new.columns:
         df_new = df_new.drop('Adj Close', axis=1)
 
-    # Normalize common column casing if needed (defensive for non-standard CSVs)
-    canonical_map = {
-        "date": "Date",
-        "timestamp": "Date",
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "volume": "Volume",
-    }
-    rename_map = {src: dest for src, dest in canonical_map.items() if src in df_new.columns and dest not in df_new.columns}
-    if rename_map:
-        df_new = df_new.rename(columns=rename_map)
+    df_new = _rename_market_columns(df_new)
     
     if 'Date' in df_new.columns:
         df_new['Date'] = pd.to_datetime(df_new['Date'], errors="coerce")
@@ -93,8 +150,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
         mdc.write_error(f"Missing required columns in {blob_name}: {missing_cols}")
         return "failed"
 
-    if "Volume" not in df_new.columns:
-        df_new["Volume"] = 0.0
+    df_new = _ensure_numeric_market_columns(df_new)
 
     backfill_start, backfill_end = get_backfill_range()
     if backfill_start or backfill_end:
@@ -117,6 +173,8 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     if df_history is None or df_history.empty:
         df_merged = df_new
     else:
+        df_history = _rename_market_columns(df_history)
+        df_history = _ensure_numeric_market_columns(df_history)
         # Ensure types match before concat
         if 'Date' in df_history.columns:
              df_history['Date'] = pd.to_datetime(df_history['Date'])
@@ -128,9 +186,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     df_merged = df_merged.reset_index(drop=True)
     
     # 6. Type Casting & Formatting
-    df_merged = df_merged.astype({
-        'Open': float, 'High': float, 'Low': float, 'Close': float, 'Volume': float
-    })
+    df_merged = _ensure_numeric_market_columns(df_merged)
     
     cols_to_round = ['Open', 'High', 'Low', 'Close']
     for col in cols_to_round:
