@@ -601,6 +601,7 @@ jobs:
         if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.api_app_check.outputs.app_exists == 'false'
         env:
           API_KEY: ${{ secrets.API_KEY }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
