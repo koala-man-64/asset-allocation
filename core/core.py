@@ -753,30 +753,30 @@ def merge_symbol_sources(
     df_alpha_vantage: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
-    Merge NASDAQ + Massive symbol universes into a single DataFrame.
-
-    Alpha Vantage is intentionally excluded from symbol ingestion. The optional
-    `df_alpha_vantage` parameter is kept only for backward-compatible callers and
-    is ignored.
+    Merge NASDAQ + Massive + Alpha Vantage symbol universes into a single DataFrame.
 
     Precedence:
       - Prefer NASDAQ Name/sector/industry metadata when present.
       - Use Massive for additional coverage and metadata.
+      - Use Alpha Vantage for additional coverage and listing metadata.
     """
-    _ = df_alpha_vantage  # Intentionally unused (backward compatibility).
-
     df_n = df_nasdaq.copy() if df_nasdaq is not None else pd.DataFrame()
     df_m = df_massive.copy() if df_massive is not None else pd.DataFrame()
+    df_a = df_alpha_vantage.copy() if df_alpha_vantage is not None else pd.DataFrame()
 
     if "Symbol" not in df_n.columns:
         df_n["Symbol"] = pd.Series(dtype="object")
     if "Symbol" not in df_m.columns:
         df_m["Symbol"] = pd.Series(dtype="object")
+    if "Symbol" not in df_a.columns:
+        df_a["Symbol"] = pd.Series(dtype="object")
 
     df_n["Symbol"] = df_n["Symbol"].astype(str).str.strip()
     df_m["Symbol"] = df_m["Symbol"].astype(str).str.strip()
+    df_a["Symbol"] = df_a["Symbol"].astype(str).str.strip()
     df_n = df_n[df_n["Symbol"].ne("")]
     df_m = df_m[df_m["Symbol"].ne("")]
+    df_a = df_a[df_a["Symbol"].ne("")]
 
     nasdaq_cols = [
         c
@@ -797,6 +797,19 @@ def merge_symbol_sources(
         for c in ["Symbol", "Name", "Exchange", "AssetType", "Locale", "Market", "CurrencyName", "Active"]
         if c in df_m.columns
     ]
+    alpha_vantage_cols = [
+        c
+        for c in [
+            "Symbol",
+            "Name",
+            "Exchange",
+            "AssetType",
+            "IpoDate",
+            "DelistingDate",
+            "Status",
+        ]
+        if c in df_a.columns
+    ]
 
     left = (
         df_n[nasdaq_cols].drop_duplicates(subset=["Symbol"])
@@ -808,13 +821,29 @@ def merge_symbol_sources(
         if massive_cols
         else df_m[["Symbol"]].drop_duplicates(subset=["Symbol"])
     )
+    right_a = (
+        df_a[alpha_vantage_cols].drop_duplicates(subset=["Symbol"])
+        if alpha_vantage_cols
+        else df_a[["Symbol"]].drop_duplicates(subset=["Symbol"])
+    )
 
     left = left.copy()
     right_m = right_m.copy()
+    right_a = right_a.copy()
     left["source_nasdaq"] = True
     right_m["source_massive"] = True
+    right_a["source_alpha_vantage"] = True
+    right_a["source_alphavantage"] = True
+
+    av_rename = {
+        col: f"{col}_alpha_vantage"
+        for col in right_a.columns
+        if col not in {"Symbol", "source_alpha_vantage", "source_alphavantage"}
+    }
+    right_a = right_a.rename(columns=av_rename)
 
     merged = left.merge(right_m, on="Symbol", how="outer", suffixes=("_nasdaq", "_massive"))
+    merged = merged.merge(right_a, on="Symbol", how="outer")
 
     def pick_str(*values) -> Any:
         for v in values:
@@ -826,14 +855,48 @@ def merge_symbol_sources(
 
     out = pd.DataFrame()
     out["Symbol"] = merged["Symbol"].astype(str).str.strip()
-    out["Name"] = merged.apply(lambda row: pick_str(row.get("Name_nasdaq"), row.get("Name_massive"), row.get("Name")), axis=1)
+    out["Name"] = merged.apply(
+        lambda row: pick_str(
+            row.get("Name_nasdaq"),
+            row.get("Name_massive"),
+            row.get("Name_alpha_vantage"),
+            row.get("Name"),
+        ),
+        axis=1,
+    )
 
     for col in ["Description", "Sector", "Industry", "Industry_2", "Optionable", "Country"]:
         if col in merged.columns:
             out[col] = merged[col]
 
-    out["Exchange"] = merged.apply(lambda row: pick_str(row.get("Exchange_massive"), row.get("Exchange")), axis=1)
-    out["AssetType"] = merged.apply(lambda row: pick_str(row.get("AssetType_massive"), row.get("AssetType")), axis=1)
+    out["Exchange"] = merged.apply(
+        lambda row: pick_str(
+            row.get("Exchange_massive"),
+            row.get("Exchange_alpha_vantage"),
+            row.get("Exchange"),
+        ),
+        axis=1,
+    )
+    out["AssetType"] = merged.apply(
+        lambda row: pick_str(
+            row.get("AssetType_massive"),
+            row.get("AssetType_alpha_vantage"),
+            row.get("AssetType"),
+        ),
+        axis=1,
+    )
+    out["IpoDate"] = merged.apply(
+        lambda row: pick_str(row.get("IpoDate_alpha_vantage"), row.get("IpoDate")),
+        axis=1,
+    )
+    out["DelistingDate"] = merged.apply(
+        lambda row: pick_str(row.get("DelistingDate_alpha_vantage"), row.get("DelistingDate")),
+        axis=1,
+    )
+    out["Status"] = merged.apply(
+        lambda row: pick_str(row.get("Status_alpha_vantage"), row.get("Status")),
+        axis=1,
+    )
 
     for col in ["Locale", "Market", "CurrencyName"]:
         if col in merged.columns:
@@ -853,8 +916,14 @@ def merge_symbol_sources(
     )
     out["source_massive"] = source_massive.astype("boolean").fillna(False).astype(bool)
 
-    # Retained for DB backward compatibility; symbol ingestion no longer uses Alpha Vantage.
-    out["source_alpha_vantage"] = False
+    source_alpha_vantage = (
+        merged["source_alpha_vantage"]
+        if "source_alpha_vantage" in merged.columns
+        else pd.Series(False, index=merged.index, dtype="boolean")
+    )
+    source_alpha_vantage_bool = source_alpha_vantage.astype("boolean").fillna(False).astype(bool)
+    out["source_alpha_vantage"] = source_alpha_vantage_bool
+    out["source_alphavantage"] = source_alpha_vantage_bool
 
     out = out[out["Symbol"].ne("")].drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
     return out
@@ -900,11 +969,23 @@ def _ensure_symbols_tables(cur) -> None:
         ("delisting_date", "TEXT"),
         ("status", "TEXT"),
         ("source_nasdaq", "BOOLEAN"),
+        ("source_massive", "BOOLEAN"),
         ("source_alpha_vantage", "BOOLEAN"),
+        ("source_alphavantage", "BOOLEAN"),
         ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
     ]
     for name, col_type in columns:
         cur.execute(f"ALTER TABLE public.symbols ADD COLUMN IF NOT EXISTS {name} {col_type};")
+
+    # Keep both AV source flag spellings in sync for backward compatibility.
+    cur.execute(
+        """
+        UPDATE public.symbols
+        SET source_alpha_vantage = COALESCE(source_alpha_vantage, source_alphavantage, FALSE),
+            source_alphavantage = COALESCE(source_alphavantage, source_alpha_vantage, FALSE)
+        WHERE source_alpha_vantage IS NULL OR source_alphavantage IS NULL;
+        """
+    )
 
     # Remove deprecated aggregate source column in favor of provider-specific booleans.
     cur.execute("DROP INDEX IF EXISTS idx_public_symbols_source;")
@@ -979,12 +1060,20 @@ def upsert_symbols_to_db(
         "DelistingDate": "delisting_date",
         "Status": "status",
         "source_nasdaq": "source_nasdaq",
+        "source_massive": "source_massive",
         "source_alpha_vantage": "source_alpha_vantage",
+        "source_alphavantage": "source_alphavantage",
     }
 
     df_to_upload = df_symbols.copy()
     if "Symbol" not in df_to_upload.columns:
         return
+
+    # Keep both AV source flag spellings in sync.
+    if "source_alpha_vantage" in df_to_upload.columns and "source_alphavantage" not in df_to_upload.columns:
+        df_to_upload["source_alphavantage"] = df_to_upload["source_alpha_vantage"]
+    if "source_alphavantage" in df_to_upload.columns and "source_alpha_vantage" not in df_to_upload.columns:
+        df_to_upload["source_alpha_vantage"] = df_to_upload["source_alphavantage"]
 
     # Normalize and keep only mapped columns.
     existing_cols = [c for c in col_map.keys() if c in df_to_upload.columns]
@@ -1014,13 +1103,13 @@ def upsert_symbols_to_db(
         return False
 
     # Avoid DB type errors by coercing source flags to strict booleans.
-    for col in ("source_nasdaq", "source_alpha_vantage"):
+    for col in ("source_nasdaq", "source_massive", "source_alpha_vantage", "source_alphavantage"):
         if col in df_to_upload.columns:
             df_to_upload[col] = df_to_upload[col].apply(_coerce_source_bool).astype(bool)
 
     # Convert empty strings/NaNs to NULL to avoid wiping out existing values on upsert.
     for col in df_to_upload.columns:
-        if col in {"source_nasdaq", "source_alpha_vantage"}:
+        if col in {"source_nasdaq", "source_massive", "source_alpha_vantage", "source_alphavantage"}:
             continue
         df_to_upload[col] = df_to_upload[col].apply(lambda v: None if v is None or pd.isna(v) or str(v).strip() == "" else v)
 
@@ -1031,14 +1120,14 @@ def upsert_symbols_to_db(
     update_cols = [c for c in db_cols if c != "symbol"]
     set_parts = []
     for col in update_cols:
-        if col in {"source_nasdaq", "source_alpha_vantage"}:
-            set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
-        else:
-            set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
+        set_parts.append(f"{col} = COALESCE(EXCLUDED.{col}, s.{col})")
     set_parts.append("updated_at = now()")
     set_clause = ", ".join(set_parts)
 
     def _execute_upsert(target_cur) -> None:
+        if hasattr(target_cur, "execute"):
+            _ensure_symbols_tables(target_cur)
+
         cols_sql = ", ".join(db_cols)
         placeholders = ", ".join(["%s"] * len(db_cols))
         insert_sql = (
@@ -1074,7 +1163,7 @@ def upsert_symbols_to_db(
 
 def refresh_symbols_to_db_if_due() -> None:
     """
-    Periodically refresh the Postgres symbols table from NASDAQ + Massive.
+    Periodically refresh the Postgres symbols table from NASDAQ + Massive + Alpha Vantage.
 
     This is invoked opportunistically by get_symbols() and uses an advisory lock
     to avoid redundant refreshes across concurrent jobs.
@@ -1097,9 +1186,10 @@ def refresh_symbols_to_db_if_due() -> None:
                 if not _symbols_refresh_due(cur, interval_hours):
                     return
 
-                write_line("Refreshing symbols from NASDAQ + Massive...")
+                write_line("Refreshing symbols from NASDAQ + Massive + Alpha Vantage...")
                 df_nasdaq = get_active_tickers()
                 df_massive = get_active_tickers_massive()
+                df_alpha_vantage = get_active_tickers_alpha_vantage()
 
                 now_ts = datetime.now().isoformat()
                 sources = {
@@ -1111,9 +1201,13 @@ def refresh_symbols_to_db_if_due() -> None:
                         "rows": int(len(df_massive)) if df_massive is not None else 0,
                         "timestamp": now_ts
                     },
+                    "alpha_vantage": {
+                        "rows": int(len(df_alpha_vantage)) if df_alpha_vantage is not None else 0,
+                        "timestamp": now_ts,
+                    },
                 }
 
-                df_merged = merge_symbol_sources(df_nasdaq, df_massive)
+                df_merged = merge_symbol_sources(df_nasdaq, df_massive, df_alpha_vantage=df_alpha_vantage)
 
                 # Mix in manual additions before persisting.
                 tickers_to_add = cfg.TICKERS_TO_ADD
@@ -1187,12 +1281,20 @@ def get_symbols_from_db():
                 'delisting_date': 'DelistingDate',
                 'status': 'Status',
                 'source_nasdaq': 'source_nasdaq',
+                'source_massive': 'source_massive',
                 'source_alpha_vantage': 'source_alpha_vantage',
+                'source_alphavantage': 'source_alphavantage',
                 'updated_at': 'UpdatedAt',
             }
             df.rename(columns=rename_map, inplace=True)
             if "source" in df.columns:
                 df.drop(columns=["source"], inplace=True)
+            if "source_alpha_vantage" in df.columns and "source_alphavantage" not in df.columns:
+                df["source_alphavantage"] = df["source_alpha_vantage"]
+            if "source_alphavantage" in df.columns and "source_alpha_vantage" not in df.columns:
+                df["source_alpha_vantage"] = df["source_alphavantage"]
+            if "source_massive" not in df.columns:
+                df["source_massive"] = False
             return df
             
     except Exception as e:
@@ -1271,10 +1373,11 @@ def get_symbols():
 
     # Fallback/Supplemental Logic
     if df_symbols is None or df_symbols.empty:
-        write_line("DB symbols missing or empty. Fetching from NASDAQ + Massive...")
+        write_line("DB symbols missing or empty. Fetching from NASDAQ + Massive + Alpha Vantage...")
         df_nasdaq = get_active_tickers()
         df_massive = get_active_tickers_massive()
-        df_symbols = merge_symbol_sources(df_nasdaq, df_massive)
+        df_alpha_vantage = get_active_tickers_alpha_vantage()
+        df_symbols = merge_symbol_sources(df_nasdaq, df_massive, df_alpha_vantage=df_alpha_vantage)
 
         # Best effort: persist immediately if Postgres is configured.
         try:

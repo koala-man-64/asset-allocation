@@ -77,12 +77,12 @@ properties:
         secretRef: api-key
       - name: ASSET_ALLOCATION_API_KEY_HEADER
         value: "X-API-Key"
-      - name: MASSIVE_TIMEOUT_SECONDS
-        value: ${MASSIVE_TIMEOUT_SECONDS}
-      - name: MASSIVE_MAX_WORKERS
-        value: ${MASSIVE_MAX_WORKERS}
-      - name: MASSIVE_FINANCE_FRESH_DAYS
-        value: ${MASSIVE_FINANCE_FRESH_DAYS}
+      - name: ALPHA_VANTAGE_TIMEOUT_SECONDS
+        value: ${ALPHA_VANTAGE_TIMEOUT_SECONDS}
+      - name: ALPHA_VANTAGE_MAX_WORKERS
+        value: ${ALPHA_VANTAGE_MAX_WORKERS}
+      - name: ALPHA_VANTAGE_FINANCE_FRESH_DAYS
+        value: ${ALPHA_VANTAGE_FINANCE_FRESH_DAYS}
       - name: POSTGRES_DSN
         secretRef: pg-dsn
       image: ${JOB_IMAGE}
