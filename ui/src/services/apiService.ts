@@ -265,6 +265,13 @@ export interface ContainerAppControlResponse {
   runningState?: string | null;
 }
 
+export interface ContainerAppLogsResponse {
+  appName: string;
+  lookbackMinutes: number;
+  tailLines: number;
+  logs: string[];
+}
+
 export const apiService = {
   // --- Data Endpoints ---
 
@@ -354,6 +361,23 @@ export const apiService = {
       `/system/container-apps/${encodeURIComponent(appName)}/stop`,
       {
         method: 'POST',
+        signal
+      }
+    );
+  },
+
+  getContainerAppLogs(
+    appName: string,
+    params: { minutes?: number; tail?: number } = {},
+    signal?: AbortSignal
+  ): Promise<ContainerAppLogsResponse> {
+    return request<ContainerAppLogsResponse>(
+      `/system/container-apps/${encodeURIComponent(appName)}/logs`,
+      {
+        params: {
+          minutes: params.minutes ?? 60,
+          tail: params.tail ?? 50
+        },
         signal
       }
     );

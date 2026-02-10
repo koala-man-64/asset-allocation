@@ -85,3 +85,54 @@ def test_header_only_csv_blacklists_symbol(unique_ticker):
 
         mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
         mock_store.assert_not_called()
+
+
+class _FakeClientManager:
+    def __init__(self) -> None:
+        self.reset_calls = 0
+
+    def get_client(self):
+        return object()
+
+    def reset_all(self) -> None:
+        self.reset_calls += 1
+
+
+def test_download_with_recovery_retries_three_attempts(monkeypatch):
+    symbol = "RETRYME"
+    manager = _FakeClientManager()
+    call_count = {"count": 0}
+    sleep_calls: list[float] = []
+
+    def _fake_download(sym, _client):
+        assert sym == symbol
+        call_count["count"] += 1
+        if call_count["count"] < 3:
+            raise bronze.MassiveGatewayError("API gateway call failed: ConnectError: boom")
+
+    monkeypatch.setattr(bronze, "download_and_save_raw", _fake_download)
+    monkeypatch.setattr(bronze.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    bronze._download_and_save_raw_with_recovery(symbol, manager, max_attempts=3, sleep_seconds=0.25)
+
+    assert call_count["count"] == 3
+    assert manager.reset_calls == 2
+    assert sleep_calls == [0.25, 0.25]
+
+
+def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
+    symbol = "MISSING"
+    manager = _FakeClientManager()
+    sleep_calls: list[float] = []
+
+    def _fake_download(_sym, _client):
+        raise bronze.MassiveGatewayNotFoundError("No data")
+
+    monkeypatch.setattr(bronze, "download_and_save_raw", _fake_download)
+    monkeypatch.setattr(bronze.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    with pytest.raises(bronze.MassiveGatewayNotFoundError):
+        bronze._download_and_save_raw_with_recovery(symbol, manager, max_attempts=3, sleep_seconds=0.25)
+
+    assert manager.reset_calls == 0
+    assert sleep_calls == []

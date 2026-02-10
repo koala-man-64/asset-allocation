@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from io import StringIO
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -26,6 +28,8 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
 
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
+_RECOVERY_MAX_ATTEMPTS = 3
+_RECOVERY_SLEEP_SECONDS = 5.0
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -332,6 +336,106 @@ def _prefetch_existing_last_modified() -> dict[str, datetime]:
     return existing_last_modified
 
 
+def _safe_close_massive_client(client: MassiveGatewayClient | None) -> None:
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
+class _ThreadLocalMassiveClientManager:
+    def __init__(self, factory: Callable[[], MassiveGatewayClient] | None = None) -> None:
+        self._factory = factory or MassiveGatewayClient.from_env
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._clients: dict[int, tuple[int, MassiveGatewayClient]] = {}
+
+    def get_client(self) -> MassiveGatewayClient:
+        thread_id = threading.get_ident()
+        with self._lock:
+            current = self._clients.get(thread_id)
+            if current and current[0] == self._generation:
+                return current[1]
+            if current:
+                _safe_close_massive_client(current[1])
+            fresh_client = self._factory()
+            self._clients[thread_id] = (self._generation, fresh_client)
+            return fresh_client
+
+    def reset_all(self) -> None:
+        with self._lock:
+            for _, client in list(self._clients.values()):
+                _safe_close_massive_client(client)
+            self._clients.clear()
+            self._generation += 1
+
+    def close_all(self) -> None:
+        with self._lock:
+            for _, client in list(self._clients.values()):
+                _safe_close_massive_client(client)
+            self._clients.clear()
+
+
+def _is_recoverable_massive_error(exc: Exception) -> bool:
+    if isinstance(exc, MassiveGatewayNotFoundError):
+        return False
+
+    if isinstance(exc, MassiveGatewayRateLimitError):
+        return True
+
+    if isinstance(exc, MassiveGatewayError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {408, 429, 500, 502, 503, 504}:
+            return True
+
+        message = str(exc).strip().lower()
+        transient_markers = (
+            "timeout",
+            "timed out",
+            "connection",
+            "server disconnected",
+            "remoteprotocolerror",
+            "readerror",
+            "connecterror",
+            "gateway unavailable",
+        )
+        return any(marker in message for marker in transient_markers)
+
+    return False
+
+
+def _download_and_save_raw_with_recovery(
+    symbol: str,
+    client_manager: _ThreadLocalMassiveClientManager,
+    *,
+    max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
+    sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
+) -> None:
+    attempts = max(1, int(max_attempts))
+    sleep_seconds = max(0.0, float(sleep_seconds))
+
+    for attempt in range(1, attempts + 1):
+        client = client_manager.get_client()
+        try:
+            download_and_save_raw(symbol, client)
+            return
+        except MassiveGatewayNotFoundError:
+            raise
+        except Exception as exc:
+            should_retry = _is_recoverable_massive_error(exc) and attempt < attempts
+            if not should_retry:
+                raise
+
+            mdc.write_warning(
+                f"Transient Massive error for {symbol}; attempt {attempt}/{attempts} failed ({exc}). "
+                f"Sleeping {sleep_seconds:.1f}s, resetting clients, and retrying."
+            )
+            time.sleep(sleep_seconds)
+            client_manager.reset_all()
+
+
 def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> None:
     """
     Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
@@ -448,8 +552,7 @@ async def main_async() -> int:
 
     existing_last_modified = _prefetch_existing_last_modified()
     utc_today = _utc_today()
-
-    massive_client = MassiveGatewayClient.from_env()
+    client_manager = _ThreadLocalMassiveClientManager()
 
     progress = {"processed": 0, "skipped": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
     retry_next_run: set[str] = set()
@@ -462,7 +565,7 @@ async def main_async() -> int:
         if _should_skip_symbol(symbol, existing_last_modified, utc_today=utc_today):
             raise RuntimeError("SKIP_FRESH")
 
-        download_and_save_raw(symbol, massive_client)
+        _download_and_save_raw_with_recovery(symbol, client_manager)
 
     max_workers = _get_max_workers()
     semaphore = asyncio.Semaphore(max_workers)
@@ -548,7 +651,7 @@ async def main_async() -> int:
         except Exception:
             pass
         try:
-            massive_client.close()
+            client_manager.close_all()
         except Exception:
             pass
         try:

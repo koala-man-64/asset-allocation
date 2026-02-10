@@ -10,6 +10,7 @@ import type {
 } from '@/types/data';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 import type {
+  ContainerAppLogsResponse,
   ContainerAppControlResponse,
   ContainerAppsStatusResponse,
   DebugSymbolsResponse,
@@ -159,6 +160,14 @@ export const DataService = {
 
   stopContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
     return apiService.stopContainerApp(appName, signal);
+  },
+
+  getContainerAppLogs(
+    appName: string,
+    params: { minutes?: number; tail?: number } = {},
+    signal?: AbortSignal
+  ): Promise<ContainerAppLogsResponse> {
+    return apiService.getContainerAppLogs(appName, params, signal);
   },
 
   getStockScreener(

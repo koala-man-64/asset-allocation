@@ -1296,6 +1296,102 @@ def list_container_apps(
     )
 
 
+@router.get("/container-apps/{app_name}/logs")
+def get_container_app_logs(
+    app_name: str,
+    request: Request,
+    minutes: int = Query(60, ge=1, le=1440),
+    tail: int = Query(50, ge=1, le=200),
+) -> JSONResponse:
+    """
+    Returns recent console logs for a specific Container App from Log Analytics.
+
+    Requires:
+    - SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID / SYSTEM_HEALTH_ARM_RESOURCE_GROUP / SYSTEM_HEALTH_ARM_CONTAINERAPPS
+    - SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true + SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID
+    """
+    validate_auth(request)
+
+    subscription_id, resource_group, app_allowlist = _container_app_allowlist()
+    if not (subscription_id and resource_group and app_allowlist):
+        raise HTTPException(status_code=503, detail="Container app log retrieval is not configured.")
+
+    resolved = (app_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?", resolved or ""):
+        raise HTTPException(status_code=400, detail="Invalid container app name.")
+    if resolved not in app_allowlist:
+        raise HTTPException(status_code=404, detail="Container app not found.")
+
+    log_analytics_enabled = _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"))
+    workspace_id_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
+    workspace_id = workspace_id_raw.strip() if workspace_id_raw else ""
+    if not log_analytics_enabled or not workspace_id:
+        raise HTTPException(status_code=503, detail="Log Analytics is not configured for container app log retrieval.")
+
+    log_timeout_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS")
+    try:
+        log_timeout_seconds = float(log_timeout_raw.strip()) if log_timeout_raw else 5.0
+    except ValueError:
+        log_timeout_seconds = 5.0
+
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(minutes=max(1, int(minutes)))
+    timespan = f"{start.isoformat()}/{now.isoformat()}"
+
+    app_kql = _escape_kql_literal(resolved)
+    tail_lines = max(1, int(tail))
+    query = f"""
+let appName = '{app_kql}';
+union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+| extend app = tostring(
+    column_ifexists('ContainerAppName_s',
+        column_ifexists('ContainerName_s',
+            column_ifexists('ContainerName',
+                column_ifexists('AppName_s', '')
+            )
+        )
+    )
+)
+| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+| extend msg = tostring(
+    column_ifexists('Log_s',
+        column_ifexists('Log',
+            column_ifexists('LogMessage_s',
+                column_ifexists('Message',
+                    column_ifexists('message', '')
+                )
+            )
+        )
+    )
+)
+| where (app != '' and app contains appName)
+    or (resource contains strcat('/containerApps/', appName))
+| where msg != ''
+| order by TimeGenerated desc
+| take {tail_lines}
+| project TimeGenerated, msg
+| order by TimeGenerated asc
+""".strip()
+
+    try:
+        with AzureLogAnalyticsClient(timeout_seconds=log_timeout_seconds) as log_client:
+            payload = log_client.query(workspace_id=workspace_id, query=query, timespan=timespan)
+            lines = _extract_log_lines(payload)
+    except Exception as exc:
+        logger.exception("Failed to query container app logs: app=%s", resolved)
+        raise HTTPException(status_code=502, detail=f"Failed to query container app logs: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "appName": resolved,
+            "lookbackMinutes": int(minutes),
+            "tailLines": tail_lines,
+            "logs": lines[-tail_lines:],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/container-apps/{app_name}/start")
 def start_container_app(app_name: str, request: Request) -> JSONResponse:
     validate_auth(request)

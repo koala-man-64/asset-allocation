@@ -54,6 +54,35 @@ class _FakeArmClient:
         }
 
 
+class _FakeLogAnalyticsClient:
+    def __init__(self, *, timeout_seconds: float = 5.0) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.queries: list[tuple[str, str, str | None]] = []
+
+    def __enter__(self) -> "_FakeLogAnalyticsClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def query(self, *, workspace_id: str, query: str, timespan: str | None = None):
+        self.queries.append((workspace_id, query, timespan))
+        return {
+            "tables": [
+                {
+                    "columns": [
+                        {"name": "TimeGenerated", "type": "datetime"},
+                        {"name": "msg", "type": "string"},
+                    ],
+                    "rows": [
+                        ["2026-02-10T00:00:00Z", "api booted"],
+                        ["2026-02-10T00:00:02Z", "health check passed"],
+                    ],
+                }
+            ]
+        }
+
+
 def _set_container_app_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
@@ -140,5 +169,44 @@ async def test_container_app_not_allowlisted(monkeypatch: pytest.MonkeyPatch) ->
     app = create_app()
     async with get_test_client(app) as client:
         resp = await client.post("/api/system/container-apps/not-allowed/start")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_container_app_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_container_app_env(monkeypatch)
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
+
+    fake_logs = _FakeLogAnalyticsClient()
+    with patch("api.endpoints.system.AzureLogAnalyticsClient", return_value=fake_logs):
+        app = create_app()
+        async with get_test_client(app) as client:
+            resp = await client.get("/api/system/container-apps/asset-allocation-api/logs?minutes=30&tail=5")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["appName"] == "asset-allocation-api"
+    assert payload["lookbackMinutes"] == 30
+    assert payload["tailLines"] == 5
+    assert payload["logs"] == ["api booted", "health check passed"]
+
+    assert len(fake_logs.queries) == 1
+    workspace_id, query, timespan = fake_logs.queries[0]
+    assert workspace_id == "workspace-id"
+    assert "asset-allocation-api" in query
+    assert timespan is not None
+
+
+@pytest.mark.asyncio
+async def test_get_container_app_logs_not_allowlisted(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_container_app_env(monkeypatch)
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/system/container-apps/not-allowed/logs")
 
     assert resp.status_code == 404

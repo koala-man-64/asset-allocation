@@ -1,0 +1,87 @@
+# Provider Data XRef
+
+## Purpose
+Cross-reference external data providers to:
+- available datasets/domains,
+- gateway endpoints and clients,
+- Bronze ingestion jobs and output paths,
+- symbol source flags in Postgres.
+
+## Provider x Domain Matrix
+| Provider | Symbol Universe | Market OHLCV | Market Fundamentals | Earnings | Finance | Price Targets | Symbol Source Flag(s) |
+|---|---|---|---|---|---|---|---|
+| Nasdaq Data Link (ZACKS) | Yes (`ZACKS/MT`) | No | No | No | No | Yes (`ZACKS/TP`) | `source_nasdaq` |
+| Massive | Yes (tickers API via `core/massive_provider.py`) | Yes | Yes (`short-interest`, `short-volume`, `float`) | No | API endpoint available; not primary Bronze source | No | `source_massive` |
+| Alpha Vantage | Yes (`LISTING_STATUS`) | Endpoint available; not primary Bronze market source | No | Yes | Yes | No | `source_alpha_vantage`, `source_alphavantage` (compat alias) |
+
+## Symbol Universe Source Mapping
+| Source | Function | Notes |
+|---|---|---|
+| Nasdaq Data Link | `core/core.py:get_active_tickers` | Uses `ZACKS/MT` metadata table. |
+| Massive | `core/core.py:get_active_tickers_massive` | Uses `core/massive_provider.py:get_complete_ticker_list`. |
+| Alpha Vantage | `core/core.py:get_active_tickers_alpha_vantage` | Uses gateway first, then direct API fallback when configured. |
+| Merge + persist | `core/core.py:merge_symbol_sources`, `core/core.py:upsert_symbols_to_db` | Persists provider flags to `public.symbols`. |
+
+## Provider Gateway Endpoints (API)
+### Massive (`api/endpoints/massive.py`)
+- `GET /api/providers/massive/time-series/daily`
+- `GET /api/providers/massive/fundamentals/short-interest`
+- `GET /api/providers/massive/fundamentals/short-volume`
+- `GET /api/providers/massive/fundamentals/float`
+- `GET /api/providers/massive/financials/{report}`
+- `GET /api/providers/massive/finance/{report}` (alias)
+
+### Alpha Vantage (`api/endpoints/alpha_vantage.py`)
+- `GET /api/providers/alpha-vantage/listing-status`
+- `GET /api/providers/alpha-vantage/time-series/daily`
+- `GET /api/providers/alpha-vantage/earnings`
+- `GET /api/providers/alpha-vantage/finance/{report}`
+
+## Bronze Ingestion XRef
+| Domain | Primary Provider | Bronze Task | Job Name | Bronze Output Path | Notes |
+|---|---|---|---|---|---|
+| Market data | Massive | `tasks/market_data/bronze_market_data.py` | `bronze-market-job` | `market-data/{symbol}.csv` | Enriches OHLCV with short-interest, short-volume, float where available. |
+| Earnings data | Alpha Vantage | `tasks/earnings_data/bronze_earnings_data.py` | `bronze-earnings-job` | `{EARNINGS_DATA_PREFIX}/{symbol}.json` (default `earnings-data/{symbol}.json`) | Quarterly earnings payload normalized to JSON records. |
+| Finance data | Alpha Vantage | `tasks/finance_data/bronze_finance_data.py` | `bronze-finance-job` | `finance-data/{folder}/{symbol}_{suffix}.json` | Pulls balance sheet, cash flow, income statement, overview. |
+| Price target data | Nasdaq Data Link | `tasks/price_target_data/bronze_price_target_data.py` | `bronze-price-target-job` | `price-target-data/{symbol}.parquet` | Reads `ZACKS/TP` by ticker batch. |
+
+## Silver/Gold Path Crosswalk
+Paths are defined centrally in `core/pipeline.py` (`DataPaths`):
+
+| Domain | Silver By-Date Path | Gold By-Date Path | Per-Symbol Gold Path |
+|---|---|---|---|
+| Market | `market-data-by-date` | `market_by_date` | `market/{ticker}` |
+| Earnings | `earnings-data-by-date` | `earnings_by_date` | `earnings/{ticker}` |
+| Finance | `finance-data-by-date` | `finance_by_date` | `finance/{ticker}` |
+| Price targets | `price-target-data-by-date` | `targets_by_date` | `targets/{ticker}` |
+
+## Postgres Symbol Flags
+`public.symbols` provider availability columns:
+- `source_nasdaq`
+- `source_massive`
+- `source_alpha_vantage`
+- `source_alphavantage` (backward-compatible alias)
+
+Related migration:
+- `deploy/sql/postgres/migrations/0013_add_public_symbols_source_massive.sql`
+
+## Quick Verification Queries
+```sql
+-- Provider availability rollup
+SELECT
+  COUNT(*) AS total_symbols,
+  COUNT(*) FILTER (WHERE source_nasdaq) AS from_nasdaq,
+  COUNT(*) FILTER (WHERE source_massive) AS from_massive,
+  COUNT(*) FILTER (WHERE source_alpha_vantage OR source_alphavantage) AS from_alpha_vantage
+FROM public.symbols;
+```
+
+```sql
+-- Symbols covered by Massive but not Nasdaq
+SELECT symbol
+FROM public.symbols
+WHERE COALESCE(source_massive, FALSE) = TRUE
+  AND COALESCE(source_nasdaq, FALSE) = FALSE
+ORDER BY symbol;
+```
+
