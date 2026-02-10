@@ -13,7 +13,7 @@ properties:
       parallelism: 1
       replicaCompletionCount: 1
     replicaRetryLimit: 2
-    replicaTimeout: 1800
+    replicaTimeout: 21600
     registries:
     - server: assetallocationacr.azurecr.io
       identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
@@ -76,7 +76,7 @@ properties:
       - name: ASSET_ALLOCATION_API_KEY_HEADER
         value: "X-API-Key"
       - name: MASSIVE_TIMEOUT_SECONDS
-        value: ${MASSIVE_TIMEOUT_SECONDS}
+        value: "60"
       - name: MASSIVE_MAX_WORKERS
         value: ${MASSIVE_MAX_WORKERS}
       - name: MASSIVE_FINANCE_FRESH_DAYS
