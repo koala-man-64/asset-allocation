@@ -66,6 +66,73 @@ def _parse_connection_string(conn_str: str) -> Dict[str, str]:
     """Parses Azure Storage Connection String into a dictionary."""
     return dict(item.split('=', 1) for item in conn_str.split(';') if '=' in item)
 
+
+def _infer_storage_auth_mode(storage_options: Dict[str, str]) -> str:
+    if storage_options.get("account_key"):
+        return "account_key"
+    if storage_options.get("sas_token"):
+        return "sas_token"
+    if (
+        storage_options.get("client_id")
+        and storage_options.get("client_secret")
+        and storage_options.get("tenant_id")
+    ):
+        return "service_principal"
+    if storage_options.get("identity_endpoint"):
+        return "managed_identity"
+    if str(storage_options.get("use_azure_cli", "")).strip().lower() == "true":
+        return "azure_cli"
+    return "unknown"
+
+
+def get_delta_storage_auth_diagnostics(container: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Returns a non-secret summary of how Delta storage auth is currently resolved.
+    Intended for startup diagnostics and incident triage.
+    """
+    conn_str_raw = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    conn_str = conn_str_raw.strip() if conn_str_raw else ""
+    cs_map = _parse_connection_string(conn_str) if conn_str else {}
+
+    account_key_raw = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
+    account_key = account_key_raw.strip() if account_key_raw else ""
+    access_key_raw = os.environ.get("AZURE_STORAGE_ACCESS_KEY")
+    access_key = access_key_raw.strip() if access_key_raw else ""
+    sas_token_raw = os.environ.get("AZURE_STORAGE_SAS_TOKEN")
+    sas_token = sas_token_raw.strip() if sas_token_raw else ""
+    client_secret_raw = os.environ.get("AZURE_CLIENT_SECRET")
+    client_secret = client_secret_raw.strip() if client_secret_raw else ""
+    identity_endpoint_raw = os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT")
+    identity_endpoint = identity_endpoint_raw.strip() if identity_endpoint_raw else ""
+
+    storage_options = get_delta_storage_options(container=container)
+    mode = _infer_storage_auth_mode(storage_options)
+
+    key_source = None
+    if storage_options.get("account_key"):
+        if account_key:
+            key_source = "AZURE_STORAGE_ACCOUNT_KEY"
+        elif access_key:
+            key_source = "AZURE_STORAGE_ACCESS_KEY"
+        elif cs_map.get("AccountKey"):
+            key_source = "AZURE_STORAGE_CONNECTION_STRING"
+        else:
+            key_source = "unknown"
+
+    return {
+        "mode": mode,
+        "container": container,
+        "accountName": storage_options.get("account_name") or cs_map.get("AccountName"),
+        "optionKeys": sorted(storage_options.keys()),
+        "hasConnectionString": bool(conn_str),
+        "hasAccountKeyEnv": bool(account_key),
+        "hasAccessKeyEnv": bool(access_key),
+        "hasSasTokenEnv": bool(sas_token),
+        "hasClientSecretEnv": bool(client_secret),
+        "hasIdentityEndpoint": bool(identity_endpoint),
+        "accountKeySource": key_source,
+    }
+
 def _get_user_delegation_sas(
     container: Optional[str],
     account_name: Optional[str],

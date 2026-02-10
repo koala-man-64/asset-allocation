@@ -1,18 +1,14 @@
 param (
-    [string]$EnvFilePath = "",
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
 
-$envPath = $EnvFilePath
-if ([string]::IsNullOrWhiteSpace($envPath)) {
-    $repoRoot = Join-Path $PSScriptRoot ".."
-    $envPath = Join-Path $repoRoot ".env.web"
-}
+$repoRoot = Join-Path $PSScriptRoot ".."
+$envPath = Join-Path $repoRoot ".env.web"
 
 if (-not (Test-Path $envPath)) {
-    Write-Error "Error: env file not found at $envPath (create .env.web or pass -EnvFilePath)."
+    Write-Error "Error: env file not found at $envPath (create .env.web)."
     exit 1
 }
 

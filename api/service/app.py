@@ -20,6 +20,7 @@ from api.service.settings import ServiceSettings
 from api.service.realtime import manager as realtime_manager
 from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
+from core.delta_core import get_delta_storage_auth_diagnostics
 
 logger = logging.getLogger("asset-allocation.api")
 
@@ -206,6 +207,24 @@ def create_app() -> FastAPI:
             return ttl
 
         app.state.system_health_cache = TtlCache(ttl_seconds=_system_health_ttl_seconds())
+
+        try:
+            storage_diag = get_delta_storage_auth_diagnostics(container=None)
+            logger.info(
+                "Delta storage auth resolved: mode=%s account=%s key_source=%s options=%s has_conn_str=%s has_account_key=%s has_access_key=%s has_sas=%s has_client_secret=%s has_identity_endpoint=%s",
+                storage_diag.get("mode"),
+                storage_diag.get("accountName"),
+                storage_diag.get("accountKeySource"),
+                ",".join(storage_diag.get("optionKeys", [])),
+                storage_diag.get("hasConnectionString"),
+                storage_diag.get("hasAccountKeyEnv"),
+                storage_diag.get("hasAccessKeyEnv"),
+                storage_diag.get("hasSasTokenEnv"),
+                storage_diag.get("hasClientSecretEnv"),
+                storage_diag.get("hasIdentityEndpoint"),
+            )
+        except Exception as exc:
+            logger.warning("Failed to resolve Delta storage auth diagnostics: %s", exc)
 
         yield
 
