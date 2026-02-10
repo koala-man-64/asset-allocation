@@ -69,3 +69,62 @@ def test_daily_time_series_falls_back_to_aggs_when_open_close_not_found() -> Non
     assert lines[1] == "2025-01-02,10.0,11.0,9.0,10.5,1234.0"
     assert calls["summary"] == 1
     assert calls["aggs"] == 1
+
+
+def test_gateway_fundamentals_request_historical_defaults() -> None:
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def get_short_interest(self, **kwargs):
+            self.calls.append(("short_interest", kwargs))
+            return {"results": []}
+
+        def get_short_volume(self, **kwargs):
+            self.calls.append(("short_volume", kwargs))
+            return {"results": []}
+
+        def get_float(self, **kwargs):
+            self.calls.append(("float", kwargs))
+            return {"results": []}
+
+    fake = _FakeClient()
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: fake  # type: ignore[method-assign]
+
+    gateway.get_short_interest(symbol="AAPL")
+    gateway.get_short_volume(symbol="AAPL")
+    gateway.get_float(symbol="AAPL")
+
+    by_name = {name: kwargs for name, kwargs in fake.calls}
+    assert by_name["short_interest"]["ticker"] == "AAPL"
+    assert by_name["short_interest"]["params"]["sort"] == "settlement_date.asc"
+    assert by_name["short_interest"]["params"]["limit"] == 50000
+    assert by_name["short_interest"]["pagination"] is True
+
+    assert by_name["short_volume"]["ticker"] == "AAPL"
+    assert by_name["short_volume"]["params"]["sort"] == "date.asc"
+    assert by_name["short_volume"]["params"]["limit"] == 50000
+    assert by_name["short_volume"]["pagination"] is True
+
+    assert by_name["float"]["ticker"] == "AAPL"
+    assert by_name["float"]["params"]["sort"] == "effective_date.asc"
+    assert by_name["float"]["params"]["limit"] == 5000
+    assert by_name["float"]["pagination"] is True
+
+
+def test_daily_time_series_defaults_to_full_history_window() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def list_ohlcv(self, **kwargs):
+            captured.update(kwargs)
+            return []
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    csv_text = gateway.get_daily_time_series_csv(symbol="AAPL")
+    assert csv_text.splitlines()[0] == "Date,Open,High,Low,Close,Volume"
+    assert captured["from_"] == "1900-01-01"
+    assert captured["ticker"] == "AAPL"

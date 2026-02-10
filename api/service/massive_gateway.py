@@ -8,7 +8,7 @@ import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Iterator, Literal, Optional
 
 from massive_provider import MassiveClient, MassiveConfig
@@ -22,6 +22,7 @@ from massive_provider.errors import (
 from massive_provider.utils import ms_to_iso_date
 
 logger = logging.getLogger("asset-allocation.api.massive")
+_FULL_HISTORY_START_DATE = "1900-01-01"
 
 FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "overview", "ratios"]
 
@@ -284,7 +285,7 @@ class MassiveGateway:
             raise ValueError("symbol is required.")
 
         end_date = to_date or _utc_today_iso()
-        start_date = from_date or (datetime.now(timezone.utc).date() - timedelta(days=180)).isoformat()
+        start_date = from_date or _FULL_HISTORY_START_DATE
 
         if str(start_date) == str(end_date):
             try:
@@ -315,13 +316,26 @@ class MassiveGateway:
         return self._to_csv(rows)
 
     def get_short_interest(self, *, symbol: str) -> Any:
-        return self.get_client().get_short_interest(ticker=str(symbol).strip().upper())
+        return self.get_client().get_short_interest(
+            ticker=str(symbol).strip().upper(),
+            params={"sort": "settlement_date.asc", "limit": 50000},
+            pagination=True,
+        )
 
     def get_short_volume(self, *, symbol: str) -> Any:
-        return self.get_client().get_short_volume(ticker=str(symbol).strip().upper())
+        return self.get_client().get_short_volume(
+            ticker=str(symbol).strip().upper(),
+            params={"sort": "date.asc", "limit": 50000},
+            pagination=True,
+        )
 
     def get_float(self, *, symbol: str, as_of: Optional[str] = None) -> Any:
-        return self.get_client().get_float(ticker=str(symbol).strip().upper(), as_of=as_of)
+        return self.get_client().get_float(
+            ticker=str(symbol).strip().upper(),
+            as_of=as_of,
+            params={"sort": "effective_date.asc", "limit": 5000},
+            pagination=True,
+        )
 
     def get_finance_report(self, *, symbol: str, report: FinanceReport) -> Any:
         by_report = {

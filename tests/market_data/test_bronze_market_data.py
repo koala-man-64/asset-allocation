@@ -1,5 +1,6 @@
 import pytest
 import uuid
+from datetime import date
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 import pandas as pd
@@ -44,12 +45,22 @@ def test_bronze_ingestion(unique_ticker):
     }
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=b"",
+    ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
-    ) as mock_list_manager:
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.get_backfill_range",
+        return_value=(None, None),
+    ):
         mock_list_manager.is_blacklisted.return_value = False
 
         bronze.download_and_save_raw(symbol, mock_massive)
 
+        mock_massive.get_daily_time_series_csv.assert_called_once()
+        _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
+        assert fetch_kwargs["from_date"] == "1900-01-01"
+        assert fetch_kwargs["adjusted"] is True
         mock_store.assert_called_once()
         args, kwargs = mock_store.call_args
         assert args[1] == f"market-data/{symbol}.csv"
@@ -76,6 +87,9 @@ def test_header_only_csv_blacklists_symbol(unique_ticker):
     mock_massive.get_daily_time_series_csv.return_value = "Date,Open,High,Low,Close,Volume\n'"
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=b"",
+    ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
@@ -85,6 +99,76 @@ def test_header_only_csv_blacklists_symbol(unique_ticker):
 
         mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
         mock_store.assert_not_called()
+
+
+def test_header_only_with_existing_data_does_not_blacklist(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = "Date,Open,High,Low,Close,Volume\n"
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2024-01-03,10,11,9,10.5,100,1000,500,1000000\n"
+    ).encode("utf-8")
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_csv,
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.get_backfill_range",
+        return_value=(None, None),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+        bronze.download_and_save_raw(symbol, mock_massive)
+
+        mock_list_manager.add_to_blacklist.assert_not_called()
+        mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
+        mock_store.assert_not_called()
+
+
+def test_download_uses_existing_data_window_and_merges(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-03,20,21,19,20.5,200\n"
+        "2024-01-04,21,22,20,21.5,250\n"
+    )
+    mock_massive.get_short_interest.return_value = {"results": [{"date": "2024-01-04", "short_interest": 1500}]}
+    mock_massive.get_short_volume.return_value = {"results": [{"date": "2024-01-04", "short_volume": 700}]}
+    mock_massive.get_float.return_value = {"results": [{"date": "2024-01-04", "float_shares": 1100000}]}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2024-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+        "2024-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+    ).encode("utf-8")
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_csv,
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.get_backfill_range",
+        return_value=(None, None),
+    ), patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2024, 1, 4),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+        bronze.download_and_save_raw(symbol, mock_massive)
+
+        _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
+        assert fetch_kwargs["from_date"] == "2024-01-03"
+        assert fetch_kwargs["to_date"] == "2024-01-04"
+
+        args, _ = mock_store.call_args
+        df = pd.read_csv(BytesIO(args[0]))
+        assert df["Date"].tolist() == ["2024-01-02", "2024-01-03", "2024-01-04"]
+        assert float(df.loc[df["Date"] == "2024-01-03", "Close"].iloc[0]) == pytest.approx(20.5)
+        assert float(df.loc[df["Date"] == "2024-01-04", "ShortInterest"].iloc[0]) == pytest.approx(1500.0)
 
 
 class _FakeClientManager:

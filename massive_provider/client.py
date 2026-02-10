@@ -289,7 +289,51 @@ class MassiveClient:
     # Fundamentals & Financials
     # ------------------------------
 
-    def get_short_interest(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def _request_paginated_results(
+        self,
+        endpoint: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
+        resp = self._request_json(endpoint, params=params)
+        payload = resp.payload
+        if not pagination:
+            return payload
+
+        if not isinstance(payload, dict):
+            return payload
+
+        initial_results = payload.get("results")
+        if not isinstance(initial_results, list):
+            return payload
+
+        merged_results = [to_jsonable(item) for item in initial_results]
+        next_url = payload.get("next_url")
+
+        while next_url:
+            next_resp = self._request_json(str(next_url))
+            next_payload = next_resp.payload
+            if not isinstance(next_payload, dict):
+                break
+            next_results = next_payload.get("results")
+            if not isinstance(next_results, list):
+                break
+            merged_results.extend([to_jsonable(item) for item in next_results])
+            next_url = next_payload.get("next_url")
+
+        merged_payload = dict(payload)
+        merged_payload["results"] = merged_results
+        merged_payload["next_url"] = None
+        return merged_payload
+
+    def get_short_interest(
+        self,
+        *,
+        ticker: str,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Short interest.
 
         REST endpoint: ``GET /stocks/v1/short-interest``.
@@ -298,9 +342,19 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json(_ENDPOINT_SHORT_INTEREST, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            _ENDPOINT_SHORT_INTEREST,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
-    def get_short_volume(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def get_short_volume(
+        self,
+        *,
+        ticker: str,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Short volume.
 
         REST endpoint: ``GET /stocks/v1/short-volume``.
@@ -309,9 +363,20 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json(_ENDPOINT_SHORT_VOLUME, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            _ENDPOINT_SHORT_VOLUME,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
-    def get_float(self, *, ticker: str, as_of: Optional[str] = None, params: Optional[dict[str, Any]] = None) -> Any:
+    def get_float(
+        self,
+        *,
+        ticker: str,
+        as_of: Optional[str] = None,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Company float (experimental).
 
         REST endpoint: ``GET /stocks/vX/float``.
@@ -323,7 +388,11 @@ class MassiveClient:
         endpoint = str(getattr(self.config, "float_endpoint", _ENDPOINT_FLOAT_DEFAULT) or _ENDPOINT_FLOAT_DEFAULT).strip()
         if not endpoint.startswith("/"):
             endpoint = "/" + endpoint
-        return self._request_json(endpoint, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            endpoint,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
     def get_income_statement(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
         """Income statements.

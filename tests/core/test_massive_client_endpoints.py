@@ -177,3 +177,32 @@ def test_list_ohlcv_falls_back_for_older_sdk_without_adjusted_sort(monkeypatch) 
         assert client._sdk.calls[0]["ticker"] == "AAPL"
     finally:
         client.close()
+
+
+def test_fundamentals_pagination_aggregates_all_pages() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, str(request.url)))
+        page = request.url.params.get("page")
+        if page == "2":
+            return httpx.Response(200, json={"results": [{"settlement_date": "2025-01-31", "short_interest": 110}]})
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"settlement_date": "2025-01-15", "short_interest": 100}],
+                "next_url": "https://api.massive.com/stocks/v1/short-interest?page=2",
+            },
+        )
+
+    client = _build_client(handler)
+    try:
+        payload = client.get_short_interest(ticker="AAPL", params={"limit": 1}, pagination=True)
+    finally:
+        client.close()
+
+    assert isinstance(payload, dict)
+    assert [row["settlement_date"] for row in payload["results"]] == ["2025-01-15", "2025-01-31"]
+    assert payload["next_url"] is None
+    assert seen[0][0] == "/stocks/v1/short-interest"
+    assert seen[1][0] == "/stocks/v1/short-interest"

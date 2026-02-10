@@ -6,8 +6,8 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
-from io import StringIO
+from datetime import date, datetime, timezone
+from io import BytesIO, StringIO
 from typing import Any, Callable
 
 import pandas as pd
@@ -30,6 +30,7 @@ list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
+_FULL_HISTORY_START_DATE = "1900-01-01"
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -113,6 +114,8 @@ def _extract_row_date(payload: dict[str, Any]) -> str | None:
     normalized = {_normalize_key(k): v for k, v in payload.items()}
     for key in (
         "date",
+        "settlement_date",
+        "effective_date",
         "as_of",
         "asof",
         "session",
@@ -310,30 +313,83 @@ def _is_header_only_provider_daily_csv(csv_text: str) -> bool:
     return True
 
 
-def _should_skip_symbol(symbol: str, existing_last_modified: dict[str, datetime], *, utc_today: datetime.date) -> bool:
-    last_mod = existing_last_modified.get(symbol)
-    if last_mod is None:
-        return False
+def _load_existing_market_df(symbol: str) -> pd.DataFrame:
+    path = f"market-data/{symbol}.csv"
     try:
-        return last_mod.astimezone(timezone.utc).date() >= utc_today
-    except Exception:
-        return False
-
-
-def _prefetch_existing_last_modified() -> dict[str, datetime]:
-    existing_last_modified: dict[str, datetime] = {}
-    try:
-        for blob in bronze_client.list_blob_infos(name_starts_with="market-data/"):
-            name = str(blob.get("name") or "")
-            if not name.endswith(".csv"):
-                continue
-            ticker = name.split("/")[-1].replace(".csv", "")
-            lm = blob.get("last_modified")
-            if isinstance(lm, datetime):
-                existing_last_modified[ticker] = lm
+        raw_bytes = mdc.read_raw_bytes(path, client=bronze_client)
     except Exception as exc:
-        mdc.write_warning(f"Unable to prefetch existing market-data blobs; proceeding without skip logic. ({exc})")
-    return existing_last_modified
+        mdc.write_warning(
+            f"Unable to read existing bronze market blob for {symbol}; continuing with provider-only payload. ({exc})"
+        )
+        return pd.DataFrame()
+
+    if not raw_bytes:
+        return pd.DataFrame()
+
+    try:
+        existing_df = pd.read_csv(BytesIO(raw_bytes))
+    except Exception as exc:
+        mdc.write_warning(f"Existing bronze market CSV for {symbol} is unreadable; rebuilding from provider data. ({exc})")
+        return pd.DataFrame()
+
+    if existing_df.empty or "Date" not in existing_df.columns:
+        return pd.DataFrame()
+
+    existing_df["Date"] = pd.to_datetime(existing_df["Date"], errors="coerce")
+    existing_df = existing_df.dropna(subset=["Date"]).copy()
+    if existing_df.empty:
+        return pd.DataFrame()
+
+    existing_df["Date"] = existing_df["Date"].dt.strftime("%Y-%m-%d")
+    return existing_df
+
+
+def _extract_latest_market_date(existing_df: pd.DataFrame) -> date | None:
+    if existing_df.empty or "Date" not in existing_df.columns:
+        return None
+    parsed = pd.to_datetime(existing_df["Date"], errors="coerce").dropna()
+    if parsed.empty:
+        return None
+    try:
+        return parsed.max().date()
+    except Exception:
+        return None
+
+
+def _resolve_fetch_window(*, existing_latest_date: date | None) -> tuple[str, str]:
+    today = _utc_today()
+    backfill_start, backfill_end = get_backfill_range()
+    if backfill_start or backfill_end:
+        from_date = backfill_start or _FULL_HISTORY_START_DATE
+        to_date = backfill_end or today.isoformat()
+        return from_date, to_date
+
+    if existing_latest_date is None:
+        from_date = _FULL_HISTORY_START_DATE
+    else:
+        from_date = min(existing_latest_date, today).isoformat()
+    return from_date, today.isoformat()
+
+
+def _merge_existing_and_new_market_data(existing_df: pd.DataFrame, incoming_df: pd.DataFrame) -> pd.DataFrame:
+    if existing_df.empty:
+        return incoming_df
+
+    merged = pd.concat([existing_df, incoming_df], ignore_index=True, sort=False)
+    merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce")
+    merged = merged.dropna(subset=["Date"]).copy()
+    if merged.empty:
+        return incoming_df
+
+    numeric_columns = ("Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS)
+    for column_name in numeric_columns:
+        if column_name not in merged.columns:
+            merged[column_name] = pd.NA
+        merged[column_name] = pd.to_numeric(merged[column_name], errors="coerce")
+
+    merged = merged.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
+    merged["Date"] = merged["Date"].dt.strftime("%Y-%m-%d")
+    return merged
 
 
 def _safe_close_massive_client(client: MassiveGatewayClient | None) -> None:
@@ -444,14 +500,9 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
     if list_manager.is_blacklisted(symbol):
         return
 
-    today = _utc_today().isoformat()
-    backfill_start, backfill_end = get_backfill_range()
-    if backfill_start or backfill_end:
-        from_date = backfill_start or "2000-01-01"
-        to_date = backfill_end or today
-    else:
-        from_date = (datetime.now(timezone.utc).date() - timedelta(days=180)).isoformat()
-        to_date = today
+    existing_df = _load_existing_market_df(symbol)
+    existing_latest_date = _extract_latest_market_date(existing_df)
+    from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
     raw_text = massive_client.get_daily_time_series_csv(
         symbol=symbol,
         from_date=from_date,
@@ -460,6 +511,13 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
     )
 
     if _is_header_only_provider_daily_csv(raw_text):
+        if not existing_df.empty:
+            mdc.write_warning(
+                f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
+                "keeping existing bronze data."
+            )
+            list_manager.add_to_whitelist(symbol)
+            return
         list_manager.add_to_blacklist(symbol)
         raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
 
@@ -485,6 +543,7 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
             short_volume_payload=short_volume_payload,
             float_payload=float_payload,
         )
+        df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
         raw_bytes = _serialize_market_csv(df_daily)
     except (MassiveGatewayRateLimitError, MassiveGatewayError):
         raise
@@ -550,20 +609,15 @@ async def main_async() -> int:
 
     mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
 
-    existing_last_modified = _prefetch_existing_last_modified()
-    utc_today = _utc_today()
     client_manager = _ThreadLocalMassiveClientManager()
 
-    progress = {"processed": 0, "skipped": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
+    progress = {"processed": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
     retry_next_run: set[str] = set()
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
         if list_manager.is_blacklisted(symbol):
             raise MassiveGatewayNotFoundError("Symbol is blacklisted.")
-
-        if _should_skip_symbol(symbol, existing_last_modified, utc_today=utc_today):
-            raise RuntimeError("SKIP_FRESH")
 
         _download_and_save_raw_with_recovery(symbol, client_manager)
 
@@ -611,19 +665,6 @@ async def main_async() -> int:
                     if payload:
                         details = f"{details} payload={payload}"
                     mdc.write_error(f"Massive gateway error while processing {symbol}. ({details})")
-            except RuntimeError as exc:
-                if str(exc) == "SKIP_FRESH":
-                    list_manager.add_to_whitelist(symbol)
-                    async with progress_lock:
-                        progress["skipped"] += 1
-                else:
-                    should_log = debug_mode
-                    async with progress_lock:
-                        progress["failed"] += 1
-                        retry_next_run.add(symbol)
-                        should_log = should_log or progress["failed"] <= 20
-                    if should_log:
-                        mdc.write_error(f"Failed to ingest {symbol}: {exc}")
             except Exception as exc:
                 should_log = debug_mode
                 async with progress_lock:
@@ -639,7 +680,7 @@ async def main_async() -> int:
                     progress["processed"] += 1
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
-                            "Bronze Massive market progress: processed={processed} downloaded={downloaded} skipped={skipped} "
+                            "Bronze Massive market progress: processed={processed} downloaded={downloaded} "
                             "blacklisted={blacklisted} failed={failed}".format(**progress)
                         )
 
@@ -660,7 +701,7 @@ async def main_async() -> int:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
 
     mdc.write_line(
-        "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} skipped={skipped} "
+        "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} "
         "blacklisted={blacklisted} failed={failed}".format(**progress)
     )
     if retry_next_run:
