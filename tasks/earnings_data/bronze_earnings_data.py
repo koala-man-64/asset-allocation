@@ -23,6 +23,9 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX, auto_flush=False)
 
 
+EARNINGS_STALE_DAYS = 7
+
+
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
@@ -123,7 +126,7 @@ def fetch_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> bool:
         blob = bronze_client.get_blob_client(blob_path)
         if blob.exists():
             props = blob.get_blob_properties()
-            if _is_fresh(props.last_modified, fresh_days=int(cfg.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS)):
+            if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS):
                 list_manager.add_to_whitelist(symbol)
                 return False
     except Exception:

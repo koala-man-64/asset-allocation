@@ -48,6 +48,9 @@ REPORTS = [
 ]
 
 
+FINANCE_REPORT_STALE_DAYS = 7
+
+
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
@@ -140,13 +143,7 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av_client: AlphaVant
             props = blob.get_blob_properties()
             if _is_fresh(
                 props.last_modified,
-                fresh_days=int(
-                    getattr(
-                        cfg,
-                        "ALPHA_VANTAGE_FINANCE_FRESH_DAYS",
-                        28,
-                    )
-                ),
+                fresh_days=FINANCE_REPORT_STALE_DAYS,
             ):
                 list_manager.add_to_whitelist(symbol)
                 return False

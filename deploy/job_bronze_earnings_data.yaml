@@ -13,7 +13,7 @@ properties:
       parallelism: 1
       replicaCompletionCount: 1
     replicaRetryLimit: 2
-    replicaTimeout: 1800
+    replicaTimeout: 14400
     registries:
     - server: assetallocationacr.azurecr.io
       identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
