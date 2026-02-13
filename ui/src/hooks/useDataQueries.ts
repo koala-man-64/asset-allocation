@@ -71,6 +71,7 @@ export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
         queryInfo('[useSystemHealthQuery] fetch success', {
           overall: response.data?.overall,
           layers: response.data?.dataLayers?.length ?? 0,
+          recentJobs: response.data?.recentJobs?.length ?? 0,
           alerts: response.data?.alerts?.length ?? 0,
           durationMs: response.meta.durationMs,
           cacheHint: response.meta.cacheHint,
@@ -92,6 +93,7 @@ export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
     if (query.data) {
       queryInfo('[Query] systemHealth success', {
         overall: query.data.overall,
+        recentJobs: query.data.recentJobs?.length ?? 0,
         alerts: query.data.alerts?.length ?? 0,
         requestId: lastSystemHealthMeta?.requestId,
         cacheHint: lastSystemHealthMeta?.cacheHint,

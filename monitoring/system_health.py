@@ -97,6 +97,11 @@ def _split_csv(raw: Optional[str]) -> List[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
+def _env_has_value(name: str) -> bool:
+    raw = os.environ.get(name)
+    return bool(raw and raw.strip())
+
+
 def _worse_resource_status(primary: str, secondary: str) -> str:
     status_order = {"unknown": 0, "healthy": 1, "warning": 2, "error": 3}
     return secondary if status_order.get(secondary, 0) > status_order.get(primary, 0) else primary
@@ -680,6 +685,22 @@ def collect_system_health_snapshot(
     app_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_CONTAINERAPPS", ""))
     job_names = _split_csv(os.environ.get("SYSTEM_HEALTH_ARM_JOBS", ""))
 
+    logger.info(
+        "System health ARM probe config: subscription_set=%s resource_group_set=%s apps=%s jobs=%s "
+        "arm_api_version_set=%s arm_timeout_set=%s resource_health_enabled_set=%s monitor_metrics_enabled_set=%s "
+        "log_analytics_enabled_set=%s job_exec_limit_set=%s",
+        bool(subscription_id),
+        bool(resource_group),
+        len(app_names),
+        len(job_names),
+        _env_has_value("SYSTEM_HEALTH_ARM_API_VERSION"),
+        _env_has_value("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS"),
+        _env_has_value("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED"),
+        _env_has_value("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED"),
+        _env_has_value("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"),
+        _env_has_value("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB"),
+    )
+
     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
     if arm_enabled:
         try:
@@ -900,17 +921,38 @@ def collect_system_health_snapshot(
 
                     if job_names:
                         logger.info("Collecting Azure job health: count=%s", len(job_names))
+                        max_executions_per_job = _require_int(
+                            "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", min_value=1, max_value=25
+                        )
                         job_resources, runs = collect_jobs_and_executions(
                             arm,
                             job_names=job_names,
                             last_checked_iso=checked_iso,
                             include_ids=include_resource_ids,
-                            max_executions_per_job=_require_int(
-                                "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", min_value=1, max_value=25
-                            ),
+                            max_executions_per_job=max_executions_per_job,
                             resource_health_enabled=resource_health_enabled,
                             resource_health_api_version=resource_health_api_version,
                         )
+                        run_counts: Dict[str, int] = {}
+                        for run in runs:
+                            run_job_name = str(run.get("jobName") or "").strip()
+                            if not run_job_name:
+                                continue
+                            run_counts[run_job_name] = run_counts.get(run_job_name, 0) + 1
+                        jobs_without_runs = [name for name in job_names if run_counts.get(name, 0) == 0]
+                        logger.info(
+                            "Azure job execution summary: configured_jobs=%s resources=%s runs=%s max_per_job=%s jobs_without_runs=%s",
+                            len(job_names),
+                            len(job_resources),
+                            len(runs),
+                            max_executions_per_job,
+                            len(jobs_without_runs),
+                        )
+                        if jobs_without_runs:
+                            logger.warning(
+                                "Azure job execution summary missing runs: jobs=%s",
+                                ",".join(jobs_without_runs[:20]),
+                            )
                         for item in job_resources:
                             enriched = _enrich_resource(item, metric_names=job_metric_names)
                             _record_resource(enriched, title="Azure job health")
@@ -954,7 +996,14 @@ def collect_system_health_snapshot(
                     if log_client is not None:
                         log_client.close()
         except Exception as exc:
-            logger.exception("Azure control-plane probes failed.")
+            logger.exception(
+                "Azure control-plane probes failed: subscription_set=%s resource_group_set=%s apps=%s jobs=%s error=%s",
+                bool(subscription_id),
+                bool(resource_group),
+                len(app_names),
+                len(job_names),
+                exc,
+            )
             checked_iso = _iso(now)
             alerts.append(
                 {
@@ -971,6 +1020,14 @@ def collect_system_health_snapshot(
                     "acknowledged": False,
                 }
             )
+    else:
+        logger.warning(
+            "System health ARM probes disabled: subscription_set=%s resource_group_set=%s apps=%s jobs=%s",
+            bool(subscription_id),
+            bool(resource_group),
+            len(app_names),
+            len(job_names),
+        )
 
     overall = _overall_from_layers(statuses)
     payload: Dict[str, Any] = {"overall": overall, "dataLayers": layers, "recentJobs": job_runs, "alerts": alerts}

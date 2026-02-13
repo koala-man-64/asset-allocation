@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -62,6 +62,14 @@ import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
+
+const ENABLE_STATUS_DIAGNOSTICS =
+  import.meta.env.DEV ||
+  ['1', 'true', 'yes', 'y', 'on'].includes(
+    String(import.meta.env.VITE_DEBUG_API ?? '')
+      .trim()
+      .toLowerCase()
+  );
 
 interface StatusOverviewProps {
   overall: string;
@@ -197,6 +205,49 @@ export function StatusOverview({
     }
     return index;
   }, [recentJobs]);
+
+  useEffect(() => {
+    if (!ENABLE_STATUS_DIAGNOSTICS) return;
+
+    const configuredJobs = new Set<string>();
+    const configuredRawNames = new Map<string, string>();
+    for (const layer of dataLayers) {
+      for (const domain of layer.domains || []) {
+        const rawJobName = String(domain?.jobName || '').trim();
+        if (!rawJobName) continue;
+        const key = normalizeAzureJobName(rawJobName);
+        if (!key) continue;
+        configuredJobs.add(key);
+        configuredRawNames.set(key, rawJobName);
+      }
+    }
+
+    if (configuredJobs.size === 0) {
+      console.info('[StatusOverview] no configured job names found in dataLayers payload');
+      return;
+    }
+
+    const missingConfiguredJobs = Array.from(configuredJobs).filter((key) => !jobIndex.has(key));
+    if (missingConfiguredJobs.length === 0) {
+      console.info('[StatusOverview] configured jobs matched recentJobs', {
+        configuredCount: configuredJobs.size,
+        recentJobsCount: recentJobs.length
+      });
+      return;
+    }
+
+    const configuredPreview = missingConfiguredJobs
+      .slice(0, 20)
+      .map((key) => configuredRawNames.get(key) || key);
+    const recentPreview = Array.from(jobIndex.keys()).slice(0, 20);
+    console.warn('[StatusOverview] configured jobs missing in recentJobs', {
+      configuredCount: configuredJobs.size,
+      missingCount: missingConfiguredJobs.length,
+      recentJobsCount: recentJobs.length,
+      missingConfiguredJobs: configuredPreview,
+      recentJobKeys: recentPreview
+    });
+  }, [dataLayers, jobIndex, recentJobs]);
 
   const domainsByLayer = useMemo(() => {
     const index = new Map<string, Map<string, DataDomain>>();

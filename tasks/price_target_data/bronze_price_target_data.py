@@ -32,7 +32,16 @@ def _validate_environment() -> None:
     
     nasdaqdatalink.ApiConfig.api_key = os.environ.get('NASDAQ_API_KEY')
 
-async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore):
+async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore) -> dict:
+    batch_summary = {
+        "requested": len(symbols),
+        "stale": 0,
+        "api_rows": 0,
+        "saved": 0,
+        "save_failed": 0,
+        "blacklisted": 0,
+        "api_error": False,
+    }
     async with semaphore:
         # Check freshness of Bronze Blobs?
         # For simplicity, we can fetch all or strictly stale.
@@ -56,13 +65,16 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
                 pass
             stale_symbols.append(sym)
             
+        batch_summary["stale"] = len(stale_symbols)
         if not stale_symbols:
-            return
+            return batch_summary
 
         min_date = date(2020, 1, 1)        
         
         loop = asyncio.get_event_loop()
+        api_error_message = ""
         def fetch_api():
+            nonlocal api_error_message
             try:
                 tickers_str = ",".join(stale_symbols)
                 return nasdaqdatalink.get_table(
@@ -71,6 +83,7 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
                     obs_date={'gte': min_date.strftime('%Y-%m-%d')}
                 )
             except Exception as e:
+                api_error_message = str(e)
                 mdc.write_error(f"API Batch Error: {e}")
                 return pd.DataFrame()
 
@@ -81,7 +94,11 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
         else:
             batch_df = await loop.run_in_executor(None, fetch_api)
         
+        if api_error_message:
+            batch_summary["api_error"] = True
+
         if not batch_df.empty:
+            batch_summary["api_rows"] = int(len(batch_df))
             for symbol, group_df in batch_df.groupby('ticker'):
                 symbol = str(symbol)
                 try:
@@ -89,8 +106,10 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
                     mdc.store_raw_bytes(raw_parquet, f"price-target-data/{symbol}.parquet", client=bronze_client)
                     mdc.write_line(f"Saved Bronze {symbol}")
                     list_manager.add_to_whitelist(symbol)
+                    batch_summary["saved"] += 1
                 except Exception as e:
                     mdc.write_error(f"Failed to save {symbol}: {e}")
+                    batch_summary["save_failed"] += 1
                     
             # Check for missing
             found_tickers = set(str(t) for t in batch_df['ticker'].unique())
@@ -99,6 +118,20 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
                      # Likely no data exists or invalid
                      mdc.write_line(f"No data for {sym}, blacklisting.")
                      list_manager.add_to_blacklist(sym)
+                     batch_summary["blacklisted"] += 1
+        else:
+            if stale_symbols and not api_error_message:
+                mdc.write_warning(
+                    f"Nasdaq batch returned no rows for stale symbols (count={len(stale_symbols)})."
+                )
+
+        mdc.write_line(
+            "Bronze price target batch summary: requested={requested} stale={stale} api_rows={api_rows} "
+            "saved={saved} save_failed={save_failed} blacklisted={blacklisted} api_error={api_error}".format(
+                **batch_summary
+            )
+        )
+        return batch_summary
 
 async def main_async():
     mdc.log_environment_diagnostics()
@@ -130,13 +163,48 @@ async def main_async():
     
     mdc.write_line(f"Starting Bronze Price Target Ingestion for {len(symbols)} symbols...")
     tasks = [process_batch_bronze(chunk, semaphore) for chunk in chunked_symbols]
+    batch_exception_count = 0
+    aggregate = {
+        "requested": 0,
+        "stale": 0,
+        "api_rows": 0,
+        "saved": 0,
+        "save_failed": 0,
+        "blacklisted": 0,
+        "api_error_batches": 0,
+    }
     try:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                batch_exception_count += 1
+                mdc.write_error(
+                    f"Bronze price target batch exception idx={idx}: {type(result).__name__}: {result}"
+                )
+                continue
+            if not isinstance(result, dict):
+                continue
+            aggregate["requested"] += int(result.get("requested", 0) or 0)
+            aggregate["stale"] += int(result.get("stale", 0) or 0)
+            aggregate["api_rows"] += int(result.get("api_rows", 0) or 0)
+            aggregate["saved"] += int(result.get("saved", 0) or 0)
+            aggregate["save_failed"] += int(result.get("save_failed", 0) or 0)
+            aggregate["blacklisted"] += int(result.get("blacklisted", 0) or 0)
+            if bool(result.get("api_error", False)):
+                aggregate["api_error_batches"] += 1
     finally:
         try:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        mdc.write_line(
+            "Bronze price target overall summary: requested={requested} stale={stale} api_rows={api_rows} "
+            "saved={saved} save_failed={save_failed} blacklisted={blacklisted} api_error_batches={api_error_batches} "
+            "batch_exceptions={batch_exception_count}".format(
+                batch_exception_count=batch_exception_count,
+                **aggregate,
+            )
+        )
         mdc.write_line("Bronze Ingestion Complete.")
 
 if __name__ == "__main__":

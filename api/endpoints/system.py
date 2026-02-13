@@ -332,13 +332,26 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         logger.info("System health alert store not configured (alerts will be unacknowledgeable).")
 
     logger.info(
-        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s",
+        "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s recent_jobs=%s",
         result.cache_hit,
         bool(result.refresh_error),
         len(payload.get("dataLayers") or []),
         len(payload.get("alerts") or []),
         len(payload.get("resources") or []),
+        len(payload.get("recentJobs") or []),
     )
+    recent_runs_preview: list[str] = []
+    for run in (payload.get("recentJobs") or [])[:10]:
+        if not isinstance(run, dict):
+            continue
+        job_name = str(run.get("jobName") or "").strip() or "?"
+        status = str(run.get("status") or "").strip() or "unknown"
+        start_time = str(run.get("startTime") or "").strip() or "n/a"
+        recent_runs_preview.append(f"{job_name}:{status}@{start_time}")
+    if recent_runs_preview:
+        logger.info("System health recentJobs preview: %s", " | ".join(recent_runs_preview))
+    elif payload.get("recentJobs") == []:
+        logger.warning("System health recentJobs is empty.")
 
     headers: Dict[str, str] = {
         "Cache-Control": "no-store",

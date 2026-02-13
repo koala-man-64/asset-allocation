@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from monitoring.arm_client import AzureArmClient
 from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION, get_current_availability
+
+logger = logging.getLogger("asset_allocation.monitoring.control_plane")
 
 
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
@@ -227,7 +230,20 @@ def collect_jobs_and_executions(
 
             # Ensure we sample the most recent executions for each job regardless of API ordering.
             executions.sort(key=_execution_start_ts, reverse=True)
-            for item in executions[:max_executions_per_job]:
+            sampled = executions[:max_executions_per_job]
+            logger.info(
+                "Job execution listing: job=%s total=%s sampled=%s",
+                name,
+                len(executions),
+                len(sampled),
+            )
+            if not sampled:
+                logger.warning(
+                    "Job execution listing returned no runs: job=%s url=%s",
+                    name,
+                    executions_url,
+                )
+            for item in sampled:
                 if not isinstance(item, dict):
                     continue
                 props = item.get("properties") if isinstance(item.get("properties"), dict) else {}
@@ -249,8 +265,15 @@ def collect_jobs_and_executions(
                         "triggeredBy": "azure",
                     }
                 )
-        except Exception:
+        except Exception as exc:
             # Executions are best-effort; rely on job resource status + alerts in aggregation.
+            logger.warning(
+                "Failed to list job executions: job=%s url=%s error=%s",
+                name,
+                executions_url,
+                exc,
+                exc_info=True,
+            )
             continue
 
     runs.sort(key=lambda r: r.get("startTime", ""), reverse=True)

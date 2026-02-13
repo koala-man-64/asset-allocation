@@ -143,6 +143,26 @@ def fetch_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> bool:
     return True
 
 
+def _format_failure_reason(exc: BaseException) -> str:
+    reason_parts = [f"type={type(exc).__name__}"]
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        reason_parts.append(f"status={status_code}")
+    detail = getattr(exc, "detail", None)
+    if detail:
+        reason_parts.append(f"detail={str(detail)[:220]}")
+    else:
+        message = str(exc).strip()
+        if message:
+            reason_parts.append(f"message={message[:220]}")
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = payload.get("path")
+        if path:
+            reason_parts.append(f"path={path}")
+    return " ".join(reason_parts)
+
+
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
@@ -173,10 +193,34 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
 
     progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    failure_counts: dict[str, int] = {}
+    failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> bool:
         return fetch_and_save_raw(symbol, av)
+
+    async def record_failure(symbol: str, exc: BaseException) -> None:
+        failure_type = type(exc).__name__
+        failure_reason = _format_failure_reason(exc)
+        async with progress_lock:
+            progress["failed"] += 1
+            failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
+            failure_examples.setdefault(failure_type, f"symbol={symbol} {failure_reason}")
+            failed_total = progress["failed"]
+            type_total = failure_counts[failure_type]
+
+        # Sample detailed failures to avoid log flooding while still exposing root causes.
+        if type_total <= 3 or failed_total % 250 == 0:
+            mdc.write_warning(
+                "Bronze AV earnings failure: symbol={symbol} {reason} total_failed={failed_total} "
+                "type_failed={type_total}".format(
+                    symbol=symbol,
+                    reason=failure_reason,
+                    failed_total=failed_total,
+                    type_total=type_total,
+                )
+            )
 
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
@@ -191,15 +235,12 @@ async def main_async() -> int:
                 list_manager.add_to_blacklist(symbol)
                 async with progress_lock:
                     progress["blacklisted"] += 1
-            except AlphaVantageGatewayThrottleError:
-                async with progress_lock:
-                    progress["failed"] += 1
-            except AlphaVantageGatewayError:
-                async with progress_lock:
-                    progress["failed"] += 1
-            except Exception:
-                async with progress_lock:
-                    progress["failed"] += 1
+            except AlphaVantageGatewayThrottleError as exc:
+                await record_failure(symbol, exc)
+            except AlphaVantageGatewayError as exc:
+                await record_failure(symbol, exc)
+            except Exception as exc:
+                await record_failure(symbol, exc)
             finally:
                 async with progress_lock:
                     progress["processed"] += 1
@@ -224,6 +265,15 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+
+    if failure_counts:
+        ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)
+        summary = ", ".join(f"{name}={count}" for name, count in ordered[:8])
+        mdc.write_warning(f"Bronze AV earnings failure summary: {summary}")
+        for name, _ in ordered[:3]:
+            example = failure_examples.get(name)
+            if example:
+                mdc.write_warning(f"Bronze AV earnings failure example ({name}): {example}")
 
     mdc.write_line(
         "Bronze AV earnings ingest complete: processed={processed} written={written} skipped={skipped} "
