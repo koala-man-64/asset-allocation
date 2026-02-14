@@ -5,6 +5,7 @@ import { Activity, ChevronDown, ExternalLink, Loader2, ScrollText, Server } from
 import { DataService } from '@/services/DataService';
 import type { ContainerAppStatusItem } from '@/services/apiService';
 import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Switch } from '@/app/components/ui/switch';
 import {

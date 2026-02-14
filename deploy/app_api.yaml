@@ -125,6 +125,8 @@ properties:
         value: "${AZURE_SUBSCRIPTION_ID}"
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
         value: "${RESOURCE_GROUP}"
+      - name: SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS
+        value: "${SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS}"
       - name: SYSTEM_HEALTH_ARM_CONTAINERAPPS
         value: "asset-allocation-api,asset-allocation-ui"
       - name: SYSTEM_HEALTH_ARM_JOBS
