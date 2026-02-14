@@ -2,6 +2,7 @@ import { useEffect, Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { QueryProvider } from '@/providers/QueryProvider';
+import { useRealtime } from '@/hooks/useRealtime';
 
 import { useUIStore } from '@/stores/useUIStore';
 
@@ -24,7 +25,8 @@ const StrategyConfigPage = lazy(() => import('@/app/components/pages/StrategyCon
 import { Toaster } from '@/app/components/ui/sonner';
 
 function AppContent() {
-  // Enable real-time updates from backend
+  // Keep query caches fresh from backend push events (Azure/prod-safe alternative to dev HMR).
+  useRealtime();
 
   return (
     <div className="h-screen flex flex-col bg-background">

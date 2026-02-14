@@ -2,10 +2,40 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { config } from '@/config';
 import { backtestKeys } from '@/services/backtestHooks';
+import { queryKeys } from '@/hooks/useDataQueries';
+
+const SUBSCRIPTION_TOPICS = [
+  'backtests',
+  'system-health',
+  'jobs',
+  'container-apps',
+  'alerts',
+  'runtime-config',
+  'debug-symbols'
+] as const;
+
+const CONTAINER_APPS_QUERY_KEY = ['system', 'container-apps'] as const;
+
+type RealtimeEvent = {
+  type?: unknown;
+  payload?: unknown;
+};
+
+type RealtimeEnvelope = {
+  topic?: unknown;
+  data?: unknown;
+  type?: unknown;
+  payload?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
 
 export function useRealtime() {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
+  const keepAliveRef = useRef<number | null>(null);
 
   useEffect(() => {
     // `config.apiBaseUrl` is the API base (expected to include `/api`).
@@ -25,9 +55,23 @@ export function useRealtime() {
 
       ws.onopen = () => {
         console.log('[Realtime] Connected');
+
+        // Subscribe to server topics so publish events are delivered.
+        ws.send(JSON.stringify({ action: 'subscribe', topics: [...SUBSCRIPTION_TOPICS] }));
+
+        // Keep the connection active behind ingress/load-balancers.
+        if (keepAliveRef.current) {
+          window.clearInterval(keepAliveRef.current);
+        }
+        keepAliveRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send('ping');
+          }
+        }, 30_000);
       };
 
       ws.onmessage = (event) => {
+        if (event.data === 'pong') return;
         try {
           const message: unknown = JSON.parse(event.data);
           handleMessage(message);
@@ -38,6 +82,10 @@ export function useRealtime() {
 
       ws.onclose = () => {
         console.log('[Realtime] Disconnected. Reconnecting in 5s...');
+        if (keepAliveRef.current) {
+          window.clearInterval(keepAliveRef.current);
+          keepAliveRef.current = null;
+        }
         wsRef.current = null;
         setTimeout(connect, 5000);
       };
@@ -49,26 +97,83 @@ export function useRealtime() {
     }
 
     function handleMessage(message: unknown) {
-      if (!message || typeof message !== 'object') return;
-      const type = (message as { type?: unknown }).type;
-      if (type !== 'RUN_UPDATE') return;
+      if (!isRecord(message)) return;
 
-      const payload = (message as { payload?: unknown }).payload;
-      console.log('[Realtime] Run update:', payload);
+      let topic: string | null = null;
+      let eventType: string | null = null;
+      let payload: unknown = null;
 
-      if (payload && typeof payload === 'object') {
-        const runId = (payload as { run_id?: unknown }).run_id;
-        if (typeof runId === 'string' && runId) {
-          void queryClient.invalidateQueries({ queryKey: backtestKeys.run(runId) });
-        }
+      const envelope = message as RealtimeEnvelope;
+      if (typeof envelope.topic === 'string') {
+        topic = envelope.topic;
       }
 
-      void queryClient.invalidateQueries({ queryKey: backtestKeys.runs() });
+      if (isRecord(envelope.data)) {
+        const event = envelope.data as RealtimeEvent;
+        if (typeof event.type === 'string') {
+          eventType = event.type;
+          payload = event.payload;
+        } else {
+          payload = envelope.data;
+        }
+      } else if (typeof envelope.type === 'string') {
+        eventType = envelope.type;
+        payload = envelope.payload;
+      } else {
+        payload = envelope.data;
+      }
+
+      // Backward-compat with old event format expected by the UI.
+      if (!eventType && typeof envelope.type === 'string') {
+        eventType = envelope.type;
+      }
+
+      if (eventType === 'RUN_UPDATE') {
+        console.log('[Realtime] Run update:', payload);
+
+        if (isRecord(payload)) {
+          const runId = payload.run_id;
+          if (typeof runId === 'string' && runId) {
+            void queryClient.invalidateQueries({ queryKey: backtestKeys.run(runId) });
+          }
+        }
+
+        void queryClient.invalidateQueries({ queryKey: backtestKeys.runs() });
+        return;
+      }
+
+      const shouldRefreshSystem =
+        topic === 'system-health' ||
+        topic === 'jobs' ||
+        topic === 'container-apps' ||
+        topic === 'alerts' ||
+        eventType === 'SYSTEM_HEALTH_UPDATE' ||
+        eventType === 'JOB_STATE_CHANGED' ||
+        eventType === 'CONTAINER_APP_STATE_CHANGED' ||
+        eventType === 'ALERT_STATE_CHANGED';
+
+      if (shouldRefreshSystem) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+        void queryClient.invalidateQueries({ queryKey: CONTAINER_APPS_QUERY_KEY });
+      }
+
+      if (topic === 'runtime-config' || eventType === 'RUNTIME_CONFIG_CHANGED') {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeConfigCatalog() });
+        void queryClient.invalidateQueries({ queryKey: ['runtimeConfig'] });
+      }
+
+      if (topic === 'debug-symbols' || eventType === 'DEBUG_SYMBOLS_CHANGED') {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.debugSymbols() });
+      }
     }
 
     connect();
 
     return () => {
+      if (keepAliveRef.current) {
+        window.clearInterval(keepAliveRef.current);
+        keepAliveRef.current = null;
+      }
       if (wsRef.current) {
         // Prevent reconnect on unmount
         wsRef.current.onclose = null;

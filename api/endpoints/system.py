@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal, Tuple
 
 import httpx
+from anyio import from_thread
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -17,6 +18,7 @@ from api.service.dependencies import (
     get_system_health_cache,
     validate_auth,
 )
+from api.service.realtime import manager as realtime_manager
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.domain_metadata import collect_domain_metadata
@@ -38,6 +40,39 @@ from core.runtime_config import (
 logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()
+
+
+REALTIME_TOPIC_BACKTESTS = "backtests"
+REALTIME_TOPIC_SYSTEM_HEALTH = "system-health"
+REALTIME_TOPIC_JOBS = "jobs"
+REALTIME_TOPIC_CONTAINER_APPS = "container-apps"
+REALTIME_TOPIC_ALERTS = "alerts"
+REALTIME_TOPIC_RUNTIME_CONFIG = "runtime-config"
+REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
+
+
+def _emit_realtime(topic: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Emit websocket events from sync FastAPI endpoints.
+
+    Endpoints in this module are mostly sync (`def`) and run in AnyIO worker threads.
+    `from_thread.run` bridges to the app event loop so connected websocket clients receive updates.
+    """
+    message = {
+        "type": event_type,
+        "payload": payload or {},
+        "emittedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        from_thread.run(realtime_manager.broadcast, topic, message)
+    except RuntimeError:
+        logger.debug(
+            "Realtime emit skipped (no AnyIO worker context): topic=%s type=%s",
+            topic,
+            event_type,
+        )
+    except Exception:
+        logger.exception("Realtime emit failed: topic=%s type=%s", topic, event_type)
 
 
 def _extract_arm_error_message(response: httpx.Response) -> str:
@@ -473,16 +508,28 @@ def acknowledge_alert(alert_id: str, request: Request) -> JSONResponse:
     except Exception as exc:
         logger.exception("Failed to acknowledge alert: id=%s", alert_id)
         raise HTTPException(status_code=500, detail=f"Failed to acknowledge alert: {exc}") from exc
-    return JSONResponse(
+    response_payload = {
+        "alertId": state.alert_id,
+        "acknowledgedAt": _iso(state.acknowledged_at),
+        "acknowledgedBy": state.acknowledged_by,
+        "snoozedUntil": _iso(state.snoozed_until),
+        "resolvedAt": _iso(state.resolved_at),
+        "resolvedBy": state.resolved_by,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_ALERTS,
+        "ALERT_STATE_CHANGED",
         {
+            "action": "acknowledge",
             "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
+        },
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "alerts", "alertId": state.alert_id},
+    )
+    return JSONResponse(response_payload)
 
 
 @router.post("/alerts/{alert_id}/snooze")
@@ -504,17 +551,29 @@ def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSO
     except Exception as exc:
         logger.exception("Failed to snooze alert: id=%s", alert_id)
         raise HTTPException(status_code=500, detail=f"Failed to snooze alert: {exc}") from exc
-
-    return JSONResponse(
+    response_payload = {
+        "alertId": state.alert_id,
+        "acknowledgedAt": _iso(state.acknowledged_at),
+        "acknowledgedBy": state.acknowledged_by,
+        "snoozedUntil": _iso(state.snoozed_until),
+        "resolvedAt": _iso(state.resolved_at),
+        "resolvedBy": state.resolved_by,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_ALERTS,
+        "ALERT_STATE_CHANGED",
         {
+            "action": "snooze",
             "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
+            "snoozedUntil": response_payload["snoozedUntil"],
+        },
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "alerts", "alertId": state.alert_id},
+    )
+    return JSONResponse(response_payload)
 
 
 @router.post("/alerts/{alert_id}/resolve")
@@ -528,16 +587,28 @@ def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
     except Exception as exc:
         logger.exception("Failed to resolve alert: id=%s", alert_id)
         raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {exc}") from exc
-    return JSONResponse(
+    response_payload = {
+        "alertId": state.alert_id,
+        "acknowledgedAt": _iso(state.acknowledged_at),
+        "acknowledgedBy": state.acknowledged_by,
+        "snoozedUntil": _iso(state.snoozed_until),
+        "resolvedAt": _iso(state.resolved_at),
+        "resolvedBy": state.resolved_by,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_ALERTS,
+        "ALERT_STATE_CHANGED",
         {
+            "action": "resolve",
             "alertId": state.alert_id,
-            "acknowledgedAt": _iso(state.acknowledged_at),
-            "acknowledgedBy": state.acknowledged_by,
-            "snoozedUntil": _iso(state.snoozed_until),
-            "resolvedAt": _iso(state.resolved_at),
-            "resolvedBy": state.resolved_by,
-        }
+        },
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "alerts", "alertId": state.alert_id},
+    )
+    return JSONResponse(response_payload)
 
 
 @router.get("/lineage")
@@ -1056,18 +1127,25 @@ def set_runtime_config(payload: RuntimeConfigUpsertRequest, request: Request) ->
         logger.exception("Failed to update runtime config.")
         raise HTTPException(status_code=502, detail=f"Failed to update runtime config: {exc}") from exc
 
-    return JSONResponse(
+    response_payload = {
+        "scope": row.scope,
+        "key": row.key,
+        "enabled": row.enabled,
+        "value": row.value,
+        "description": row.description,
+        "updatedAt": _iso(row.updated_at),
+        "updatedBy": row.updated_by,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_RUNTIME_CONFIG,
+        "RUNTIME_CONFIG_CHANGED",
         {
             "scope": row.scope,
             "key": row.key,
-            "enabled": row.enabled,
-            "value": row.value,
-            "description": row.description,
-            "updatedAt": _iso(row.updated_at),
-            "updatedBy": row.updated_by,
+            "enabled": bool(row.enabled),
         },
-        headers={"Cache-Control": "no-store"},
     )
+    return JSONResponse(response_payload, headers={"Cache-Control": "no-store"})
 
 
 @router.delete("/runtime-config/{key}")
@@ -1094,10 +1172,17 @@ def remove_runtime_config(key: str, request: Request, scope: str = Query("global
         logger.exception("Failed to delete runtime config.")
         raise HTTPException(status_code=502, detail=f"Failed to delete runtime config: {exc}") from exc
 
-    return JSONResponse(
-        {"scope": resolved_scope, "key": resolved, "deleted": bool(deleted)},
-        headers={"Cache-Control": "no-store"},
+    response_payload = {"scope": resolved_scope, "key": resolved, "deleted": bool(deleted)}
+    _emit_realtime(
+        REALTIME_TOPIC_RUNTIME_CONFIG,
+        "RUNTIME_CONFIG_CHANGED",
+        {
+            "scope": resolved_scope,
+            "key": resolved,
+            "deleted": bool(deleted),
+        },
     )
+    return JSONResponse(response_payload, headers={"Cache-Control": "no-store"})
 
 
 class DebugSymbolsUpdateRequest(BaseModel):
@@ -1172,15 +1257,20 @@ def set_debug_symbols(payload: DebugSymbolsUpdateRequest, request: Request) -> J
         logger.exception("Failed to update debug symbols.")
         raise HTTPException(status_code=502, detail=f"Failed to update debug symbols: {exc}") from exc
 
-    return JSONResponse(
+    response_payload = {
+        "enabled": state.enabled,
+        "symbols": state.symbols_raw,
+        "updatedAt": _iso(state.updated_at),
+        "updatedBy": state.updated_by,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_DEBUG_SYMBOLS,
+        "DEBUG_SYMBOLS_CHANGED",
         {
-            "enabled": state.enabled,
-            "symbols": state.symbols_raw,
-            "updatedAt": _iso(state.updated_at),
-            "updatedBy": state.updated_by,
+            "enabled": bool(state.enabled),
         },
-        headers={"Cache-Control": "no-store"},
     )
+    return JSONResponse(response_payload, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/container-apps")
@@ -1451,15 +1541,23 @@ def start_container_app(app_name: str, request: Request) -> JSONResponse:
         raise HTTPException(status_code=502, detail=f"Failed to start container app: {exc}") from exc
 
     props = _extract_container_app_properties(payload if isinstance(payload, dict) else {})
-    return JSONResponse(
-        {
-            "appName": resolved,
-            "action": "start",
-            "provisioningState": props.get("provisioningState"),
-            "runningState": props.get("runningState"),
-        },
-        status_code=202,
+    response_payload = {
+        "appName": resolved,
+        "action": "start",
+        "provisioningState": props.get("provisioningState"),
+        "runningState": props.get("runningState"),
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_CONTAINER_APPS,
+        "CONTAINER_APP_STATE_CHANGED",
+        response_payload,
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "container-app-control", "appName": resolved, "action": "start"},
+    )
+    return JSONResponse(response_payload, status_code=202)
 
 
 @router.post("/container-apps/{app_name}/stop")
@@ -1508,15 +1606,23 @@ def stop_container_app(app_name: str, request: Request) -> JSONResponse:
         raise HTTPException(status_code=502, detail=f"Failed to stop container app: {exc}") from exc
 
     props = _extract_container_app_properties(payload if isinstance(payload, dict) else {})
-    return JSONResponse(
-        {
-            "appName": resolved,
-            "action": "stop",
-            "provisioningState": props.get("provisioningState"),
-            "runningState": props.get("runningState"),
-        },
-        status_code=202,
+    response_payload = {
+        "appName": resolved,
+        "action": "stop",
+        "provisioningState": props.get("provisioningState"),
+        "runningState": props.get("runningState"),
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_CONTAINER_APPS,
+        "CONTAINER_APP_STATE_CHANGED",
+        response_payload,
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "container-app-control", "appName": resolved, "action": "stop"},
+    )
+    return JSONResponse(response_payload, status_code=202)
 
 
 @router.post("/jobs/{job_name}/run")
@@ -1593,15 +1699,29 @@ def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
         execution_name = str(payload.get("name") or "") or None
 
     logger.info("Triggered Azure job run: job=%s execution=%s", resolved, execution_name or execution_id or "?")
-    return JSONResponse(
+    response_payload = {
+        "jobName": resolved,
+        "status": "queued",
+        "executionId": execution_id,
+        "executionName": execution_name,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_JOBS,
+        "JOB_STATE_CHANGED",
         {
             "jobName": resolved,
+            "action": "run",
             "status": "queued",
             "executionId": execution_id,
             "executionName": execution_name,
         },
-        status_code=202,
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "job-control", "jobName": resolved, "action": "run"},
+    )
+    return JSONResponse(response_payload, status_code=202)
 
 
 @router.post("/jobs/{job_name}/suspend")
@@ -1660,14 +1780,26 @@ def suspend_job(job_name: str, request: Request) -> JSONResponse:
         running_state = str(props.get("runningState") or "") or None
 
     logger.info("Suspended Azure job: job=%s running_state=%s", resolved, running_state or "?")
-    return JSONResponse(
+    response_payload = {
+        "jobName": resolved,
+        "action": "suspend",
+        "runningState": running_state,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_JOBS,
+        "JOB_STATE_CHANGED",
         {
             "jobName": resolved,
             "action": "suspend",
             "runningState": running_state,
         },
-        status_code=202,
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "job-control", "jobName": resolved, "action": "suspend"},
+    )
+    return JSONResponse(response_payload, status_code=202)
 
 
 @router.post("/jobs/{job_name}/resume")
@@ -1726,14 +1858,26 @@ def resume_job(job_name: str, request: Request) -> JSONResponse:
         running_state = str(props.get("runningState") or "") or None
 
     logger.info("Resumed Azure job: job=%s running_state=%s", resolved, running_state or "?")
-    return JSONResponse(
+    response_payload = {
+        "jobName": resolved,
+        "action": "resume",
+        "runningState": running_state,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_JOBS,
+        "JOB_STATE_CHANGED",
         {
             "jobName": resolved,
             "action": "resume",
             "runningState": running_state,
         },
-        status_code=202,
     )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {"source": "job-control", "jobName": resolved, "action": "resume"},
+    )
+    return JSONResponse(response_payload, status_code=202)
 
 
 def _is_truthy(raw: Optional[str]) -> bool:
