@@ -114,16 +114,22 @@ export function StatusOverview({
     displayDomain: string;
   } | null>(null);
   const [isPurging, setIsPurging] = useState(false);
+  const [activePurgeTarget, setActivePurgeTarget] = useState<{
+    layer: string;
+    domain: string;
+  } | null>(null);
   const [metadataTarget, setMetadataTarget] = useState<DomainMetadataSheetTarget | null>(null);
 
   const confirmPurge = async () => {
-    if (!purgeTarget) return;
+    const target = purgeTarget;
+    if (!target) return;
     setIsPurging(true);
+    setActivePurgeTarget({ layer: target.layer, domain: target.domain });
     try {
       const result = await DataService.purgeData({
         scope: 'layer-domain',
-        layer: purgeTarget.layer,
-        domain: purgeTarget.domain,
+        layer: target.layer,
+        domain: target.domain,
         confirm: true
       });
       toast.success(`Purged ${result.totalDeleted} blob(s).`);
@@ -133,6 +139,7 @@ export function StatusOverview({
       toast.error(`Purge failed: ${message}`);
     } finally {
       setIsPurging(false);
+      setActivePurgeTarget(null);
       setPurgeTarget(null);
     }
   };
@@ -392,7 +399,14 @@ export function StatusOverview({
               onClick={() => void confirmPurge()}
               disabled={isPurging}
             >
-              Purge
+              {isPurging ? (
+                <span className="inline-flex items-center gap-2">
+                  <Trash2 className="h-4 w-4 animate-spin" />
+                  Purging...
+                </span>
+              ) : (
+                'Purge'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1066,6 +1080,10 @@ export function StatusOverview({
                                   'inline-flex h-7 w-7 items-center justify-center rounded-md border border-mcm-walnut/10 bg-mcm-cream/40 text-mcm-walnut/25';
                                 const actionButtonDestructive =
                                   'inline-flex h-7 w-7 items-center justify-center rounded-md border border-mcm-walnut/15 bg-mcm-cream/60 text-mcm-walnut/60 hover:bg-mcm-cream hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive/30 disabled:opacity-40';
+                                const isPurgingThisTarget =
+                                  isPurging &&
+                                  activePurgeTarget?.layer === layerKey &&
+                                  activePurgeTarget?.domain === domainKey;
 
                                 return (
                                   <div className="inline-flex items-center gap-1">
@@ -1183,10 +1201,16 @@ export function StatusOverview({
                                             })
                                           }
                                         >
-                                          <Trash2 className="h-4 w-4" />
+                                          <Trash2
+                                            className={`h-4 w-4 ${
+                                              isPurgingThisTarget ? 'animate-spin text-rose-600' : ''
+                                            }`}
+                                          />
                                         </button>
                                       </TooltipTrigger>
-                                      <TooltipContent side="bottom">Purge data</TooltipContent>
+                                      <TooltipContent side="bottom">
+                                        {isPurgingThisTarget ? 'Purging data...' : 'Purge data'}
+                                      </TooltipContent>
                                     </Tooltip>
                                   </div>
                                 );
