@@ -134,6 +134,35 @@ def _append_signal_details(details: str, signals: Sequence[Dict[str, Any]]) -> s
     return f"{details}, signals[{suffix}]"
 
 
+def _parse_iso_start_time(value: Optional[str]) -> Optional[datetime]:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _newer_execution(current: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> bool:
+    if existing is None:
+        return True
+
+    current_time = _parse_iso_start_time(str(current.get("startTime") or ""))
+    existing_time = _parse_iso_start_time(str(existing.get("startTime") or ""))
+
+    if current_time and existing_time:
+        return current_time > existing_time
+
+    if current_time and not existing_time:
+        return True
+
+    return str(current.get("startTime") or "") > str(existing.get("startTime") or "")
+
+
 def collect_resource_health_signals(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
     """
     Compatibility shim for tests expecting a resource health collector in this module.
@@ -971,7 +1000,7 @@ def collect_system_health_snapshot(
                             if not job_name:
                                 continue
                             existing = latest_by_job.get(job_name)
-                            if not existing or str(run.get("startTime") or "") > str(existing.get("startTime") or ""):
+                            if _newer_execution(run, existing):
                                 latest_by_job[job_name] = run
 
                         for run in latest_by_job.values():

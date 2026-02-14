@@ -254,7 +254,7 @@ export function ContainerAppsPanel() {
           <Button
             variant="outline"
             size="sm"
-            className="gap-2"
+            className="h-8 px-3 gap-2"
             onClick={() => void queryClient.invalidateQueries({ queryKey: QUERY_KEY })}
             disabled={containerAppsQuery.isFetching}
           >

@@ -36,6 +36,11 @@ interface JobMonitorProps {
   jobLinks?: Record<string, string>;
 }
 
+const runStartEpoch = (raw?: string | null): number => {
+  const value = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+};
+
 export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
   const successJobs = recentJobs.filter((j) => j.status === 'success').length;
@@ -49,7 +54,7 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
       const key = normalizeAzureJobName(job.jobName);
       if (!key) continue;
       const existing = index.get(key);
-      if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
+      if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
         index.set(key, job);
       }
     }

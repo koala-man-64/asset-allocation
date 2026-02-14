@@ -37,6 +37,11 @@ import { apiService } from '@/services/apiService';
 
 import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, RefreshCw, ScrollText } from 'lucide-react';
 
+const runStartEpoch = (raw?: string | null): number => {
+  const value = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+};
+
 type ScheduledJobRow = {
   jobName: string;
   layerName: string;
@@ -149,7 +154,9 @@ export function ScheduledJobMonitor({
       const key = normalizeAzureJobName(job.jobName);
       if (!key) continue;
       const existing = index.get(key);
-      if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
+      const jobStart = runStartEpoch(job.startTime);
+      const existingStart = runStartEpoch(existing?.startTime);
+      if (!existing || jobStart > existingStart) {
         index.set(key, job);
       }
     }

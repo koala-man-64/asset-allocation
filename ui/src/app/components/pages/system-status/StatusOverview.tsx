@@ -63,6 +63,11 @@ import { Button } from '@/app/components/ui/button';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
 
+const runStartEpoch = (raw?: string | null): number => {
+  const value = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+};
+
 const ENABLE_STATUS_DIAGNOSTICS =
   import.meta.env.DEV ||
   ['1', 'true', 'yes', 'y', 'on'].includes(
@@ -199,7 +204,7 @@ export function StatusOverview({
       const key = normalizeAzureJobName(job.jobName);
       if (!key) continue;
       const existing = index.get(key);
-      if (!existing || String(job.startTime || '') > String(existing.startTime || '')) {
+      if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
         index.set(key, job);
       }
     }
@@ -499,14 +504,14 @@ export function StatusOverview({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 w-[220px] px-3 text-xs"
+              className="h-8 w-[220px] px-3 gap-2 text-xs"
               onClick={onRefresh}
               disabled={!onRefresh || isFetching || isRefreshing}
             >
               <RefreshCw
                 className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`}
               />
-              Refresh now
+              Refresh
             </Button>
           </div>
         </div>

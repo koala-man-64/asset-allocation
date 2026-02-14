@@ -32,15 +32,22 @@ def _duration_seconds(start: Optional[datetime], end: Optional[datetime]) -> Opt
 
 def _map_job_execution_status(raw: str) -> str:
     status = (raw or "").strip().lower()
-    if status in {"succeeded", "success"}:
+    if status in {"succeeded", "success", "completed", "complete", "succeededwithwarnings"}:
         return "success"
-    if status in {"failed", "error"}:
+    if status in {"failed", "error", "failure", "terminated", "terminatedwitherror"}:
         return "failed"
-    if status in {"running", "processing"}:
+    if status in {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}:
         return "running"
-    if status in {"stopped"}:
+    if status in {"stopped", "canceled", "cancelled", "canceling", "cancellationrequested"}:
         return "failed"
     return "pending"
+
+
+def _normalize_execution_start_time(value: Optional[datetime], fallback: str) -> str:
+    if value is None:
+        return fallback
+    normalized = value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+    return normalized.replace("+00:00", "Z")
 
 
 def _job_type_from_name(job_name: str) -> str:
@@ -254,13 +261,14 @@ def collect_jobs_and_executions(
                 start_dt = _parse_dt(start_time)
                 end_dt = _parse_dt(end_time)
                 duration = _duration_seconds(start_dt, end_dt)
+                normalized_start_time = _normalize_execution_start_time(start_dt, start_time or last_checked_iso)
 
                 runs.append(
                     {
                         "jobName": name,
                         "jobType": _job_type_from_name(name),
                         "status": _map_job_execution_status(raw_status),
-                        "startTime": start_dt.isoformat() if start_dt else start_time or last_checked_iso,
+                        "startTime": normalized_start_time,
                         "duration": duration,
                         "triggeredBy": "azure",
                     }
