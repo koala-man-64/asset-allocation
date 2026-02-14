@@ -1,11 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Activity, ChevronDown, ExternalLink, Loader2, RefreshCw, ScrollText, Server } from 'lucide-react';
+import { Activity, ChevronDown, ExternalLink, Loader2, ScrollText, Server } from 'lucide-react';
 import { DataService } from '@/services/DataService';
 import type { ContainerAppStatusItem } from '@/services/apiService';
 import { Badge } from '@/app/components/ui/badge';
-import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Switch } from '@/app/components/ui/switch';
 import {
@@ -239,29 +238,15 @@ export function ContainerAppsPanel() {
   }
 
   return (
-    <Card className="h-full flex flex-col">
+      <Card className="h-full flex flex-col">
       <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Server className="h-5 w-5" />
-              Container Apps
-            </CardTitle>
-            <CardDescription>
-              Toggle API/UI container apps and run live accessibility checks.
-            </CardDescription>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 px-3 gap-2"
-            onClick={() => void queryClient.invalidateQueries({ queryKey: QUERY_KEY })}
-            disabled={containerAppsQuery.isFetching}
-          >
-            <RefreshCw className={cn('h-4 w-4', containerAppsQuery.isFetching && 'animate-spin')} />
-            Refresh
-          </Button>
-        </div>
+        <CardTitle className="flex items-center gap-2">
+          <Server className="h-5 w-5" />
+          Container Apps
+        </CardTitle>
+        <CardDescription>
+          Toggle API/UI container apps and run live accessibility checks.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden">
         <div className="rounded-md border overflow-hidden">

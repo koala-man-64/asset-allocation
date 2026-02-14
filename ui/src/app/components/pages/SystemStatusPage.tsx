@@ -7,7 +7,6 @@ import { Skeleton } from '@/app/components/ui/skeleton';
 
 // Lazy load components to reduce initial bundle size of the page
 const StatusOverview = lazy(() => import('./system-status/StatusOverview').then(m => ({ default: m.StatusOverview })));
-const AzureResources = lazy(() => import('./system-status/AzureResources').then(m => ({ default: m.AzureResources })));
 const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonitor').then(m => ({ default: m.ScheduledJobMonitor })));
 const ContainerAppsPanel = lazy(() =>
   import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
@@ -123,7 +122,7 @@ export function SystemStatusPage() {
     );
   }
 
-  const { overall, dataLayers, recentJobs, resources } = data;
+  const { overall, dataLayers, recentJobs } = data;
 
   return (
     <div className="page-shell">
@@ -149,9 +148,6 @@ export function SystemStatusPage() {
             dataLayers={dataLayers}
             recentJobs={recentJobs}
             jobLinks={jobLinks}
-            onRefresh={handleRefresh}
-            isRefreshing={isRefreshing}
-            isFetching={isFetching}
           />
         </Suspense>
       </ErrorBoundary>
@@ -162,20 +158,6 @@ export function SystemStatusPage() {
           <ContainerAppsPanel />
         </Suspense>
       </ErrorBoundary>
-
-      {/* Connectors / Resources */}
-      {resources && resources.length > 0 && (
-        <ErrorBoundary>
-          <Suspense fallback={<Skeleton className="h-[250px] w-full rounded-xl bg-muted/20" />}>
-            <AzureResources
-              resources={resources}
-              onRefresh={handleRefresh}
-              isRefreshing={isRefreshing}
-              isFetching={isFetching}
-            />
-          </Suspense>
-        </ErrorBoundary>
-      )}
 
       {/* Footer Status Line */}
       <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">

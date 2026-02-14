@@ -35,7 +35,7 @@ import {
 } from './SystemStatusHelpers';
 import { apiService } from '@/services/apiService';
 
-import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, RefreshCw, ScrollText } from 'lucide-react';
+import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
 
 const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
@@ -54,9 +54,6 @@ interface ScheduledJobMonitorProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobLinks?: Record<string, string>;
-  onRefresh?: () => void | Promise<void>;
-  isRefreshing?: boolean;
-  isFetching?: boolean;
 }
 
 type LogState = {
@@ -79,10 +76,7 @@ type LogResponseLike = {
 export function ScheduledJobMonitor({
   dataLayers,
   recentJobs,
-  jobLinks = {},
-  onRefresh,
-  isRefreshing = false,
-  isFetching = false
+  jobLinks = {}
 }: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -300,16 +294,6 @@ export function ScheduledJobMonitor({
             </div>
             <div className="text-sm font-mono text-muted-foreground">{scheduledJobs.length}</div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 px-3 gap-2"
-            onClick={() => void onRefresh?.()}
-            disabled={!onRefresh || isFetching || isRefreshing}
-          >
-            <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
         </div>
       </CardHeader>
       <CardContent className="flex-1 overflow-auto">
