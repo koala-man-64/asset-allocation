@@ -14,8 +14,9 @@ import {
   TableHeader,
   TableRow
 } from '@/app/components/ui/table';
+import { Button } from '@/app/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { Activity, ExternalLink } from 'lucide-react';
+import { Activity, ExternalLink, RefreshCw } from 'lucide-react';
 import {
   formatTimestamp,
   getAzurePortalUrl,
@@ -26,9 +27,17 @@ import { ResourceHealth, ResourceSignal } from '@/types/strategy';
 
 interface AzureResourcesProps {
   resources: ResourceHealth[];
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
+  isFetching?: boolean;
 }
 
-export function AzureResources({ resources }: AzureResourcesProps) {
+export function AzureResources({
+  resources,
+  onRefresh,
+  isRefreshing = false,
+  isFetching = false
+}: AzureResourcesProps) {
   const infra = resources.filter((r) => r.resourceType !== 'Microsoft.App/jobs');
   const showAzureResources = infra.length > 0;
 
@@ -52,13 +61,27 @@ export function AzureResources({ resources }: AzureResourcesProps) {
       {infra.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5" />
-              Azure Infrastructure Health
-            </CardTitle>
-            <CardDescription>
-              Control-plane status for container apps and other resources
-            </CardDescription>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5" />
+                  Azure Infrastructure Health
+                </CardTitle>
+                <CardDescription>
+                  Control-plane status for container apps and other resources
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 gap-2"
+                onClick={() => void onRefresh?.()}
+                disabled={!onRefresh || isFetching || isRefreshing}
+              >
+                <RefreshCw className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="rounded-md border">

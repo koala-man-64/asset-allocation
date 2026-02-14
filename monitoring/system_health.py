@@ -24,6 +24,7 @@ from monitoring.monitor_metrics import (
 from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
+DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
 
 
 def _utc_now() -> datetime:
@@ -48,6 +49,11 @@ def _require_env(name: str) -> str:
     if raw is None or not raw.strip():
         raise ValueError(f"Missing required environment variable: {name}")
     return raw.strip()
+
+
+def _env_or_default(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    return raw.strip() if raw and raw.strip() else default
 
 
 def _parse_bool(value: str) -> bool:
@@ -704,7 +710,7 @@ def collect_system_health_snapshot(
     arm_enabled = bool(subscription_id and resource_group and (app_names or job_names))
     if arm_enabled:
         try:
-            api_version = _require_env("SYSTEM_HEALTH_ARM_API_VERSION")
+            api_version = _env_or_default("SYSTEM_HEALTH_ARM_API_VERSION", DEFAULT_ARM_API_VERSION)
             timeout_seconds = _require_float(
                 "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0
             )

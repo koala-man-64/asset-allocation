@@ -145,7 +145,14 @@ export function SystemStatusPage() {
       {/* Jobs */}
       <ErrorBoundary>
         <Suspense fallback={<Skeleton className="h-[400px] w-full rounded-xl bg-muted/20" />}>
-          <ScheduledJobMonitor dataLayers={dataLayers} recentJobs={recentJobs} jobLinks={jobLinks} />
+          <ScheduledJobMonitor
+            dataLayers={dataLayers}
+            recentJobs={recentJobs}
+            jobLinks={jobLinks}
+            onRefresh={handleRefresh}
+            isRefreshing={isRefreshing}
+            isFetching={isFetching}
+          />
         </Suspense>
       </ErrorBoundary>
 
@@ -160,7 +167,12 @@ export function SystemStatusPage() {
       {resources && resources.length > 0 && (
         <ErrorBoundary>
           <Suspense fallback={<Skeleton className="h-[250px] w-full rounded-xl bg-muted/20" />}>
-            <AzureResources resources={resources} />
+            <AzureResources
+              resources={resources}
+              onRefresh={handleRefresh}
+              isRefreshing={isRefreshing}
+              isFetching={isFetching}
+            />
           </Suspense>
         </ErrorBoundary>
       )}
