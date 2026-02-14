@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Trash2 } from 'lucide-react';
+import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +18,10 @@ import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 
 export type PurgeScope = 'layer-domain' | 'layer' | 'domain';
+
+const PURGE_POLL_INTERVAL_MS = 1000;
+const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const normalizeLayerKey = (value: string) =>
   value.toLowerCase().trim().replace(/\s+/g, '-').replace(/_/g, '-');
@@ -58,15 +62,48 @@ export function PurgeActionIcon({
   const queryClient = useQueryClient();
   const [isBusy, setIsBusy] = useState(false);
 
+  const waitForPurgeResult = async (operationId: string) => {
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (true) {
+      const operation = await DataService.getPurgeOperation(operationId);
+      if (operation.status === 'succeeded') {
+        if (!operation.result) {
+          throw new Error('Purge completed with no result payload.');
+        }
+        return operation.result;
+      }
+      if (operation.status === 'failed') {
+        throw new Error(operation.error || 'Purge failed.');
+      }
+      if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
+        throw new Error('Purge is still running. Check system status for progress.');
+      }
+
+      const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
+      await sleep(delay);
+      attempt += 1;
+    }
+  };
+
   const handleConfirm = async () => {
     setIsBusy(true);
     try {
-      const result = await DataService.purgeData({
+      const operation = await DataService.purgeData({
         scope,
         layer,
         domain,
         confirm: true
       });
+      const result =
+        operation.status === 'succeeded'
+          ? operation.result
+          : await waitForPurgeResult(operation.operationId);
+
+      if (!result) {
+        throw new Error('Purge returned no completion result.');
+      }
+
       toast.success(`Purged ${result.totalDeleted} blob(s).`);
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (err: unknown) {
@@ -128,7 +165,14 @@ export function PurgeActionIcon({
             onClick={() => void handleConfirm()}
             disabled={isBusy}
           >
-            Purge
+            {isBusy ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Purging
+              </span>
+            ) : (
+              'Purge'
+            )}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

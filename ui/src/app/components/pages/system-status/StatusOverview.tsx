@@ -26,6 +26,7 @@ import {
   Play,
   RefreshCw,
   ScrollText,
+  Square,
   Trash2
 } from 'lucide-react';
 import {
@@ -67,6 +68,10 @@ const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 };
+
+const PURGE_POLL_INTERVAL_MS = 1000;
+const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const ENABLE_STATUS_DIAGNOSTICS =
   import.meta.env.DEV ||
@@ -120,18 +125,49 @@ export function StatusOverview({
   } | null>(null);
   const [metadataTarget, setMetadataTarget] = useState<DomainMetadataSheetTarget | null>(null);
 
+  const waitForPurgeResult = async (operationId: string) => {
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (true) {
+      const operation = await DataService.getPurgeOperation(operationId);
+      if (operation.status === 'succeeded') {
+        if (!operation.result) {
+          throw new Error('Purge completed with no result payload.');
+        }
+        return operation.result;
+      }
+      if (operation.status === 'failed') {
+        throw new Error(operation.error || 'Purge failed.');
+      }
+      if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
+        throw new Error('Purge is still running. Check system status for progress.');
+      }
+
+      const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
+      await sleep(delay);
+      attempt += 1;
+    }
+  };
+
   const confirmPurge = async () => {
     const target = purgeTarget;
     if (!target) return;
     setIsPurging(true);
     setActivePurgeTarget({ layer: target.layer, domain: target.domain });
     try {
-      const result = await DataService.purgeData({
+      const operation = await DataService.purgeData({
         scope: 'layer-domain',
         layer: target.layer,
         domain: target.domain,
         confirm: true
       });
+      const result =
+        operation.status === 'succeeded'
+          ? operation.result
+          : await waitForPurgeResult(operation.operationId);
+      if (!result) {
+        throw new Error('Purge returned no completion result.');
+      }
       toast.success(`Purged ${result.totalDeleted} blob(s).`);
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (err: unknown) {
@@ -1065,10 +1101,18 @@ export function StatusOverview({
                                 const isTriggering =
                                   Boolean(actionJobName) && triggeringJob === actionJobName;
                                 const runningState = jobKey ? jobStates?.[jobKey] : undefined;
-                                const isSuspended =
+                                        const isSuspended =
                                   String(runningState || '')
                                     .trim()
                                     .toLowerCase() === 'suspended';
+                                const isRunning =
+                                  String(run?.status || '')
+                                    .trim()
+                                    .toLowerCase() === 'running' ||
+                                  String(runningState || '')
+                                    .trim()
+                                    .toLowerCase()
+                                    .includes('running');
                                 const isControlling =
                                   Boolean(actionJobName) && jobControl?.jobName === actionJobName;
                                 const isControlDisabled =
@@ -1158,23 +1202,31 @@ export function StatusOverview({
 
                                     <Tooltip>
                                       <TooltipTrigger asChild>
-                                        {!jobName || Boolean(triggeringJob) ? (
+                                        {!jobName || isControlDisabled ? (
                                           <span
                                             tabIndex={0}
                                             className={actionButtonDisabled}
-                                            aria-label="Trigger unavailable"
+                                            aria-label={isRunning ? 'Stop unavailable' : 'Trigger unavailable'}
                                           >
-                                            <Play className="h-4 w-4" />
+                                            {isRunning ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                                           </span>
                                         ) : (
                                           <button
                                             type="button"
                                             className={actionButtonBase}
-                                            aria-label="Trigger job"
+                                            aria-label={isRunning ? `Stop ${actionJobName}` : 'Trigger job'}
                                             disabled={!jobName || Boolean(triggeringJob)}
-                                            onClick={() => void triggerJob(actionJobName)}
+                                            onClick={() =>
+                                              isRunning
+                                                ? void setJobSuspended(actionJobName, true)
+                                                : void triggerJob(actionJobName)
+                                            }
                                           >
-                                            {isTriggering ? (
+                                            {isControlling ? (
+                                              <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : isRunning ? (
+                                              <Square className="h-4 w-4" />
+                                            ) : isTriggering ? (
                                               <Loader2 className="h-4 w-4 animate-spin" />
                                             ) : (
                                               <Play className="h-4 w-4" />
@@ -1182,7 +1234,9 @@ export function StatusOverview({
                                           </button>
                                         )}
                                       </TooltipTrigger>
-                                      <TooltipContent side="bottom">Trigger job</TooltipContent>
+                                      <TooltipContent side="bottom">
+                                        {isRunning ? 'Stop job' : 'Trigger job'}
+                                      </TooltipContent>
                                     </Tooltip>
 
                                     <Tooltip>

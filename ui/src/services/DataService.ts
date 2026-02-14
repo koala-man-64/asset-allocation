@@ -16,7 +16,7 @@ import type {
   DebugSymbolsResponse,
   JobLogsResponse,
   PurgeRequest,
-  PurgeResponse,
+  PurgeOperationResponse,
   ResponseWithMeta,
   RuntimeConfigCatalogResponse,
   RuntimeConfigItem,
@@ -203,8 +203,12 @@ export const DataService = {
     return apiService.getDataQualityValidation(layer, domain, tickerOrSignal, signal);
   },
 
-  purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
+  purgeData(payload: PurgeRequest): Promise<PurgeOperationResponse> {
     return apiService.purgeData(payload);
+  },
+
+  getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
+    return apiService.getPurgeOperation(operationId);
   },
 
   getDebugSymbols(): Promise<DebugSymbolsResponse> {

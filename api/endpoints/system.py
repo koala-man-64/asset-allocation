@@ -2,6 +2,8 @@ import logging
 import json
 import os
 import re
+import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal, Tuple
 
@@ -49,6 +51,9 @@ REALTIME_TOPIC_CONTAINER_APPS = "container-apps"
 REALTIME_TOPIC_ALERTS = "alerts"
 REALTIME_TOPIC_RUNTIME_CONFIG = "runtime-config"
 REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
+
+_PURGE_OPERATIONS: Dict[str, Dict[str, Any]] = {}
+_PURGE_OPERATIONS_LOCK = threading.Lock()
 
 
 def _emit_realtime(topic: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -631,6 +636,50 @@ class PurgeRequest(BaseModel):
     confirm: bool = False
 
 
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _create_purge_operation(
+    payload: PurgeRequest,
+    actor: Optional[str],
+) -> str:
+    operation_id = str(uuid.uuid4())
+    now = _utc_timestamp()
+    with _PURGE_OPERATIONS_LOCK:
+        _PURGE_OPERATIONS[operation_id] = {
+            "operationId": operation_id,
+            "status": "running",
+            "scope": payload.scope,
+            "layer": payload.layer,
+            "domain": payload.domain,
+            "requestedBy": actor,
+            "createdAt": now,
+            "updatedAt": now,
+            "startedAt": now,
+            "completedAt": None,
+            "result": None,
+            "error": None,
+        }
+    return operation_id
+
+
+def _get_purge_operation(operation_id: str) -> Optional[Dict[str, Any]]:
+    with _PURGE_OPERATIONS_LOCK:
+        operation = _PURGE_OPERATIONS.get(operation_id)
+        return dict(operation) if operation else None
+
+
+def _update_purge_operation(operation_id: str, patch: Dict[str, Any]) -> bool:
+    with _PURGE_OPERATIONS_LOCK:
+        operation = _PURGE_OPERATIONS.get(operation_id)
+        if not operation:
+            return False
+        operation.update(patch)
+        operation["updatedAt"] = _utc_timestamp()
+        return True
+
+
 def _normalize_layer(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -729,12 +778,7 @@ def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[st
     return targets
 
 
-@router.post("/purge")
-def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
-    validate_auth(request)
-    if not payload.confirm:
-        raise HTTPException(status_code=400, detail="Confirmation required to purge data.")
-
+def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     targets = _resolve_purge_targets(payload.scope, payload.layer, payload.domain)
 
     planned: List[Tuple[BlobStorageClient, Dict[str, Optional[str]]]] = []
@@ -806,15 +850,88 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
         total_deleted,
     )
 
+    return {
+        "scope": payload.scope,
+        "layer": payload.layer,
+        "domain": payload.domain,
+        "totalDeleted": total_deleted,
+        "targets": results,
+    }
+
+
+def _execute_purge_operation(operation_id: str, payload: PurgeRequest) -> None:
+    try:
+        result = _run_purge_operation(payload)
+        _update_purge_operation(
+            operation_id,
+            {"status": "succeeded", "result": result, "completedAt": _utc_timestamp()},
+        )
+    except HTTPException as exc:
+        logger.exception(
+            "Purge operation failed: operation=%s scope=%s layer=%s domain=%s",
+            operation_id,
+            payload.scope,
+            payload.layer,
+            payload.domain,
+        )
+        _update_purge_operation(
+            operation_id,
+            {"status": "failed", "error": str(exc.detail), "completedAt": _utc_timestamp()},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Purge operation crashed: operation=%s scope=%s layer=%s domain=%s",
+            operation_id,
+            payload.scope,
+            payload.layer,
+            payload.domain,
+        )
+        _update_purge_operation(
+            operation_id,
+            {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+                "completedAt": _utc_timestamp(),
+            },
+        )
+
+
+@router.post("/purge")
+def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to purge data.")
+
+    actor = _get_actor(request)
+    operation_id = _create_purge_operation(payload, actor)
+    thread = threading.Thread(target=_execute_purge_operation, args=(operation_id, payload), daemon=True)
+    thread.start()
+
     return JSONResponse(
         {
+            "operationId": operation_id,
+            "status": "running",
             "scope": payload.scope,
             "layer": payload.layer,
             "domain": payload.domain,
-            "totalDeleted": total_deleted,
-            "targets": results,
-        }
+            "createdAt": _utc_timestamp(),
+            "updatedAt": _utc_timestamp(),
+            "startedAt": _utc_timestamp(),
+            "completedAt": None,
+            "result": None,
+            "error": None,
+        },
+        status_code=202,
     )
+
+
+@router.get("/purge/{operation_id}")
+def get_purge_operation(operation_id: str, request: Request) -> JSONResponse:
+    validate_auth(request)
+    operation = _get_purge_operation(operation_id)
+    if not operation:
+        raise HTTPException(status_code=404, detail="Purge operation not found.")
+    return JSONResponse(operation)
 
 
 RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {

@@ -12,6 +12,14 @@ from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.silver_contracts import (
+    ContractViolation,
+    align_to_existing_schema,
+    assert_no_unexpected_mixed_empty,
+    log_contract_violation,
+    normalize_date_column,
+    require_non_empty_frame,
+)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -356,18 +364,7 @@ def _try_get_delta_max_date(container: str, path: str) -> Optional[pd.Timestamp]
 
 
 def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
-    existing_cols = delta_core.get_delta_schema_columns(container, path)
-    if not existing_cols:
-        return df.reset_index(drop=True)
-
-    out = df.copy()
-    for col in existing_cols:
-        if col not in out.columns:
-            out[col] = pd.NA
-
-    ordered_cols = list(existing_cols) + [col for col in out.columns if col not in existing_cols]
-    out = out[ordered_cols]
-    return out.reset_index(drop=True)
+    return align_to_existing_schema(df, container=container, path=path)
 
 
 def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = None) -> BlobProcessResult:
@@ -451,6 +448,28 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             df_clean = df_raw
         else:
             df_clean = transpose_dataframe(df_raw, ticker)
+
+        try:
+            df_clean = require_non_empty_frame(
+                df_clean, context=f"finance preflight {blob_name}"
+            )
+            df_clean = normalize_date_column(
+                df_clean,
+                context=f"finance date parse {blob_name}",
+                aliases=("Date", "date"),
+                canonical="Date",
+            )
+            df_clean = assert_no_unexpected_mixed_empty(
+                df_clean, context=f"finance date filter {blob_name}", alias="Date"
+            )
+        except ContractViolation as exc:
+            log_contract_violation(f"finance preflight failed for {blob_name}", exc, severity="ERROR")
+            return BlobProcessResult(
+                blob_name=blob_name,
+                silver_path=silver_path,
+                status="failed",
+                error=str(exc),
+            )
         
         # Resample to daily frequency (forward fill)
         df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)

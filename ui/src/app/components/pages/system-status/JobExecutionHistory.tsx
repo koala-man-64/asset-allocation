@@ -16,7 +16,7 @@ import {
 } from '@/app/components/ui/table';
 import { Button } from '@/app/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { AlertTriangle, Loader2, Play, PlayCircle, XCircle } from 'lucide-react';
+import { AlertTriangle, Loader2, Play, PlayCircle, Square, XCircle } from 'lucide-react';
 import {
   getJobTypeIcon,
   getStatusBadge,
@@ -25,6 +25,7 @@ import {
   formatRecordCount
 } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
+import { useJobSuspend } from '@/hooks/useJobSuspend';
 
 // Use same interface as backend/strategy.ts if possible, or define here
 // Based on recent monolith analysis:
@@ -49,6 +50,7 @@ interface JobExecutionHistoryProps {
 
 export function JobExecutionHistory({ recentJobs }: JobExecutionHistoryProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
+  const { jobControl, setJobSuspended } = useJobSuspend();
 
   return (
     <Card>
@@ -80,25 +82,48 @@ export function JobExecutionHistory({ recentJobs }: JobExecutionHistoryProps) {
                   <TableCell>
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-medium">{job.jobName}</div>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            disabled={Boolean(triggeringJob)}
-                            onClick={() => triggerJob(job.jobName)}
-                            aria-label={`Run ${job.jobName}`}
-                          >
-                            {triggeringJob === job.jobName ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">Run job</TooltipContent>
-                      </Tooltip>
+                      {(() => {
+                        const jobName = String(job.jobName || '').trim();
+                        const isRunning = String(job.status || '').trim().toLowerCase() === 'running';
+                        const isActioning =
+                          Boolean(jobName) &&
+                          (Boolean(triggeringJob) || Boolean(jobControl)) &&
+                          (triggeringJob === jobName ||
+                            (jobControl?.jobName === jobName && jobControl?.action === 'suspend'));
+                        const isDisabled = !jobName || Boolean(triggeringJob) || Boolean(jobControl);
+
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                disabled={isDisabled}
+                                onClick={() => {
+                                  if (isRunning) {
+                                    void setJobSuspended(jobName, true);
+                                  } else {
+                                    triggerJob(jobName);
+                                  }
+                                }}
+                                aria-label={isRunning ? `Stop ${jobName}` : `Run ${jobName}`}
+                              >
+                                {isActioning ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : isRunning ? (
+                                  <Square className="h-4 w-4" />
+                                ) : (
+                                  <Play className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="left">
+                              {isRunning ? 'Stop job' : 'Run job'}
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })()}
                     </div>
                     {(job.errors || job.warnings) && (
                       <div className="text-xs mt-1 space-y-0.5">

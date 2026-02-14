@@ -165,6 +165,20 @@ export interface PurgeRequest {
   confirm: boolean;
 }
 
+export interface PurgeOperationResponse {
+  operationId: string;
+  status: 'running' | 'succeeded' | 'failed';
+  scope: string;
+  layer?: string | null;
+  domain?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string;
+  completedAt?: string | null;
+  result?: PurgeResponse;
+  error?: string | null;
+}
+
 export interface PurgeResponse {
   scope: string;
   layer?: string | null;
@@ -429,11 +443,15 @@ export const apiService = {
     });
   },
 
-  purgeData(payload: PurgeRequest): Promise<PurgeResponse> {
-    return request<PurgeResponse>('/system/purge', {
+  purgeData(payload: PurgeRequest): Promise<PurgeOperationResponse> {
+    return request<PurgeOperationResponse>('/system/purge', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+  },
+
+  getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
+    return request<PurgeOperationResponse>(`/system/purge/${encodeURIComponent(operationId)}`);
   },
 
   getDebugSymbols(): Promise<DebugSymbolsResponse> {

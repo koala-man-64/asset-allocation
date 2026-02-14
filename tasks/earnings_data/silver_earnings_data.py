@@ -8,6 +8,13 @@ from core import delta_core
 from core.pipeline import DataPaths
 from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest_only_flag
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.silver_contracts import (
+    ContractViolation,
+    align_to_existing_schema,
+    assert_no_unexpected_mixed_empty,
+    log_contract_violation,
+    normalize_date_column,
+)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -61,9 +68,19 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
 
     # 2. Clean/Normalize
     df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors='ignore')
-    if 'Date' in df_new.columns:
-        df_new['Date'] = pd.to_datetime(df_new['Date'], errors='coerce')
-        df_new = df_new.dropna(subset=["Date"])
+    try:
+        df_new = normalize_date_column(
+            df_new,
+            context=f"earnings date parse {blob_name}",
+            aliases=("Date", "date"),
+            canonical="Date",
+        )
+        df_new = assert_no_unexpected_mixed_empty(
+            df_new, context=f"earnings date filter {blob_name}", alias="Date"
+        )
+    except ContractViolation as exc:
+        log_contract_violation(f"earnings preflight failed for {blob_name}", exc, severity="ERROR")
+        return "failed"
     
     df_new['Symbol'] = ticker
 
@@ -89,9 +106,13 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     if df_history is None or df_history.empty:
         df_merged = df_new
     else:
-        if 'Date' in df_history.columns:
-             df_history['Date'] = pd.to_datetime(df_history['Date'], errors='coerce')
-        
+        df_history = align_to_existing_schema(df_history, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+        if "Date" in df_history.columns:
+            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
+        elif "date" in df_history.columns:
+            df_history = df_history.rename(columns={"date": "Date"})
+            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
+            
         df_merged = pd.concat([df_history, df_new], ignore_index=True)
     
     # Sort

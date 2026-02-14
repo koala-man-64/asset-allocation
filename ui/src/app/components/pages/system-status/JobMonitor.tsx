@@ -16,7 +16,7 @@ import {
   TableRow
 } from '@/app/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
-import { ExternalLink, Loader2, Play, PlayCircle, ScrollText } from 'lucide-react';
+import { ExternalLink, Loader2, Play, PlayCircle, ScrollText, Square } from 'lucide-react';
 import {
   formatDuration,
   formatRecordCount,
@@ -29,6 +29,7 @@ import {
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
+import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { JobRun } from '@/types/strategy';
 
 interface JobMonitorProps {
@@ -43,6 +44,7 @@ const runStartEpoch = (raw?: string | null): number => {
 
 export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
+  const { jobControl, setJobSuspended } = useJobSuspend();
   const successJobs = recentJobs.filter((j) => j.status === 'success').length;
   const runningJobs = recentJobs.filter((j) => j.status === 'running').length;
   const failedJobs = recentJobs.filter((j) => j.status === 'failed').length;
@@ -112,20 +114,30 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{job.jobName}</span>
-                        {(() => {
-                          const portalLink = getJobPortalLink(job.jobName);
-                          const jobKey = normalizeAzureJobName(job.jobName);
-                          const latestRun = jobKey ? latestRunByJob.get(jobKey) : undefined;
-                          const runStatus = latestRun?.status
-                            ? String(latestRun.status).toUpperCase()
-                            : 'UNKNOWN';
-                          const runTimeAgo = latestRun?.startTime
-                            ? `${formatTimeAgo(latestRun.startTime)} ago`
-                            : 'UNKNOWN';
+                      {(() => {
+                        const portalLink = getJobPortalLink(job.jobName);
+                        const jobKey = normalizeAzureJobName(job.jobName);
+                        const latestRun = jobKey ? latestRunByJob.get(jobKey) : undefined;
+                        const runStatus = latestRun?.status
+                          ? String(latestRun.status).toUpperCase()
+                          : 'UNKNOWN';
+                        const runTimeAgo = latestRun?.startTime
+                          ? `${formatTimeAgo(latestRun.startTime)} ago`
+                          : 'UNKNOWN';
+                        const isRunning =
+                          String(job.status || '').trim().toLowerCase() === 'running';
+                        const isTriggering = Boolean(job.jobName) && triggeringJob === job.jobName;
+                        const isStopping =
+                          Boolean(job.jobName) &&
+                          jobControl?.jobName === job.jobName &&
+                          jobControl.action === 'suspend';
+                        const isBusy = Boolean(isTriggering || isStopping);
+                        const canTrigger =
+                          Boolean(job.jobName) && !Boolean(triggeringJob) && !Boolean(jobControl);
 
-                          if (!portalLink) return null;
+                        if (!portalLink) return null;
 
-                          return (
+                        return (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <a
@@ -208,26 +220,34 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                         );
                       })()}
 
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            disabled={Boolean(triggeringJob)}
-                            onClick={() => void triggerJob(job.jobName)}
-                            aria-label={`Run ${job.jobName}`}
-                          >
-                            {triggeringJob === job.jobName ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">Trigger job</TooltipContent>
-                      </Tooltip>
-                    </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              disabled={!canTrigger}
+                              onClick={() =>
+                                isRunning
+                                  ? void setJobSuspended(String(job.jobName), true)
+                                  : void triggerJob(job.jobName)
+                              }
+                              aria-label={isRunning ? `Stop ${job.jobName}` : `Run ${job.jobName}`}
+                            >
+                              {isBusy ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : isRunning ? (
+                                <Square className="h-4 w-4" />
+                              ) : (
+                                <Play className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">
+                            {isRunning ? 'Stop job' : 'Trigger job'}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                   </TableCell>
                 </TableRow>
               ))}

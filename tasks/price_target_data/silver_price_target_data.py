@@ -9,6 +9,13 @@ from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.silver_contracts import (
+    ContractViolation,
+    align_to_existing_schema,
+    assert_no_unexpected_mixed_empty,
+    log_contract_violation,
+    normalize_date_column,
+)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -47,7 +54,7 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         df_new = pd.read_parquet(BytesIO(raw_bytes))
         
         column_names = [
-            "symbol", "obs_date", "tp_mean_est", "tp_std_dev_est", 
+            "symbol", "Date", "tp_mean_est", "tp_std_dev_est", 
             "tp_high_est", "tp_low_est", "tp_cnt_est", 
             "tp_cnt_est_rev_up", "tp_cnt_est_rev_down"
         ]
@@ -56,18 +63,36 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         if df_new.empty:
             return "skipped_empty"
 
-        df_new['obs_date'] = pd.to_datetime(df_new['obs_date'])
-        df_new = df_new.sort_values(by='obs_date')
+        try:
+            df_new = normalize_date_column(
+                df_new,
+                context=f"price target date parse {blob_name}",
+                aliases=("obs_date", "Date", "date"),
+                canonical="Date",
+            )
+            df_new = assert_no_unexpected_mixed_empty(
+                df_new, context=f"price target date filter {blob_name}", alias="Date"
+            )
+            df_new["Date"] = df_new["Date"].dt.normalize()
+        except ContractViolation as exc:
+            log_contract_violation(
+                f"price-target preflight failed for {ticker} in {blob_name}",
+                exc,
+                severity="ERROR",
+            )
+            return "failed"
+
+        df_new = df_new.sort_values(by="Date")
         
         # Carry Forward / Upsample
         today = pd.to_datetime("today").normalize()
         if not df_new.empty:
-             latest_obs = df_new['obs_date'].max()
+             latest_obs = df_new["Date"].max()
              if latest_obs < today:
                  # Extend date range
-                 all_dates = pd.date_range(start=df_new['obs_date'].min(), end=today)
-                 df_dates = pd.DataFrame({'obs_date': all_dates})
-                 df_new = df_dates.merge(df_new, on='obs_date', how='left')
+                 all_dates = pd.date_range(start=df_new["Date"].min(), end=today)
+                 df_dates = pd.DataFrame({"Date": all_dates})
+                 df_new = df_dates.merge(df_new, on="Date", how="left")
                  df_new = df_new.ffill()
 
         df_new['symbol'] = ticker
@@ -78,13 +103,13 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         df_new = df_new[column_names]
 
         # Resample Daily (Full Range)
-        df_new = df_new.set_index('obs_date')
+        df_new = df_new.set_index("Date")
         df_new = df_new[~df_new.index.duplicated(keep='last')]
         
         full_range = pd.date_range(start=df_new.index.min(), end=df_new.index.max(), freq='D')
         df_new = df_new.reindex(full_range)
         df_new.ffill(inplace=True)
-        df_new = df_new.reset_index().rename(columns={'index': 'obs_date'})
+        df_new = df_new.reset_index().rename(columns={"index": "Date"})
         df_new['symbol'] = ticker
 
         # Load Existing Silver
@@ -94,12 +119,19 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         if df_history is None or df_history.empty:
             df_merged = df_new
         else:
-             if 'obs_date' in df_history.columns:
-                 df_history['obs_date'] = pd.to_datetime(df_history['obs_date'])
+             df_history = align_to_existing_schema(
+                 df_history, container=cfg.AZURE_CONTAINER_SILVER, path=silver_path
+             )
+             if "obs_date" in df_history.columns and "Date" not in df_history.columns:
+                 df_history = df_history.rename(columns={"obs_date": "Date"})
+             if "date" in df_history.columns and "Date" not in df_history.columns:
+                 df_history = df_history.rename(columns={"date": "Date"})
+             if "Date" in df_history.columns:
+                 df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
              df_merged = pd.concat([df_history, df_new], ignore_index=True)
              
-        df_merged = df_merged.drop_duplicates(subset=['obs_date', 'symbol'], keep='last')
-        df_merged = df_merged.sort_values(by=['obs_date', 'symbol'])
+        df_merged = df_merged.drop_duplicates(subset=['Date', 'symbol'], keep='last')
+        df_merged = df_merged.sort_values(by=['Date', 'symbol'])
         df_merged = df_merged.reset_index(drop=True)
         
         # Write

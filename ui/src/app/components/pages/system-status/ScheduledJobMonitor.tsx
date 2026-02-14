@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/too
 import { cn } from '@/app/components/ui/utils';
 
 import { useJobTrigger } from '@/hooks/useJobTrigger';
+import { useJobSuspend } from '@/hooks/useJobSuspend';
 import type { DataLayer, JobRun } from '@/types/strategy';
 import {
   formatDuration,
@@ -35,7 +36,7 @@ import {
 } from './SystemStatusHelpers';
 import { apiService } from '@/services/apiService';
 
-import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText } from 'lucide-react';
+import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText, Square } from 'lucide-react';
 
 const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
@@ -79,6 +80,7 @@ export function ScheduledJobMonitor({
   jobLinks = {}
 }: ScheduledJobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
+  const { jobControl, setJobSuspended } = useJobSuspend();
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [logStateByJob, setLogStateByJob] = useState<Record<string, LogState>>({});
   const logControllers = useRef<Record<string, AbortController>>({});
@@ -512,18 +514,32 @@ export function ScheduledJobMonitor({
                                       variant="ghost"
                                       size="icon"
                                       className="h-7 w-7"
-                                      disabled={Boolean(triggeringJob)}
-                                      onClick={() => void triggerJob(job.jobName)}
-                                      aria-label={`Run ${job.jobName}`}
+                                      disabled={Boolean(triggeringJob) || Boolean(jobControl)}
+                                      onClick={() =>
+                                        String(job.jobRun?.status || '').trim().toLowerCase() === 'running'
+                                          ? void setJobSuspended(job.jobName, true)
+                                          : void triggerJob(job.jobName)
+                                      }
+                                      aria-label={
+                                        String(job.jobRun?.status || '').trim().toLowerCase() === 'running'
+                                          ? `Stop ${job.jobName}`
+                                          : `Run ${job.jobName}`
+                                      }
                                     >
                                       {triggeringJob === job.jobName ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : String(job.jobRun?.status || '').trim().toLowerCase() === 'running' ? (
+                                        <Square className="h-4 w-4" />
                                       ) : (
                                         <Play className="h-4 w-4" />
                                       )}
                                     </Button>
                                   </TooltipTrigger>
-                                  <TooltipContent side="left">Trigger job</TooltipContent>
+                                  <TooltipContent side="left">
+                                    {String(job.jobRun?.status || '').trim().toLowerCase() === 'running'
+                                      ? 'Stop job'
+                                      : 'Trigger job'}
+                                  </TooltipContent>
                                 </Tooltip>
                               </div>
                             </TableCell>
