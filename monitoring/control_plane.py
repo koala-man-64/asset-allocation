@@ -46,8 +46,7 @@ def _map_job_execution_status(raw: str) -> str:
 def _normalize_execution_start_time(value: Optional[datetime], fallback: str) -> str:
     if value is None:
         return fallback
-    normalized = value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
-    return normalized.replace("+00:00", "Z")
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _job_type_from_name(job_name: str) -> str:
