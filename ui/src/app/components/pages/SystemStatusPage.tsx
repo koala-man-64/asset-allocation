@@ -7,6 +7,11 @@ import { Skeleton } from '@/app/components/ui/skeleton';
 
 // Lazy load components to reduce initial bundle size of the page
 const StatusOverview = lazy(() => import('./system-status/StatusOverview').then(m => ({ default: m.StatusOverview })));
+const DomainLayerComparisonPanel = lazy(() =>
+  import('./system-status/DomainLayerComparisonPanel').then((m) => ({
+    default: m.DomainLayerComparisonPanel
+  }))
+);
 const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonitor').then(m => ({ default: m.ScheduledJobMonitor })));
 const ContainerAppsPanel = lazy(() =>
   import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
@@ -138,6 +143,13 @@ export function SystemStatusPage() {
             isRefreshing={isRefreshing}
             isFetching={isFetching}
           />
+        </Suspense>
+      </ErrorBoundary>
+
+      {/* Domain Layer Coverage Comparison */}
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-[280px] w-full rounded-xl bg-muted/20" />}>
+          <DomainLayerComparisonPanel dataLayers={dataLayers} />
         </Suspense>
       </ErrorBoundary>
 

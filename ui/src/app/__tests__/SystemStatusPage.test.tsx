@@ -66,6 +66,12 @@ vi.mock('@/app/components/pages/system-status/StatusOverview', () => ({
   StatusOverview: () => <div data-testid="mock-status-overview">Mock Status Overview</div>
 }));
 
+vi.mock('@/app/components/pages/system-status/DomainLayerComparisonPanel', () => ({
+  DomainLayerComparisonPanel: () => (
+    <div data-testid="mock-domain-layer-coverage-panel">Mock Domain Layer Coverage Panel</div>
+  )
+}));
+
 vi.mock('@/app/components/pages/system-status/ScheduledJobMonitor', () => ({
   ScheduledJobMonitor: () => <div data-testid="mock-job-monitor">Mock Job Monitor</div>
 }));
@@ -84,6 +90,7 @@ describe('SystemStatusPage', () => {
     // Depending on test runner timing, lazy modules can remain in Suspense fallback.
     const lazyComponentsLoaded =
       Boolean(screen.queryByTestId('mock-status-overview')) &&
+      Boolean(screen.queryByTestId('mock-domain-layer-coverage-panel')) &&
       Boolean(screen.queryByTestId('mock-job-monitor'));
     const suspenseFallbackVisible =
       document.querySelectorAll('[data-slot="skeleton"]').length >= 2;
