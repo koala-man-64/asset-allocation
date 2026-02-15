@@ -1443,6 +1443,8 @@ class JobLock:
         self.blob_client = None
         self._renew_stop = threading.Event()
         self._renew_thread: Optional[threading.Thread] = None
+        self._renew_count = 0
+        self._renew_log_every = 10
 
     def _renew_loop(self) -> None:
         interval = max(1, int(self.lease_duration * 0.5))
@@ -1451,7 +1453,12 @@ class JobLock:
                 continue
             try:
                 self.lease_client.renew()
-                write_line(f"Lock renewed for {self.job_name}. Lease ID: {self.lease_client.id}")
+                self._renew_count += 1
+                if self._renew_count == 1 or (self._renew_count % self._renew_log_every) == 0:
+                    write_line(
+                        f"Lock renewed for {self.job_name}. Lease ID: {self.lease_client.id} "
+                        f"(renewals={self._renew_count})"
+                    )
             except Exception as exc:
                 write_error(f"Lock renewal failed for {self.job_name}: {exc}")
                 # Fail fast: if we can't renew, we may lose exclusivity and corrupt shared state.
@@ -1546,6 +1553,8 @@ class JobLock:
         self._renew_stop.set()
         if self._renew_thread and self._renew_thread.is_alive():
             self._renew_thread.join(timeout=2)
+        if self._renew_count > 1:
+            write_line(f"Lock renewal summary for {self.job_name}: renewals={self._renew_count}")
         if self.lease_client:
             try:
                 write_line(f"Releasing lock for {self.job_name}...")

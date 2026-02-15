@@ -95,6 +95,15 @@ def _whitelist_path(domain: DomainKey) -> Optional[str]:
     return None
 
 
+def _blacklist_path(domain: DomainKey) -> Optional[str]:
+    domain_key = _normalize_key(domain)
+    if domain_key in {"market", "finance", "earnings"}:
+        return f"{domain_key}-data/blacklist.csv"
+    if domain_key == "price-target":
+        return "price-target-data/blacklist.csv"
+    return None
+
+
 def _ticker_listing_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
     layer_key = _normalize_key(layer)
     domain_key = _normalize_key(domain)
@@ -182,9 +191,10 @@ def _extract_ticker_from_blob_name(layer: LayerKey, domain: DomainKey, blob_name
     return None
 
 
-def _parse_whitelist_symbols(blob_bytes: Optional[bytes]) -> Optional[int]:
+def _parse_symbol_list(blob_bytes: Optional[bytes]) -> Optional[set[str]]:
     if not blob_bytes:
         return None
+
     text = blob_bytes.decode("utf-8", errors="replace")
     reader = csv.reader(io.StringIO(text))
     symbols: set[str] = set()
@@ -198,6 +208,13 @@ def _parse_whitelist_symbols(blob_bytes: Optional[bytes]) -> Optional[int]:
         if lowered in {"symbol", "ticker", "tickers"}:
             continue
         symbols.add(raw.replace(".", "-"))
+    return symbols
+
+
+def _parse_list_size(blob_bytes: Optional[bytes]) -> Optional[int]:
+    symbols = _parse_symbol_list(blob_bytes)
+    if symbols is None:
+        return None
     return len(symbols)
 
 
@@ -347,6 +364,8 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         prefix = _ticker_listing_prefix(layer_key, domain_key)
         symbol_count = None
         symbol_truncated = False
+        warnings: List[str] = []
+
         if prefix:
             symbol_count, symbol_truncated = _count_symbols_from_listing(
                 client,
@@ -356,7 +375,6 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
                 max_scanned_blobs=max_scanned_blobs,
             )
 
-        warnings: List[str] = []
         if symbol_truncated:
             warnings.append(f"Symbol discovery truncated after {max_scanned_blobs} blobs.")
 
@@ -369,6 +387,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "tablePath": delta_path,
             "computedAt": computed_at,
             "symbolCount": symbol_count,
+            "blacklistedSymbolCount": None,
             "warnings": warnings,
             **metrics,
         }
@@ -387,9 +406,17 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         symbol_count = None
         if whitelist_path:
             try:
-                symbol_count = _parse_whitelist_symbols(client.download_data(whitelist_path))
+                symbol_count = _parse_list_size(client.download_data(whitelist_path))
             except Exception as exc:
                 warnings.append(f"Unable to read whitelist.csv: {exc}")
+
+        blacklisted_symbol_count = None
+        blacklist_path = _blacklist_path(domain_key)
+        if blacklist_path:
+            try:
+                blacklisted_symbol_count = _parse_list_size(client.download_data(blacklist_path))
+            except Exception as exc:
+                warnings.append(f"Unable to read blacklist.csv: {exc}")
 
         return {
             "layer": layer_key,
@@ -399,6 +426,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "prefix": prefix,
             "computedAt": computed_at,
             "symbolCount": symbol_count,
+            "blacklistedSymbolCount": blacklisted_symbol_count,
             "fileCount": files,
             "totalBytes": total_bytes,
             "warnings": warnings,

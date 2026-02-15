@@ -150,6 +150,7 @@ export interface DomainMetadata {
   type: 'blob' | 'delta';
   computedAt: string;
   symbolCount?: number | null;
+  blacklistedSymbolCount?: number | null;
   dateRange?: DomainDateRange | null;
   totalRows?: number | null;
   fileCount?: number | null;

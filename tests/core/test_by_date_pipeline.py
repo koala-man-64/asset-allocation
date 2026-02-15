@@ -25,3 +25,18 @@ def test_run_partner_then_by_date_uses_year_months_provider(monkeypatch):
 
     assert result == 0
     assert calls == [["--year-month", "2024-12"], ["--year-month", "2025-01"]]
+
+
+def test_silver_finance_month_selector_returns_all_discovered_months(monkeypatch):
+    from tasks.finance_data import materialize_silver_finance_by_date as finance_by_date
+    from tasks.finance_data import silver_finance_data as silver_job
+
+    monkeypatch.delenv("MATERIALIZE_YEAR_MONTH", raising=False)
+    monkeypatch.setattr(
+        finance_by_date,
+        "discover_year_months_from_data",
+        lambda: ["2024-01", "2024-03", "2024-02", "2024-03"],
+    )
+
+    months = silver_job.discover_year_months_for_routine_materialization()
+    assert months == ["2024-01", "2024-02", "2024-03"]

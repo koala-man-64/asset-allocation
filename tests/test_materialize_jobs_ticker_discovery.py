@@ -496,3 +496,87 @@ def test_discover_silver_finance_year_months_from_data(monkeypatch):
     months = job.discover_year_months_from_data(container="silver")
 
     assert months == ["2026-01", "2026-02"]
+
+
+def test_materialize_silver_finance_by_date_uses_date_filters(monkeypatch):
+    from tasks.finance_data import materialize_silver_finance_by_date as job
+
+    cfg = job.MaterializeConfig(
+        container="silver",
+        year_month="2026-01",
+        output_path="finance-data-by-date",
+        max_tickers=None,
+    )
+
+    available_roots = {"finance-data/balance_sheet/AAPL_quarterly_balance-sheet"}
+    monkeypatch.setattr(job, "_try_load_finance_table_roots_from_container", lambda _container: available_roots)
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setenv("SILVER_FINANCE_BY_DATE_MAX_WORKERS", "1")
+
+    load_calls = []
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        load_calls.append({"container": container, "path": path, "filters": filters})
+        return pd.DataFrame({"Date": [pd.Timestamp("2026-01-15")], "Total Assets": [123.0]})
+
+    captured = {}
+
+    def fake_store_delta(df, **kwargs):
+        captured["df"] = df.copy()
+        captured.update(kwargs)
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+    monkeypatch.setattr(job, "store_delta", fake_store_delta)
+
+    assert job.materialize_silver_finance_by_date(cfg) == 0
+    assert len(load_calls) == 1
+    assert load_calls[0]["filters"] is not None
+    assert load_calls[0]["filters"][0][0] == "Date"
+    assert captured["predicate"] == "year_month = '2026-01'"
+
+
+def test_materialize_silver_finance_by_date_parallel_matches_serial(monkeypatch):
+    from tasks.finance_data import materialize_silver_finance_by_date as job
+
+    cfg = job.MaterializeConfig(
+        container="silver",
+        year_month="2026-01",
+        output_path="finance-data-by-date",
+        max_tickers=None,
+    )
+
+    available_roots = {
+        "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
+        "finance-data/balance_sheet/MSFT_quarterly_balance-sheet",
+    }
+    monkeypatch.setattr(job, "_try_load_finance_table_roots_from_container", lambda _container: available_roots)
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        ticker = "AAPL" if "AAPL" in path else "MSFT"
+        return pd.DataFrame(
+            {
+                "Date": [pd.Timestamp("2026-01-10"), pd.Timestamp("2026-01-20")],
+                "metric": [1.0, 2.0] if ticker == "AAPL" else [3.0, 4.0],
+            }
+        )
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+
+    def run_and_capture(max_workers: str) -> pd.DataFrame:
+        monkeypatch.setenv("SILVER_FINANCE_BY_DATE_MAX_WORKERS", max_workers)
+        captured = {}
+
+        def fake_store_delta(df, **kwargs):
+            captured["df"] = df.copy()
+            captured.update(kwargs)
+
+        monkeypatch.setattr(job, "store_delta", fake_store_delta)
+        assert job.materialize_silver_finance_by_date(cfg) == 0
+        out = captured["df"].copy()
+        return out.sort_values(["Symbol", "Date"]).reset_index(drop=True)
+
+    serial_df = run_and_capture("1")
+    parallel_df = run_and_capture("4")
+
+    assert serial_df.equals(parallel_df)

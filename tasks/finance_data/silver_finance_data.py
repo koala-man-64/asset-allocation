@@ -1,5 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
+import time
 from typing import Any, Optional, Tuple
 
 import pandas as pd
@@ -33,6 +36,7 @@ class BlobProcessResult:
     status: str  # ok|skipped|failed
     rows_written: Optional[int] = None
     error: Optional[str] = None
+    watermark_signature: Optional[dict[str, Optional[str]]] = None
 
 
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
@@ -42,6 +46,87 @@ _KNOWN_FINANCE_SUFFIXES: Tuple[str, ...] = (
     "quarterly_cash-flow",
     "quarterly_financials",
 )
+
+
+def _get_available_cpus() -> int:
+    try:
+        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
+    except Exception:
+        return max(1, os.cpu_count() or 1)
+
+
+def _get_positive_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return default
+    return value if value > 0 else default
+
+
+def _get_ingest_max_workers() -> int:
+    default_workers = min(8, _get_available_cpus() * 2)
+    return _get_positive_int_env("SILVER_FINANCE_INGEST_MAX_WORKERS", default_workers)
+
+
+def _get_blob_dedupe_key(blob_name: str) -> Optional[str]:
+    parts = str(blob_name).split("/")
+    if len(parts) < 3:
+        return None
+    folder_name = parts[1]
+    filename = parts[2]
+    if not (filename.endswith(".csv") or filename.endswith(".json")):
+        return None
+
+    suffix = None
+    for s in _KNOWN_FINANCE_SUFFIXES:
+        if filename.endswith(s + ".csv") or filename.endswith(s + ".json"):
+            suffix = s
+            break
+    if not suffix:
+        return None
+
+    ticker = filename.replace(f"_{suffix}.csv", "").replace(f"_{suffix}.json", "").strip()
+    if not ticker:
+        return None
+
+    return DataPaths.get_finance_path(folder_name, ticker, suffix)
+
+
+def _blob_preference(blob_name: str) -> tuple[int, str]:
+    name = str(blob_name).strip()
+    if name.endswith(".json"):
+        return (2, name)
+    if name.endswith(".csv"):
+        return (1, name)
+    return (0, name)
+
+
+def _select_preferred_blob_candidates(blobs: list[dict]) -> list[dict]:
+    chosen_by_key: dict[str, dict] = {}
+    passthrough: list[dict] = []
+
+    for blob in blobs:
+        blob_name = str(blob.get("name", "")).strip()
+        dedupe_key = _get_blob_dedupe_key(blob_name)
+        if not dedupe_key:
+            passthrough.append(blob)
+            continue
+
+        existing = chosen_by_key.get(dedupe_key)
+        if existing is None:
+            chosen_by_key[dedupe_key] = blob
+            continue
+
+        existing_name = str(existing.get("name", "")).strip()
+        if _blob_preference(blob_name) > _blob_preference(existing_name):
+            chosen_by_key[dedupe_key] = blob
+
+    selected = list(chosen_by_key.values()) + passthrough
+    selected.sort(key=lambda item: str(item.get("name", "")))
+    return selected
 
 
 def _normalize_key(name: Any) -> str:
@@ -456,6 +541,7 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             status="skipped",
         )
     
+    signature: Optional[dict[str, Optional[str]]] = None
     if watermarks is not None:
         unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
         if unchanged:
@@ -560,15 +646,17 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             schema_mode="merge",
         )
         mdc.write_line(f"Updated Silver {silver_path}")
-        if watermarks is not None and signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
-            watermarks[blob_name] = signature
+        watermark_signature = None
+        if signature:
+            watermark_signature = dict(signature)
+            watermark_signature["updated_at"] = datetime.now(timezone.utc).isoformat()
         return BlobProcessResult(
             blob_name=blob_name,
             silver_path=silver_path,
             ticker=ticker,
             status="ok",
             rows_written=int(len(df_clean)),
+            watermark_signature=watermark_signature,
         )
         
     except Exception as e:
@@ -582,25 +670,87 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
         )
 
 
+def discover_year_months_for_routine_materialization() -> list[str]:
+    from tasks.finance_data.materialize_silver_finance_by_date import discover_year_months_from_data
+
+    discovery_started = time.perf_counter()
+    discovered = sorted({str(value).strip() for value in discover_year_months_from_data() if str(value).strip()})
+    discovery_elapsed = time.perf_counter() - discovery_started
+
+    override = os.environ.get("MATERIALIZE_YEAR_MONTH", "").strip()
+    if override:
+        mdc.write_line(
+            f"Silver finance by-date month selection: override={override}, discovered={len(discovered)}, "
+            f"selected={len(discovered)}, elapsedSec={discovery_elapsed:.2f}."
+        )
+        return discovered
+
+    preview = ", ".join(discovered[-min(6, len(discovered)) :]) if discovered else "none"
+    mdc.write_line(
+        "Silver finance by-date month selection: "
+        f"discovered={len(discovered)} ({preview}), selected={len(discovered)} ({preview}), "
+        f"mode=all_discovered, elapsedSec={discovery_elapsed:.2f}."
+    )
+    return discovered
+
+
 def main() -> int:
     mdc.log_environment_diagnostics()
-    
+
     mdc.write_line("Listing Bronze Finance files...")
     # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
-    blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
+    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
+    blobs = _select_preferred_blob_candidates(listed_blobs)
+    deduped = len(listed_blobs) - len(blobs)
+    if deduped > 0:
+        mdc.write_line(
+            f"Silver finance candidate dedupe removed {deduped} duplicate blob candidate(s); "
+            f"processing {len(blobs)} preferred inputs."
+        )
 
     watermarks = load_watermarks("bronze_finance_data")
     watermarks_dirty = False
-    
-    desired_end = _utc_today()
 
+    desired_end = _utc_today()
+    max_workers = _get_ingest_max_workers()
+    mdc.write_line(f"Silver finance ingest workers={max_workers} candidates={len(blobs)}.")
+
+    ingest_started = time.perf_counter()
     results: list[BlobProcessResult] = []
-    for blob in blobs:
-        result = process_blob(blob, desired_end=desired_end, watermarks=watermarks)
-        if result.status == "ok" and watermarks is not None:
+    if max_workers <= 1:
+        for blob in blobs:
+            results.append(process_blob(blob, desired_end=desired_end, watermarks=watermarks))
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="silver-finance") as executor:
+            futures = {
+                executor.submit(process_blob, blob, desired_end=desired_end, watermarks=watermarks): blob
+                for blob in blobs
+            }
+            for future in as_completed(futures):
+                blob = futures[future]
+                blob_name = str(blob.get("name", "unknown"))
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    mdc.write_error(f"Unhandled failure while processing {blob_name}: {exc}")
+                    results.append(
+                        BlobProcessResult(
+                            blob_name=blob_name,
+                            silver_path=None,
+                            ticker=None,
+                            status="failed",
+                            error=str(exc),
+                        )
+                    )
+    ingest_elapsed = time.perf_counter() - ingest_started
+
+    if watermarks is not None:
+        for result in results:
+            if result.status != "ok" or not result.watermark_signature:
+                continue
+            watermarks[result.blob_name] = result.watermark_signature
             watermarks_dirty = True
-        results.append(result)
-        
+
     processed = sum(1 for r in results if r.status == "ok")
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
@@ -610,7 +760,7 @@ def main() -> int:
     mdc.write_line(
         "Silver finance ingest complete: "
         f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={failed}, "
-        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}"
+        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={ingest_elapsed:.2f}"
     )
     if watermarks is not None and watermarks_dirty:
         save_watermarks("bronze_finance_data", watermarks)
@@ -619,7 +769,6 @@ def main() -> int:
 if __name__ == "__main__":
     from core.by_date_pipeline import run_partner_then_by_date
     from tasks.finance_data.materialize_silver_finance_by_date import (
-        discover_year_months_from_data,
         main as by_date_main,
     )
     from tasks.common.job_trigger import trigger_next_job_from_env
@@ -629,7 +778,7 @@ if __name__ == "__main__":
         job_name=job_name,
         partner_main=main,
         by_date_main=by_date_main,
-        year_months_provider=discover_year_months_from_data,
+        year_months_provider=discover_year_months_for_routine_materialization,
     )
     if exit_code == 0:
         trigger_next_job_from_env()

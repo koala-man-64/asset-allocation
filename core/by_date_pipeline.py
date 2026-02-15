@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Callable, Optional, Protocol, TypeVar, Union
 
 from core import core as mdc
@@ -107,7 +108,10 @@ def run_partner_then_by_date(
     """
 
     with mdc.JobLock(job_name):
+        partner_started = time.perf_counter()
         partner_rc = partner_main()
+        partner_elapsed = time.perf_counter() - partner_started
+        mdc.write_line(f"Partner phase complete for job={job_name} elapsedSec={partner_elapsed:.2f}.")
         if isinstance(partner_rc, int) and partner_rc != 0:
             return partner_rc
 
@@ -126,6 +130,7 @@ def run_partner_then_by_date(
             year_months = _get_materialize_year_months()
             source = "override"
         elif year_months_provider is not None:
+            discovery_started = time.perf_counter()
             try:
                 year_months = _normalize_year_months(year_months_provider())
             except Exception as exc:
@@ -137,6 +142,11 @@ def run_partner_then_by_date(
                 source = "fallback"
             else:
                 source = "data"
+            discovery_elapsed = time.perf_counter() - discovery_started
+            mdc.write_line(
+                f"Year-month discovery complete for job={job_name} source={source} "
+                f"count={len(year_months)} elapsedSec={discovery_elapsed:.2f}."
+            )
         else:
             year_months = _get_materialize_year_months()
             source = "window"
@@ -157,7 +167,13 @@ def run_partner_then_by_date(
 
         for year_month in year_months:
             mdc.write_line(f"Running by-date materialization for job={job_name} year_month={year_month}...")
+            month_started = time.perf_counter()
             rc = by_date_main(["--year-month", year_month])
+            month_elapsed = time.perf_counter() - month_started
+            mdc.write_line(
+                f"By-date materialization complete for job={job_name} year_month={year_month} "
+                f"elapsedSec={month_elapsed:.2f}."
+            )
             if isinstance(rc, int) and rc != 0:
                 return rc
         return 0

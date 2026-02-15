@@ -477,6 +477,7 @@ class DomainMetadataResponse(BaseModel):
     deltaVersion: Optional[int] = None
     tablePath: Optional[str] = None
     prefix: Optional[str] = None
+    blacklistedSymbolCount: Optional[int] = None
     warnings: List[str] = Field(default_factory=list)
 
 

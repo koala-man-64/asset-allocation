@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { CalendarDays, Database, Files, Hash, HardDrive, Loader2 } from 'lucide-react';
+import { CalendarDays, Database, Files, Hash, HardDrive, Loader2, Ban } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -112,10 +112,19 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
                 <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-3">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-mcm-olive">
                     <Hash className="h-3.5 w-3.5 text-mcm-walnut/60" />
-                    Symbols
+                    Active Symbols
                   </div>
                   <div className={`${StatusTypos.MONO} mt-1 text-lg font-black text-mcm-walnut`}>
                     {formatInt(metadata.symbolCount)}
+                  </div>
+                </div>
+                <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-3">
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-mcm-olive">
+                    <Ban className="h-3.5 w-3.5 text-mcm-walnut/60" />
+                    Blacklisted
+                  </div>
+                  <div className={`${StatusTypos.MONO} mt-1 text-lg font-black text-mcm-walnut`}>
+                    {formatInt(metadata.blacklistedSymbolCount)}
                   </div>
                 </div>
                 <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-3">
