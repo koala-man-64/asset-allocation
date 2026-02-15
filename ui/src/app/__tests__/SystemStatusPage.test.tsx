@@ -66,10 +66,6 @@ vi.mock('@/app/components/pages/system-status/StatusOverview', () => ({
   StatusOverview: () => <div data-testid="mock-status-overview">Mock Status Overview</div>
 }));
 
-vi.mock('@/app/components/pages/system-status/AzureResources', () => ({
-  AzureResources: () => <div data-testid="mock-azure-resources">Mock Azure Resources</div>
-}));
-
 vi.mock('@/app/components/pages/system-status/ScheduledJobMonitor', () => ({
   ScheduledJobMonitor: () => <div data-testid="mock-job-monitor">Mock Job Monitor</div>
 }));
