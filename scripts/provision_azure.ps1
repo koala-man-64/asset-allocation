@@ -908,12 +908,14 @@ if ($GrantAcrPullToAcaResources) {
       if (-not $name) { continue }
       try {
         $principalId = az containerapp show --name $name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors
-        if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
-          $acrPullAssignmentsCreated += 1
-          Write-Host "  AcrPull granted (app): $name"
-        }
-        else {
-          $acrPullAssignmentsSkipped += 1
+        if (-not [string]::IsNullOrWhiteSpace($principalId)) {
+          if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
+            $acrPullAssignmentsCreated += 1
+            Write-Host "  AcrPull granted (app): $name"
+          }
+          else {
+            $acrPullAssignmentsSkipped += 1
+          }
         }
       }
       catch {
@@ -932,12 +934,14 @@ if ($GrantAcrPullToAcaResources) {
       if (-not $name) { continue }
       try {
         $principalId = az containerapp job show --name $name --resource-group $ResourceGroup --query identity.principalId -o tsv --only-show-errors
-        if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
-          $acrPullAssignmentsCreated += 1
-          Write-Host "  AcrPull granted (job): $name"
-        }
-        else {
-          $acrPullAssignmentsSkipped += 1
+        if (-not [string]::IsNullOrWhiteSpace($principalId)) {
+          if (Ensure-AcrPullRoleAssignment -PrincipalId $principalId -Scope $acrId) {
+            $acrPullAssignmentsCreated += 1
+            Write-Host "  AcrPull granted (job): $name"
+          }
+          else {
+            $acrPullAssignmentsSkipped += 1
+          }
         }
       }
       catch {
