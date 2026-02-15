@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/utils';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
@@ -37,11 +37,42 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
               }
             ],
             portalUrl: 'https://example.com/storage/bronze'
+          },
+          {
+            name: 'Platinum',
+            description: 'Serving layer',
+            status: 'healthy',
+            lastUpdated: now,
+            refreshFrequency: 'Daily',
+            domains: [
+              {
+                name: 'platinum',
+                description: 'Reserved',
+                type: 'blob',
+                path: 'platinum',
+                lastUpdated: now,
+                status: 'healthy',
+                portalUrl: 'https://example.com/storage/platinum',
+                jobUrl:
+                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-platinum/overview',
+                jobName: 'aca-job-platinum',
+                frequency: 'Daily',
+                cron: '0 0 * * *'
+              }
+            ],
+            portalUrl: 'https://example.com/storage/platinum'
           }
         ],
         recentJobs: [
           {
             jobName: 'aca-job-market',
+            jobType: 'data-ingest',
+            status: 'success',
+            startTime: now,
+            triggeredBy: 'azure'
+          },
+          {
+            jobName: 'aca-job-platinum',
             jobType: 'data-ingest',
             status: 'success',
             startTime: now,
@@ -62,18 +93,31 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   };
 });
 
+const statusOverviewSpy = vi.fn();
+const domainLayerCoverageSpy = vi.fn();
+const jobMonitorSpy = vi.fn();
+
 vi.mock('@/app/components/pages/system-status/StatusOverview', () => ({
-  StatusOverview: () => <div data-testid="mock-status-overview">Mock Status Overview</div>
+  StatusOverview: (props: unknown) => {
+    statusOverviewSpy(props);
+    return <div data-testid="mock-status-overview">Mock Status Overview</div>;
+  }
 }));
 
 vi.mock('@/app/components/pages/system-status/DomainLayerComparisonPanel', () => ({
-  DomainLayerComparisonPanel: () => (
-    <div data-testid="mock-domain-layer-coverage-panel">Mock Domain Layer Coverage Panel</div>
-  )
+  DomainLayerComparisonPanel: (props: unknown) => {
+    domainLayerCoverageSpy(props);
+    return (
+      <div data-testid="mock-domain-layer-coverage-panel">Mock Domain Layer Coverage Panel</div>
+    );
+  }
 }));
 
 vi.mock('@/app/components/pages/system-status/ScheduledJobMonitor', () => ({
-  ScheduledJobMonitor: () => <div data-testid="mock-job-monitor">Mock Job Monitor</div>
+  ScheduledJobMonitor: (props: unknown) => {
+    jobMonitorSpy(props);
+    return <div data-testid="mock-job-monitor">Mock Job Monitor</div>;
+  }
 }));
 
 vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
@@ -81,6 +125,14 @@ vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
 }));
 
 describe('SystemStatusPage', () => {
+  const expectNoPlatinumDomain = (layers: Array<{ domains?: Array<{ name?: string }> }>) => {
+    for (const layer of layers) {
+      for (const domain of layer.domains || []) {
+        expect(String(domain.name || '').trim().toLowerCase()).not.toBe('platinum');
+      }
+    }
+  };
+
   it('renders the page layout and lazy loaded components', async () => {
     renderWithProviders(<SystemStatusPage />);
 
@@ -98,5 +150,35 @@ describe('SystemStatusPage', () => {
 
     // Check loading state of footer
     expect(screen.getByText('LINK ESTABLISHED')).toBeInTheDocument();
+  });
+
+  it('keeps platinum as a layer but removes it as a data domain', async () => {
+    statusOverviewSpy.mockClear();
+    domainLayerCoverageSpy.mockClear();
+    jobMonitorSpy.mockClear();
+
+    renderWithProviders(<SystemStatusPage />);
+    await screen.findByTestId('mock-status-overview');
+
+    await waitFor(() => {
+      expect(statusOverviewSpy).toHaveBeenCalled();
+      expect(domainLayerCoverageSpy).toHaveBeenCalled();
+      expect(jobMonitorSpy).toHaveBeenCalled();
+    });
+
+    const statusOverviewProps = statusOverviewSpy.mock.calls.at(-1)?.[0] as {
+      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+    };
+    const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
+      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+    };
+    const jobMonitorProps = jobMonitorSpy.mock.calls.at(-1)?.[0] as {
+      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+    };
+
+    for (const props of [statusOverviewProps, coverageProps, jobMonitorProps]) {
+      expect(props.dataLayers.some((layer) => layer.name.toLowerCase() === 'platinum')).toBe(true);
+      expectNoPlatinumDomain(props.dataLayers);
+    }
   });
 });

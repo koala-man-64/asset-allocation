@@ -22,6 +22,7 @@ import {
   normalizeAzureJobName,
   normalizeAzurePortalUrl
 } from './system-status/SystemStatusHelpers';
+import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
 export function SystemStatusPage() {
   const { data, isLoading, error, isFetching } = useSystemHealthQuery();
@@ -29,13 +30,24 @@ export function SystemStatusPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_, setTick] = useState(0);
+
+  const displayDataLayers = useMemo(() => {
+    return (data?.dataLayers || []).map((layer) => ({
+      ...layer,
+      domains: (layer.domains || []).filter((domain) => {
+        const domainKey = normalizeDomainKey(String(domain?.name || ''));
+        return domainKey !== 'platinum';
+      })
+    }));
+  }, [data]);
+
   const jobLinks = useMemo(() => {
     if (!data) {
       return {};
     }
 
     const links: Record<string, string> = {};
-    for (const layer of data.dataLayers || []) {
+    for (const layer of displayDataLayers) {
       for (const domain of layer.domains || []) {
         if (domain.jobName && domain.jobUrl) {
           const rawName = String(domain.jobName).trim();
@@ -62,7 +74,7 @@ export function SystemStatusPage() {
       }
     }
     return links;
-  }, [data]);
+  }, [data, displayDataLayers]);
 
   const jobStates = useMemo(() => {
     const states: Record<string, string> = {};
@@ -127,7 +139,7 @@ export function SystemStatusPage() {
     );
   }
 
-  const { overall, dataLayers, recentJobs } = data;
+  const { overall, recentJobs } = data;
 
   return (
     <div className="page-shell">
@@ -136,7 +148,7 @@ export function SystemStatusPage() {
         <Suspense fallback={<Skeleton className="h-[300px] w-full rounded-xl bg-muted/20" />}>
           <StatusOverview
             overall={overall}
-            dataLayers={dataLayers}
+            dataLayers={displayDataLayers}
             recentJobs={recentJobs}
             jobStates={jobStates}
             onRefresh={handleRefresh}
@@ -149,7 +161,7 @@ export function SystemStatusPage() {
       {/* Domain Layer Coverage Comparison */}
       <ErrorBoundary>
         <Suspense fallback={<Skeleton className="h-[280px] w-full rounded-xl bg-muted/20" />}>
-          <DomainLayerComparisonPanel dataLayers={dataLayers} />
+          <DomainLayerComparisonPanel dataLayers={displayDataLayers} />
         </Suspense>
       </ErrorBoundary>
 
@@ -157,7 +169,7 @@ export function SystemStatusPage() {
       <ErrorBoundary>
         <Suspense fallback={<Skeleton className="h-[400px] w-full rounded-xl bg-muted/20" />}>
           <ScheduledJobMonitor
-            dataLayers={dataLayers}
+            dataLayers={displayDataLayers}
             recentJobs={recentJobs}
             jobLinks={jobLinks}
           />
