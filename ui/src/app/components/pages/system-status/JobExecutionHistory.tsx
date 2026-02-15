@@ -89,7 +89,8 @@ export function JobExecutionHistory({ recentJobs }: JobExecutionHistoryProps) {
                           Boolean(jobName) &&
                           (Boolean(triggeringJob) || Boolean(jobControl)) &&
                           (triggeringJob === jobName ||
-                            (jobControl?.jobName === jobName && jobControl?.action === 'suspend'));
+                            (jobControl?.jobName === jobName &&
+                              (jobControl?.action === 'suspend' || jobControl?.action === 'stop')));
                         const isDisabled = !jobName || Boolean(triggeringJob) || Boolean(jobControl);
 
                         return (

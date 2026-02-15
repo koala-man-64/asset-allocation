@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import pandas as pd
 from io import BytesIO
@@ -29,11 +29,19 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 class BlobProcessResult:
     blob_name: str
     silver_path: Optional[str]
+    ticker: Optional[str]
     status: str  # ok|skipped|failed
+    rows_written: Optional[int] = None
     error: Optional[str] = None
 
 
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
+_KNOWN_FINANCE_SUFFIXES: Tuple[str, ...] = (
+    "quarterly_balance-sheet",
+    "quarterly_valuation_measures",
+    "quarterly_cash-flow",
+    "quarterly_financials",
+)
 
 
 def _normalize_key(name: Any) -> str:
@@ -367,6 +375,19 @@ def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd
     return align_to_existing_schema(df, container=container, path=path)
 
 
+def _extract_ticker_from_filename(filename: str) -> Optional[str]:
+    lowered = filename.lower()
+    stem = filename.rsplit(".", 1)[0]
+    lowered_stem = lowered.rsplit(".", 1)[0]
+
+    for suffix in _KNOWN_FINANCE_SUFFIXES:
+        suffix_token = f"_{suffix}"
+        if lowered_stem.endswith(suffix_token):
+            prefix = stem[: - (len(suffix) + 1)]
+            return prefix.strip() or None
+    return None
+
+
 def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = None) -> BlobProcessResult:
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
@@ -374,37 +395,53 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
     
     parts = blob_name.split('/')
     if len(parts) < 3:
-        return BlobProcessResult(blob_name=blob_name, silver_path=None, status="skipped")
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=None,
+            ticker=None,
+            status="skipped",
+        )
         
     folder_name = parts[1]
     filename = parts[2]
     
     if not (filename.endswith(".csv") or filename.endswith(".json")):
-        return BlobProcessResult(blob_name=blob_name, silver_path=None, status="skipped")
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=None,
+            ticker=_extract_ticker_from_filename(filename),
+            status="skipped",
+        )
         
     # extract ticker
     # filename: ticker_suffix.csv
     # suffix starts with quarterly_...
     # split by first underscore? Tickers can have no underscores usually.
-    # suffix is known: 
-    known_suffixes = [
-        "quarterly_balance-sheet", 
-        "quarterly_valuation_measures", 
-        "quarterly_cash-flow", 
-        "quarterly_financials"
-    ]
-    
+    # suffix is known:
     suffix = None
-    for s in known_suffixes:
+    for s in _KNOWN_FINANCE_SUFFIXES:
         if filename.endswith(s + ".csv") or filename.endswith(s + ".json"):
             suffix = s
             break
             
     if not suffix:
         mdc.write_line(f"Skipping unknown file format: {filename}")
-        return BlobProcessResult(blob_name=blob_name, silver_path=None, status="skipped")
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=None,
+            ticker=_extract_ticker_from_filename(filename),
+            status="skipped",
+        )
         
     ticker = filename.replace(f"_{suffix}.csv", "").replace(f"_{suffix}.json", "")
+    if not ticker:
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=None,
+            ticker=None,
+            status="skipped",
+            error="Unable to parse ticker from finance file name.",
+        )
     
     # Silver Path
     # Use DataPaths or manual? DataPaths uses folder name.
@@ -412,12 +449,22 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
     silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
 
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
-        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="skipped",
+        )
     
     if watermarks is not None:
         unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
         if unchanged:
-            return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
+            return BlobProcessResult(
+                blob_name=blob_name,
+                silver_path=silver_path,
+                ticker=ticker,
+                status="skipped",
+            )
     else:
         signature = {}
         bronze_lm = blob.get("last_modified")
@@ -427,7 +474,12 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             if silver_lm and (silver_lm > bronze_ts):
                 max_date = _try_get_delta_max_date(cfg.AZURE_CONTAINER_SILVER, silver_path)
                 if max_date is not None and max_date >= desired_end:
-                    return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
+                    return BlobProcessResult(
+                        blob_name=blob_name,
+                        silver_path=silver_path,
+                        ticker=ticker,
+                        status="skipped",
+                    )
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
     
@@ -441,7 +493,12 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
         # Header-only or otherwise empty inputs occasionally appear in Bronze.
         if df_raw is None or df_raw.empty:
             mdc.write_warning(f"Skipping empty finance CSV: {blob_name}")
-            return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="skipped")
+            return BlobProcessResult(
+                blob_name=blob_name,
+                silver_path=silver_path,
+                ticker=ticker,
+                status="skipped",
+            )
 
         # Legacy CSV requires transpose; AV JSON is already row-oriented by Date.
         if filename.endswith(".json"):
@@ -467,6 +524,7 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             return BlobProcessResult(
                 blob_name=blob_name,
                 silver_path=silver_path,
+                ticker=ticker,
                 status="failed",
                 error=str(exc),
             )
@@ -478,6 +536,7 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             return BlobProcessResult(
                 blob_name=blob_name,
                 silver_path=silver_path,
+                ticker=ticker,
                 status="skipped",
                 error="No valid dated rows after cleaning/resample.",
             )
@@ -504,11 +563,23 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
         if watermarks is not None and signature:
             signature["updated_at"] = datetime.utcnow().isoformat()
             watermarks[blob_name] = signature
-        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="ok")
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="ok",
+            rows_written=int(len(df_clean)),
+        )
         
     except Exception as e:
         mdc.write_error(f"Failed to process {blob_name}: {e}")
-        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, status="failed", error=str(e))
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="failed",
+            error=str(e),
+        )
 
 
 def main() -> int:
@@ -533,7 +604,14 @@ def main() -> int:
     processed = sum(1 for r in results if r.status == "ok")
     skipped = sum(1 for r in results if r.status == "skipped")
     failed = sum(1 for r in results if r.status == "failed")
-    mdc.write_line(f"Silver finance ingest complete: processed={processed}, skipped={skipped}, failed={failed}")
+    attempts = len(results)
+    distinct_tickers = len({str(r.ticker).strip() for r in results if r.ticker})
+    rows_written = sum(int(r.rows_written or 0) for r in results if r.status == "ok")
+    mdc.write_line(
+        "Silver finance ingest complete: "
+        f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={failed}, "
+        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}"
+    )
     if watermarks is not None and watermarks_dirty:
         save_watermarks("bronze_finance_data", watermarks)
     return 0 if failed == 0 else 1

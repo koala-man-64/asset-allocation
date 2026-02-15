@@ -129,18 +129,40 @@ export function StatusOverview({
     const startedAt = Date.now();
     let attempt = 0;
     while (true) {
-      const operation = await DataService.getPurgeOperation(operationId);
-      if (operation.status === 'succeeded') {
-        if (!operation.result) {
+      let operation: unknown;
+      try {
+        operation = await DataService.getPurgeOperation(operationId);
+      } catch (error) {
+        if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
+          throw new Error(
+            `Purge status polling is still failing after timeout. Check system status for progress. operationId=${operationId}`
+          );
+        }
+
+        const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
+        await sleep(delay);
+        attempt += 1;
+        continue;
+      }
+
+      const polledOperation = operation as {
+        status?: string;
+        result?: {
+          totalDeleted?: number;
+        };
+        error?: string;
+      };
+      if (polledOperation.status === 'succeeded') {
+        if (!polledOperation.result) {
           throw new Error('Purge completed with no result payload.');
         }
-        return operation.result;
+        return polledOperation.result;
       }
-      if (operation.status === 'failed') {
-        throw new Error(operation.error || 'Purge failed.');
+      if (polledOperation.status === 'failed') {
+        throw new Error(polledOperation.error || 'Purge failed.');
       }
       if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
-        throw new Error('Purge is still running. Check system status for progress.');
+        throw new Error(`Purge is still running. Check system status for progress. operationId=${operationId}`);
       }
 
       const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
@@ -154,6 +176,7 @@ export function StatusOverview({
     if (!target) return;
     setIsPurging(true);
     setActivePurgeTarget({ layer: target.layer, domain: target.domain });
+    let operationId: string | null = null;
     try {
       const operation = await DataService.purgeData({
         scope: 'layer-domain',
@@ -161,6 +184,7 @@ export function StatusOverview({
         domain: target.domain,
         confirm: true
       });
+      operationId = operation.operationId;
       const result =
         operation.status === 'succeeded'
           ? operation.result
@@ -172,7 +196,10 @@ export function StatusOverview({
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Purge failed: ${message}`);
+      const detail = operationId
+        ? `operation ${operationId}: ${message}`
+        : message;
+      toast.error(`Purge failed (${detail})`);
     } finally {
       setIsPurging(false);
       setActivePurgeTarget(null);
@@ -690,12 +717,12 @@ export function StatusOverview({
                                 disabled={isLayerLoading}
                                 onSelect={() => void suspendLayerJobs(layer, true)}
                               >
-                                {isLayerLoading && layerAction === 'suspend' ? (
+                                {isLayerLoading && layerAction === 'stop' ? (
                                   <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                                 ) : (
                                   <CirclePause className="h-4 w-4 shrink-0" />
                                 )}
-                                <span className="flex-1 leading-none">Suspend all jobs</span>
+                                <span className="flex-1 leading-none">Stop all jobs</span>
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 disabled={isLayerLoading}
@@ -1167,7 +1194,7 @@ export function StatusOverview({
                                           <span
                                             tabIndex={0}
                                             className={actionButtonDisabled}
-                                            aria-label="Suspend/resume unavailable"
+                                            aria-label="Stop/resume unavailable"
                                           >
                                             {isSuspended ? (
                                               <CirclePlay className="h-4 w-4" />
@@ -1179,24 +1206,24 @@ export function StatusOverview({
                                           <button
                                             type="button"
                                             className={actionButtonBase}
-                                            aria-label={isSuspended ? 'Resume job' : 'Suspend job'}
+                                            aria-label={isSuspended ? 'Resume job' : 'Stop job'}
                                             disabled={!jobName || isControlDisabled}
                                             onClick={() =>
                                               void setJobSuspended(actionJobName, !isSuspended)
                                             }
                                           >
-                                            {isControlling ? (
-                                              <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : isSuspended ? (
-                                              <CirclePlay className="h-4 w-4" />
-                                            ) : (
-                                              <CirclePause className="h-4 w-4" />
+                                              {isControlling ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                              ) : isSuspended ? (
+                                                <CirclePlay className="h-4 w-4" />
+                                              ) : (
+                                                <CirclePause className="h-4 w-4" />
                                             )}
                                           </button>
                                         )}
                                       </TooltipTrigger>
                                       <TooltipContent side="bottom">
-                                        {isSuspended ? 'Resume job' : 'Suspend job'}
+                                        {isSuspended ? 'Resume job' : 'Stop job'}
                                       </TooltipContent>
                                     </Tooltip>
 
@@ -1211,16 +1238,16 @@ export function StatusOverview({
                                             {isRunning ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                                           </span>
                                         ) : (
-                                          <button
-                                            type="button"
-                                            className={actionButtonBase}
-                                            aria-label={isRunning ? `Stop ${actionJobName}` : 'Trigger job'}
-                                            disabled={!jobName || Boolean(triggeringJob)}
-                                            onClick={() =>
-                                              isRunning
-                                                ? void setJobSuspended(actionJobName, true)
-                                                : void triggerJob(actionJobName)
-                                            }
+                                            <button
+                                              type="button"
+                                              className={actionButtonBase}
+                                              aria-label={isRunning ? `Stop ${actionJobName}` : 'Trigger job'}
+                                              disabled={!jobName || isControlDisabled}
+                                              onClick={() =>
+                                                isRunning
+                                                  ? void setJobSuspended(actionJobName, true)
+                                                  : void triggerJob(actionJobName)
+                                              }
                                           >
                                             {isControlling ? (
                                               <Loader2 className="h-4 w-4 animate-spin" />

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, backtestApi } from '@/services/backtestApi';
 
-type JobControlAction = 'suspend' | 'resume';
+type JobControlAction = 'suspend' | 'resume' | 'stop';
 
 export function useJobSuspend() {
   const queryClient = useQueryClient();
@@ -17,12 +17,12 @@ export function useJobSuspend() {
     suspended: boolean,
     queryKey: string[] = ['systemHealth']
   ) => {
-    const action: JobControlAction = suspended ? 'suspend' : 'resume';
+    const action: JobControlAction = suspended ? 'stop' : 'resume';
     setJobControl({ jobName, action });
     try {
       if (suspended) {
-        await backtestApi.suspendJob(jobName);
-        toast.success(`Suspended ${jobName}`);
+        await backtestApi.stopJob(jobName);
+        toast.success(`Stopped ${jobName}`);
       } else {
         await backtestApi.resumeJob(jobName);
         toast.success(`Resumed ${jobName}`);
@@ -41,8 +41,28 @@ export function useJobSuspend() {
     }
   };
 
+  const stopJob = async (jobName: string, queryKey: string[] = ['systemHealth']) => {
+    setJobControl({ jobName, action: 'stop' });
+    try {
+      await backtestApi.stopJob(jobName);
+      toast.success(`Stopped ${jobName}`);
+      void queryClient.invalidateQueries({ queryKey });
+    } catch (err: unknown) {
+      const message =
+        err instanceof ApiError
+          ? `${err.status}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      toast.error(`Failed to stop ${jobName}: ${message}`);
+    } finally {
+      setJobControl(null);
+    }
+  };
+
   return {
     jobControl,
-    setJobSuspended
+    setJobSuspended,
+    stopJob
   };
 }

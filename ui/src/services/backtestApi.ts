@@ -147,7 +147,8 @@ export interface JobTriggerResponse {
 
 export interface JobControlResponse {
   jobName: string;
-  action: 'suspend' | 'resume';
+  action: 'suspend' | 'resume' | 'stop';
+  command?: 'suspend' | 'resume' | 'stop' | 'run';
   runningState?: string | null;
 }
 
@@ -491,6 +492,14 @@ export const backtestApi = {
   async suspendJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
     const encoded = encodeURIComponent(jobName);
     return requestJson<JobControlResponse>(`/system/jobs/${encoded}/suspend`, {
+      method: 'POST',
+      signal
+    });
+  },
+
+  async stopJob(jobName: string, signal?: AbortSignal): Promise<JobControlResponse> {
+    const encoded = encodeURIComponent(jobName);
+    return requestJson<JobControlResponse>(`/system/jobs/${encoded}/stop`, {
       method: 'POST',
       signal
     });

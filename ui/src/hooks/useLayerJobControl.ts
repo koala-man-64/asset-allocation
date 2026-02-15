@@ -8,7 +8,7 @@ import {
   normalizeAzurePortalUrl
 } from '@/app/components/pages/system-status/SystemStatusHelpers';
 
-type LayerAction = 'suspend' | 'resume' | 'trigger';
+type LayerAction = 'stop' | 'resume' | 'trigger';
 
 interface LayerControlState {
   [layerName: string]: {
@@ -86,19 +86,19 @@ export function useLayerJobControl() {
       return;
     }
 
-    const action = suspend ? 'suspend' : 'resume';
+    const action: LayerAction = suspend ? 'stop' : 'resume';
     setLayerStates((prev) => ({
       ...prev,
       [layer.name]: { action, isLoading: true }
     }));
 
     try {
-      toast.info(`${suspend ? 'Suspending' : 'Resuming'} ${jobs.length} jobs for ${layer.name}...`);
+      toast.info(`${suspend ? 'Stopping' : 'Resuming'} ${jobs.length} jobs for ${layer.name}...`);
       const requests = jobs.map((job) =>
-        suspend ? backtestApi.suspendJob(job) : backtestApi.resumeJob(job)
+        suspend ? backtestApi.stopJob(job) : backtestApi.resumeJob(job)
       );
       await Promise.allSettled(requests);
-      toast.success(`${suspend ? 'Suspended' : 'Resumed'} commands sent for ${layer.name}`);
+      toast.success(`${suspend ? 'Stop' : 'Resume'} commands sent for ${layer.name}`);
       void queryClient.invalidateQueries({ queryKey: ['systemHealth'] });
     } catch (err: unknown) {
       console.error(err);

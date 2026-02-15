@@ -130,7 +130,7 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                         const isStopping =
                           Boolean(job.jobName) &&
                           jobControl?.jobName === job.jobName &&
-                          jobControl.action === 'suspend';
+                          (jobControl.action === 'suspend' || jobControl.action === 'stop');
                         const isBusy = Boolean(isTriggering || isStopping);
                         const canTrigger =
                           Boolean(job.jobName) && !Boolean(triggeringJob) && !Boolean(jobControl);

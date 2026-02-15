@@ -173,6 +173,8 @@ def _extract_ticker_from_blob_name(layer: LayerKey, domain: DomainKey, blob_name
         # finance-data/<folder>/<ticker>_<suffix>/_delta_log/<file>
         if len(parts) >= 5 and parts[0] == "finance-data" and parts[3] == "_delta_log":
             table_name = parts[2].strip()
+            if "_" not in table_name:
+                return None
             ticker = table_name.split("_", 1)[0].strip()
             return ticker or None
         return None

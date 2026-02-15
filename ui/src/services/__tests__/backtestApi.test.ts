@@ -53,6 +53,23 @@ describe('backtestApi', () => {
   });
 
   describe('job control', () => {
+    it('posts stop job endpoint', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          jobName: 'test-job',
+          action: 'stop',
+          runningState: 'Stopped'
+        })
+      });
+
+      await backtestApi.stopJob('test-job');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const url = new URL(fetchMock.mock.calls[0][0] as string, 'http://localhost');
+      expect(url.pathname).toBe('/api/system/jobs/test-job/stop');
+    });
+
     it('posts suspend job endpoint', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,

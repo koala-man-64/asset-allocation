@@ -159,6 +159,17 @@ def _get_actor(request: Request) -> Optional[str]:
     return None
 
 
+def _job_control_context(request: Request) -> Dict[str, str]:
+    actor = _get_actor(request)
+    request_id = request.headers.get("x-request-id")
+    context: Dict[str, str] = {}
+    if actor:
+        context["actor"] = actor
+    if request_id:
+        context["requestId"] = request_id.strip()
+    return context
+
+
 def _split_csv(raw: Optional[str]) -> List[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
@@ -1745,7 +1756,13 @@ def stop_container_app(app_name: str, request: Request) -> JSONResponse:
 @router.post("/jobs/{job_name}/run")
 def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
     validate_auth(request)
-    logger.info("Trigger job run requested: job=%s", job_name)
+    control_context = _job_control_context(request)
+    logger.info(
+        "Trigger job run requested: job=%s actor=%s requestId=%s",
+        job_name,
+        control_context.get("actor") or "-",
+        control_context.get("requestId") or "-",
+    )
 
     subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
     subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
@@ -1821,6 +1838,8 @@ def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
         "status": "queued",
         "executionId": execution_id,
         "executionName": execution_name,
+        "command": "run",
+        **control_context,
     }
     _emit_realtime(
         REALTIME_TOPIC_JOBS,
@@ -1828,15 +1847,23 @@ def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
         {
             "jobName": resolved,
             "action": "run",
+            "command": "run",
             "status": "queued",
             "executionId": execution_id,
             "executionName": execution_name,
+            **control_context,
         },
     )
     _emit_realtime(
         REALTIME_TOPIC_SYSTEM_HEALTH,
         "SYSTEM_HEALTH_UPDATE",
-        {"source": "job-control", "jobName": resolved, "action": "run"},
+        {
+            "source": "job-control",
+            "jobName": resolved,
+            "action": "run",
+            "command": "run",
+            **control_context,
+        },
     )
     return JSONResponse(response_payload, status_code=202)
 
@@ -1844,7 +1871,13 @@ def trigger_job_run(job_name: str, request: Request) -> JSONResponse:
 @router.post("/jobs/{job_name}/suspend")
 def suspend_job(job_name: str, request: Request) -> JSONResponse:
     validate_auth(request)
-    logger.info("Suspend job requested: job=%s", job_name)
+    control_context = _job_control_context(request)
+    logger.info(
+        "Suspend job requested: job=%s actor=%s requestId=%s",
+        job_name,
+        control_context.get("actor") or "-",
+        control_context.get("requestId") or "-",
+    )
 
     subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
     subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
@@ -1901,6 +1934,8 @@ def suspend_job(job_name: str, request: Request) -> JSONResponse:
         "jobName": resolved,
         "action": "suspend",
         "runningState": running_state,
+        "command": "suspend",
+        **control_context,
     }
     _emit_realtime(
         REALTIME_TOPIC_JOBS,
@@ -1908,13 +1943,131 @@ def suspend_job(job_name: str, request: Request) -> JSONResponse:
         {
             "jobName": resolved,
             "action": "suspend",
+            "command": "suspend",
             "runningState": running_state,
+            **control_context,
         },
     )
     _emit_realtime(
         REALTIME_TOPIC_SYSTEM_HEALTH,
         "SYSTEM_HEALTH_UPDATE",
-        {"source": "job-control", "jobName": resolved, "action": "suspend"},
+        {
+            "source": "job-control",
+            "jobName": resolved,
+            "action": "suspend",
+            "command": "suspend",
+            **control_context,
+        },
+    )
+    return JSONResponse(response_payload, status_code=202)
+
+
+@router.post("/jobs/{job_name}/stop")
+def stop_job(job_name: str, request: Request) -> JSONResponse:
+    validate_auth(request)
+    control_context = _job_control_context(request)
+    logger.info(
+        "Stop job requested: job=%s actor=%s requestId=%s",
+        job_name,
+        control_context.get("actor") or "-",
+        control_context.get("requestId") or "-",
+    )
+
+    subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
+    subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
+    resource_group_raw = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP")
+    resource_group = resource_group_raw.strip() if resource_group_raw else ""
+
+    job_names_raw = os.environ.get("SYSTEM_HEALTH_ARM_JOBS")
+    job_allowlist = [item.strip() for item in (job_names_raw or "").split(",") if item.strip()]
+
+    if not (subscription_id and resource_group and job_allowlist):
+        raise HTTPException(status_code=503, detail="Azure job control is not configured.")
+
+    resolved = (job_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?", resolved or ""):
+        raise HTTPException(status_code=400, detail="Invalid job name.")
+
+    if resolved not in job_allowlist:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    api_version_env = os.environ.get("SYSTEM_HEALTH_ARM_API_VERSION")
+    api_version = api_version_env.strip() if api_version_env else ""
+    if not api_version:
+        api_version = ArmConfig.api_version
+
+    timeout_env = os.environ.get("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS")
+    try:
+        timeout_seconds = float(timeout_env.strip()) if timeout_env else 5.0
+    except ValueError:
+        timeout_seconds = 5.0
+
+    cfg = ArmConfig(
+        subscription_id=subscription_id,
+        resource_group=resource_group,
+        api_version=api_version,
+        timeout_seconds=timeout_seconds,
+    )
+
+    try:
+        with AzureArmClient(cfg) as arm:
+            job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=resolved)
+            stop_url = f"{job_url}/stop"
+            try:
+                payload = arm.post_json(stop_url)
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code in {404, 405}:
+                    logger.warning(
+                        "Stop job endpoint unavailable, falling back to suspend for job=%s status=%s",
+                        resolved,
+                        status_code,
+                    )
+                    payload = arm.post_json(f"{job_url}/suspend")
+                else:
+                    message = _extract_arm_error_message(exc.response)
+                    raise HTTPException(
+                        status_code=exc.response.status_code,
+                        detail=f"Failed to stop job: {message or str(exc)}",
+                    ) from exc
+    except Exception as exc:
+        logger.exception("Failed to stop Azure job: job=%s", resolved)
+        raise HTTPException(status_code=502, detail=f"Failed to stop job: {exc}") from exc
+
+    running_state: Optional[str] = None
+    if isinstance(payload, dict):
+        props = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
+        running_state = str(props.get("runningState") or "") or None
+
+    logger.info("Stopped Azure job: job=%s running_state=%s", resolved, running_state or "?")
+    response_payload = {
+        "jobName": resolved,
+        "action": "stop",
+        "runningState": running_state,
+        "command": "stop",
+        **control_context,
+    }
+    _emit_realtime(
+        REALTIME_TOPIC_JOBS,
+        "JOB_STATE_CHANGED",
+        {
+            "jobName": resolved,
+            "action": "stop",
+            "command": "stop",
+            "runningState": running_state,
+            **control_context,
+        },
+    )
+    _emit_realtime(
+        REALTIME_TOPIC_SYSTEM_HEALTH,
+        "SYSTEM_HEALTH_UPDATE",
+        {
+            "source": "job-control",
+            "jobName": resolved,
+            "action": "stop",
+            "command": "stop",
+            **control_context,
+        },
     )
     return JSONResponse(response_payload, status_code=202)
 
@@ -1922,7 +2075,13 @@ def suspend_job(job_name: str, request: Request) -> JSONResponse:
 @router.post("/jobs/{job_name}/resume")
 def resume_job(job_name: str, request: Request) -> JSONResponse:
     validate_auth(request)
-    logger.info("Resume job requested: job=%s", job_name)
+    control_context = _job_control_context(request)
+    logger.info(
+        "Resume job requested: job=%s actor=%s requestId=%s",
+        job_name,
+        control_context.get("actor") or "-",
+        control_context.get("requestId") or "-",
+    )
 
     subscription_id_raw = os.environ.get("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID")
     subscription_id = subscription_id_raw.strip() if subscription_id_raw else ""
@@ -1979,6 +2138,8 @@ def resume_job(job_name: str, request: Request) -> JSONResponse:
         "jobName": resolved,
         "action": "resume",
         "runningState": running_state,
+        "command": "resume",
+        **control_context,
     }
     _emit_realtime(
         REALTIME_TOPIC_JOBS,
@@ -1986,13 +2147,21 @@ def resume_job(job_name: str, request: Request) -> JSONResponse:
         {
             "jobName": resolved,
             "action": "resume",
+            "command": "resume",
             "runningState": running_state,
+            **control_context,
         },
     )
     _emit_realtime(
         REALTIME_TOPIC_SYSTEM_HEALTH,
         "SYSTEM_HEALTH_UPDATE",
-        {"source": "job-control", "jobName": resolved, "action": "resume"},
+        {
+            "source": "job-control",
+            "jobName": resolved,
+            "action": "resume",
+            "command": "resume",
+            **control_context,
+        },
     )
     return JSONResponse(response_payload, status_code=202)
 

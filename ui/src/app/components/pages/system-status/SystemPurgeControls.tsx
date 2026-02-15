@@ -66,18 +66,41 @@ export function PurgeActionIcon({
     const startedAt = Date.now();
     let attempt = 0;
     while (true) {
-      const operation = await DataService.getPurgeOperation(operationId);
-      if (operation.status === 'succeeded') {
-        if (!operation.result) {
+      let operation: unknown;
+      try {
+        operation = await DataService.getPurgeOperation(operationId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
+          throw new Error(
+            `Purge status polling is still failing after timeout. Operation may still be running. Check system status. operationId=${operationId}`
+          );
+        }
+
+        const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
+        await sleep(delay);
+        attempt += 1;
+        continue;
+      }
+
+      const polledOperation = operation as {
+        status?: string;
+        result?: {
+          totalDeleted?: number;
+        };
+        error?: string;
+      };
+      if (polledOperation.status === 'succeeded') {
+        if (!polledOperation.result) {
           throw new Error('Purge completed with no result payload.');
         }
-        return operation.result;
+        return polledOperation.result;
       }
-      if (operation.status === 'failed') {
-        throw new Error(operation.error || 'Purge failed.');
+      if (polledOperation.status === 'failed') {
+        throw new Error(polledOperation.error || 'Purge failed.');
       }
       if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
-        throw new Error('Purge is still running. Check system status for progress.');
+        throw new Error(`Purge is still running. Check system status for progress. operationId=${operationId}`);
       }
 
       const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
@@ -86,8 +109,16 @@ export function PurgeActionIcon({
     }
   };
 
+  const describePurgeFailure = (operationId: string | null, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return operationId
+      ? `Purge failed for operation ${operationId}: ${message}`
+      : `Purge failed: ${message}`;
+  };
+
   const handleConfirm = async () => {
     setIsBusy(true);
+    let operationId: string | null = null;
     try {
       const operation = await DataService.purgeData({
         scope,
@@ -95,6 +126,7 @@ export function PurgeActionIcon({
         domain,
         confirm: true
       });
+      operationId = operation.operationId;
       const result =
         operation.status === 'succeeded'
           ? operation.result
@@ -107,8 +139,7 @@ export function PurgeActionIcon({
       toast.success(`Purged ${result.totalDeleted} blob(s).`);
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Purge failed: ${message}`);
+      toast.error(describePurgeFailure(operationId, err));
     } finally {
       setIsBusy(false);
     }

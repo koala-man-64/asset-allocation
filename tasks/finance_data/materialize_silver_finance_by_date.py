@@ -34,6 +34,19 @@ _KNOWN_TYPES: Tuple[Tuple[str, str], ...] = (
 )
 
 
+def _extract_ticker_from_finance_table_root(table_root: str) -> Optional[str]:
+    parts = str(table_root).strip("/").split("/")
+    if len(parts) < 3:
+        return None
+    if parts[0] != "finance-data":
+        return None
+    table_name = str(parts[2]).strip()
+    if "_" not in table_name:
+        return None
+    ticker = table_name.split("_", 1)[0].strip()
+    return ticker or None
+
+
 def _normalize_object_columns(df: pd.DataFrame, *, exclude: set[str]) -> pd.DataFrame:
     """
     Delta/Arrow writes can fail when pandas `object` columns contain a mix of strings + floats
@@ -195,9 +208,13 @@ def discover_year_months_from_data(
         table_roots = sorted(available_table_roots)
         source = "container_listing"
         if max_tickers is not None:
-            keep_tickers = sorted({root.split("/")[2].split("_", 1)[0] for root in table_roots})[:max_tickers]
+            keep_tickers = sorted(
+                {ticker for root in table_roots if (ticker := _extract_ticker_from_finance_table_root(root)) is not None}
+            )[:max_tickers]
             keep_ticker_set = set(keep_tickers)
-            table_roots = [root for root in table_roots if root.split("/")[2].split("_", 1)[0] in keep_ticker_set]
+            table_roots = [
+                root for root in table_roots if _extract_ticker_from_finance_table_root(root) in keep_ticker_set
+            ]
 
     if not table_roots:
         write_line(f"No Silver finance tables found (source={source}); no year_months discovered.")
@@ -229,11 +246,23 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
         tickers = _load_ticker_universe()
         ticker_source = "symbol_universe"
     else:
-        tickers = sorted({root.split("/")[2].split("_", 1)[0] for root in available_table_roots})
+        tickers = sorted(
+            {
+                ticker
+                for root in available_table_roots
+                if (ticker := _extract_ticker_from_finance_table_root(root)) is not None
+            }
+        )
         ticker_source = "container_listing"
 
     if cfg.max_tickers is not None:
         tickers = tickers[: cfg.max_tickers]
+
+    source_tickers: set[str] = {
+        ticker
+        for root in (available_table_roots or [])
+        if (ticker := _extract_ticker_from_finance_table_root(root)) is not None
+    }
 
     write_line(
         f"Materializing finance-data-by-date for {cfg.year_month}: container={cfg.container} "
@@ -281,7 +310,10 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
     #     Filter by Date Range
     #     Append to frames
     
+    source_tickers_with_data: set[str] = set()
+
     for ticker in tickers:
+        ticker_has_data = False
         ticker_frames = []
         for folder_name, suffix in _KNOWN_TYPES:
             src_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
@@ -307,6 +339,7 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
             df = df[(df[date_col] >= start) & (df[date_col] < end)]
             if df.empty:
                 continue
+            ticker_has_data = True
             
             # Set index for merging
             df = df.set_index(date_col)
@@ -345,6 +378,8 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
         df_merged = df_merged.loc[:, ~df_merged.columns.duplicated()]
         
         frames.append(df_merged)
+        if ticker_has_data:
+            source_tickers_with_data.add(ticker)
 
     if not frames:
         write_line(f"No Silver finance rows found for {cfg.year_month}; nothing to materialize.")
@@ -369,6 +404,28 @@ def materialize_silver_finance_by_date(cfg: MaterializeConfig) -> int:
     if "symbol" in out.columns:
         out["symbol"] = out["symbol"].astype("string")
     out = _normalize_object_columns(out, exclude={date_col, "year_month", "Symbol", "symbol"})
+
+    output_symbols = {
+        str(value).strip()
+        for value in out.get("Symbol", pd.Series(dtype="object")).dropna().tolist()
+    } if "Symbol" in out else set()
+    output_symbols = {symbol for symbol in output_symbols if symbol}
+    expected_symbols = source_tickers_with_data or source_tickers
+
+    expected_count = len(expected_symbols)
+    output_count = len(output_symbols)
+    if expected_count:
+        ratio = output_count / expected_count
+        if output_count < expected_count:
+            write_warning(
+                f"Finance by-date reconciliation mismatch for {cfg.year_month}: "
+                f"expected={expected_count} source symbols, output={output_count}, ratio={ratio:.3f}."
+            )
+        else:
+            write_line(
+                f"Finance by-date reconciliation for {cfg.year_month}: "
+                f"symbols={output_count}, ratio={ratio:.3f}"
+            )
 
     store_delta(
         out,
