@@ -32,7 +32,7 @@ function Get-EnvValue {
     if ($trimmed -match ("^" + [regex]::Escape($Key) + "=(.*)$")) {
       $value = $matches[1].Trim()
       if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
-          ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+        ($value.StartsWith("'") -and $value.EndsWith("'"))) {
         $value = $value.Substring(1, $value.Length - 2)
       }
       return $value
@@ -80,11 +80,11 @@ function Add-Result {
   )
 
   $script:results += [PSCustomObject]@{
-    Name = $Name
-    Ok = $Ok
-    Details = $Details
+    Name        = $Name
+    Ok          = $Ok
+    Details     = $Details
     Remediation = $Remediation
-    Severity = $Severity
+    Severity    = $Severity
   }
 }
 
@@ -95,7 +95,8 @@ function Write-Results {
   foreach ($result in $results) {
     if ($result.Ok) {
       Write-Host "[OK] $($result.Name) - $($result.Details)"
-    } else {
+    }
+    else {
       $label = if ($result.Severity -eq "Warning") { "[WARN]" } else { "[ERROR]" }
       Write-Host "$label $($result.Name) - $($result.Details)"
       if ($result.Remediation) {
@@ -115,7 +116,8 @@ function Get-RoleAssignments {
 
   try {
     $raw = az role assignment list --assignee-object-id $PrincipalId --all -o json --only-show-errors 2>$null
-  } catch {
+  }
+  catch {
     return @()
   }
 
@@ -154,7 +156,8 @@ $results = @()
 
 try {
   $null = az account show --query id -o tsv 2>$null
-} catch {
+}
+catch {
   Write-Error "Azure CLI not logged in. Run 'az login' or 'az login --tenant <tenant>' and retry."
   exit 2
 }
@@ -228,7 +231,8 @@ try {
   $acrId = (az acr show --name $AcrName --resource-group $ResourceGroup --query id -o tsv --only-show-errors) -replace "`r", ""
   if ([string]::IsNullOrWhiteSpace($acrId)) { throw "ACR not found" }
   Add-Result -Name "ACR exists" -Ok $true -Details "$AcrName ($acrId)" -Remediation ""
-} catch {
+}
+catch {
   Add-Result -Name "ACR exists" -Ok $false -Details "ACR '$AcrName' not found in RG '$ResourceGroup'." -Remediation "Provision the ACR or update -AcrName/-ResourceGroup."
 }
 
@@ -237,7 +241,8 @@ try {
   $storageId = (az storage account show --name $StorageAccountName --resource-group $ResourceGroup --query id -o tsv --only-show-errors) -replace "`r", ""
   if ([string]::IsNullOrWhiteSpace($storageId)) { throw "Storage not found" }
   Add-Result -Name "Storage account exists" -Ok $true -Details "$StorageAccountName ($storageId)" -Remediation ""
-} catch {
+}
+catch {
   Add-Result -Name "Storage account exists" -Ok $false -Details "Storage '$StorageAccountName' not found in RG '$ResourceGroup'." -Remediation "Provision the storage account or update -StorageAccountName/-ResourceGroup."
 }
 
@@ -250,7 +255,8 @@ try {
   $acrPullPrincipalId = (az identity show --ids $identityId --query principalId -o tsv --only-show-errors) -replace "`r", ""
   $acrPullClientId = (az identity show --ids $identityId --query clientId -o tsv --only-show-errors) -replace "`r", ""
   Add-Result -Name "ACR pull identity exists" -Ok $true -Details "$AcrPullIdentityName ($identityId)" -Remediation ""
-} catch {
+}
+catch {
   Add-Result -Name "ACR pull identity exists" -Ok $false -Details "Managed identity '$AcrPullIdentityName' not found in RG '$ResourceGroup'." -Remediation "Run scripts/provision_azure.ps1 to create the identity."
 }
 
@@ -261,22 +267,30 @@ if (-not [string]::IsNullOrWhiteSpace($acrPullPrincipalId) -and -not [string]::I
 
   $hasContributor = Has-RoleAtScope -Assignments $assignments -RoleNames @("Contributor", "Owner") -Scope $rgId
   Add-Result -Name "ACR pull identity has RG Contributor" -Ok $hasContributor -Details "principalId=$acrPullPrincipalId" -Remediation "Grant Contributor on $ResourceGroup to $AcrPullIdentityName for job start/system health." -Severity "Warning"
+
+  if (-not [string]::IsNullOrWhiteSpace($storageId)) {
+    $hasStorageData = Has-RoleAtScope -Assignments $assignments -RoleNames @("Storage Blob Data Contributor", "Storage Blob Data Owner") -Scope $storageId
+    Add-Result -Name "ACR pull identity has storage data access" -Ok $hasStorageData -Details "principalId=$acrPullPrincipalId" -Remediation "Grant Storage Blob Data Contributor on $StorageAccountName to $AcrPullIdentityName."
+  }
 }
 
 $azureSpObjectId = ""
 if (-not [string]::IsNullOrWhiteSpace($AzureClientId)) {
   try {
     $azureSpObjectId = (az ad sp show --id $AzureClientId --query id -o tsv --only-show-errors) -replace "`r", ""
-  } catch {
+  }
+  catch {
     $azureSpObjectId = ""
   }
 
   if ([string]::IsNullOrWhiteSpace($azureSpObjectId)) {
     Add-Result -Name "Azure client SP resolved" -Ok $false -Details "Failed to resolve service principal for clientId '$AzureClientId'." -Remediation "Ensure the Azure client ID is correct and you have permission to query AAD." -Severity "Warning"
-  } else {
+  }
+  else {
     Add-Result -Name "Azure client SP resolved" -Ok $true -Details "objectId=$azureSpObjectId" -Remediation ""
   }
-} else {
+}
+else {
   Add-Result -Name "Azure client ID set" -Ok $false -Details "AZURE_CLIENT_ID not found in $envLabel or env." -Remediation "Set AZURE_CLIENT_ID to the GitHub Actions service principal client ID." -Severity "Warning"
 }
 

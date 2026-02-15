@@ -764,6 +764,37 @@ if ($doManagedIdentity) {
   }
 }
 
+if ($doManagedIdentity) {
+  if ($storageAccountId -and $acrPullIdentityPrincipalId) {
+    Write-Host ""
+    Write-Host "Ensuring ACR pull identity can access storage data (Storage Blob Data Contributor)..."
+    $storageDataAcrExisting = "0"
+    try {
+      $storageDataAcrExisting = az role assignment list `
+        --assignee-object-id $acrPullIdentityPrincipalId `
+        --scope $storageAccountId `
+        --query "[?roleDefinitionName=='Storage Blob Data Contributor'] | length(@)" -o tsv --only-show-errors 2>$null
+      if (-not $storageDataAcrExisting) { $storageDataAcrExisting = "0" }
+    }
+    catch {
+      $storageDataAcrExisting = "0"
+    }
+
+    if ([int]$storageDataAcrExisting -eq 0) {
+      az role assignment create `
+        --assignee-object-id $acrPullIdentityPrincipalId `
+        --assignee-principal-type ServicePrincipal `
+        --role "Storage Blob Data Contributor" `
+        --scope $storageAccountId `
+        --only-show-errors 1>$null
+      Write-Host "  Storage Blob Data Contributor granted to $AcrPullIdentityName on $StorageAccountName."
+    }
+    else {
+      Write-Host "  Storage Blob Data Contributor already assigned to $AcrPullIdentityName on $StorageAccountName."
+    }
+  }
+}
+
 if ($AzureClientId -and $doManagedIdentity) {
   Write-Host ""
   Write-Host "Ensuring GitHub Actions principal can assign the ACR pull identity..."
