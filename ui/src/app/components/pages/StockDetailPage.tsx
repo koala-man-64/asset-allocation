@@ -23,6 +23,7 @@ import {
   TableHeader,
   TableRow
 } from '@/app/components/ui/table';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 export function StockDetailPage() {
   const { ticker: paramTicker } = useParams();
@@ -74,7 +75,7 @@ export function StockDetailPage() {
         setError('Could not retrieve data for this symbol.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatSystemStatusText(err));
     } finally {
       setLoading(false);
     }

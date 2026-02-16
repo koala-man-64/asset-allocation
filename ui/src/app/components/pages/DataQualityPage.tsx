@@ -23,6 +23,7 @@ import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getStatusConfig } from './system-status/SystemStatusHelpers';
 import { sanitizeExternalUrl } from '@/utils/urlSecurity';
 import type { RequestMeta } from '@/services/apiService';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import {
   computeLayerDrift,
   domainKey,
@@ -184,7 +185,7 @@ export function DataQualityPage() {
       setHealthMeta(response.meta);
       setLastRefreshedAt(nowIso());
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatSystemStatusText(err);
       setRunAllStatusMessage(`Refresh failed: ${message}`);
     } finally {
       setIsForceRefreshing(false);
@@ -213,10 +214,7 @@ export function DataQualityPage() {
   }
 
   if (health.error || !health.data) {
-    const message =
-      health.error instanceof Error
-        ? health.error.message
-        : String(health.error || 'Unknown error');
+    const message = formatSystemStatusText(health.error) || 'Unknown error';
     return (
       <div className="dq min-h-[calc(100vh-6rem)]">
         <div className="dq-panel p-6">

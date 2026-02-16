@@ -18,6 +18,7 @@ import {
 } from '@/app/components/ui/table';
 import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getAzurePortalUrl } from './SystemStatusHelpers';
+import { formatSystemStatusText } from './systemStatusText';
 
 const QUERY_KEY = ['system', 'container-apps'] as const;
 const LOG_TAIL_LINES = 50;
@@ -109,7 +110,7 @@ export function ContainerAppsPanel() {
         queryClient.invalidateQueries({ queryKey: ['systemHealth'] })
       ]);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatSystemStatusText(err);
       toast.error(`Failed to update ${name}: ${message}`);
     } finally {
       setPending(name, false);
@@ -140,7 +141,8 @@ export function ContainerAppsPanel() {
         const logs = Array.isArray(response?.logs)
           ? response.logs
               .filter((line) => line !== undefined && line !== null)
-              .map((line) => String(line))
+              .map((line) => formatSystemStatusText(line))
+              .filter((line) => line.length > 0)
               .slice(-LOG_TAIL_LINES)
           : [];
         setLogStateByName((prev) => ({
@@ -160,7 +162,7 @@ export function ContainerAppsPanel() {
           [appName]: {
             lines: [],
             loading: false,
-            error: error instanceof Error ? error.message : String(error),
+            error: formatSystemStatusText(error),
             marker
           }
         }));
@@ -218,10 +220,7 @@ export function ContainerAppsPanel() {
   }
 
   if (containerAppsQuery.error) {
-    const message =
-      containerAppsQuery.error instanceof Error
-        ? containerAppsQuery.error.message
-        : String(containerAppsQuery.error);
+    const message = formatSystemStatusText(containerAppsQuery.error);
     return (
       <Card>
         <CardHeader>

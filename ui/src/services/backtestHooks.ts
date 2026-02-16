@@ -1,5 +1,6 @@
 import { useQuery, useQueries, keepPreviousData } from '@tanstack/react-query';
 import { BacktestSummary, DataSource, ListRunsParams, backtestApi } from '@/services/backtestApi';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 // Key Factory for consistent query keys
 export const backtestKeys = {
@@ -35,7 +36,7 @@ export function useRunList(params: ListRunsParams = {}, opts: { enabled?: boolea
     response: data,
     runs: data?.runs ?? [],
     loading: isLoading,
-    error: error ? String(error) : undefined,
+    error: error ? formatSystemStatusText(error) : undefined,
     refresh: refetch
   };
 }
@@ -61,7 +62,7 @@ export function useRunSummary(
   return {
     data,
     loading: isLoading,
-    error: error ? String(error) : undefined
+    error: error ? formatSystemStatusText(error) : undefined
   };
 }
 
@@ -98,7 +99,7 @@ export function useRunSummaries(
     const runId = targetIds[index];
     summaries[runId] = result.data;
     if (result.isLoading) loading = true;
-    if (result.error) error = String(result.error);
+    if (result.error) error = formatSystemStatusText(result.error);
   });
 
   return { summaries, loading, error };
@@ -134,7 +135,7 @@ export function useTimeseriesMulti(
     const runId = uniqueIds[index];
     timeseriesByRunId[runId] = result.data;
     if (result.isLoading) loading = true;
-    if (result.error) error = String(result.error);
+    if (result.error) error = formatSystemStatusText(result.error);
   });
 
   return { timeseriesByRunId, loading, error };
@@ -171,7 +172,7 @@ export function useRollingMulti(
     const runId = uniqueIds[index];
     rollingByRunId[runId] = result.data;
     if (result.isLoading) loading = true;
-    if (result.error) error = String(result.error);
+    if (result.error) error = formatSystemStatusText(result.error);
   });
 
   return { rollingByRunId, loading, error };
@@ -195,6 +196,6 @@ export function useTrades(
   return {
     data,
     loading: isLoading,
-    error: error ? String(error) : undefined
+    error: error ? formatSystemStatusText(error) : undefined
   };
 }

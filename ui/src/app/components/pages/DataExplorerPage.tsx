@@ -3,6 +3,7 @@ import { DataService } from '@/services/DataService';
 import { DataTable } from '@/app/components/common/DataTable';
 import { Button } from '@/app/components/ui/button';
 import { Database, RefreshCw } from 'lucide-react';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 // Utility to debounce or just simple state for now
 export const DataExplorerPage: React.FC = () => {
@@ -35,7 +36,7 @@ export const DataExplorerPage: React.FC = () => {
       );
       setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatSystemStatusText(err));
     } finally {
       setLoading(false);
     }

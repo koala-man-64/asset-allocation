@@ -31,6 +31,7 @@ import {
 } from '@/app/components/ui/table';
 import { formatTimeAgo } from '@/app/components/pages/system-status/SystemStatusHelpers';
 import type { RuntimeConfigItem } from '@/services/apiService';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 type EditState = {
   key: string;
@@ -132,7 +133,7 @@ export function RuntimeConfigPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.runtimeConfigCatalog() })
       ]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatSystemStatusText(err);
       toast.error(`Failed to update runtime config: ${message}`);
     } finally {
       setIsSaving(false);
@@ -146,7 +147,7 @@ export function RuntimeConfigPage() {
       toast.success('Runtime config entry removed.');
       await queryClient.invalidateQueries({ queryKey: queryKeys.runtimeConfig(scope) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatSystemStatusText(err);
       toast.error(`Failed to delete runtime config: ${message}`);
     } finally {
       setIsDeletingKey(null);
@@ -158,8 +159,8 @@ export function RuntimeConfigPage() {
 
   if (hasError) {
     const message =
-      (catalogQuery.error instanceof Error ? catalogQuery.error.message : '') ||
-      (configQuery.error instanceof Error ? configQuery.error.message : '') ||
+      formatSystemStatusText(catalogQuery.error) ||
+      formatSystemStatusText(configQuery.error) ||
       'Runtime config is unavailable.';
     return (
       <div className="mcm-panel rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-destructive">

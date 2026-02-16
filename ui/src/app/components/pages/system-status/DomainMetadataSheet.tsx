@@ -10,6 +10,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert';
 import { StatusTypos } from './StatusTokens';
 import { useDomainMetadataQuery } from '@/hooks/useDataQueries';
+import { formatSystemStatusText } from './systemStatusText';
 
 type LayerKey = 'bronze' | 'silver' | 'gold' | 'platinum';
 
@@ -103,7 +104,7 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
             <Alert variant="destructive">
               <AlertTitle>Metadata unavailable</AlertTitle>
               <AlertDescription className="break-words">
-                {query.error instanceof Error ? query.error.message : String(query.error)}
+                {formatSystemStatusText(query.error)}
               </AlertDescription>
             </Alert>
           ) : metadata ? (

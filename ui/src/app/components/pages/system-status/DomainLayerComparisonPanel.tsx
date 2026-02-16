@@ -16,6 +16,7 @@ import { DataService } from '@/services/DataService';
 import type { DataLayer, DomainMetadata } from '@/types/strategy';
 import { StatusTypos } from './StatusTokens';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
+import { formatSystemStatusText } from './systemStatusText';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
@@ -192,7 +193,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       const key = makeCellKey(pair.layerKey, pair.domainKey);
       if (query.data) metadata.set(key, query.data);
       if (query.error) {
-        const message = query.error instanceof Error ? query.error.message : String(query.error);
+        const message = formatSystemStatusText(query.error);
         errors.set(key, message);
       }
       if (query.isLoading || query.isFetching) pending.add(key);

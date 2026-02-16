@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { DataService } from '@/services/DataService';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import {
     getProbeIdForRow,
     isValidTickerSymbol,
@@ -105,9 +106,7 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
                     ? runAllCancelledRef.current
                         ? 'Probe cancelled.'
                         : `Probe timed out after ${Math.round(PROBE_TIMEOUT_MS / 1000)}s.`
-                    : err instanceof Error
-                        ? err.message
-                        : String(err);
+                    : formatSystemStatusText(err);
 
                 console.warn('[DataQualityProbe] failed', {
                     probeId: id,
@@ -172,7 +171,7 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
                 const rowCount = Number(report.rowCount || 0);
                 const isError = status === 'error';
                 const detail = isError
-                    ? report.error || 'Validation endpoint returned an error.'
+                    ? formatSystemStatusText(report.error) || 'Validation endpoint returned an error.'
                     : status === 'empty'
                         ? 'Dataset reachable • 0 rows (empty).'
                         : `Rows: ${rowCount.toLocaleString()} • Status: ${status || 'healthy'}`;

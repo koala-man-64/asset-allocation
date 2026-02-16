@@ -34,6 +34,7 @@ import {
   normalizeAzureJobName,
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
+import { formatSystemStatusText } from './systemStatusText';
 import { apiService } from '@/services/apiService';
 
 import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText, Square } from 'lucide-react';
@@ -245,16 +246,18 @@ export function ScheduledJobMonitor({
           ])
         ]
           .filter((line) => line !== undefined && line !== null)
-          .map((line) => String(line));
+          .map((line) => formatSystemStatusText(line))
+          .filter((line) => line.length > 0);
 
         const firstError = (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
+        const formattedFirstError = formatSystemStatusText(firstError);
         const logs = combined.slice(-50);
         setLogStateByJob((prev) => ({
           ...prev,
           [jobName]: {
             lines: logs,
             loading: false,
-            error: logs.length === 0 ? firstError : null,
+            error: logs.length === 0 && formattedFirstError ? formattedFirstError : null,
             runStart
           }
         }));
@@ -266,7 +269,7 @@ export function ScheduledJobMonitor({
           [jobName]: {
             lines: [],
             loading: false,
-            error: error instanceof Error ? error.message : String(error),
+            error: formatSystemStatusText(error),
             runStart
           }
         }));

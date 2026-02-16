@@ -10,6 +10,7 @@ import { Switch } from '@/app/components/ui/switch';
 import { Textarea } from '@/app/components/ui/textarea';
 import { Badge } from '@/app/components/ui/badge';
 import { formatTimeAgo } from '@/app/components/pages/system-status/SystemStatusHelpers';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 const MAX_PREVIEW = 20;
 
@@ -80,7 +81,7 @@ export function DebugSymbolsPage() {
       setHasLocalChanges(false);
       void queryClient.invalidateQueries({ queryKey: queryKeys.debugSymbols() });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatSystemStatusText(err);
       toast.error(`Failed to update debug symbols: ${message}`);
     } finally {
       setIsSaving(false);
@@ -94,11 +95,7 @@ export function DebugSymbolsPage() {
           <ShieldAlert className="h-4 w-4" />
           Debug Symbols Unavailable
         </div>
-        <p className="mt-3 text-sm">
-          {debugSymbolsQuery.error instanceof Error
-            ? debugSymbolsQuery.error.message
-            : String(debugSymbolsQuery.error)}
-        </p>
+        <p className="mt-3 text-sm">{formatSystemStatusText(debugSymbolsQuery.error)}</p>
       </div>
     );
   }

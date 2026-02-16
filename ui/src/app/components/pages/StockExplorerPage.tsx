@@ -19,6 +19,7 @@ import {
 import type { StockScreenerRow, StockScreenerResponse } from '@/services/backtestApi';
 import { DataService } from '@/services/DataService';
 import { cn } from '@/app/components/ui/utils';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 type SortDirection = 'asc' | 'desc';
 
@@ -216,7 +217,7 @@ export function StockExplorerPage() {
           <ScrollArea className="h-[calc(100vh-290px)]">
             {screenerQuery.isError ? (
               <div className="p-6 font-mono text-xs text-destructive">
-                {(screenerQuery.error as Error)?.message || 'Failed to load screener.'}
+                {formatSystemStatusText(screenerQuery.error) || 'Failed to load screener.'}
                 <div className="mt-2 text-muted-foreground">
                   Requires Postgres (`core.symbols`) + Silver/Gold by-date Delta tables.
                 </div>

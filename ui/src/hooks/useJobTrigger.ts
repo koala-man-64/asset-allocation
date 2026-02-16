@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, backtestApi } from '@/services/backtestApi';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 export function useJobTrigger() {
   const queryClient = useQueryClient();
@@ -14,12 +15,9 @@ export function useJobTrigger() {
       toast.success(`Triggered ${jobName}`);
       void queryClient.invalidateQueries({ queryKey });
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError
-          ? `${err.status}: ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const message = err instanceof ApiError
+        ? `${err.status}: ${formatSystemStatusText(err.message)}`
+        : formatSystemStatusText(err);
       toast.error(`Failed to trigger ${jobName}: ${message}`);
     } finally {
       setTriggeringJob(null);

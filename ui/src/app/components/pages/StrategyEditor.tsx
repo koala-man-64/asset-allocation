@@ -21,6 +21,7 @@ import {
 } from '@/app/components/ui/select';
 import { Strategy, strategyApi } from '@/services/strategyApi';
 import { toast } from 'sonner';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 interface StrategyEditorProps {
   strategy: Strategy | null;
@@ -80,7 +81,7 @@ export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorP
       onOpenChange(false);
     },
     onError: (error) => {
-      toast.error(`Failed to save strategy: ${error}`);
+      toast.error(`Failed to save strategy: ${formatSystemStatusText(error)}`);
     }
   });
 

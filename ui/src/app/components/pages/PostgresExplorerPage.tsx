@@ -3,6 +3,7 @@ import { PostgresService } from '@/services/PostgresService';
 import { DataTable } from '@/app/components/common/DataTable';
 import { Database, Table as TableIcon, RefreshCw } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
+import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 export const PostgresExplorerPage: React.FC = () => {
   const [schemas, setSchemas] = useState<string[]>([]);
@@ -29,7 +30,7 @@ export const PostgresExplorerPage: React.FC = () => {
       });
       setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatSystemStatusText(err));
     } finally {
       setLoading(false);
     }
@@ -43,7 +44,8 @@ export const PostgresExplorerPage: React.FC = () => {
         setSchemas(s);
       } catch (err) {
         console.error('Failed to load schemas', err);
-        setError('Failed to load schemas.');
+        const message = formatSystemStatusText(err);
+        setError(message ? `Failed to load schemas: ${message}` : 'Failed to load schemas.');
       }
     };
     loadSchemas();
@@ -65,7 +67,12 @@ export const PostgresExplorerPage: React.FC = () => {
         }
       } catch (err) {
         console.error('Failed to load tables', err);
-        setError(`Failed to load tables for schema ${selectedSchema}`);
+        const message = formatSystemStatusText(err);
+        setError(
+          message
+            ? `Failed to load tables for schema ${selectedSchema}: ${message}`
+            : `Failed to load tables for schema ${selectedSchema}`
+        );
       } finally {
         setMetadataLoading(false);
       }
