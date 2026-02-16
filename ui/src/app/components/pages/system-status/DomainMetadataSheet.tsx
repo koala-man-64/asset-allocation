@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { CalendarDays, Database, Files, Hash, HardDrive, Loader2, Ban } from 'lucide-react';
+import { CalendarDays, Database, Files, Hash, HardDrive, Info, Loader2, Ban } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -8,6 +8,7 @@ import {
   SheetTitle
 } from '@/app/components/ui/sheet';
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { StatusTypos } from './StatusTokens';
 import { useDomainMetadataQuery } from '@/hooks/useDataQueries';
 
@@ -54,6 +55,36 @@ function formatDate(value: string | null | undefined): string {
   return dt.toISOString().slice(0, 10);
 }
 
+function dateRangeUnavailableReason(metadata: {
+  type?: string | null;
+  dateRange?: { min?: string | null; max?: string | null } | null;
+  warnings?: Array<string> | null;
+}): string | null {
+  if (!metadata) {
+    return null;
+  }
+
+  if (metadata.type === 'blob') {
+    return 'Date range is unavailable for blob-based domains.';
+  }
+
+  if (metadata.type === 'delta' && metadata.dateRange) {
+    const hasBounds = Boolean(metadata.dateRange.min) || Boolean(metadata.dateRange.max);
+    if (hasBounds) {
+      return null;
+    }
+  }
+
+  if (metadata.type !== 'delta') {
+    return null;
+  }
+
+  if ((metadata.warnings || []).some((warning) => warning.toLowerCase().includes('date range')) {
+    return 'Date range stats were unavailable or not parseable for this delta domain.';
+  }
+  return 'Date range is unavailable for this delta domain.';
+}
+
 export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetadataSheetProps) {
   const layer = target?.layer;
   const domain = target?.domain;
@@ -74,6 +105,7 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
   const dateRange = metadata?.dateRange
     ? `${formatDate(metadata.dateRange.min)} → ${formatDate(metadata.dateRange.max)}`
     : '—';
+  const dateRangeReason = metadata ? dateRangeUnavailableReason(metadata) : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -142,7 +174,22 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
                     Date Range
                   </div>
                   <div className={`${StatusTypos.MONO} mt-1 text-sm font-bold text-mcm-walnut/80`}>
-                    {dateRange}
+                    <div className="inline-flex items-center gap-1">
+                      {dateRange}
+                      {dateRangeReason ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3.5 w-3.5 cursor-help opacity-70" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            {dateRangeReason}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                    {dateRangeReason ? (
+                      <div className="mt-1 text-[10px] text-mcm-walnut/55">{dateRangeReason}</div>
+                    ) : null}
                   </div>
                   {metadata.dateRange?.column ? (
                     <div className="mt-1 text-[10px] text-mcm-walnut/50">

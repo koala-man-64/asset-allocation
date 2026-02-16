@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { AlertTriangle, GitCompareArrows, Layers, Loader2 } from 'lucide-react';
+import { AlertTriangle, GitCompareArrows, Info, Layers, Loader2 } from 'lucide-react';
 import { Badge } from '@/app/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
@@ -16,6 +16,7 @@ import { DataService } from '@/services/DataService';
 import type { DataLayer, DomainMetadata } from '@/types/strategy';
 import { StatusTypos } from './StatusTokens';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
@@ -67,6 +68,29 @@ function formatDateRange(metadata: DomainMetadata | undefined): string {
   const max = normalizeDate(metadata.dateRange.max);
   if (!min && !max) return 'N/A';
   return `${min || 'N/A'} -> ${max || 'N/A'}`;
+}
+
+function dateRangeUnavailableReason(metadata: DomainMetadata | undefined): string | null {
+  if (!metadata) {
+    return null;
+  }
+
+  if (metadata.dateRange && (normalizeDate(metadata.dateRange.min) || normalizeDate(metadata.dateRange.max))) {
+    return null;
+  }
+
+  if (metadata.type === 'blob') {
+    return 'Date range is unavailable for blob-backed domains.';
+  }
+
+  if (metadata.type === 'delta') {
+    if ((metadata.warnings || []).some((warning) => warning.toLowerCase().includes('date range'))) {
+      return 'Date range stats are unavailable or could not be parsed for this delta domain.';
+    }
+    return 'Date range stats were not detected for this delta domain.';
+  }
+
+  return 'Date range is not available for this metadata source.';
 }
 
 function compareSymbols(current: DomainMetadata, previous: DomainMetadata): {
@@ -371,6 +395,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                           const rangeComparison = previousMetadata
                             ? compareDateRanges(metadata, previousMetadata)
                             : null;
+                          const dateRangeReason = dateRangeUnavailableReason(metadata);
 
                           return (
                             <TableCell key={`${row.key}-${layerColumn.key}`} className="align-top">
@@ -382,8 +407,25 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                   </span>
                                 </div>
                                 <div className={`${StatusTypos.MONO} text-[11px] font-semibold text-mcm-walnut/80`}>
-                                  {formatDateRange(metadata)}
+                                  {dateRangeReason ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="inline-flex items-center gap-1">
+                                          {formatDateRange(metadata)}
+                                          <Info className="h-3 w-3 opacity-60" />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" className="max-w-xs">
+                                        {dateRangeReason}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ) : (
+                                    formatDateRange(metadata)
+                                  )}
                                 </div>
+                                {dateRangeReason ? (
+                                  <div className="text-[10px] text-mcm-walnut/55">{dateRangeReason}</div>
+                                ) : null}
                                 {symbolComparison && rangeComparison ? (
                                   <div className={`${StatusTypos.MONO} text-[10px]`}>
                                     <span className="text-mcm-walnut/50">vs {previousLabel}: </span>

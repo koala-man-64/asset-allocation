@@ -38,3 +38,61 @@ def test_collect_delta_table_metadata_reports_rows_and_date_range(tmp_path) -> N
     assert min_dt.date().isoformat() == "2024-01-01"
     assert max_dt.date().isoformat() == "2024-01-04"
 
+
+def test_collect_delta_table_metadata_parses_string_date_stats(monkeypatch) -> None:
+    class _FakeStructArray:
+        def __init__(self, rows: list[dict[str, object]]) -> None:
+            self._rows = rows
+
+        def to_pylist(self) -> list[dict[str, object]]:
+            return self._rows
+
+    class _FakeActions:
+        def __init__(self, rows: list[dict[str, object]]) -> None:
+            self._rows = rows
+
+        def to_struct_array(self) -> _FakeStructArray:
+            return _FakeStructArray(self._rows)
+
+    class _FakeDeltaTable:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def version(self) -> int:
+            return 7
+
+        def get_add_actions(self, *args, **kwargs) -> _FakeActions:
+            return _FakeActions(
+                [
+                    {
+                        "num_records": 2,
+                        "size_bytes": 120,
+                        "min.date": "2024-01-01",
+                        "max.date": "2024-01-03",
+                    },
+                    {
+                        "num_records": 3,
+                        "size_bytes": 220,
+                        "min.date": "2024-01-04",
+                        "max.date": "2024-01-10",
+                    },
+                ]
+            )
+
+    monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _FakeDeltaTable)
+    warnings: list[str] = []
+    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+
+    assert warnings == []
+    assert meta["dateRange"] is not None
+    assert meta["dateRange"]["column"] == "date"
+    assert meta["totalRows"] == 5
+    assert meta["fileCount"] == 2
+    assert meta["totalBytes"] == 340
+    assert meta["deltaVersion"] == 7
+
+    min_dt = datetime.fromisoformat(meta["dateRange"]["min"]).astimezone(timezone.utc)
+    max_dt = datetime.fromisoformat(meta["dateRange"]["max"]).astimezone(timezone.utc)
+    assert min_dt.date().isoformat() == "2024-01-01"
+    assert max_dt.date().isoformat() == "2024-01-10"
+
