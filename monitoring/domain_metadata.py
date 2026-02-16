@@ -4,7 +4,9 @@ import csv
 import io
 import logging
 import os
+import time
 from datetime import datetime, timezone
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.blob_storage import BlobStorageClient
@@ -12,6 +14,7 @@ from core import delta_core
 from deltalake import DeltaTable
 
 logger = logging.getLogger("asset_allocation.monitoring.domain_metadata")
+_DOMAIN_METADATA_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
 
 
 LayerKey = str
@@ -20,6 +23,46 @@ DomainKey = str
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _domain_metadata_cache_ttl_seconds() -> int:
+    raw_ttl = os.environ.get("DOMAIN_METADATA_CACHE_TTL_SECONDS", "30").strip()
+    try:
+        ttl = int(raw_ttl)
+    except ValueError:
+        logger.warning(
+            "Invalid DOMAIN_METADATA_CACHE_TTL_SECONDS=%s; defaulting to 30 seconds.",
+            raw_ttl,
+        )
+        return 30
+    if ttl < 0:
+        return 0
+    return ttl
+
+
+def _read_cached_domain_metadata(layer_key: str, domain_key: str) -> Optional[Dict[str, Any]]:
+    ttl = _domain_metadata_cache_ttl_seconds()
+    if ttl <= 0:
+        return None
+
+    key = (layer_key, domain_key)
+    cached = _DOMAIN_METADATA_CACHE.get(key)
+    if not cached:
+        return None
+
+    cached_at, payload = cached
+    if time.time() - cached_at > ttl:
+        _DOMAIN_METADATA_CACHE.pop(key, None)
+        return None
+
+    return deepcopy(payload)
+
+
+def _cache_domain_metadata(layer_key: str, domain_key: str, payload: Dict[str, Any]) -> None:
+    ttl = _domain_metadata_cache_ttl_seconds()
+    if ttl <= 0:
+        return
+    _DOMAIN_METADATA_CACHE[(layer_key, domain_key)] = (time.time(), deepcopy(payload))
 
 
 def _normalize_key(value: str) -> str:
@@ -276,16 +319,87 @@ def _summarize_blob_prefix(
     return files, total_bytes, truncated
 
 
+def _coerce_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, bool):
+        return None
+    elif isinstance(value, (int, float)):
+        try:
+            raw = float(value)
+        except (TypeError, ValueError):
+            return None
+        if raw <= 0:
+            return None
+        if raw > 1_000_000_000_000:
+            dt = datetime.fromtimestamp(raw / 1000, tz=timezone.utc)
+        elif raw > 1_000_000_000:
+            dt = datetime.fromtimestamp(raw, tz=timezone.utc)
+        else:
+            return None
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+
+        parsed: Optional[datetime] = None
+        for candidate in (text.replace("Z", "+00:00"), text):
+            try:
+                parsed = datetime.fromisoformat(candidate)
+                break
+            except ValueError:
+                parsed = None
+
+        if parsed is None:
+            formats = [
+                "%Y-%m-%d",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M:%S.%f",
+                "%Y/%m/%d",
+                "%Y/%m/%d %H:%M:%S",
+                "%Y/%m/%d %H:%M:%S.%f",
+            ]
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    parsed = None
+
+        if parsed is None:
+            return None
+        dt = parsed
+
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _to_iso_datetime(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).isoformat()
+
+
 def _pick_date_column(rows: List[Dict[str, Any]]) -> Optional[str]:
     if not rows:
         return None
-    sample = rows[0]
+
     candidates: List[str] = []
-    for key, value in sample.items():
-        if not key.startswith("min."):
+    for row in rows:
+        if not isinstance(row, dict):
             continue
-        if isinstance(value, datetime):
-            candidates.append(key[len("min.") :])
+        for key, value in row.items():
+            if not key.startswith("min."):
+                continue
+            column = key[len("min.") :]
+            max_key = f"max.{column}"
+            if _coerce_datetime(value) is None and _coerce_datetime(row.get(max_key)) is None:
+                continue
+            candidates.append(column)
 
     if not candidates:
         return None
@@ -299,7 +413,11 @@ def _pick_date_column(rows: List[Dict[str, Any]]) -> Optional[str]:
     return candidates[0]
 
 
-def collect_delta_table_metadata(container: str, table_path: str) -> Dict[str, Any]:
+def collect_delta_table_metadata(
+    container: str, table_path: str, warnings: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    local_warnings = warnings if warnings is not None else []
+
     uri = delta_core.get_delta_table_uri(container, table_path)
     opts = delta_core.get_delta_storage_options(container)
     dt = DeltaTable(uri, storage_options=opts)
@@ -322,37 +440,47 @@ def collect_delta_table_metadata(container: str, table_path: str) -> Dict[str, A
     max_dt: Optional[datetime] = None
     if date_column:
         for action in add_actions:
-            start = action.get(f"min.{date_column}")
-            end = action.get(f"max.{date_column}")
-            if isinstance(start, datetime):
+            start = _coerce_datetime(action.get(f"min.{date_column}"))
+            end = _coerce_datetime(action.get(f"max.{date_column}"))
+            if start is not None:
                 min_dt = start if min_dt is None or start < min_dt else min_dt
-            if isinstance(end, datetime):
+            if end is not None:
                 max_dt = end if max_dt is None or end > max_dt else max_dt
 
-    def _dt_iso(value: Optional[datetime]) -> Optional[str]:
-        if not value:
-            return None
-        out = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-        return out.astimezone(timezone.utc).isoformat()
+    date_range = (
+        {
+            "min": _to_iso_datetime(min_dt),
+            "max": _to_iso_datetime(max_dt),
+            "column": date_column,
+        }
+        if date_column and (min_dt is not None or max_dt is not None)
+        else None
+    )
+
+    if date_column and date_range is None:
+        local_warnings.append(
+            f"Date range stats for table={table_path} could not be parsed from min/max metadata."
+        )
+    if not date_column:
+        local_warnings.append(
+            f"Date range stats for table={table_path} were not found in table metadata."
+        )
 
     return {
         "deltaVersion": version,
         "fileCount": len(add_actions),
         "totalBytes": total_bytes,
         "totalRows": total_rows,
-        "dateRange": {
-            "min": _dt_iso(min_dt),
-            "max": _dt_iso(max_dt),
-            "column": date_column,
-        }
-        if date_column
-        else None,
+        "dateRange": date_range,
     }
 
 
 def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
     layer_key = _normalize_key(layer)
     domain_key = _normalize_key(domain)
+    cached = _read_cached_domain_metadata(layer_key, domain_key)
+    if cached is not None:
+        return cached
 
     container = _require_container(_layer_container_env(layer_key))
     computed_at = _utc_now_iso()
@@ -378,8 +506,8 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         if symbol_truncated:
             warnings.append(f"Symbol discovery truncated after {max_scanned_blobs} blobs.")
 
-        metrics = collect_delta_table_metadata(container, delta_path)
-        return {
+        metrics = collect_delta_table_metadata(container, delta_path, warnings=warnings)
+        payload = {
             "layer": layer_key,
             "domain": domain_key,
             "container": container,
@@ -391,6 +519,8 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "warnings": warnings,
             **metrics,
         }
+        _cache_domain_metadata(layer_key, domain_key, payload)
+        return payload
 
     prefix = _blob_prefix(layer_key, domain_key)
     if prefix:
@@ -418,7 +548,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             except Exception as exc:
                 warnings.append(f"Unable to read blacklist.csv: {exc}")
 
-        return {
+        payload = {
             "layer": layer_key,
             "domain": domain_key,
             "container": container,
@@ -431,5 +561,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "totalBytes": total_bytes,
             "warnings": warnings,
         }
+        _cache_domain_metadata(layer_key, domain_key, payload)
+        return payload
 
     raise ValueError(f"Unsupported layer/domain combination: layer={layer_key} domain={domain_key}")
