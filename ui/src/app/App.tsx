@@ -19,6 +19,7 @@ const StockExplorerPage = lazy(() => import('@/app/components/pages/StockExplore
 const StockDetailPage = lazy(() => import('@/app/components/pages/StockDetailPage').then(m => ({ default: m.StockDetailPage })));
 const PostgresExplorerPage = lazy(() => import('@/app/components/pages/PostgresExplorerPage').then(m => ({ default: m.PostgresExplorerPage })));
 const DebugSymbolsPage = lazy(() => import('@/app/components/pages/DebugSymbolsPage').then(m => ({ default: m.DebugSymbolsPage })));
+const DataProfilingPage = lazy(() => import('@/app/components/pages/DataProfilingPage').then(m => ({ default: m.DataProfilingPage })));
 const RuntimeConfigPage = lazy(() => import('@/app/components/pages/RuntimeConfigPage').then(m => ({ default: m.RuntimeConfigPage })));
 const StrategyConfigPage = lazy(() => import('@/app/components/pages/StrategyConfigPage').then(m => ({ default: m.StrategyConfigPage })));
 
@@ -46,6 +47,7 @@ function AppContent() {
                 <Route path="/live-trading" element={<LiveTradingPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/data-quality" element={<DataQualityPage />} />
+                <Route path="/data-profiling" element={<DataProfilingPage />} />
                 <Route path="/system-status" element={<SystemStatusPage />} />
                 <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
                 <Route path="/runtime-config" element={<RuntimeConfigPage />} />
