@@ -34,7 +34,9 @@ import {
   normalizeAzureJobName,
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
+import { getDomainOrderIndex } from './domainOrdering';
 import { apiService } from '@/services/apiService';
+import { normalizeDomainKey } from './SystemPurgeControls';
 
 import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText, Square } from 'lucide-react';
 
@@ -47,6 +49,7 @@ type ScheduledJobRow = {
   jobName: string;
   layerName: string;
   domainName: string;
+  domainOrderKey: string;
   schedule: string;
   jobRun: JobRun | null;
 };
@@ -159,21 +162,27 @@ export function ScheduledJobMonitor({
     return index;
   }, [recentJobs]);
 
+  const domainOrderIndex = useMemo(() => getDomainOrderIndex(dataLayers), [dataLayers]);
+
   const scheduledJobs = useMemo(() => {
     const rows: ScheduledJobRow[] = [];
     for (const layer of dataLayers || []) {
       for (const domain of layer.domains || []) {
+        const domainName = String(domain.name || '').trim();
+        if (!domainName) continue;
         const jobName = String(domain.jobName || '').trim();
         if (!jobName) continue;
-        const jobKey = normalizeAzureJobName(jobName);
 
+        const jobKey = normalizeAzureJobName(jobName);
         const scheduleRaw = domain.cron || domain.frequency || layer.refreshFrequency || '';
         const schedule = String(scheduleRaw || '').trim() || '-';
+        const domainOrderKey = normalizeDomainKey(domainName);
 
         rows.push({
           jobName,
           layerName: layer.name,
-          domainName: domain.name,
+          domainName,
+          domainOrderKey,
           schedule,
           jobRun: (jobKey ? jobIndex.get(jobKey) : null) ?? null
         });
@@ -183,13 +192,24 @@ export function ScheduledJobMonitor({
     rows.sort((a, b) => {
       const layerCmp = a.layerName.localeCompare(b.layerName);
       if (layerCmp !== 0) return layerCmp;
+
+      const domainOrderA = domainOrderIndex.get(a.domainOrderKey);
+      const domainOrderB = domainOrderIndex.get(b.domainOrderKey);
+
+      if (domainOrderA === undefined && domainOrderB === undefined) {
+        return a.domainName.localeCompare(b.domainName);
+      }
+      if (domainOrderA === undefined) return 1;
+      if (domainOrderB === undefined) return -1;
+      if (domainOrderA !== domainOrderB) return domainOrderA - domainOrderB;
+
       const domainCmp = a.domainName.localeCompare(b.domainName);
       if (domainCmp !== 0) return domainCmp;
       return a.jobName.localeCompare(b.jobName);
     });
 
     return rows;
-  }, [dataLayers, jobIndex]);
+  }, [dataLayers, jobIndex, domainOrderIndex]);
 
   const groupedJobs = useMemo(() => {
     const groups: Array<{
