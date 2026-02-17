@@ -137,6 +137,12 @@
   font-style: italic;
 }
 
+.dq-storage-meta {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: end;
+}
+
 .dq-mono {
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',

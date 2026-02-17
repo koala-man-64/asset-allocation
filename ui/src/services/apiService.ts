@@ -251,6 +251,31 @@ export interface ValidationReport {
   sampleLimit?: number;
 }
 
+export interface StorageFolderUsage {
+  path: string;
+  fileCount: number | null;
+  totalBytes: number | null;
+  truncated: boolean;
+  error?: string | null;
+}
+
+export interface StorageContainerUsage {
+  layer: string;
+  layerLabel: string;
+  container: string;
+  totalFiles: number | null;
+  totalBytes: number | null;
+  truncated: boolean;
+  error?: string | null;
+  folders: StorageFolderUsage[];
+}
+
+export interface StorageUsageResponse {
+  generatedAt: string;
+  scanLimit: number;
+  containers: StorageContainerUsage[];
+}
+
 export interface ContainerAppHealthCheck {
   status: 'healthy' | 'warning' | 'error' | 'unknown';
   url?: string | null;
@@ -447,6 +472,12 @@ export const apiService = {
     return request<ValidationReport>(`/data/quality/${layer}/${domain}/validation`, {
       params: { ticker },
       signal: resolvedSignal
+    });
+  },
+
+  getStorageUsage(signal?: AbortSignal): Promise<StorageUsageResponse> {
+    return request<StorageUsageResponse>('/data/storage-usage', {
+      signal
     });
   },
 

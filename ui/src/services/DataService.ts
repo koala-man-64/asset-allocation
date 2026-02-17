@@ -22,7 +22,8 @@ import type {
   RuntimeConfigItem,
   RuntimeConfigListResponse,
   ValidationReport,
-  SymbolSyncState
+  SymbolSyncState,
+  StorageUsageResponse
 } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
 import { apiService } from '@/services/apiService';
@@ -202,6 +203,10 @@ export const DataService = {
     signal?: AbortSignal
   ): Promise<ValidationReport> {
     return apiService.getDataQualityValidation(layer, domain, tickerOrSignal, signal);
+  },
+
+  getStorageUsage(signal?: AbortSignal): Promise<StorageUsageResponse> {
+    return apiService.getStorageUsage(signal);
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeOperationResponse> {

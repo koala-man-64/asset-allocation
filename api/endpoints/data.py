@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Sequence
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
+from core.blob_storage import BlobStorageClient
 
 from api.service.dependencies import get_settings, validate_auth
 from core.delta_core import load_delta
@@ -20,6 +21,110 @@ from api.service.validation_service import ValidationService
 router = APIRouter()
 logger = logging.getLogger("asset-allocation.api.data")
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
+_STORAGE_USAGE_LIMIT_DEFAULT = 200_000
+_STORAGE_USAGE_LIMIT_MAX = 2_000_000
+
+_STORAGE_USAGE_CATALOG = (
+    (
+        "bronze",
+        "AZURE_CONTAINER_BRONZE",
+        "Bronze",
+        (
+            "market-data",
+            "finance-data",
+            "earnings-data",
+            "price-target-data",
+        ),
+    ),
+    (
+        "silver",
+        "AZURE_CONTAINER_SILVER",
+        "Silver",
+        (
+            "market-data-by-date",
+            "finance-data-by-date",
+            "earnings-data-by-date",
+            "price-target-data-by-date",
+        ),
+    ),
+    (
+        "gold",
+        "AZURE_CONTAINER_GOLD",
+        "Gold",
+        (
+            "market_by_date",
+            "finance_by_date",
+            "earnings_by_date",
+            "targets_by_date",
+        ),
+    ),
+    (
+        "platinum",
+        "AZURE_CONTAINER_PLATINUM",
+        "Platinum",
+        ("platinum",),
+    ),
+)
+
+
+def _storage_usage_scan_limit(default: int = _STORAGE_USAGE_LIMIT_DEFAULT) -> int:
+    raw = (os.environ.get("DATA_USAGE_SCAN_LIMIT") or "").strip() or os.environ.get(
+        "DOMAIN_METADATA_MAX_SCANNED_BLOBS",
+        str(default),
+    ).strip()
+
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if value <= 0:
+        return default
+    if value > _STORAGE_USAGE_LIMIT_MAX:
+        return _STORAGE_USAGE_LIMIT_MAX
+    return value
+
+
+def _ensure_folder_prefix(prefix: str) -> str:
+    normalized = str(prefix or "").strip().strip("/")
+    if not normalized:
+        return ""
+    return f"{normalized}/"
+
+
+def _summarize_container_prefix(
+    *,
+    client: BlobStorageClient,
+    prefix: Optional[str],
+    scan_limit: int,
+) -> Dict[str, Optional[int] | bool | str]:
+    file_count = 0
+    total_bytes = 0
+    scanned = 0
+    truncated = False
+    try:
+        blobs = client.container_client.list_blobs(name_starts_with=prefix)
+        for blob in blobs:
+            scanned += 1
+            if scanned > scan_limit:
+                truncated = True
+                break
+            file_count += 1
+            blob_size = getattr(blob, "size", None)
+            if isinstance(blob_size, int):
+                total_bytes += blob_size
+        return {
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+            "truncated": truncated,
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "file_count": None,
+            "total_bytes": None,
+            "truncated": False,
+            "error": str(exc),
+        }
 
 
 def _strip_or_none(value: object) -> Optional[str]:
@@ -84,6 +189,97 @@ def _validate_ticker(value: Optional[str]) -> Optional[str]:
             detail="Invalid ticker format. Expected pattern: ^[A-Z][A-Z0-9.-]{0,9}$",
         )
     return normalized
+
+
+@router.get("/storage-usage")
+def get_storage_usage(
+    request: Request,
+    scan_limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=_STORAGE_USAGE_LIMIT_MAX,
+        description="Limit blobs scanned per container/prefix to avoid runaway reads.",
+    ),
+) -> Dict[str, Any]:
+    validate_auth(request)
+    resolved_scan_limit = scan_limit if scan_limit is not None else _storage_usage_scan_limit()
+
+    containers = []
+    for layer_name, container_env, layer_label, folder_paths in _STORAGE_USAGE_CATALOG:
+        container = (os.environ.get(container_env) or "").strip()
+        if not container:
+            containers.append(
+                {
+                    "layer": layer_name,
+                    "layerLabel": layer_label,
+                    "container": "",
+                    "totalFiles": None,
+                    "totalBytes": None,
+                    "truncated": False,
+                    "error": f"Missing container env var: {container_env}",
+                    "folders": [],
+                }
+            )
+            continue
+
+        try:
+            client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+        except Exception as exc:
+            containers.append(
+                {
+                    "layer": layer_name,
+                    "layerLabel": layer_label,
+                    "container": container,
+                    "totalFiles": None,
+                    "totalBytes": None,
+                    "truncated": False,
+                    "error": f"Storage client init failed: {exc}",
+                    "folders": [],
+                }
+            )
+            continue
+
+        container_summary = _summarize_container_prefix(
+            client=client,
+            prefix=None,
+            scan_limit=resolved_scan_limit,
+        )
+        folder_payloads = []
+        for folder_path in folder_paths:
+            normalized_prefix = _ensure_folder_prefix(folder_path)
+            folder_summary = _summarize_container_prefix(
+                client=client,
+                prefix=normalized_prefix,
+                scan_limit=resolved_scan_limit,
+            )
+            folder_payloads.append(
+                {
+                    "path": normalized_prefix,
+                    "fileCount": folder_summary["file_count"],
+                    "totalBytes": folder_summary["total_bytes"],
+                    "truncated": folder_summary["truncated"],
+                    "error": folder_summary["error"],
+                }
+            )
+
+        containers.append(
+            {
+                "layer": layer_name,
+                "layerLabel": layer_label,
+                "container": container,
+                "totalFiles": container_summary["file_count"],
+                "totalBytes": container_summary["total_bytes"],
+                "truncated": container_summary["truncated"],
+                "error": container_summary["error"],
+                "folders": folder_payloads,
+            }
+        )
+
+    return {
+        "generatedAt": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "scanLimit": resolved_scan_limit,
+        "containers": containers,
+    }
 
 
 def _find_latest_market_date(

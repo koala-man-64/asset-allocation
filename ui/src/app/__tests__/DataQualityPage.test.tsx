@@ -25,7 +25,8 @@ vi.mock('@/hooks/useDataQueries', () => ({
 vi.mock('@/services/DataService', () => ({
   DataService: {
     getSystemHealthWithMeta: vi.fn(),
-    getDataQualityValidation: vi.fn()
+    getDataQualityValidation: vi.fn(),
+    getStorageUsage: vi.fn()
   }
 }));
 
@@ -92,6 +93,34 @@ describe('DataQualityPage', () => {
       columns: [],
       timestamp: '2026-02-06T00:00:00Z',
       sampleLimit: 1000
+    });
+    vi.mocked(DataService.getStorageUsage).mockResolvedValue({
+      generatedAt: '2026-02-17T00:00:00Z',
+      scanLimit: 200000,
+      containers: [
+        {
+          layer: 'bronze',
+          layerLabel: 'Bronze',
+          container: 'bronze',
+          totalFiles: 120,
+          totalBytes: 1048576,
+          truncated: false,
+          folders: [
+            {
+              path: 'market-data/',
+              fileCount: 40,
+              totalBytes: 419430,
+              truncated: false
+            },
+            {
+              path: 'finance-data/',
+              fileCount: 40,
+              totalBytes: 327680,
+              truncated: false
+            }
+          ]
+        }
+      ]
     });
   });
 
