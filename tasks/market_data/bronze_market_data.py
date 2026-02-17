@@ -8,7 +8,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from io import BytesIO, StringIO
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
@@ -356,9 +356,36 @@ def _extract_latest_market_date(existing_df: pd.DataFrame) -> date | None:
         return None
 
 
+def _resolve_market_backfill_range() -> tuple[Optional[date], Optional[date]]:
+    """Resolve market backfill date window with market-specific overrides."""
+    backfill_start, backfill_end = get_backfill_range()
+
+    override_start = os.getenv("MARKET_BACKFILL_START_DATE", "").strip()
+    override_end = os.getenv("MARKET_BACKFILL_END_DATE", "").strip()
+
+    if override_start:
+        parsed_start = pd.to_datetime(override_start, errors="coerce")
+        if pd.isna(parsed_start):
+            mdc.write_warning(f"Invalid MARKET_BACKFILL_START_DATE={override_start!r}; ignoring.")
+        else:
+            backfill_start = parsed_start
+
+    if override_end:
+        parsed_end = pd.to_datetime(override_end, errors="coerce")
+        if pd.isna(parsed_end):
+            mdc.write_warning(f"Invalid MARKET_BACKFILL_END_DATE={override_end!r}; ignoring.")
+        else:
+            backfill_end = parsed_end
+
+    return (
+        backfill_start.to_pydatetime().date() if backfill_start is not None else None,
+        backfill_end.to_pydatetime().date() if backfill_end is not None else None,
+    )
+
+
 def _resolve_fetch_window(*, existing_latest_date: date | None) -> tuple[str, str]:
     today = _utc_today()
-    backfill_start, backfill_end = get_backfill_range()
+    backfill_start, backfill_end = _resolve_market_backfill_range()
     if backfill_start or backfill_end:
         from_date = backfill_start or _FULL_HISTORY_START_DATE
         to_date = backfill_end or today.isoformat()
