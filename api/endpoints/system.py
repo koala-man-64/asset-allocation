@@ -409,6 +409,8 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         "X-System-Health-Cache": "hit" if result.cache_hit else "miss",
     }
     if result.refresh_error:
+        headers["X-System-Health-Cache-Degraded"] = "1"
+        # Backward-compatible legacy signal.
         headers["X-System-Health-Stale"] = "1"
     return JSONResponse(payload, headers=headers)
 
@@ -461,6 +463,7 @@ class DomainDateRange(BaseModel):
     min: Optional[str] = None
     max: Optional[str] = None
     column: Optional[str] = None
+    source: Optional[Literal["partition", "stats"]] = None
 
 
 class DomainMetadataResponse(BaseModel):
@@ -1062,6 +1065,37 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "SYSTEM_HEALTH_MAX_AGE_SECONDS": {
         "description": "Max staleness window before marking layers stale (integer seconds).",
         "example": "129600",
+    },
+    "SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON": {
+        "description": (
+            "JSON object of per-domain freshness overrides. "
+            "Keys support layer.domain, layer:domain, domain, layer.*, and *."
+        ),
+        "example": '{"silver.market":{"maxAgeSeconds":43200},"gold.*":{"maxAgeSeconds":172800}}',
+    },
+    "SYSTEM_HEALTH_MARKERS_ENABLED": {
+        "description": "When true, prefer system-health marker blobs before legacy freshness probes.",
+        "example": "true",
+    },
+    "SYSTEM_HEALTH_MARKERS_CONTAINER": {
+        "description": "Container name holding marker blobs (defaults to AZURE_CONTAINER_COMMON).",
+        "example": "common",
+    },
+    "SYSTEM_HEALTH_MARKERS_PREFIX": {
+        "description": "Prefix path for marker blobs inside marker container.",
+        "example": "system/health_markers",
+    },
+    "SYSTEM_HEALTH_MARKERS_FALLBACK_TO_LEGACY": {
+        "description": "When true, marker misses/errors fall back to legacy probes.",
+        "example": "true",
+    },
+    "SYSTEM_HEALTH_MARKERS_DUAL_READ": {
+        "description": "When true, run marker and legacy probes for parity checks.",
+        "example": "false",
+    },
+    "SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS": {
+        "description": "Allowed marker-vs-legacy timestamp skew before warning (integer seconds).",
+        "example": "21600",
     },
     "SYSTEM_HEALTH_VERBOSE_IDS": {
         "description": "Comma-separated list of alert IDs/components to include in verbose mode.",

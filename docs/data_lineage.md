@@ -72,4 +72,7 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 - Default runs yesterday’s month.
 - `MATERIALIZE_WINDOW_MONTHS` expands to the last N months (e.g., `3` → current + prior 2).
 - `MATERIALIZE_YEAR_MONTH` overrides with a single partition when set.
+- Successful Bronze/Silver/Gold jobs emit system-health markers under
+  `system/health_markers/<layer>/<domain>.json` in `AZURE_CONTAINER_COMMON`;
+  system-health probes use markers first (configurable fallback to legacy scans).
 

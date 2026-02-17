@@ -133,7 +133,7 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
         )
         return batch_summary
 
-async def main_async():
+async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
     
@@ -206,12 +206,22 @@ async def main_async():
             )
         )
         mdc.write_line("Bronze Ingestion Complete.")
+    has_failures = (
+        batch_exception_count > 0
+        or int(aggregate.get("save_failed", 0) or 0) > 0
+        or int(aggregate.get("api_error_batches", 0) or 0) > 0
+    )
+    return 1 if has_failures else 0
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env
+    from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = 'bronze-price-target-job'
     with mdc.JobLock("nasdaq", wait_timeout_seconds=None):
         with mdc.JobLock(job_name):
-            asyncio.run(main_async())
-            trigger_next_job_from_env()
+            exit_code = asyncio.run(main_async())
+            if exit_code == 0:
+                write_system_health_marker(layer="bronze", domain="price-target", job_name=job_name)
+                trigger_next_job_from_env()
+            raise SystemExit(exit_code)

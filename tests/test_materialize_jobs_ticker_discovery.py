@@ -425,6 +425,38 @@ def test_materialize_silver_price_target_by_date_prefers_container_listing(monke
     assert "Date" in captured["df"].columns
 
 
+def test_materialize_silver_price_target_by_date_normalizes_legacy_date_alias(monkeypatch):
+    from tasks.price_target_data import materialize_silver_price_target_by_date as job
+
+    cfg = job.MaterializeConfig(
+        container="targets",
+        year_month="2026-01",
+        output_path="price-target-data-by-date",
+        max_tickers=None,
+    )
+
+    monkeypatch.setattr(job, "_try_load_tickers_from_container", lambda _container, root_prefix: ["AAPL"])
+    monkeypatch.setattr(job, "_load_ticker_universe", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    def fake_load_delta(container, path, version=None, columns=None, filters=None):
+        assert (container, path) == ("targets", "price-target-data/AAPL")
+        return pd.DataFrame({"date": [pd.Timestamp("2026-01-15")], "feature": [2.0]})
+
+    captured: dict = {}
+
+    def fake_store_delta(df, **kwargs):
+        captured["df"] = df
+        captured.update(kwargs)
+
+    monkeypatch.setattr(job, "load_delta", fake_load_delta)
+    monkeypatch.setattr(job, "store_delta", fake_store_delta)
+
+    assert job.materialize_silver_targets_by_date(cfg) == 0
+    assert captured["partition_by"] == ["year_month", "Date"]
+    assert "Date" in captured["df"].columns
+    assert "date" not in captured["df"].columns
+
+
 def test_discover_silver_price_target_year_months_from_data(monkeypatch):
     from tasks.price_target_data import materialize_silver_price_target_by_date as job
 

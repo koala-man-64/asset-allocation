@@ -46,6 +46,10 @@ param(
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
+  [switch]$CorrectApiStorageAuthMode,
+  [ValidateSet("ManagedIdentity", "ConnectionString")]
+  [string]$ApiStorageAuthMode = "ManagedIdentity",
+  [string]$ApiContainerAppName = "",
   [string]$AzureClientId = "",
   [string]$AksClusterName = "",
   [string]$KubernetesNamespace = "k8se-apps",
@@ -271,6 +275,38 @@ if ((-not $PSBoundParameters.ContainsKey("ContainerAppsEnvironmentName")) -or [s
   }
 }
 
+if ((-not $PSBoundParameters.ContainsKey("ApiContainerAppName")) -or [string]::IsNullOrWhiteSpace($ApiContainerAppName)) {
+  $apiContainerAppFromEnv = Get-EnvValueFirst -Keys @("API_CONTAINER_APP_NAME", "CONTAINER_APP_API_NAME")
+  if (-not [string]::IsNullOrWhiteSpace($apiContainerAppFromEnv)) {
+    $ApiContainerAppName = $apiContainerAppFromEnv.Trim()
+    Write-Host "Using API_CONTAINER_APP_NAME from ${envLabel}: $ApiContainerAppName"
+  }
+  else {
+    $containerAppsRaw = Get-EnvValue -Key "SYSTEM_HEALTH_ARM_CONTAINERAPPS"
+    if (-not [string]::IsNullOrWhiteSpace($containerAppsRaw)) {
+      $containerApps = @(
+        $containerAppsRaw.Split(",") |
+          ForEach-Object { $_.Trim() } |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+      )
+      if ($containerApps.Count -gt 0) {
+        $apiMatch = $containerApps | Where-Object { $_.ToLowerInvariant().Contains("api") } | Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace($apiMatch)) {
+          $ApiContainerAppName = $apiMatch
+        }
+        else {
+          $ApiContainerAppName = $containerApps[0]
+        }
+        Write-Host "Using API container app inferred from SYSTEM_HEALTH_ARM_CONTAINERAPPS: $ApiContainerAppName"
+      }
+    }
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($ApiContainerAppName)) {
+  $ApiContainerAppName = "asset-allocation-api"
+}
+
 if ((-not $PSBoundParameters.ContainsKey("ServiceAccountName")) -or [string]::IsNullOrWhiteSpace($ServiceAccountName)) {
   $serviceAccountFromEnv = Get-EnvValue -Key "SERVICE_ACCOUNT_NAME"
   if ($serviceAccountFromEnv) {
@@ -343,6 +379,108 @@ function Assert-CommandExists {
 Assert-CommandExists -Name "az"
 if ($AksClusterName) {
   Assert-CommandExists -Name "kubectl"
+}
+
+function Set-ApiStorageAuthMode {
+  param(
+    [Parameter(Mandatory = $true)][string]$ResourceGroupName,
+    [Parameter(Mandatory = $true)][string]$ContainerAppName,
+    [Parameter(Mandatory = $true)][ValidateSet("ManagedIdentity", "ConnectionString")][string]$AuthMode,
+    [Parameter(Mandatory = $true)][string]$StorageAccount
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ContainerAppName)) {
+    throw "ApiContainerAppName is required when -CorrectApiStorageAuthMode is set."
+  }
+
+  $existingAppName = ""
+  try {
+    $existingAppName = az containerapp show `
+      --name $ContainerAppName `
+      --resource-group $ResourceGroupName `
+      --query "name" -o tsv --only-show-errors 2>$null
+  }
+  catch {
+    $existingAppName = ""
+  }
+
+  if ([string]::IsNullOrWhiteSpace($existingAppName)) {
+    throw "Container App '$ContainerAppName' was not found in resource group '$ResourceGroupName'."
+  }
+
+  $setEnvVars = @("AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount")
+  $removeEnvVars = @("AZURE_STORAGE_ACCOUNT_KEY", "AZURE_STORAGE_ACCESS_KEY", "AZURE_STORAGE_SAS_TOKEN")
+
+  if ($AuthMode -eq "ManagedIdentity") {
+    $removeEnvVars += "AZURE_STORAGE_CONNECTION_STRING"
+  }
+  elseif ($AuthMode -eq "ConnectionString") {
+    $connectionString = Get-EnvValue -Key "AZURE_STORAGE_CONNECTION_STRING"
+    if ([string]::IsNullOrWhiteSpace($connectionString)) {
+      $connectionString = az storage account show-connection-string `
+        --name $StorageAccount `
+        --resource-group $ResourceGroupName `
+        --query connectionString -o tsv --only-show-errors 2>$null
+    }
+    if ([string]::IsNullOrWhiteSpace($connectionString)) {
+      throw "ConnectionString auth mode requested, but no AZURE_STORAGE_CONNECTION_STRING was found in ${envLabel} and Azure CLI could not resolve one."
+    }
+
+    $secretName = "azure-storage-connection-string"
+    Write-Host "Setting storage connection string secret on container app '$ContainerAppName'..."
+    $secretArgs = @(
+      "containerapp", "secret", "set",
+      "--name", $ContainerAppName,
+      "--resource-group", $ResourceGroupName,
+      "--secrets", "$secretName=$connectionString",
+      "--only-show-errors"
+    )
+    & az @secretArgs 1>$null
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to set storage connection string secret on container app '$ContainerAppName'."
+    }
+
+    $setEnvVars += "AZURE_STORAGE_CONNECTION_STRING=secretref:$secretName"
+  }
+
+  Write-Host "Applying storage auth mode '$AuthMode' to container app '$ContainerAppName'..." -ForegroundColor Cyan
+  $setArgs = @(
+    "containerapp", "update",
+    "--name", $ContainerAppName,
+    "--resource-group", $ResourceGroupName,
+    "--set-env-vars"
+  )
+  $setArgs += $setEnvVars
+  $setArgs += "--only-show-errors"
+  & az @setArgs 1>$null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to update storage auth env vars on container app '$ContainerAppName'."
+  }
+
+  $removeTargets = $removeEnvVars | Sort-Object -Unique
+  if ($removeTargets.Count -gt 0) {
+    $removeArgs = @(
+      "containerapp", "update",
+      "--name", $ContainerAppName,
+      "--resource-group", $ResourceGroupName,
+      "--remove-env-vars"
+    )
+    $removeArgs += $removeTargets
+    $removeArgs += "--only-show-errors"
+    & az @removeArgs 1>$null
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to remove conflicting storage auth env vars on container app '$ContainerAppName'."
+    }
+  }
+
+  $authBindings = az containerapp show `
+    --name $ContainerAppName `
+    --resource-group $ResourceGroupName `
+    --query "properties.template.containers[0].env[?name=='AZURE_STORAGE_ACCOUNT_NAME' || name=='AZURE_STORAGE_CONNECTION_STRING' || name=='AZURE_STORAGE_ACCOUNT_KEY' || name=='AZURE_STORAGE_ACCESS_KEY' || name=='AZURE_STORAGE_SAS_TOKEN'].{name:name,secretRef:secretRef,value:value}" `
+    -o table --only-show-errors
+
+  Write-Host "Effective storage auth env bindings for '$ContainerAppName':"
+  Write-Host $authBindings
 }
 
 $acrLoginServer = ""
@@ -1085,6 +1223,21 @@ if ($ConfigureAcrPullIdentityOnAcaResources) {
   }
 }
 
+if ($CorrectApiStorageAuthMode) {
+  Write-Host ""
+  Write-Host "Correcting API storage auth mode..." -ForegroundColor Cyan
+  Set-ApiStorageAuthMode `
+    -ResourceGroupName $ResourceGroup `
+    -ContainerAppName $ApiContainerAppName `
+    -AuthMode $ApiStorageAuthMode `
+    -StorageAccount $StorageAccountName
+
+  Write-Host ""
+  Write-Host "Storage auth mode correction complete for '$ApiContainerAppName'." -ForegroundColor Green
+  Write-Host "Suggested verification:"
+  Write-Host "  az containerapp logs show --resource-group $ResourceGroup --name $ApiContainerAppName --tail 300 | rg 'Delta storage auth resolved|AuthenticationFailed|MAC signature'"
+}
+
 $outputs = [ordered]@{
   subscriptionId                          = $SubscriptionId
   location                                = $Location
@@ -1107,6 +1260,9 @@ $outputs = [ordered]@{
   acrPullAssignmentsSkipped               = $acrPullAssignmentsSkipped
   jobStartAssignmentsCreated              = $jobStartAssignmentsCreated
   jobStartAssignmentsSkipped              = $jobStartAssignmentsSkipped
+  apiStorageAuthCorrectionRequested       = [bool]$CorrectApiStorageAuthMode
+  apiStorageAuthMode                      = $ApiStorageAuthMode
+  apiContainerAppName                     = $ApiContainerAppName
   logAnalyticsWorkspaceName               = $LogAnalyticsWorkspaceName
   logAnalyticsCustomerId                  = $lawCustomerId
   containerAppsEnvironmentName            = $ContainerAppsEnvironmentName

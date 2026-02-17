@@ -93,6 +93,7 @@ export const DataService = {
         status: response.meta.status,
         durationMs: response.meta.durationMs,
         cacheHint: response.meta.cacheHint,
+        cacheDegraded: response.meta.cacheDegraded,
         stale: response.meta.stale,
         requestId: response.meta.requestId
       });

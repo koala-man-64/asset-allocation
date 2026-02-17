@@ -58,7 +58,7 @@ function formatDate(value: string | null | undefined): string {
 
 function dateRangeUnavailableReason(metadata: {
   type?: string | null;
-  dateRange?: { min?: string | null; max?: string | null } | null;
+  dateRange?: { min?: string | null; max?: string | null; source?: string | null } | null;
   warnings?: Array<string> | null;
 }): string | null {
   if (!metadata) {
@@ -80,8 +80,8 @@ function dateRangeUnavailableReason(metadata: {
     return null;
   }
 
-  if ((metadata.warnings || []).some((warning) => warning.toLowerCase().includes('date range')) {
-    return 'Date range stats were unavailable or not parseable for this delta domain.';
+  if ((metadata.warnings || []).some((warning) => warning.toLowerCase().includes('date range'))) {
+    return 'Date range was unavailable or could not be parsed for this delta domain.';
   }
   return 'Date range is unavailable for this delta domain.';
 }
@@ -195,6 +195,11 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
                   {metadata.dateRange?.column ? (
                     <div className="mt-1 text-[10px] text-mcm-walnut/50">
                       column: <span className={StatusTypos.MONO}>{metadata.dateRange.column}</span>
+                    </div>
+                  ) : null}
+                  {metadata.dateRange?.source ? (
+                    <div className="mt-1 text-[10px] text-mcm-walnut/50">
+                      source: <span className={StatusTypos.MONO}>{metadata.dateRange.source}</span>
                     </div>
                   ) : null}
                 </div>

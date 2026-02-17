@@ -1,0 +1,85 @@
+import pandas as pd
+
+from tasks.price_target_data import silver_price_target_data as silver
+
+
+def _sample_price_target_frame(date_value: pd.Timestamp) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "obs_date": [date_value],
+            "tp_mean_est": [150.0],
+            "tp_std_dev_est": [7.5],
+            "tp_high_est": [165.0],
+            "tp_low_est": [135.0],
+            "tp_cnt_est": [10.0],
+            "tp_cnt_est_rev_up": [3.0],
+            "tp_cnt_est_rev_down": [1.0],
+        }
+    )
+
+
+def test_process_blob_migrates_legacy_date_schema_when_blob_is_unchanged(monkeypatch):
+    today = pd.Timestamp.today().normalize()
+    blob_name = "price-target-data/AAPL.parquet"
+    blob = {"name": blob_name}
+    watermarks = {blob_name: {"etag": "abc123"}}
+
+    legacy_schema = [
+        "symbol",
+        "Date",
+        "tp_mean_est",
+        "tp_std_dev_est",
+        "tp_high_est",
+        "tp_low_est",
+        "tp_cnt_est",
+        "tp_cnt_est_rev_up",
+        "tp_cnt_est_rev_down",
+    ]
+    legacy_history = _sample_price_target_frame(today).rename(columns={"obs_date": "Date"})
+    legacy_history["symbol"] = "AAPL"
+
+    captured: dict = {}
+
+    monkeypatch.setattr(silver, "check_blob_unchanged", lambda _blob, _prior: (True, {"etag": "abc123"}))
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: _sample_price_target_frame(today))
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: legacy_schema)
+    monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: legacy_history.copy())
+    monkeypatch.setattr(
+        silver.delta_core,
+        "store_delta",
+        lambda df, *_args, **_kwargs: captured.setdefault("df", df.copy()),
+    )
+
+    status = silver.process_blob(blob, watermarks=watermarks)
+
+    assert status == "ok"
+    assert "df" in captured
+    assert "obs_date" in captured["df"].columns
+    assert "Date" not in captured["df"].columns
+    assert "updated_at" in watermarks[blob_name]
+
+
+def test_process_blob_skips_unchanged_when_schema_is_already_obs_date(monkeypatch):
+    blob_name = "price-target-data/AAPL.parquet"
+    blob = {"name": blob_name}
+
+    calls = {"read_raw_bytes": 0}
+
+    monkeypatch.setattr(silver, "check_blob_unchanged", lambda _blob, _prior: (True, {"etag": "same"}))
+    monkeypatch.setattr(
+        silver.delta_core,
+        "get_delta_schema_columns",
+        lambda *_args, **_kwargs: ["symbol", "obs_date", "tp_mean_est"],
+    )
+
+    def fake_read_raw_bytes(*_args, **_kwargs):
+        calls["read_raw_bytes"] += 1
+        return b"ignored"
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", fake_read_raw_bytes)
+
+    status = silver.process_blob(blob, watermarks={blob_name: {"etag": "same"}})
+
+    assert status == "skipped_unchanged"
+    assert calls["read_raw_bytes"] == 0

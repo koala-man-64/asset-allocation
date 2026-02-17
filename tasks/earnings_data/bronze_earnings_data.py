@@ -291,10 +291,12 @@ def main() -> int:
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import trigger_next_job_from_env
+    from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-earnings-job"
     with mdc.JobLock(job_name):
         exit_code = main()
         if exit_code == 0:
+            write_system_health_marker(layer="bronze", domain="earnings", job_name=job_name)
             trigger_next_job_from_env()
         raise SystemExit(exit_code)

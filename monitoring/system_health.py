@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig
+from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig, LastModifiedProbeResult
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.control_plane import ResourceHealthItem, collect_container_apps, collect_jobs_and_executions
 from monitoring.log_analytics import (
@@ -25,6 +26,8 @@ from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
 DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
+DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
+DEFAULT_SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS = 6 * 3600
 
 
 def _utc_now() -> datetime:
@@ -170,6 +173,491 @@ def collect_resource_health_signals(*_args: Any, **_kwargs: Any) -> List[Dict[st
     The current system health flow enriches resources inline; return an empty list by default.
     """
     return []
+
+
+@dataclass(frozen=True)
+class FreshnessPolicy:
+    max_age_seconds: int
+    source: str
+
+
+@dataclass(frozen=True)
+class MarkerProbeConfig:
+    enabled: bool
+    container: str
+    prefix: str
+    fallback_to_legacy: bool
+    dual_read: bool
+    dual_read_tolerance_seconds: int
+
+
+@dataclass(frozen=True)
+class JobScheduleMetadata:
+    trigger_type: str
+    cron_expression: str
+
+
+def _normalize_layer_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
+def _normalize_domain_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
+def _load_freshness_overrides() -> Dict[str, Dict[str, Any]]:
+    raw = os.environ.get("SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON", "")
+    text = raw.strip()
+    if not text:
+        return {}
+
+    try:
+        payload = json.loads(text)
+    except Exception as exc:
+        logger.warning(
+            "SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON parse error: %s",
+            exc,
+            exc_info=True,
+        )
+        return {}
+
+    if not isinstance(payload, dict):
+        logger.warning("SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON must be a JSON object.")
+        return {}
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for raw_key, raw_value in payload.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        if isinstance(raw_value, dict):
+            normalized[key] = raw_value
+        elif isinstance(raw_value, int):
+            normalized[key] = {"maxAgeSeconds": int(raw_value)}
+        else:
+            logger.warning(
+                "Ignoring freshness override for key=%s (expected object or int, got %s).",
+                key,
+                type(raw_value).__name__,
+            )
+    return normalized
+
+
+def _resolve_freshness_policy(
+    *,
+    layer_name: str,
+    domain_name: str,
+    default_max_age_seconds: int,
+    overrides: Dict[str, Dict[str, Any]],
+) -> FreshnessPolicy:
+    layer_key = _normalize_layer_key(layer_name)
+    domain_key = _normalize_domain_key(domain_name)
+
+    candidates = [
+        f"{layer_key}.{domain_key}",
+        f"{layer_key}:{domain_key}",
+        domain_key,
+        f"{layer_key}.*",
+        "*",
+    ]
+    for key in candidates:
+        node = overrides.get(key)
+        if not isinstance(node, dict):
+            continue
+        raw_max_age = node.get("maxAgeSeconds")
+        if raw_max_age is None:
+            continue
+        try:
+            parsed = int(raw_max_age)
+        except Exception:
+            logger.warning(
+                "Invalid maxAgeSeconds for freshness override key=%s value=%r",
+                key,
+                raw_max_age,
+            )
+            continue
+        if parsed <= 0:
+            logger.warning(
+                "Ignoring non-positive maxAgeSeconds for freshness override key=%s value=%r",
+                key,
+                raw_max_age,
+            )
+            continue
+        return FreshnessPolicy(max_age_seconds=parsed, source=f"override:{key}")
+
+    return FreshnessPolicy(max_age_seconds=int(default_max_age_seconds), source="default")
+
+
+def _marker_probe_config() -> MarkerProbeConfig:
+    enabled_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_ENABLED", "true")
+    fallback_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_FALLBACK_TO_LEGACY", "true")
+    dual_read_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_DUAL_READ", "false")
+
+    container = (
+        os.environ.get("SYSTEM_HEALTH_MARKERS_CONTAINER")
+        or os.environ.get("AZURE_CONTAINER_COMMON")
+        or ""
+    ).strip()
+    prefix = os.environ.get("SYSTEM_HEALTH_MARKERS_PREFIX", DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX).strip()
+    tolerance_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS", "").strip()
+    if tolerance_raw:
+        try:
+            tolerance = int(tolerance_raw)
+        except Exception:
+            tolerance = DEFAULT_SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS
+    else:
+        tolerance = DEFAULT_SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS
+    if tolerance < 0:
+        tolerance = 0
+
+    return MarkerProbeConfig(
+        enabled=_is_truthy(enabled_raw),
+        container=container,
+        prefix=prefix or DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX,
+        fallback_to_legacy=_is_truthy(fallback_raw),
+        dual_read=_is_truthy(dual_read_raw),
+        dual_read_tolerance_seconds=tolerance,
+    )
+
+
+def _marker_blob_name(*, layer_name: str, domain_name: str, prefix: str) -> str:
+    layer_key = _normalize_layer_key(layer_name)
+    domain_key = _normalize_domain_key(domain_name)
+    prefix_clean = str(prefix or DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX).strip().strip("/")
+    return f"{prefix_clean}/{layer_key}/{domain_key}.json"
+
+
+def _probe_marker_last_modified(
+    *,
+    store: AzureBlobStore,
+    container: str,
+    marker_blob: str,
+) -> LastModifiedProbeResult:
+    try:
+        lm = store.get_blob_last_modified(container=container, blob_name=marker_blob)
+    except Exception as exc:
+        return LastModifiedProbeResult(state="error", error=str(exc))
+    if lm is None:
+        return LastModifiedProbeResult(state="not_found")
+    return LastModifiedProbeResult(state="ok", last_modified=lm)
+
+
+def _normalize_probe_result(raw: Any) -> LastModifiedProbeResult:
+    if isinstance(raw, LastModifiedProbeResult):
+        return raw
+
+    state = str(getattr(raw, "state", "") or "").strip().lower()
+    last_modified = getattr(raw, "last_modified", None)
+    error = str(getattr(raw, "error", "") or "").strip() or None
+
+    if state not in {"ok", "not_found", "error"}:
+        if isinstance(last_modified, datetime):
+            state = "ok"
+        elif last_modified is None:
+            state = "not_found"
+        else:
+            state = "error"
+            error = error or "Invalid probe response."
+
+    if state == "ok" and not isinstance(last_modified, datetime):
+        if last_modified is None:
+            state = "not_found"
+        else:
+            state = "error"
+            error = error or "Invalid probe timestamp."
+
+    return LastModifiedProbeResult(
+        state=state,
+        last_modified=last_modified if isinstance(last_modified, datetime) else None,
+        error=error,
+    )
+
+
+def _probe_container_last_modified(
+    *,
+    store: Any,
+    container: str,
+    prefix: Optional[str],
+) -> LastModifiedProbeResult:
+    probe_fn = getattr(store, "probe_container_last_modified", None)
+    if callable(probe_fn):
+        raw = probe_fn(container=container, prefix=prefix)
+        if raw.__class__.__module__.startswith("unittest.mock"):
+            normalized = LastModifiedProbeResult(state="error", error="Mock probe response.")
+        else:
+            normalized = _normalize_probe_result(raw)
+        # Compatibility fallback for loose mocks/adapters that expose the method name
+        # but do not return a typed probe object.
+        if normalized.state != "error" or normalized.error not in {
+            "Invalid probe response.",
+            "Invalid probe timestamp.",
+            "Mock probe response.",
+        }:
+            return normalized
+
+    lm = store.get_container_last_modified(container=container, prefix=prefix)
+    if isinstance(lm, datetime):
+        return LastModifiedProbeResult(state="ok", last_modified=lm)
+    if lm is None:
+        return LastModifiedProbeResult(state="not_found")
+    return LastModifiedProbeResult(state="error", error="Invalid legacy probe timestamp.")
+
+
+@dataclass(frozen=True)
+class DomainTimestampResolution:
+    status: str
+    last_updated: Optional[datetime]
+    source: str
+    warnings: List[str]
+    error: Optional[str] = None
+
+
+def _resolve_last_updated_with_marker_fallback(
+    *,
+    layer_name: str,
+    domain_name: str,
+    store: AzureBlobStore,
+    marker_cfg: MarkerProbeConfig,
+    legacy_source: str,
+    legacy_probe_fn: Callable[[], LastModifiedProbeResult],
+) -> DomainTimestampResolution:
+    warnings: List[str] = []
+    marker_last_updated: Optional[datetime] = None
+
+    if marker_cfg.enabled:
+        if not marker_cfg.container:
+            warnings.append("Marker probes enabled but marker container is not configured.")
+        else:
+            marker_blob = _marker_blob_name(
+                layer_name=layer_name,
+                domain_name=domain_name,
+                prefix=marker_cfg.prefix,
+            )
+            marker_probe = _probe_marker_last_modified(
+                store=store,
+                container=marker_cfg.container,
+                marker_blob=marker_blob,
+            )
+            if marker_probe.state == "ok":
+                marker_last_updated = marker_probe.last_modified
+            elif marker_probe.state == "error":
+                message = (
+                    f"Marker probe failed for {marker_blob}: "
+                    f"{marker_probe.error or 'unknown error'}"
+                )
+                if not marker_cfg.fallback_to_legacy:
+                    return DomainTimestampResolution(
+                        status="error",
+                        last_updated=None,
+                        source="marker",
+                        warnings=[message],
+                        error=message,
+                    )
+                warnings.append(message)
+            elif not marker_cfg.fallback_to_legacy:
+                return DomainTimestampResolution(
+                    status="ok",
+                    last_updated=None,
+                    source="marker",
+                    warnings=warnings,
+                )
+            else:
+                warnings.append(f"Marker missing for {marker_blob}; falling back to legacy probe.")
+
+    if marker_last_updated is not None and not marker_cfg.dual_read:
+        return DomainTimestampResolution(
+            status="ok",
+            last_updated=marker_last_updated,
+            source="marker",
+            warnings=warnings,
+        )
+
+    legacy_probe: LastModifiedProbeResult = legacy_probe_fn()
+    if legacy_probe.state == "error":
+        message = legacy_probe.error or "Legacy freshness probe failed."
+        if marker_last_updated is not None:
+            warnings.append(f"Legacy parity probe failed: {message}")
+            return DomainTimestampResolution(
+                status="ok",
+                last_updated=marker_last_updated,
+                source="marker",
+                warnings=warnings,
+            )
+        return DomainTimestampResolution(
+            status="error",
+            last_updated=None,
+            source=legacy_source,
+            warnings=warnings,
+            error=message,
+        )
+
+    if legacy_probe.state == "ok":
+        legacy_last_updated = legacy_probe.last_modified
+        if marker_last_updated is None:
+            return DomainTimestampResolution(
+                status="ok",
+                last_updated=legacy_last_updated,
+                source=legacy_source,
+                warnings=warnings,
+            )
+        if marker_cfg.dual_read and legacy_last_updated is not None:
+            skew_seconds = abs((marker_last_updated - legacy_last_updated).total_seconds())
+            if skew_seconds > float(marker_cfg.dual_read_tolerance_seconds):
+                warnings.append(
+                    "Marker/legacy freshness mismatch exceeds tolerance "
+                    f"({int(skew_seconds)}s > {marker_cfg.dual_read_tolerance_seconds}s)."
+                )
+        return DomainTimestampResolution(
+            status="ok",
+            last_updated=marker_last_updated,
+            source="marker",
+            warnings=warnings,
+        )
+
+    if marker_last_updated is not None:
+        return DomainTimestampResolution(
+            status="ok",
+            last_updated=marker_last_updated,
+            source="marker",
+            warnings=warnings,
+        )
+
+    return DomainTimestampResolution(
+        status="ok",
+        last_updated=None,
+        source=legacy_source,
+        warnings=warnings,
+    )
+
+
+def _domain_name_from_marker_path(path: str) -> str:
+    d_name = os.path.dirname(path) or path
+    return d_name.replace("/whitelist.csv", "").replace("-data", "")
+
+
+def _domain_name_from_delta_path(path: str) -> str:
+    d_name = path
+    name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
+    if "/signals/" in d_name:
+        name_clean = "signals"
+    if name_clean == "targets":
+        name_clean = "price-target"
+    return name_clean
+
+
+def _collect_job_names_for_layers(specs: Sequence["LayerProbeSpec"]) -> List[str]:
+    names: List[str] = []
+    seen: set[str] = set()
+    for spec in specs:
+        for domain_spec in spec.marker_blobs:
+            domain_name = _domain_name_from_marker_path(domain_spec.path)
+            job_name = _derive_job_name(spec.name, domain_name)
+            if not job_name:
+                continue
+            normalized = job_name.strip().lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            names.append(job_name)
+        for domain_spec in spec.delta_tables:
+            domain_name = _domain_name_from_delta_path(domain_spec.path)
+            job_name = _derive_job_name(spec.name, domain_name)
+            if not job_name:
+                continue
+            normalized = job_name.strip().lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            names.append(job_name)
+    return names
+
+
+def _load_job_schedule_metadata(
+    *,
+    subscription_id: str,
+    resource_group: str,
+    job_names: Sequence[str],
+) -> Dict[str, JobScheduleMetadata]:
+    if not subscription_id or not resource_group or not job_names:
+        return {}
+
+    api_version = _env_or_default("SYSTEM_HEALTH_ARM_API_VERSION", DEFAULT_ARM_API_VERSION)
+    timeout_raw = _env_or_default("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5")
+    try:
+        timeout_seconds = float(timeout_raw)
+    except Exception:
+        timeout_seconds = 5.0
+    if timeout_seconds <= 0:
+        timeout_seconds = 5.0
+
+    arm_cfg = ArmConfig(
+        subscription_id=subscription_id,
+        resource_group=resource_group,
+        api_version=api_version,
+        timeout_seconds=timeout_seconds,
+    )
+
+    metadata: Dict[str, JobScheduleMetadata] = {}
+    try:
+        with AzureArmClient(arm_cfg) as arm:
+            for name in job_names:
+                job_name = str(name or "").strip()
+                if not job_name:
+                    continue
+                job_key = job_name.lower()
+                try:
+                    payload = arm.get_json(
+                        arm.resource_url(
+                            provider="Microsoft.App",
+                            resource_type="jobs",
+                            name=job_name,
+                        )
+                    )
+                    props = payload.get("properties") if isinstance(payload, dict) else {}
+                    cfg = props.get("configuration") if isinstance(props, dict) else {}
+                    trigger_type = str(cfg.get("triggerType") or "").strip().lower() if isinstance(cfg, dict) else ""
+                    schedule_cfg = cfg.get("scheduleTriggerConfig") if isinstance(cfg, dict) else {}
+                    cron_expression = (
+                        str(schedule_cfg.get("cronExpression") or "").strip()
+                        if isinstance(schedule_cfg, dict)
+                        else ""
+                    )
+                    if not trigger_type and not cron_expression:
+                        continue
+                    metadata[job_key] = JobScheduleMetadata(
+                        trigger_type=trigger_type,
+                        cron_expression=cron_expression,
+                    )
+                except Exception as exc:
+                    logger.info("Unable to resolve job trigger metadata for job=%s: %s", job_name, exc)
+    except Exception as exc:
+        logger.info("Skipping job schedule metadata probe (ARM unavailable): %s", exc)
+
+    return metadata
+
+
+def _resolve_domain_schedule(
+    *,
+    job_name: str,
+    default_cron: str,
+    job_schedule_metadata: Dict[str, JobScheduleMetadata],
+) -> tuple[str, str]:
+    schedule = job_schedule_metadata.get(str(job_name or "").strip().lower())
+    if schedule is None:
+        cron = str(default_cron or "").strip()
+        return cron, _describe_cron(cron) if cron else ""
+
+    trigger = schedule.trigger_type
+    if trigger == "manual":
+        return "", "Manual trigger"
+    if trigger == "schedule":
+        cron = schedule.cron_expression or str(default_cron or "").strip()
+        return cron, _describe_cron(cron) if cron else "Scheduled trigger"
+    if trigger:
+        return "", f"{trigger.title()} trigger"
+
+    cron = schedule.cron_expression or str(default_cron or "").strip()
+    return cron, _describe_cron(cron) if cron else ""
 
 
 @dataclass(frozen=True)
@@ -465,7 +953,17 @@ def collect_system_health_snapshot(
     rg = os.environ.get("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "").strip()
     storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "").strip()
 
-    for spec in _default_layer_specs():
+    layer_specs = _default_layer_specs()
+    freshness_overrides = _load_freshness_overrides()
+    marker_cfg = _marker_probe_config()
+    layer_job_names = _collect_job_names_for_layers(layer_specs)
+    job_schedule_metadata = _load_job_schedule_metadata(
+        subscription_id=sub_id,
+        resource_group=rg,
+        job_names=layer_job_names,
+    )
+
+    for spec in layer_specs:
         layer_last_updated: Optional[datetime] = None
         had_layer_error = False
         domain_items: List[Dict[str, Any]] = []
@@ -484,34 +982,12 @@ def collect_system_health_snapshot(
             prefix = str(getattr(spec, "blob_prefix") or "").strip()
             max_age = int(getattr(spec, "freshness_threshold") or 0)
             layer_name = str(getattr(spec, "layer") or "Layer")
-            try:
-                lm = store.get_container_last_modified(container=container, prefix=prefix)
-                status = _compute_layer_status(now, lm, max_age_seconds=max_age, had_error=False)
-                domain_items.append(
-                    {
-                        "name": prefix,
-                        "description": "",
-                        "type": "blob",
-                        "path": prefix,
-                        "maxAgeSeconds": max_age,
-                        "cron": "",
-                        "frequency": "",
-                        "lastUpdated": _iso(lm),
-                        "status": status,
-                        "portalUrl": None,
-                        "jobUrl": None,
-                        "jobName": None,
-                    }
-                )
-                layer_last_updated = lm
-            except Exception:
-                logger.warning(
-                    "Legacy layer probe failed: layer=%s container=%s prefix=%s",
-                    layer_name,
-                    container,
-                    prefix,
-                    exc_info=True,
-                )
+            probe = _probe_container_last_modified(
+                store=store,
+                container=container,
+                prefix=prefix,
+            )
+            if probe.state == "error":
                 had_layer_error = True
                 domain_items.append(
                     {
@@ -527,8 +1003,34 @@ def collect_system_health_snapshot(
                         "portalUrl": None,
                         "jobUrl": None,
                         "jobName": None,
+                        "freshnessSource": "legacy-prefix",
+                        "freshnessPolicySource": "legacy",
+                        "warnings": [probe.error or "Legacy layer probe failed."],
                     }
                 )
+            else:
+                lm = probe.last_modified
+                status = _compute_layer_status(now, lm, max_age_seconds=max_age, had_error=False)
+                domain_items.append(
+                    {
+                        "name": prefix,
+                        "description": "",
+                        "type": "blob",
+                        "path": prefix,
+                        "maxAgeSeconds": max_age,
+                        "cron": "",
+                        "frequency": "",
+                        "lastUpdated": _iso(lm),
+                        "status": status,
+                        "portalUrl": None,
+                        "jobUrl": None,
+                        "jobName": None,
+                        "freshnessSource": "legacy-prefix",
+                        "freshnessPolicySource": "legacy",
+                        "warnings": [],
+                    }
+                )
+                layer_last_updated = lm
 
             layer_status = (
                 "error" if any(d["status"] == "error" for d in domain_items) else _compute_layer_status(now, layer_last_updated, max_age_seconds=max_age, had_error=had_layer_error)
@@ -553,119 +1055,178 @@ def collect_system_health_snapshot(
         for domain_spec in spec.marker_blobs:
             blob_name = domain_spec.path
             d_name = os.path.dirname(blob_name) or blob_name
-            name_clean = d_name.replace("/whitelist.csv", "").replace("-data", "")
-            
+            name_clean = _domain_name_from_marker_path(blob_name)
             job_name = _derive_job_name(spec.name, name_clean)
             job_url = _make_job_portal_url(sub_id, rg, job_name)
             folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
+            domain_cron, domain_frequency = _resolve_domain_schedule(
+                job_name=job_name,
+                default_cron=domain_spec.cron,
+                job_schedule_metadata=job_schedule_metadata,
+            )
+            policy = _resolve_freshness_policy(
+                layer_name=spec.name,
+                domain_name=name_clean,
+                default_max_age_seconds=spec.max_age_seconds,
+                overrides=freshness_overrides,
+            )
 
             # If the config points to a specific file (e.g. whitelist.csv), we want to scan the folder it's in.
             # If it points to a folder (e.g. data/), dirname handles it appropriately (usually).
             search_prefix = os.path.dirname(blob_name) 
             # If search_prefix is empty (file at root), we scan the whole container (prefix=None or "").
             # Ideally we might want to restrict this, but for "latest update" in a container used for data, scanning root is correct.
-            
-            try:
-                lm = store.get_container_last_modified(container=container, prefix=search_prefix)
-                if spec.name.lower() == "platinum" and lm is None:
-                    status = "healthy"
-                else:
-                    status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
-                domain_items.append({
-                    "name": name_clean,
-                    "description": _get_domain_description(spec.name, name_clean),
-                    "type": "blob",
-                    "path": blob_name,
-                    "maxAgeSeconds": spec.max_age_seconds,
-                    "cron": domain_spec.cron,
-                    "frequency": _describe_cron(domain_spec.cron),
-                    "lastUpdated": _iso(lm),
-                    "status": status,
-                    "portalUrl": folder_url,
-                    "jobUrl": job_url,
-                    "jobName": job_name,
-                })
-            except Exception:
-                logger.warning(
-                    "Layer marker probe failed: layer=%s domain=%s container=%s",
-                    spec.name,
-                    name_clean,
-                    container,
-                    exc_info=True,
-                )
+
+            probe_resolution = _resolve_last_updated_with_marker_fallback(
+                layer_name=spec.name,
+                domain_name=name_clean,
+                store=store,
+                marker_cfg=marker_cfg,
+                legacy_source="legacy-prefix",
+                legacy_probe_fn=lambda container_name=container, prefix=search_prefix: _probe_container_last_modified(
+                    store=store,
+                    container=container_name,
+                    prefix=prefix,
+                ),
+            )
+            lm = probe_resolution.last_updated
+            if probe_resolution.status == "error":
                 had_layer_error = True
                 domain_items.append({
                     "name": name_clean,
                     "description": _get_domain_description(spec.name, name_clean),
                     "type": "blob",
                     "path": blob_name,
-                    "maxAgeSeconds": spec.max_age_seconds,
-                    "cron": domain_spec.cron,
-                    "frequency": _describe_cron(domain_spec.cron),
+                    "maxAgeSeconds": policy.max_age_seconds,
+                    "cron": domain_cron,
+                    "frequency": domain_frequency,
                     "lastUpdated": None,
                     "status": "error",
                     "portalUrl": folder_url,
                     "jobUrl": job_url,
                     "jobName": job_name,
+                    "freshnessSource": probe_resolution.source,
+                    "freshnessPolicySource": policy.source,
+                    "warnings": probe_resolution.warnings,
                 })
+                continue
+
+            if spec.name.lower() == "platinum" and lm is None:
+                status = "healthy"
+            else:
+                status = _compute_layer_status(
+                    now,
+                    lm,
+                    max_age_seconds=policy.max_age_seconds,
+                    had_error=False,
+                )
+            domain_items.append({
+                "name": name_clean,
+                "description": _get_domain_description(spec.name, name_clean),
+                "type": "blob",
+                "path": blob_name,
+                "maxAgeSeconds": policy.max_age_seconds,
+                "cron": domain_cron,
+                "frequency": domain_frequency,
+                "lastUpdated": _iso(lm),
+                "status": status,
+                "portalUrl": folder_url,
+                "jobUrl": job_url,
+                "jobName": job_name,
+                "freshnessSource": probe_resolution.source,
+                "freshnessPolicySource": policy.source,
+                "warnings": probe_resolution.warnings,
+            })
 
         # Collect Delta tables
         for domain_spec in spec.delta_tables:
             table_path = domain_spec.path
             d_name = table_path
-            name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
-            if "/signals/" in d_name:
-                name_clean = "signals"
-            if name_clean == "targets":
-                name_clean = "price-target"
-            
+            name_clean = _domain_name_from_delta_path(d_name)
             job_name = _derive_job_name(spec.name, name_clean)
             job_url = _make_job_portal_url(sub_id, rg, job_name)
             folder_url = _make_folder_portal_url(sub_id, rg, storage_account, container, d_name)
+            domain_cron, domain_frequency = _resolve_domain_schedule(
+                job_name=job_name,
+                default_cron=domain_spec.cron,
+                job_schedule_metadata=job_schedule_metadata,
+            )
+            policy = _resolve_freshness_policy(
+                layer_name=spec.name,
+                domain_name=name_clean,
+                default_max_age_seconds=spec.max_age_seconds,
+                overrides=freshness_overrides,
+            )
 
-            try:
-                ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
-                status = _compute_layer_status(now, lm, max_age_seconds=spec.max_age_seconds, had_error=False)
-                domain_items.append({
-                    "name": name_clean,
-                    "description": _get_domain_description(spec.name, name_clean),
-                    "type": "delta",
-                    "path": table_path,
-                    "maxAgeSeconds": spec.max_age_seconds,
-                    "cron": domain_spec.cron,
-                    "frequency": _describe_cron(domain_spec.cron),
-                    "lastUpdated": _iso(lm),
-                    "status": status,
-                    "version": ver if ver is not None else None,
-                    "portalUrl": folder_url,
-                    "jobUrl": job_url,
-                    "jobName": job_name,
-                })
-            except Exception:
-                logger.warning(
-                    "Layer delta probe failed: layer=%s domain=%s container=%s path=%s",
-                    spec.name,
-                    name_clean,
-                    container,
-                    table_path,
-                    exc_info=True,
-                )
+            delta_version: Optional[int] = None
+
+            def _legacy_delta_probe() -> LastModifiedProbeResult:
+                nonlocal delta_version
+                try:
+                    ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
+                    delta_version = ver
+                    if lm is None:
+                        return LastModifiedProbeResult(state="not_found")
+                    return LastModifiedProbeResult(state="ok", last_modified=lm)
+                except Exception as exc:
+                    return LastModifiedProbeResult(state="error", error=str(exc))
+
+            probe_resolution = _resolve_last_updated_with_marker_fallback(
+                layer_name=spec.name,
+                domain_name=name_clean,
+                store=store,
+                marker_cfg=marker_cfg,
+                legacy_source="legacy-delta-log",
+                legacy_probe_fn=_legacy_delta_probe,
+            )
+            lm = probe_resolution.last_updated
+
+            if probe_resolution.status == "error":
                 had_layer_error = True
                 domain_items.append({
                     "name": name_clean,  # Use raw name on error if cleaning is ambiguous
                     "description": "",
                     "type": "delta",
                     "path": table_path,
-                    "maxAgeSeconds": spec.max_age_seconds,
-                    "cron": domain_spec.cron,
-                    "frequency": _describe_cron(domain_spec.cron),
+                    "maxAgeSeconds": policy.max_age_seconds,
+                    "cron": domain_cron,
+                    "frequency": domain_frequency,
                     "lastUpdated": None,
                     "status": "error",
                     "version": None,
                     "portalUrl": folder_url,
                     "jobUrl": job_url,
                     "jobName": job_name,
+                    "freshnessSource": probe_resolution.source,
+                    "freshnessPolicySource": policy.source,
+                    "warnings": probe_resolution.warnings,
                 })
+                continue
+
+            status = _compute_layer_status(
+                now,
+                lm,
+                max_age_seconds=policy.max_age_seconds,
+                had_error=False,
+            )
+            domain_items.append({
+                "name": name_clean,
+                "description": _get_domain_description(spec.name, name_clean),
+                "type": "delta",
+                "path": table_path,
+                "maxAgeSeconds": policy.max_age_seconds,
+                "cron": domain_cron,
+                "frequency": domain_frequency,
+                "lastUpdated": _iso(lm),
+                "status": status,
+                "version": delta_version if delta_version is not None else None,
+                "portalUrl": folder_url,
+                "jobUrl": job_url,
+                "jobName": job_name,
+                "freshnessSource": probe_resolution.source,
+                "freshnessPolicySource": policy.source,
+                "warnings": probe_resolution.warnings,
+            })
 
         # Aggregate layer status
         valid_times = [

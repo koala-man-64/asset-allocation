@@ -667,13 +667,15 @@ if __name__ == "__main__":
         discover_year_months_from_data,
         main as by_date_main,
     )
+    from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "gold-finance-job"
-    raise SystemExit(
-        run_partner_then_by_date(
-            job_name=job_name,
-            partner_main=main,
-            by_date_main=by_date_main,
-            year_months_provider=discover_year_months_from_data,
-        )
+    exit_code = run_partner_then_by_date(
+        job_name=job_name,
+        partner_main=main,
+        by_date_main=by_date_main,
+        year_months_provider=discover_year_months_from_data,
     )
+    if exit_code == 0:
+        write_system_health_marker(layer="gold", domain="finance", job_name=job_name)
+    raise SystemExit(exit_code)

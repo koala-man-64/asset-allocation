@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +11,9 @@ from azure.core.exceptions import ResourceNotFoundError
 from core.blob_storage import BlobStorageClient
 
 from monitoring.delta_log import find_latest_delta_version, parse_last_checkpoint_version
+
+
+logger = logging.getLogger("asset_allocation.monitoring.azure_blob_store")
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,13 @@ class AzureBlobStoreConfig:
             connection_string_raw.strip() if connection_string_raw and connection_string_raw.strip() else None
         )
         return AzureBlobStoreConfig(account_name=account_name, connection_string=connection_string)
+
+
+@dataclass(frozen=True)
+class LastModifiedProbeResult:
+    state: str
+    last_modified: Optional[datetime] = None
+    error: Optional[str] = None
 
 
 class AzureBlobStore:
@@ -104,10 +115,14 @@ class AzureBlobStore:
         latest_blob = f"{delta_prefix}{latest_version:020d}.json"
         return latest_version, self.get_blob_last_modified(container=container, blob_name=latest_blob)
 
-    def get_container_last_modified(self, *, container: str, prefix: Optional[str] = None) -> Optional[datetime]:
+    def probe_container_last_modified(
+        self, *, container: str, prefix: Optional[str] = None
+    ) -> LastModifiedProbeResult:
         """
-        Recursively finds the latest last_modified timestamp among all blobs in the container 
+        Recursively probes the latest `last_modified` among blobs in the container
         (optionally filtered by prefix).
+
+        Returns a typed state so callers can separate "not found" from real probe errors.
         """
         client = self._client(container)
         try:
@@ -115,16 +130,30 @@ class AzureBlobStore:
             # effectively recursing into all "subfolders" (virtual directories).
             # We iterate directly to find the max last_modified without loading all into memory.
             blobs_iter = client.container_client.list_blobs(name_starts_with=prefix)
-            
+
             max_lm: Optional[datetime] = None
             for blob in blobs_iter:
                 lm = blob.last_modified
-                if lm:
-                    if max_lm is None or lm > max_lm:
-                        max_lm = lm
-            
-            return max_lm
-        except Exception:
-            # If listing fails (e.g. permission error, container specific error), return None
-            return None
+                if lm and (max_lm is None or lm > max_lm):
+                    max_lm = lm
+
+            if max_lm is None:
+                return LastModifiedProbeResult(state="not_found")
+            return LastModifiedProbeResult(state="ok", last_modified=max_lm)
+        except Exception as exc:
+            logger.warning(
+                "Container last-modified probe failed: container=%s prefix=%s error=%s",
+                container,
+                prefix or "",
+                exc,
+                exc_info=True,
+            )
+            return LastModifiedProbeResult(state="error", error=str(exc))
+
+    def get_container_last_modified(self, *, container: str, prefix: Optional[str] = None) -> Optional[datetime]:
+        """
+        Backward-compatible helper that returns only the timestamp.
+        """
+        result = self.probe_container_last_modified(container=container, prefix=prefix)
+        return result.last_modified
 

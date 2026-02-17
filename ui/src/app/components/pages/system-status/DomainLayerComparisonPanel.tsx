@@ -86,9 +86,9 @@ function dateRangeUnavailableReason(metadata: DomainMetadata | undefined): strin
 
   if (metadata.type === 'delta') {
     if ((metadata.warnings || []).some((warning) => warning.toLowerCase().includes('date range'))) {
-      return 'Date range stats are unavailable or could not be parsed for this delta domain.';
+      return 'Date range is unavailable or could not be parsed for this delta domain.';
     }
-    return 'Date range stats were not detected for this delta domain.';
+    return 'Date range was not detected for this delta domain.';
   }
 
   return 'Date range is not available for this metadata source.';
@@ -426,6 +426,11 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                 </div>
                                 {dateRangeReason ? (
                                   <div className="text-[10px] text-mcm-walnut/55">{dateRangeReason}</div>
+                                ) : null}
+                                {metadata.dateRange?.source ? (
+                                  <div className="text-[10px] text-mcm-walnut/50">
+                                    date range source: <span className={StatusTypos.MONO}>{metadata.dateRange.source}</span>
+                                  </div>
                                 ) : null}
                                 {symbolComparison && rangeComparison ? (
                                   <div className={`${StatusTypos.MONO} text-[10px]`}>

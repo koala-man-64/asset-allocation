@@ -141,6 +141,7 @@ export interface DomainDateRange {
   min?: string | null;
   max?: string | null;
   column?: string | null;
+  source?: 'partition' | 'stats' | null;
 }
 
 export interface DomainMetadata {

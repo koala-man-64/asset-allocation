@@ -556,7 +556,7 @@ export function DataQualityPage() {
                 <>
                   {' '}
                   • Cache: {healthMeta.cacheHint || 'n/a'}
-                  {healthMeta.stale ? ' • STALE SNAPSHOT' : ''}
+                  {healthMeta.cacheDegraded || healthMeta.stale ? ' • CACHE-DEGRADED SNAPSHOT' : ''}
                   {healthMeta.requestId ? ` • Req ${healthMeta.requestId.slice(0, 8)}` : ''}
                 </>
               )}

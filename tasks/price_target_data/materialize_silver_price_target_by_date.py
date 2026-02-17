@@ -17,7 +17,7 @@ from core.core import write_line, write_warning
 from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
 
-_DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("Date", "date", "obs_date")
+_DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("obs_date", "Date", "date")
 
 
 @dataclass(frozen=True)
@@ -157,9 +157,7 @@ def _build_config(argv: Optional[List[str]]) -> MaterializeConfig:
     )
 
 
-def discover_year_months_from_data(
-    *, container: Optional[str] = None, max_tickers: Optional[int] = None
-) -> List[str]:
+def discover_year_months_from_data(*, container: Optional[str] = None, max_tickers: Optional[int] = None) -> List[str]:
     container = _resolve_container(container)
     tickers_from_container = _try_load_tickers_from_container(container, root_prefix="price-target-data")
     if tickers_from_container is None:
@@ -170,7 +168,7 @@ def discover_year_months_from_data(
         ticker_source = "container_listing"
 
     if max_tickers is not None:
-        tickers = tickers[: max_tickers]
+        tickers = tickers[:max_tickers]
 
     if not tickers:
         write_line(f"No per-ticker price target tables found (source={ticker_source}); no year_months discovered.")
@@ -225,35 +223,34 @@ def materialize_silver_targets_by_date(cfg: MaterializeConfig) -> int:
         if df is None or df.empty:
             continue
 
-        # Silver price target tables use `obs_date` (vendor convention). Older tables may use `Date`/`date`.
-        if "Date" in df.columns:
-            date_col = "Date"
+        # Canonical per-ticker silver schema is `obs_date`; normalize legacy aliases to `Date` for by-date output.
+        if "obs_date" in df.columns:
+            source_date_col = "obs_date"
+        elif "Date" in df.columns:
+            source_date_col = "Date"
         elif "date" in df.columns:
-            date_col = "date"
-        elif "obs_date" in df.columns:
-            # Normalize to a canonical `Date` column for by-date tables (aligns with other Silver domains).
-            df = df.copy()
-            df["Date"] = pd.to_datetime(df["obs_date"], errors="coerce").dt.normalize()
-            df = df.drop(columns=["obs_date"])
-            date_col = "Date"
+            source_date_col = "date"
         else:
             continue
 
         df = df.copy()
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.normalize()
-        df = df.dropna(subset=[date_col])
+        df["Date"] = pd.to_datetime(df[source_date_col], errors="coerce").dt.normalize()
+        for legacy_col in ("obs_date", "date"):
+            if legacy_col in df.columns:
+                df = df.drop(columns=[legacy_col])
+        df = df.dropna(subset=["Date"])
         if df.empty:
             continue
 
-        df = df[(df[date_col] >= start) & (df[date_col] < end)]
+        df = df[(df["Date"] >= start) & (df["Date"] < end)]
         if df.empty:
             continue
-            
+
         # Inject symbol if missing
         if "Symbol" not in df.columns and "symbol" not in df.columns:
             df["symbol"] = ticker
 
-        df["year_month"] = df[date_col].dt.strftime("%Y-%m")
+        df["year_month"] = df["Date"].dt.strftime("%Y-%m")
         df = df[df["year_month"] == cfg.year_month]
         if df.empty:
             continue
@@ -265,7 +262,6 @@ def materialize_silver_targets_by_date(cfg: MaterializeConfig) -> int:
         return 0
 
     out = pd.concat(frames, ignore_index=True)
-    date_col = "Date" if "Date" in out.columns else "date"
     predicate = f"year_month = '{cfg.year_month}'"
 
     store_delta(
@@ -273,7 +269,7 @@ def materialize_silver_targets_by_date(cfg: MaterializeConfig) -> int:
         container=cfg.container,
         path=cfg.output_path,
         mode="overwrite",
-        partition_by=["year_month", date_col],
+        partition_by=["year_month", "Date"],
         merge_schema=True,
         predicate=predicate,
     )

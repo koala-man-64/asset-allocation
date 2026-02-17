@@ -384,6 +384,79 @@ def _to_iso_datetime(value: Optional[datetime]) -> Optional[str]:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _pick_date_like_column(candidates: List[str]) -> Optional[str]:
+    if not candidates:
+        return None
+
+    date_like = [c for c in candidates if "date" in c.lower()]
+    if date_like:
+        if "Date" in date_like:
+            return "Date"
+        if "date" in date_like:
+            return "date"
+        date_like.sort(key=str.lower)
+        return date_like[0]
+
+    candidates.sort(key=str.lower)
+    return candidates[0]
+
+
+def _collect_partition_date_bounds(rows: List[Dict[str, Any]]) -> tuple[
+    Optional[str],
+    Optional[datetime],
+    Optional[datetime],
+    bool,
+]:
+    """
+    Extract date bounds from partition metadata in add-action rows.
+
+    Supports both flattened and non-flattened delta action payloads.
+    """
+    partition_seen = False
+    candidates: Dict[str, list[datetime]] = {}
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        partition_payloads: Dict[str, Any] = {}
+
+        if isinstance(row.get("partition"), dict):
+            partition_seen = True
+            partition_payloads.update(row.get("partition") or {})
+
+        if isinstance(row.get("partition_values"), dict):
+            partition_seen = True
+            partition_payloads.update(row.get("partition_values") or {})
+
+        for key, value in row.items():
+            if not isinstance(key, str):
+                continue
+            if key.startswith("partition."):
+                partition_seen = True
+                partition_payloads[key.split(".", 1)[1]] = value
+
+        for partition_key, raw_value in partition_payloads.items():
+            parsed = _coerce_datetime(raw_value)
+            if parsed is None:
+                continue
+            bucket = candidates.setdefault(str(partition_key), [])
+            bucket.append(parsed)
+
+    if not candidates:
+        return None, None, None, partition_seen
+
+    column = _pick_date_like_column(list(candidates.keys()))
+    if column is None:
+        return None, None, None, partition_seen
+
+    values = candidates.get(column, [])
+    if not values:
+        return column, None, None, partition_seen
+
+    return column, min(values), max(values), partition_seen
+
+
 def _pick_date_column(rows: List[Dict[str, Any]]) -> Optional[str]:
     if not rows:
         return None
@@ -424,6 +497,7 @@ def collect_delta_table_metadata(
 
     version = int(dt.version())
     add_actions = dt.get_add_actions(flatten=True).to_struct_array().to_pylist()
+    # Keep using flattened actions for min/max stats and partition.* fields.
 
     total_rows = 0
     total_bytes = 0
@@ -434,6 +508,26 @@ def collect_delta_table_metadata(
         size_bytes = action.get("size_bytes")
         if isinstance(size_bytes, int):
             total_bytes += size_bytes
+
+    partition_date_range: Optional[Dict[str, Any]] = None
+    partition_column, partition_min_dt, partition_max_dt, partition_seen = _collect_partition_date_bounds(add_actions)
+
+    if partition_column is None and not partition_seen:
+        raw_add_actions = dt.get_add_actions(flatten=False).to_struct_array().to_pylist()
+        (
+            partition_column,
+            partition_min_dt,
+            partition_max_dt,
+            partition_seen,
+        ) = _collect_partition_date_bounds(raw_add_actions)
+
+    if partition_column:
+        partition_date_range = {
+            "min": _to_iso_datetime(partition_min_dt),
+            "max": _to_iso_datetime(partition_max_dt),
+            "column": partition_column,
+            "source": "partition",
+        }
 
     date_column = _pick_date_column(add_actions)
     min_dt: Optional[datetime] = None
@@ -452,19 +546,28 @@ def collect_delta_table_metadata(
             "min": _to_iso_datetime(min_dt),
             "max": _to_iso_datetime(max_dt),
             "column": date_column,
+            "source": "stats",
         }
         if date_column and (min_dt is not None or max_dt is not None)
         else None
     )
 
-    if date_column and date_range is None:
-        local_warnings.append(
-            f"Date range stats for table={table_path} could not be parsed from min/max metadata."
-        )
-    if not date_column:
-        local_warnings.append(
-            f"Date range stats for table={table_path} were not found in table metadata."
-        )
+    if partition_date_range is not None:
+        date_range = partition_date_range
+
+    if date_range is None:
+        if partition_seen:
+            local_warnings.append(
+                f"Date range for table={table_path} was not parseable from partition and stats metadata."
+            )
+        elif date_column is None:
+            local_warnings.append(
+                f"Date range stats for table={table_path} were not found in table metadata."
+            )
+        else:
+            local_warnings.append(
+                f"Date range stats for table={table_path} could not be parsed from min/max metadata."
+            )
 
     return {
         "deltaVersion": version,

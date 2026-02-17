@@ -22,6 +22,8 @@ export interface RequestMeta {
   durationMs: number;
   url: string;
   cacheHint?: string;
+  cacheDegraded?: boolean;
+  // Legacy alias retained for backward compatibility.
   stale?: boolean;
 }
 
@@ -97,7 +99,12 @@ async function performRequest<T>(
       durationMs,
       url: response.url || url,
       cacheHint: response.headers.get('X-System-Health-Cache') || undefined,
-      stale: response.headers.get('X-System-Health-Stale') === '1'
+      cacheDegraded:
+        response.headers.get('X-System-Health-Cache-Degraded') === '1' ||
+        response.headers.get('X-System-Health-Stale') === '1',
+      stale:
+        response.headers.get('X-System-Health-Cache-Degraded') === '1' ||
+        response.headers.get('X-System-Health-Stale') === '1'
     }
   };
 }

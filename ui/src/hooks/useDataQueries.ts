@@ -75,6 +75,7 @@ export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
           alerts: response.data?.alerts?.length ?? 0,
           durationMs: response.meta.durationMs,
           cacheHint: response.meta.cacheHint,
+          cacheDegraded: response.meta.cacheDegraded,
           stale: response.meta.stale,
           requestId: response.meta.requestId
         });
@@ -97,6 +98,7 @@ export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
         alerts: query.data.alerts?.length ?? 0,
         requestId: lastSystemHealthMeta?.requestId,
         cacheHint: lastSystemHealthMeta?.cacheHint,
+        cacheDegraded: lastSystemHealthMeta?.cacheDegraded,
         stale: lastSystemHealthMeta?.stale
       });
     }
