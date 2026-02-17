@@ -13,6 +13,7 @@ import {
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
 import { StatusTypos } from './StatusTokens';
+import { getDomainOrderEntries } from './domainOrdering';
 import {
   AlertTriangle,
   CalendarDays,
@@ -252,19 +253,7 @@ export function StatusOverview({
     .toUpperCase();
 
   const domainNames = useMemo(() => {
-    const seen = new Set<string>();
-    const names: string[] = [];
-
-    for (const layer of dataLayers) {
-      for (const domain of layer.domains || []) {
-        if (!domain?.name) continue;
-        if (seen.has(domain.name)) continue;
-        seen.add(domain.name);
-        names.push(domain.name);
-      }
-    }
-
-    return names;
+    return getDomainOrderEntries(dataLayers).map((entry) => entry.label);
   }, [dataLayers]);
 
   const jobIndex = useMemo(() => {
@@ -330,7 +319,12 @@ export function StatusOverview({
     for (const layer of dataLayers) {
       const domainIndex = new Map<string, DataDomain>();
       for (const domain of layer.domains || []) {
-        if (domain?.name) domainIndex.set(domain.name, domain);
+        if (!domain?.name) continue;
+        const domainKey = normalizeDomainKey(String(domain.name).trim());
+        if (!domainKey) continue;
+        if (!domainIndex.has(domainKey)) {
+          domainIndex.set(domainKey, domain);
+        }
       }
       index.set(layer.name, domainIndex);
     }
@@ -795,7 +789,7 @@ export function StatusOverview({
             </TableHeader>
 
             <TableBody>
-              {domainNames.map((domainName) => {
+                {domainNames.map((domainName) => {
                 const domainKey = normalizeDomainKey(domainName);
                 return (
                   <TableRow
@@ -807,7 +801,7 @@ export function StatusOverview({
                     </TableCell>
 
                     {dataLayers.map((layer) => {
-                      const domain = domainsByLayer.get(layer.name)?.get(domainName);
+                      const domain = domainsByLayer.get(layer.name)?.get(domainKey);
                       const layerKey = normalizeLayerKey(layer.name);
 
                       return (

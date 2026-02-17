@@ -3,6 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/utils';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
+import { getDomainOrderEntries } from '@/app/components/pages/system-status/domainOrdering';
 
 vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
@@ -21,6 +22,34 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
             lastUpdated: now,
             refreshFrequency: 'Daily',
             domains: [
+              {
+                name: 'zeta',
+                description: 'Market data',
+                type: 'blob',
+                path: 'bronze/zeta',
+                lastUpdated: now,
+                status: 'healthy',
+                portalUrl: 'https://example.com/storage/bronze/zeta',
+                jobUrl:
+                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-zeta/overview',
+                jobName: 'aca-job-zeta',
+                frequency: 'Daily',
+                cron: '0 0 * * *'
+              },
+              {
+                name: 'Alpha',
+                description: 'Reference domain',
+                type: 'blob',
+                path: 'bronze/alpha',
+                lastUpdated: now,
+                status: 'healthy',
+                portalUrl: 'https://example.com/storage/bronze/alpha',
+                jobUrl:
+                  'https://portal.azure.com/#@/resource/sub-id/resourceGroups/rg-name/providers/Microsoft.App/jobs/aca-job-alpha/overview',
+                jobName: 'aca-job-alpha',
+                frequency: 'Daily',
+                cron: '0 0 * * *'
+              },
               {
                 name: 'market',
                 description: 'Market data',
@@ -180,5 +209,36 @@ describe('SystemStatusPage', () => {
       expect(props.dataLayers.some((layer) => layer.name.toLowerCase() === 'platinum')).toBe(true);
       expectNoPlatinumDomain(props.dataLayers);
     }
+  });
+
+  it('uses a consistent canonical domain ordering for all status panels', async () => {
+    statusOverviewSpy.mockClear();
+    domainLayerCoverageSpy.mockClear();
+    jobMonitorSpy.mockClear();
+
+    renderWithProviders(<SystemStatusPage />);
+    await waitFor(() => {
+      expect(statusOverviewSpy).toHaveBeenCalled();
+      expect(domainLayerCoverageSpy).toHaveBeenCalled();
+      expect(jobMonitorSpy).toHaveBeenCalled();
+    });
+
+    const statusOverviewProps = statusOverviewSpy.mock.calls.at(-1)?.[0] as {
+      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+    };
+    const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
+      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+    };
+    const jobMonitorProps = jobMonitorSpy.mock.calls.at(-1)?.[0] as {
+      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
+    };
+
+    const statusOrder = getDomainOrderEntries(statusOverviewProps.dataLayers).map((entry) => entry.key);
+    const coverageOrder = getDomainOrderEntries(coverageProps.dataLayers).map((entry) => entry.key);
+    const jobOrder = getDomainOrderEntries(jobMonitorProps.dataLayers).map((entry) => entry.key);
+
+    expect(statusOrder).toEqual(['alpha', 'market', 'zeta']);
+    expect(coverageOrder).toEqual(statusOrder);
+    expect(jobOrder).toEqual(statusOrder);
   });
 });

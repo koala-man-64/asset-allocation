@@ -16,6 +16,7 @@ import { DataService } from '@/services/DataService';
 import type { DataLayer, DomainMetadata } from '@/types/strategy';
 import { StatusTypos } from './StatusTokens';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
+import { getDomainOrderEntries } from './domainOrdering';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { formatSystemStatusText } from './systemStatusText';
 
@@ -24,11 +25,6 @@ type LayerKey = (typeof LAYER_ORDER)[number];
 
 type LayerColumn = {
   key: LayerKey;
-  label: string;
-};
-
-type DomainRow = {
-  key: string;
   label: string;
 };
 
@@ -157,7 +153,6 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
 
   const { domainsByLayer, domainRows } = useMemo(() => {
     const matrix = new Map<string, Map<LayerKey, true>>();
-    const labels = new Map<string, string>();
 
     for (const layerColumn of layerColumns) {
       const domains = layersByKey.get(layerColumn.key)?.domains || [];
@@ -167,20 +162,18 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
         const domainKey = normalizeDomainKey(domainName);
         if (!domainKey) continue;
 
-        if (!labels.has(domainKey)) labels.set(domainKey, domainName);
-
         const row = matrix.get(domainKey) || new Map<LayerKey, true>();
         row.set(layerColumn.key, true);
         matrix.set(domainKey, row);
       }
     }
 
-    const rows = Array.from(labels.entries())
-      .map(([key, label]) => ({ key, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const rows = getDomainOrderEntries(dataLayers).filter((entry) => {
+      return matrix.has(entry.key);
+    });
 
     return { domainsByLayer: matrix, domainRows: rows };
-  }, [layerColumns, layersByKey]);
+  }, [dataLayers, layerColumns, layersByKey]);
 
   const queryPairs = useMemo(() => {
     const pairs: Array<{ layerKey: LayerKey; domainKey: string }> = [];
