@@ -12,7 +12,7 @@
   --mcm-walnut: #773f1a;
   --mcm-teal: #008080;
   --mcm-mustard: #e1ad01;
-  --mcm-olive: #808000;
+  --mcm-olive: #6f6600;
 
   /* Slightly deepen the app background so panels pop a bit more. */
   --background: color-mix(in srgb, var(--mcm-cream) 94%, var(--mcm-walnut));
@@ -25,8 +25,8 @@
   --primary-foreground: var(--mcm-walnut);
   --secondary: color-mix(in srgb, var(--mcm-cream) 88%, var(--mcm-walnut));
   --secondary-foreground: var(--mcm-walnut);
-  --muted: color-mix(in srgb, var(--mcm-paper) 92%, var(--mcm-walnut));
-  --muted-foreground: var(--mcm-olive);
+  --muted: color-mix(in srgb, var(--mcm-paper) 88%, var(--mcm-walnut));
+  --muted-foreground: #5b4a16;
   --accent: color-mix(in srgb, var(--mcm-teal) 18%, var(--mcm-cream));
   --accent-foreground: var(--mcm-walnut);
   --destructive: #b42318;
