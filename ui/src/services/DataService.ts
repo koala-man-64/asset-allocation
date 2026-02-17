@@ -23,6 +23,7 @@ import type {
   RuntimeConfigListResponse,
   ValidationReport,
   SymbolSyncState,
+  DataProfilingResponse,
   StorageUsageResponse
 } from '@/services/apiService';
 import type { StockScreenerResponse } from '@/services/apiService';
@@ -203,6 +204,21 @@ export const DataService = {
     signal?: AbortSignal
   ): Promise<ValidationReport> {
     return apiService.getDataQualityValidation(layer, domain, tickerOrSignal, signal);
+  },
+
+  getDataProfile(
+    layer: 'bronze' | 'silver' | 'gold',
+    domain: string,
+    column: string,
+    params: {
+      ticker?: string;
+      bins?: number;
+      sampleRows?: number;
+      topValues?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<DataProfilingResponse> {
+    return apiService.getDataProfile(layer, domain, column, params, signal);
   },
 
   getStorageUsage(signal?: AbortSignal): Promise<StorageUsageResponse> {

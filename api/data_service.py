@@ -391,3 +391,275 @@ class DataService:
         except Exception as e:
             # Log error
             raise FileNotFoundError(f"Failed to read data at {path}: {str(e)}")
+
+    @staticmethod
+    def _extract_finance_domain_rows(
+        layer: str,
+        domain: str,
+        ticker: Optional[str],
+        sample_rows: int,
+    ) -> List[Dict[str, Any]]:
+        normalized_domain = str(domain or "").strip().lower()
+        if normalized_domain.startswith("finance/"):
+            _, _, remainder = normalized_domain.partition("/")
+            sub_domain = remainder.strip()
+            if not sub_domain:
+                raise ValueError("finance domain requires a sub-domain, e.g. finance/balance_sheet")
+            return DataService.get_finance_data(layer, sub_domain, ticker, limit=sample_rows)
+        return DataService.get_data(layer, domain, ticker, limit=sample_rows)
+
+    @staticmethod
+    def _format_number_bucket_edge(value: float) -> float:
+        if value == int(value):
+            return float(int(value))
+        return float(np.round(value, 6))
+
+    @staticmethod
+    def get_column_profile(
+        layer: str,
+        domain: str,
+        column: str,
+        *,
+        ticker: Optional[str] = None,
+        bins: int = 20,
+        sample_rows: int = 10000,
+        top_values: int = 20,
+    ) -> Dict[str, Any]:
+        normalized_layer = str(layer or "").strip().lower()
+        normalized_domain = str(domain or "").strip().lower()
+        normalized_column = str(column or "").strip()
+
+        if not normalized_layer:
+            raise ValueError("layer is required.")
+        if normalized_layer not in {"bronze", "silver", "gold"}:
+            raise ValueError("Layer must be 'bronze', 'silver', or 'gold'.")
+        if not normalized_domain:
+            raise ValueError("domain is required.")
+        if not normalized_column:
+            raise ValueError("column is required.")
+
+        resolved_ticker = None if ticker is None else str(ticker).strip().upper() or None
+        resolved_bins = max(3, min(int(bins), 200))
+        resolved_sample_rows = max(10, min(int(sample_rows), 100000))
+        resolved_top_values = max(1, min(int(top_values), 200))
+
+        rows = DataService._extract_finance_domain_rows(
+            normalized_layer,
+            normalized_domain,
+            resolved_ticker,
+            sample_rows=resolved_sample_rows,
+        )
+        if not rows:
+            return {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "column": normalized_column,
+                "kind": "string",
+                "totalRows": 0,
+                "nonNullCount": 0,
+                "nullCount": 0,
+                "sampleRows": resolved_sample_rows,
+                "bins": [],
+                "uniqueCount": 0,
+                "duplicateCount": 0,
+                "topValues": [],
+            }
+
+        df = pd.DataFrame(rows)
+        if normalized_column not in df.columns:
+            raise ValueError(f"Column '{normalized_column}' not found in sampled data.")
+
+        series = df[normalized_column]
+        total_rows = int(len(df))
+        series_non_null = series.dropna()
+        non_null_count = int(len(series_non_null))
+        null_count = total_rows - non_null_count
+
+        if non_null_count == 0:
+            return {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "column": normalized_column,
+                "kind": "string",
+                "totalRows": total_rows,
+                "nonNullCount": 0,
+                "nullCount": null_count,
+                "sampleRows": resolved_sample_rows,
+                "bins": [],
+                "uniqueCount": 0,
+                "duplicateCount": 0,
+                "topValues": [],
+            }
+
+        candidate_str = series_non_null.astype(str).str.strip()
+        if candidate_str.empty:
+            return {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "column": normalized_column,
+                "kind": "string",
+                "totalRows": total_rows,
+                "nonNullCount": non_null_count,
+                "nullCount": null_count,
+                "sampleRows": resolved_sample_rows,
+                "bins": [],
+                "uniqueCount": 0,
+                "duplicateCount": 0,
+                "topValues": [],
+            }
+
+        parsed_date = pd.to_datetime(series_non_null, errors="coerce", utc=False)
+        date_count = int(parsed_date.notna().sum())
+        date_ratio = date_count / non_null_count if non_null_count else 0.0
+
+        if date_ratio >= 0.7:
+            date_vals = parsed_date.dropna().dt.to_period("M").astype(str)
+            value_counts = date_vals.value_counts().sort_index()
+            buckets = []
+            for key, count in value_counts.items():
+                buckets.append({
+                    "label": str(key),
+                    "count": int(count),
+                })
+            return {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "column": normalized_column,
+                "kind": "date",
+                "totalRows": total_rows,
+                "nonNullCount": non_null_count,
+                "nullCount": null_count,
+                "sampleRows": resolved_sample_rows,
+                "bins": buckets,
+                "uniqueCount": int(date_vals.nunique()),
+                "duplicateCount": int(non_null_count - date_vals.nunique()),
+                "topValues": [],
+            }
+
+        numeric = pd.to_numeric(series_non_null, errors="coerce")
+        numeric_count = int(numeric.notna().sum())
+        numeric_ratio = numeric_count / non_null_count if non_null_count else 0.0
+
+        if numeric_ratio >= 0.7 and numeric_count > 0:
+            numeric_clean = numeric.replace([np.inf, -np.inf], np.nan).dropna()
+
+            if numeric_clean.empty:
+                kind = "string"
+                return {
+                    "layer": normalized_layer,
+                    "domain": normalized_domain,
+                    "column": normalized_column,
+                    "kind": kind,
+                    "totalRows": total_rows,
+                    "nonNullCount": non_null_count,
+                    "nullCount": null_count,
+                    "sampleRows": resolved_sample_rows,
+                    "bins": [],
+                    "uniqueCount": 0,
+                    "duplicateCount": 0,
+                    "topValues": [],
+                }
+
+            if len(numeric_clean.unique()) == 1:
+                value = DataService._format_number_bucket_edge(float(numeric_clean.iloc[0]))
+                return {
+                    "layer": normalized_layer,
+                    "domain": normalized_domain,
+                    "column": normalized_column,
+                    "kind": "numeric",
+                    "totalRows": total_rows,
+                    "nonNullCount": non_null_count,
+                    "nullCount": null_count,
+                    "sampleRows": resolved_sample_rows,
+                    "bins": [{"label": str(value), "count": int(len(numeric_clean)), "start": value, "end": value}],
+                    "uniqueCount": 1,
+                    "duplicateCount": int(non_null_count - 1),
+                    "topValues": [],
+                }
+
+            try:
+                bucketed = pd.cut(numeric_clean, bins=resolved_bins)
+            except ValueError:
+                unique_values = numeric_clean.drop_duplicates().sort_values()
+                min_value = float(unique_values.min())
+                max_value = float(unique_values.max())
+                if min_value == max_value:
+                    return {
+                        "layer": normalized_layer,
+                        "domain": normalized_domain,
+                        "column": normalized_column,
+                        "kind": "numeric",
+                        "totalRows": total_rows,
+                        "nonNullCount": non_null_count,
+                        "nullCount": null_count,
+                        "sampleRows": resolved_sample_rows,
+                        "bins": [{"label": str(DataService._format_number_bucket_edge(min_value)), "count": int(len(numeric_clean)), "start": min_value, "end": max_value}],
+                        "uniqueCount": int(unique_values.nunique()),
+                        "duplicateCount": int(non_null_count - unique_values.nunique()),
+                        "topValues": [],
+                    }
+                bucketed = pd.qcut(
+                    numeric_clean,
+                    q=min(20, int(numeric_clean.nunique())),
+                    duplicates="drop"
+                )
+                buckets = bucketed.value_counts().sort_index()
+            else:
+                buckets = bucketed.value_counts().sort_index()
+
+            payload = []
+            for key, count in buckets.items():
+                if isinstance(key, pd.Interval):
+                    left = DataService._format_number_bucket_edge(float(key.left))
+                    right = DataService._format_number_bucket_edge(float(key.right))
+                    if isinstance(key.left, (int, float)) and isinstance(key.right, (int, float)) and key.left == key.right:
+                        label = str(left)
+                    else:
+                        label = f"{left} to {right}"
+                    payload.append(
+                        {
+                            "label": label,
+                            "count": int(count),
+                            "start": left,
+                            "end": right,
+                        }
+                    )
+                else:
+                    value = DataService._format_number_bucket_edge(float(key))
+                    payload.append({"label": str(value), "count": int(count), "start": value, "end": value})
+
+            return {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "column": normalized_column,
+                "kind": "numeric",
+                "totalRows": total_rows,
+                "nonNullCount": non_null_count,
+                "nullCount": null_count,
+                "sampleRows": resolved_sample_rows,
+                "bins": payload,
+                "uniqueCount": int(numeric_clean.nunique()),
+                "duplicateCount": int(non_null_count - numeric_clean.nunique()),
+                "topValues": [],
+            }
+
+        value_counts = candidate_str.value_counts()
+        unique = int(value_counts.shape[0])
+        top_n = value_counts.head(resolved_top_values)
+
+        return {
+            "layer": normalized_layer,
+            "domain": normalized_domain,
+            "column": normalized_column,
+            "kind": "string",
+            "totalRows": total_rows,
+            "nonNullCount": non_null_count,
+            "nullCount": null_count,
+            "sampleRows": resolved_sample_rows,
+            "bins": [],
+            "uniqueCount": unique,
+            "duplicateCount": int(non_null_count - unique),
+            "topValues": [
+                {"value": str(value), "count": int(count)} for value, count in top_n.items()
+            ],
+        }

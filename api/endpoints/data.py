@@ -531,6 +531,62 @@ def get_stock_screener(
         "rows": page.to_dict(orient="records"),
     }
 
+
+@router.get("/{layer}/profile")
+def get_column_profile(
+    layer: str,
+    request: Request,
+    domain: str = Query(default="", description="Domain name (market, finance, earnings, price-target, finance/balance_sheet, ...)"),
+    column: str = Query(default="", description="Column to profile"),
+    bins: int = Query(default=20, ge=3, le=200, description="Histogram bucket count"),
+    sample_rows: int = Query(default=10000, ge=10, le=100000, description="Rows to sample"),
+    top_values: int = Query(default=20, ge=1, le=200, description="Top string values to return"),
+    ticker: Optional[str] = Query(default=None, description="Ticker filter when supported"),
+):
+    """
+    Compute column profile for a selected dataset:
+    - numeric: buckets for distribution (histogram-like)
+    - date: monthly buckets
+    - string: unique/total/duplicate counts plus top values
+    """
+    request_id = request.headers.get("x-request-id", "")
+    ticker_normalized = _validate_ticker(ticker)
+    logger.info(
+        "Column profile request: layer=%s domain=%s column=%s bins=%s sample_rows=%s request_id=%s",
+        layer,
+        domain,
+        column,
+        bins,
+        sample_rows,
+        request_id or "-",
+    )
+    validate_auth(request)
+
+    if layer not in ["bronze", "silver", "gold"]:
+        raise HTTPException(status_code=400, detail="Layer must be 'bronze', 'silver', or 'gold'.")
+    if not str(domain or "").strip():
+        raise HTTPException(status_code=400, detail="Missing required domain.")
+    if not str(column or "").strip():
+        raise HTTPException(status_code=400, detail="Missing required column.")
+
+    try:
+        return DataService.get_column_profile(
+            layer=layer,
+            domain=domain,
+            column=column,
+            ticker=ticker_normalized,
+            bins=bins,
+            sample_rows=sample_rows,
+            top_values=top_values,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{layer}/{domain}")
 def get_data_generic(
     layer: str,

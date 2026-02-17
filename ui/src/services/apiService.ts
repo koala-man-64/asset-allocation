@@ -251,6 +251,33 @@ export interface ValidationReport {
   sampleLimit?: number;
 }
 
+export interface ProfilingBucket {
+  label: string;
+  count: number;
+  start?: number | null;
+  end?: number | null;
+}
+
+export interface ProfilingTopValue {
+  value: string;
+  count: number;
+}
+
+export interface DataProfilingResponse {
+  layer: string;
+  domain: string;
+  column: string;
+  kind: 'numeric' | 'date' | 'string';
+  totalRows: number;
+  nonNullCount: number;
+  nullCount: number;
+  sampleRows: number;
+  bins: ProfilingBucket[];
+  uniqueCount?: number;
+  duplicateCount?: number;
+  topValues?: ProfilingTopValue[];
+}
+
 export interface StorageFolderUsage {
   path: string;
   fileCount: number | null;
@@ -477,6 +504,31 @@ export const apiService = {
 
   getStorageUsage(signal?: AbortSignal): Promise<StorageUsageResponse> {
     return request<StorageUsageResponse>('/data/storage-usage', {
+      signal
+    });
+  },
+
+  getDataProfile(
+    layer: 'bronze' | 'silver' | 'gold',
+    domain: string,
+    column: string,
+    params: {
+      ticker?: string;
+      bins?: number;
+      sampleRows?: number;
+      topValues?: number;
+    } = {},
+    signal?: AbortSignal
+  ): Promise<DataProfilingResponse> {
+    return request<DataProfilingResponse>(`/data/${layer}/profile`, {
+      params: {
+        domain,
+        column,
+        ticker: params.ticker,
+        bins: params.bins,
+        sampleRows: params.sampleRows,
+        topValues: params.topValues
+      },
       signal
     });
   },
