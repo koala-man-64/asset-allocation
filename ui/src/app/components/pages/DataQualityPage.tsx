@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getLastSystemHealthMeta,
   queryKeys,
@@ -22,7 +22,7 @@ import {
 import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getStatusConfig } from './system-status/SystemStatusHelpers';
 import { sanitizeExternalUrl } from '@/utils/urlSecurity';
-import type { RequestMeta } from '@/services/apiService';
+import type { RequestMeta, StorageUsageResponse } from '@/services/apiService';
 import {
   computeLayerDrift,
   domainKey,
@@ -40,6 +40,7 @@ import {
   CircleSlash2,
   ExternalLink,
   FlaskConical,
+  HardDrive,
   RefreshCw,
   ScanSearch,
   ShieldAlert
@@ -51,6 +52,27 @@ import { useDataProbes, ProbeStatus } from '@/hooks/useDataProbes';
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const countFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+
+function formatStorageCount(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  return countFormatter.format(value);
+}
+
+function formatStorageBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  if (value === 0) return '0 B';
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
+  let size = value / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unit]}`;
 }
 
 function ProbePill({ status }: { status: ProbeStatus }) {
@@ -87,6 +109,28 @@ function ProbePill({ status }: { status: ProbeStatus }) {
       {text}
     </Badge>
   );
+}
+
+function storageStatusMeta(error?: string | null, truncated?: boolean): {
+  label: string;
+  css: string;
+} {
+  if (error) {
+    return {
+      label: 'ERROR',
+      css: 'text-rose-700'
+    };
+  }
+  if (truncated) {
+    return {
+      label: 'PARTIAL',
+      css: 'text-amber-700'
+    };
+  }
+  return {
+    label: 'SCANNED',
+    css: 'text-emerald-700'
+  };
 }
 
 export function DataQualityPage() {
@@ -152,6 +196,12 @@ export function DataQualityPage() {
   } = useDataProbes({
     ticker: normalizedProbeSymbol,
     rows
+  });
+  const storageUsageQuery = useQuery<StorageUsageResponse>({
+    queryKey: ['data-quality', 'storage-usage'],
+    queryFn: ({ signal }) => DataService.getStorageUsage(signal),
+    staleTime: 1000 * 60 * 5,
+    retry: 1
   });
 
   const summary = useMemo(() => {
@@ -361,6 +411,116 @@ export function DataQualityPage() {
         <Suspense fallback={<Skeleton className="h-[200px] w-full rounded-xl bg-muted/20" />}>
           <DataPipelinePanel drift={drift} rows={rows} />
         </Suspense>
+
+        <section className="dq-panel dq-panel-pad mt-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="dq-kicker">ADLS STORAGE</div>
+              <div className="dq-title text-lg">Container + Folder Usage</div>
+              <p className="dq-subtitle mt-1 text-sm">
+                Aggregate file counts and byte usage by each configured ADLS folder.
+              </p>
+            </div>
+            <div className="dq-storage-meta">
+              <div className="dq-mono text-xs text-muted-foreground">
+                Scan cap: {storageUsageQuery.data?.scanLimit?.toLocaleString() || '—'} blobs/prefix
+              </div>
+              {storageUsageQuery.data?.generatedAt ? (
+                <div className="dq-mono text-xs text-muted-foreground">
+                  Refreshed: {storageUsageQuery.data.generatedAt.replace('T', ' ').replace('Z', ' UTC')}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {storageUsageQuery.isLoading ? (
+            <div className="mt-4">
+              <Skeleton className="h-44 w-full rounded-xl bg-muted/20" />
+            </div>
+          ) : storageUsageQuery.isError ? (
+            <div className="mt-4 dq-mono text-sm text-rose-700">
+              Failed to load storage usage: {storageUsageQuery.error instanceof Error ? storageUsageQuery.error.message : String(storageUsageQuery.error)}
+            </div>
+          ) : (
+            <div className="mt-4 dq-ledger-table">
+              <Table className="dq-table">
+                <TableHeader>
+                  <TableRow className="dq-table-head">
+                    <TableHead className="dq-th">Container</TableHead>
+                    <TableHead className="dq-th">Layer</TableHead>
+                    <TableHead className="dq-th">Folder</TableHead>
+                    <TableHead className="dq-th text-right">Files</TableHead>
+                    <TableHead className="dq-th text-right">Bytes</TableHead>
+                    <TableHead className="dq-th text-right">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(storageUsageQuery.data?.containers || []).map((container) => {
+                    const containerStatus = storageStatusMeta(container.error, container.truncated);
+                    const containerKey = `${container.layer}-${container.container || container.layer}`;
+                    const folderRows = (container.folders || []).map((folder) => {
+                      const folderStatus = storageStatusMeta(folder.error, folder.truncated);
+                      return (
+                        <TableRow key={`${containerKey}-${folder.path}`}>
+                          <TableCell className="dq-td" />
+                          <TableCell className="dq-td" />
+                          <TableCell className="dq-td">
+                            <span className="dq-mono text-xs text-muted-foreground">└ {folder.path}</span>
+                          </TableCell>
+                          <TableCell className="dq-td text-right">
+                            {formatStorageCount(folder.fileCount)}
+                          </TableCell>
+                          <TableCell className="dq-td text-right">
+                            <span className="dq-path-meta">
+                              {formatStorageBytes(folder.totalBytes)}
+                            </span>
+                          </TableCell>
+                          <TableCell className={`dq-td text-right ${folderStatus.css}`}>
+                            {folderStatus.label}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    });
+
+                    return [
+                      <TableRow key={containerKey} className="dq-tr">
+                        <TableCell className="dq-td">
+                          <div className="dq-domain-cell">
+                            <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="dq-domain-name">
+                              {container.container || container.layer}
+                            </span>
+                          </div>
+                          {container.error ? (
+                            <div className="dq-path-meta text-rose-600">
+                              Error: {container.error}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="dq-td">
+                          <span className="dq-badge">{container.layerLabel}</span>
+                        </TableCell>
+                        <TableCell className="dq-td dq-path-meta">TOTAL</TableCell>
+                        <TableCell className="dq-td text-right">
+                          {formatStorageCount(container.totalFiles)}
+                        </TableCell>
+                        <TableCell className="dq-td text-right">
+                          <span className="dq-path-meta">
+                            {formatStorageBytes(container.totalBytes)}
+                          </span>
+                        </TableCell>
+                        <TableCell className={`dq-td text-right ${containerStatus.css}`}>
+                          {containerStatus.label}
+                        </TableCell>
+                      </TableRow>,
+                      ...folderRows
+                    ];
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </section>
 
         <section className="dq-panel dq-panel-pad mt-6">
           <div className="flex items-center justify-between gap-4">
