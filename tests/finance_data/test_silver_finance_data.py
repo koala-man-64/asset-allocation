@@ -30,10 +30,10 @@ def test_silver_finance_processes_alpha_vantage_json_quarterly_reports():
 
         mock_store.assert_called_once()
         df = mock_store.call_args.args[0]
-        assert "Date" in df.columns
-        assert "Symbol" in df.columns
-        assert "totalAssets" in df.columns
-        assert df.iloc[-1]["Symbol"] == "TEST"
+        assert "date" in df.columns
+        assert "symbol" in df.columns
+        assert "total_assets" in df.columns
+        assert df.iloc[-1]["symbol"] == "TEST"
 
 
 def test_silver_finance_builds_valuation_timeseries_from_overview_and_prices():
@@ -64,8 +64,8 @@ def test_silver_finance_builds_valuation_timeseries_from_overview_and_prices():
         assert result.status == "ok"
 
         mock_store.assert_called_once()
-        df = mock_store.call_args.args[0].sort_values("Date").reset_index(drop=True)
-        assert df["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-01", "2024-01-02"]
+        df = mock_store.call_args.args[0].sort_values("date").reset_index(drop=True)
+        assert df["date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-01", "2024-01-02"]
 
         assert df.loc[0, "market_cap"] == pytest.approx(500.0)
         assert df.loc[1, "market_cap"] == pytest.approx(1000.0)

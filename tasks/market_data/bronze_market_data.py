@@ -177,7 +177,6 @@ def _build_metric_series(
     metric_column: str,
     value_keys: tuple[str, ...],
     fallback_date: str,
-    *,
     min_date: str | None = None,
     max_date: str | None = None,
 ) -> pd.DataFrame:
@@ -457,8 +456,8 @@ def _resolve_fetch_window(*, existing_latest_date: date | None) -> tuple[str, st
     today = _utc_today()
     backfill_start, backfill_end = _resolve_market_backfill_range()
     if backfill_start or backfill_end:
-        from_date = backfill_start or _FULL_HISTORY_START_DATE
-        to_date = backfill_end or today.isoformat()
+        from_date = backfill_start.isoformat() if isinstance(backfill_start, date) else _FULL_HISTORY_START_DATE
+        to_date = backfill_end.isoformat() if isinstance(backfill_end, date) else today.isoformat()
         return from_date, to_date
 
     if existing_latest_date is None:

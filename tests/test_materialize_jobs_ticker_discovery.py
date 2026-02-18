@@ -420,9 +420,9 @@ def test_materialize_silver_price_target_by_date_prefers_container_listing(monke
     assert captured["container"] == "targets"
     assert captured["path"] == "price-target-data-by-date"
     assert captured["predicate"] == "year_month = '2026-01'"
-    assert captured["partition_by"] == ["year_month", "Date"]
+    assert captured["partition_by"] == ["year_month", "date"]
     assert "year_month" in captured["df"].columns
-    assert "Date" in captured["df"].columns
+    assert "date" in captured["df"].columns
 
 
 def test_materialize_silver_price_target_by_date_normalizes_legacy_date_alias(monkeypatch):
@@ -452,9 +452,9 @@ def test_materialize_silver_price_target_by_date_normalizes_legacy_date_alias(mo
     monkeypatch.setattr(job, "store_delta", fake_store_delta)
 
     assert job.materialize_silver_targets_by_date(cfg) == 0
-    assert captured["partition_by"] == ["year_month", "Date"]
-    assert "Date" in captured["df"].columns
-    assert "date" not in captured["df"].columns
+    assert captured["partition_by"] == ["year_month", "date"]
+    assert "date" in captured["df"].columns
+    assert "Date" not in captured["df"].columns
 
 
 def test_discover_silver_price_target_year_months_from_data(monkeypatch):
@@ -606,7 +606,7 @@ def test_materialize_silver_finance_by_date_parallel_matches_serial(monkeypatch)
         monkeypatch.setattr(job, "store_delta", fake_store_delta)
         assert job.materialize_silver_finance_by_date(cfg) == 0
         out = captured["df"].copy()
-        return out.sort_values(["Symbol", "Date"]).reset_index(drop=True)
+        return out.sort_values(["symbol", "date"]).reset_index(drop=True)
 
     serial_df = run_and_capture("1")
     parallel_df = run_and_capture("4")

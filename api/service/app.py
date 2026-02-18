@@ -31,6 +31,70 @@ def _is_truthy(raw: str | None) -> bool:
 def _is_test_environment() -> bool:
     return "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
 
+
+def _background_workers_enabled() -> bool:
+    """
+    Global gate for non-essential background workers.
+    Defaults off in tests to keep API lifespan deterministic.
+    """
+    raw = os.environ.get("BACKGROUND_WORKERS_ENABLED")
+    if raw is None:
+        return not _is_test_environment()
+    return _is_truthy(raw)
+
+
+async def _shutdown_background_task(
+    task: asyncio.Task[None] | None,
+    *,
+    stop_event: asyncio.Event | None,
+    task_name: str,
+    graceful_timeout_seconds: float = 2.0,
+) -> None:
+    """
+    Stop a background task without leaking CancelledError during app shutdown.
+    """
+    if task is None:
+        return
+
+    if stop_event is not None:
+        stop_event.set()
+
+    # Already complete: await once to surface non-cancellation errors in logs.
+    if task.done():
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.warning("Background task '%s' completed with error: %s", task_name, exc)
+        return
+
+    try:
+        await asyncio.wait_for(task, timeout=graceful_timeout_seconds)
+        logger.info("Background task '%s' stopped gracefully.", task_name)
+        return
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Background task '%s' did not stop within %.2fs; cancelling.",
+            task_name,
+            graceful_timeout_seconds,
+        )
+    except asyncio.CancelledError:
+        logger.info("Background task '%s' cancellation acknowledged during graceful stop.", task_name)
+        return
+    except Exception as exc:
+        logger.warning("Background task '%s' exited with error during graceful stop: %s", task_name, exc)
+        return
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.info("Background task '%s' cancelled after timeout.", task_name)
+        return
+    except Exception as exc:
+        logger.warning("Background task '%s' raised after cancellation: %s", task_name, exc)
+
 def _normalize_root_prefix(value: str | None) -> str:
     raw = (value or "").strip()
     if not raw or raw == "/":
@@ -96,6 +160,13 @@ def create_app() -> FastAPI:
         refresh_task: asyncio.Task[None] | None = None
         purge_rules_task: asyncio.Task[None] | None = None
 
+        workers_enabled = _background_workers_enabled()
+        logger.info(
+            "Background worker gate resolved: enabled=%s test_env=%s",
+            workers_enabled,
+            _is_test_environment(),
+        )
+
         if settings.postgres_dsn:
             app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
             try:
@@ -103,7 +174,7 @@ def create_app() -> FastAPI:
                 from core.debug_symbols import refresh_debug_symbols_from_db
                 from core.runtime_config import DEFAULT_ENV_OVERRIDE_KEYS, apply_runtime_config_to_env
 
-                if not _is_test_environment():
+                if workers_enabled and not _is_test_environment():
                     baseline_env: dict[str, str | None] = {
                         key: os.environ.get(key) for key in sorted(DEFAULT_ENV_OVERRIDE_KEYS)
                     }
@@ -182,6 +253,8 @@ def create_app() -> FastAPI:
                                 break
                             except asyncio.TimeoutError:
                                 pass
+                            except asyncio.CancelledError:
+                                return
 
                             try:
                                 _apply_and_reconcile()
@@ -195,6 +268,7 @@ def create_app() -> FastAPI:
                                 logger.warning("Periodic runtime config refresh failed: %s", exc)
 
                     refresh_task = asyncio.create_task(_periodic_refresh())
+                    logger.info("Background task started: runtime_config_refresh")
             except Exception as exc:
                 logger.warning("Runtime config overrides not applied: %s", exc)
 
@@ -219,6 +293,8 @@ def create_app() -> FastAPI:
                         break
                     except asyncio.TimeoutError:
                         pass
+                    except asyncio.CancelledError:
+                        return
 
                     try:
                         if not settings.postgres_dsn:
@@ -239,7 +315,9 @@ def create_app() -> FastAPI:
                     except Exception as exc:
                         logger.warning("Periodic purge-rule execution failed: %s", exc)
 
-            purge_rules_task = asyncio.create_task(_periodic_purge_rules())
+            if workers_enabled:
+                purge_rules_task = asyncio.create_task(_periodic_purge_rules())
+                logger.info("Background task started: periodic_purge_rules")
 
         def _system_health_ttl_seconds() -> float:
             raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "300")
@@ -273,20 +351,16 @@ def create_app() -> FastAPI:
 
         yield
 
-        stop_refresh.set()
-        stop_purge_rules.set()
-        if refresh_task is not None:
-            refresh_task.cancel()
-            try:
-                await refresh_task
-            except Exception:
-                pass
-        if purge_rules_task is not None:
-            purge_rules_task.cancel()
-            try:
-                await purge_rules_task
-            except Exception:
-                pass
+        await _shutdown_background_task(
+            refresh_task,
+            stop_event=stop_refresh,
+            task_name="runtime_config_refresh",
+        )
+        await _shutdown_background_task(
+            purge_rules_task,
+            stop_event=stop_purge_rules,
+            task_name="periodic_purge_rules",
+        )
 
         try:
             app.state.alpha_vantage_gateway.close()

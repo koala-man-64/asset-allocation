@@ -1959,7 +1959,7 @@ def _run_due_purge_rules(dsn: str, *, actor: Optional[str]) -> Dict[str, Any]:
                 actor=actor,
             ):
                 continue
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to claim purge rule for execution: id=%s", rule.id)
             result["failed"] += 1
             continue
@@ -2162,7 +2162,7 @@ def preview_purge_rule(rule_id: int, request: Request, payload: PurgeRulePreview
             }
             for symbol, metric in matches[: payload.max_symbols]
         ]
-    except HTTPException as exc:
+    except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Failed to preview purge rule id=%s.", rule_id)
@@ -2323,7 +2323,7 @@ def get_purge_candidates(
             limit=limit,
             offset=offset,
         )
-    except HTTPException as exc:
+    except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

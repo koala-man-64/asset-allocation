@@ -46,7 +46,7 @@ def test_silver_processing(unique_ticker):
         assert container == cfg.AZURE_CONTAINER_SILVER
         assert path == DataPaths.get_market_data_path(symbol)
         assert len(df_saved) == 1
-        assert df_saved.iloc[0]['Close'] == 102
+        assert df_saved.iloc[0]["close"] == 102
 
 
 def test_silver_processing_accepts_alpha_vantage_timestamp(unique_ticker):
@@ -86,9 +86,9 @@ def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
         args, _ = mock_store_delta.call_args
         df_saved = args[0]
 
-        assert "ShortInterest" in df_saved.columns
-        assert "ShortVolume" in df_saved.columns
-        assert "FloatShares" in df_saved.columns
-        assert float(df_saved.iloc[0]["ShortInterest"]) == pytest.approx(1200.0)
-        assert float(df_saved.iloc[0]["ShortVolume"]) == pytest.approx(500.0)
-        assert float(df_saved.iloc[0]["FloatShares"]) == pytest.approx(1_000_000.0)
+        assert "short_interest" in df_saved.columns
+        assert "short_volume" in df_saved.columns
+        assert "float_shares" in df_saved.columns
+        assert float(df_saved.iloc[0]["short_interest"]) == pytest.approx(1200.0)
+        assert float(df_saved.iloc[0]["short_volume"]) == pytest.approx(500.0)
+        assert float(df_saved.iloc[0]["float_shares"]) == pytest.approx(1_000_000.0)

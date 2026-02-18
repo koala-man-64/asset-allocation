@@ -2,7 +2,8 @@ import pytest
 import os
 from unittest.mock import patch, MagicMock
 
-os.environ.setdefault("DISABLE_DOTENV", "true")
+# Force hermetic test env so local shell/.env values cannot leak into unit tests.
+os.environ["DISABLE_DOTENV"] = "true"
 os.environ.setdefault("LOG_FORMAT", "JSON")
 os.environ.setdefault("LOG_LEVEL", "INFO")
 
@@ -10,8 +11,14 @@ os.environ.setdefault("LOG_LEVEL", "INFO")
 # Note: NASDAQ_API_KEY should be in .env for actual data fetching.
 os.environ.setdefault("ALPHA_VANTAGE_API_KEY", "test_alpha_vantage_key")
 os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "test_account")
-os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net")
+os.environ["AZURE_STORAGE_CONNECTION_STRING"] = "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net"
 os.environ.setdefault("TEST_MODE", "True")
+# Keep tests hermetic even when local shell has production-like env values.
+os.environ.pop("POSTGRES_DSN", None)
+os.environ.pop("MARKET_BACKFILL_START_DATE", None)
+os.environ.pop("MARKET_BACKFILL_END_DATE", None)
+os.environ["PURGE_RULES_ENABLED"] = "false"
+os.environ["BACKGROUND_WORKERS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "10")
 os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")
 os.environ.setdefault("SYSTEM_HEALTH_ARM_API_VERSION", "2023-05-01")

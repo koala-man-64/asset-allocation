@@ -32,7 +32,7 @@ def test_process_file_success():
         
         # Should have 2 rows (old + new)
         assert len(df_saved) == 2
-        assert "TEST" in df_saved["Symbol"].values
+        assert "TEST" in df_saved["symbol"].values
 
 def test_process_file_bad_json():
     blob_name = "earnings-data/BAD.json"

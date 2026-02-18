@@ -34,6 +34,14 @@ class MaterializeConfig:
 _DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("Date", "date")
 
 
+def _resolve_date_alias(df: pd.DataFrame, candidate: str) -> Optional[str]:
+    if candidate in df.columns:
+        return candidate
+
+    alt = "date" if candidate == "Date" else "Date"
+    return alt if alt in df.columns else None
+
+
 def _parse_year_month_bounds(year_month: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
     try:
         start = pd.Timestamp(f"{year_month}-01")
@@ -50,8 +58,9 @@ def _load_first_available_date_projection(
         df = load_delta(container, src_path, columns=[date_col])
         if df is None or df.empty:
             continue
-        if date_col in df.columns:
-            return date_col, df
+        resolved = _resolve_date_alias(df, date_col)
+        if resolved is not None:
+            return resolved, df
     return None, None
 
 
@@ -72,8 +81,9 @@ def _load_first_available_date_range(
         )
         if df is None or df.empty:
             continue
-        if date_col in df.columns:
-            return date_col, df
+        resolved = _resolve_date_alias(df, date_col)
+        if resolved is not None:
+            return resolved, df
 
     df = load_delta(container, src_path)
     if df is None or df.empty:

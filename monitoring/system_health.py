@@ -736,10 +736,10 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
     max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
 
     # Deployed job schedules (see deploy/job_*.yaml)
-    CRON_BRONZE_MARKET = "0 14-22 * * 1-5"
-    CRON_BRONZE_PRICE_TARGET = "0 12 * * 1-5"
-    CRON_BRONZE_FINANCE = "0 22 * * 1-5"
-    CRON_BRONZE_EARNINGS = "0 23 * * 1-5"
+    CRON_BRONZE_MARKET = "0 22 * * 1-5"
+    CRON_BRONZE_PRICE_TARGET = "0 4 * * 1-5"
+    CRON_BRONZE_EARNINGS = "0 10 * * 1-5"
+    CRON_BRONZE_FINANCE = "0 16 * * 1-5"
 
     CRON_SILVER_MARKET = "30 14-23 * * *"
     CRON_SILVER_FINANCE = "30 0 * * *"
@@ -870,6 +870,9 @@ def _describe_cron(expression: str) -> str:
         "30 14-23 * * *": "Daily, hourly 2:30–11:30 PM UTC",
         "30 0 * * *": "Daily at 12:30 AM UTC",
         "30 1 * * *": "Daily at 1:30 AM UTC",
+        "0 4 * * 1-5": "Weekdays at 4:00 AM UTC",
+        "0 10 * * 1-5": "Weekdays at 10:00 AM UTC",
+        "0 16 * * 1-5": "Weekdays at 4:00 PM UTC",
         "0 22 * * *": "Daily at 10:00 PM UTC",
         "0 22 * * 1-5": "Weekdays at 10:00 PM UTC",
         "30 22 * * *": "Daily at 10:30 PM UTC",
