@@ -14,6 +14,7 @@ from tasks.common.silver_contracts import (
     assert_no_unexpected_mixed_empty,
     log_contract_violation,
     normalize_date_column,
+    normalize_columns_to_snake_case,
 )
 
 # Initialize Clients
@@ -160,6 +161,7 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         df_merged = df_merged.drop_duplicates(subset=["obs_date", "symbol"], keep="last")
         df_merged = df_merged.sort_values(by=["obs_date", "symbol"])
         df_merged = df_merged.reset_index(drop=True)
+        df_merged = normalize_columns_to_snake_case(df_merged)
 
         # Write
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")

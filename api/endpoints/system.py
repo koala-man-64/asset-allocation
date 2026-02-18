@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import uuid
+import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal, Tuple
 
@@ -27,9 +28,13 @@ from monitoring.domain_metadata import collect_domain_metadata
 from monitoring.log_analytics import AzureLogAnalyticsClient
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
+from core import config as cfg
+from core import core as mdc
 from core.blob_storage import BlobStorageClient
 from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
 from core.core import get_symbol_sync_state
+from core.delta_core import load_delta, store_delta
+from core.pipeline import DataPaths
 from core.postgres import PostgresError
 from core.runtime_config import (
     DEFAULT_ENV_OVERRIDE_KEYS,
@@ -37,6 +42,20 @@ from core.runtime_config import (
     list_runtime_config,
     normalize_env_override,
     upsert_runtime_config,
+)
+from core.purge_rules import (
+    PurgeRule,
+    claim_purge_rule_for_run,
+    complete_purge_rule_execution,
+    create_purge_rule,
+    delete_purge_rule as delete_purge_rule_row,
+    get_purge_rule,
+    is_percent_operator,
+    list_due_purge_rules,
+    list_purge_rules,
+    normalize_purge_rule_operator,
+    supported_purge_rule_operators,
+    update_purge_rule,
 )
 
 logger = logging.getLogger("asset-allocation.api.system")
@@ -651,6 +670,578 @@ class PurgeRequest(BaseModel):
     confirm: bool = False
 
 
+class PurgeSymbolRequest(BaseModel):
+    symbol: str
+    confirm: bool = False
+
+
+class PurgeSymbolsBatchRequest(BaseModel):
+    symbols: List[str] = Field(..., min_length=1)
+    confirm: bool = False
+    scope_note: Optional[str] = None
+    dry_run: bool = False
+
+
+class PurgeRuleCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    column_name: str = Field(..., min_length=1, max_length=128)
+    operator: str = Field(..., min_length=1, max_length=24)
+    threshold: float
+    run_interval_minutes: int = Field(..., ge=1)
+    enabled: bool = True
+
+
+class PurgeRuleUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    layer: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    domain: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    column_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    operator: Optional[str] = Field(default=None, min_length=1, max_length=24)
+    threshold: Optional[float] = None
+    run_interval_minutes: Optional[int] = Field(default=None, ge=1)
+    enabled: Optional[bool] = None
+
+
+class PurgeRulePreviewRequest(BaseModel):
+    max_symbols: int = Field(default=200, ge=1, le=1000)
+
+
+def _require_postgres_dsn(request: Request) -> str:
+    settings = get_settings(request)
+    dsn = (settings.postgres_dsn or os.environ.get("POSTGRES_DSN") or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is not configured (POSTGRES_DSN).")
+    return dsn
+
+
+def _rule_normalize_column_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").strip().lower())
+
+
+def _serialize_purge_rule(rule: PurgeRule) -> Dict[str, Any]:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "layer": rule.layer,
+        "domain": rule.domain,
+        "columnName": rule.column_name,
+        "operator": rule.operator,
+        "threshold": rule.threshold,
+        "runIntervalMinutes": rule.run_interval_minutes,
+        "enabled": rule.enabled,
+        "nextRunAt": _iso(rule.next_run_at),
+        "lastRunAt": _iso(rule.last_run_at),
+        "lastStatus": rule.last_status,
+        "lastError": rule.last_error,
+        "lastMatchCount": rule.last_match_count,
+        "lastPurgeCount": rule.last_purge_count,
+        "createdAt": _iso(rule.created_at),
+        "updatedAt": _iso(rule.updated_at),
+        "createdBy": rule.created_by,
+        "updatedBy": rule.updated_by,
+    }
+
+
+def _resolve_purge_rule_table(layer: str, domain: str) -> tuple[str, str]:
+    table = _BY_DATE_TABLES.get(layer, {}).get(domain)
+    if not table:
+        raise HTTPException(status_code=400, detail=f"Unsupported purge layer/domain: {layer}/{domain}.")
+    container = _resolve_container(layer)
+    return container, table
+
+
+def _resolve_rule_symbol_column(df: pd.DataFrame) -> str:
+    for column in df.columns:
+        if _rule_normalize_column_name(column) in {"symbol", "ticker"}:
+            return str(column)
+    raise HTTPException(status_code=400, detail="Dataset does not contain symbol/ticker column.")
+
+
+def _resolve_rule_value_column(df: pd.DataFrame, raw_column_name: str) -> str:
+    target = _rule_normalize_column_name(raw_column_name)
+    for column in df.columns:
+        if _rule_normalize_column_name(column) == target:
+            return str(column)
+    raise HTTPException(
+        status_code=400,
+        detail=f"Column '{raw_column_name}' does not exist in the selected dataset.",
+    )
+
+
+def _resolve_rule_date_column(df: pd.DataFrame) -> Optional[str]:
+    candidates = ["date", "obsdate", "obs_date", "timestamp", "datetime", "asof", "as_of_date", "tradingdate"]
+    normalized_to_name: Dict[str, str] = {_rule_normalize_column_name(column): str(column) for column in df.columns}
+    for candidate in candidates:
+        column = normalized_to_name.get(_rule_normalize_column_name(candidate))
+        if column:
+            return column
+    return None
+
+
+def _collect_rule_symbol_values(rule: PurgeRule) -> List[tuple[str, float]]:
+    layer = _rule_normalize_column_name(rule.layer)
+    domain = rule.domain
+    operator = rule.operator
+    container, table = _resolve_purge_rule_table(layer, domain)
+    df = load_delta(container=container, path=table)
+
+    if df is None or df.empty:
+        return []
+
+    symbol_column = _resolve_rule_symbol_column(df)
+    value_column = _resolve_rule_value_column(df, rule.column_name)
+    normalized_values = pd.to_numeric(df[value_column], errors="coerce")
+    symbols = df[symbol_column].astype("string").str.upper().str.strip()
+
+    work = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "value": normalized_values,
+        }
+    )
+    work = work.dropna(subset=["symbol", "value"]).copy()
+    if work.empty:
+        return []
+
+    date_column = _resolve_rule_date_column(df)
+    if date_column:
+        work["date"] = pd.to_datetime(df[date_column], errors="coerce")
+        work = work.dropna(subset=["date"]).sort_values("date")
+        selected = work.groupby("symbol", as_index=False).tail(1)
+    else:
+        selected = work.groupby("symbol", as_index=False)["value"].mean()
+
+    selected["value"] = pd.to_numeric(selected["value"], errors="coerce")
+    selected = selected.dropna(subset=["value"])
+    if selected.empty:
+        return []
+
+    symbol_values = {
+        str(row["symbol"]): float(row["value"])
+        for _, row in selected.iterrows()
+        if str(row["symbol"]).strip()
+    }
+    if not symbol_values:
+        return []
+
+    if is_percent_operator(operator):
+        percentile = rule.threshold
+        values = pd.Series(list(symbol_values.values()), dtype=float)
+        if values.empty:
+            return []
+        if operator == "bottom_percent":
+            cutoff = values.quantile(percentile / 100.0)
+            return [
+                (symbol, value)
+                for symbol, value in symbol_values.items()
+                if value <= cutoff
+            ]
+        cutoff = values.quantile(1.0 - (percentile / 100.0))
+        return [
+            (symbol, value)
+            for symbol, value in symbol_values.items()
+            if value >= cutoff
+        ]
+
+    ops: Dict[str, Any] = {
+        "gt": lambda lhs, rhs: lhs > rhs,
+        "gte": lambda lhs, rhs: lhs >= rhs,
+        "lt": lambda lhs, rhs: lhs < rhs,
+        "lte": lambda lhs, rhs: lhs <= rhs,
+        "eq": lambda lhs, rhs: lhs == rhs,
+        "ne": lambda lhs, rhs: lhs != rhs,
+    }
+    comparator = ops.get(operator)
+    if comparator is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported operator '{operator}'.")
+
+    return [
+        (symbol, value)
+        for symbol, value in symbol_values.items()
+        if comparator(value, float(rule.threshold))
+    ]
+
+
+def _collect_purge_candidates(
+    layer: str,
+    domain: str,
+    column: str,
+    operator: str,
+    raw_value: float,
+    as_of: Optional[str] = None,
+    min_rows: int = 1,
+    limit: int = 200,
+    offset: int = 0,
+) -> tuple[List[Dict[str, Any]], int, int, int]:
+    normalized_layer = _normalize_layer(layer)
+    normalized_domain = _normalize_domain(domain)
+    if not normalized_layer or not normalized_domain:
+        raise HTTPException(status_code=400, detail="layer and domain are required.")
+
+    operator = normalize_purge_rule_operator(operator)
+    threshold = float(raw_value)
+    if not pd.notna(threshold) or not pd.api.types.is_number(threshold):
+        raise HTTPException(status_code=400, detail="value must be a finite number.")
+
+    container, table = _resolve_purge_rule_table(normalized_layer, normalized_domain)
+    df = load_delta(container=container, path=table)
+
+    if df is None or df.empty:
+        return [], 0, 0, 0
+
+    symbol_column = _resolve_rule_symbol_column(df)
+    value_column = _resolve_rule_value_column(df, column)
+    rows = pd.to_numeric(df[value_column], errors="coerce")
+    work = pd.DataFrame(
+        {
+            "symbol": df[symbol_column].astype("string").str.upper().str.strip(),
+            "value": rows,
+        }
+    )
+
+    date_column = _resolve_rule_date_column(df)
+    if date_column:
+        work["asOf"] = pd.to_datetime(df[date_column], errors="coerce")
+        work = work.dropna(subset=["symbol", "value", "asOf"]).copy()
+        if as_of:
+            as_of_dt = pd.to_datetime(as_of, errors="coerce")
+            if pd.isna(as_of_dt):
+                raise HTTPException(status_code=400, detail=f"Invalid as_of value '{as_of}'.")
+            work = work.loc[work["asOf"] <= as_of_dt]
+
+        if work.empty:
+            return [], 0, 0, 0
+
+        rows_per_symbol = work.groupby("symbol", as_index=False).size().rename(columns={"size": "rowsContributing"})
+        latest = work.sort_values("asOf").groupby("symbol", as_index=False).tail(1)
+        latest = latest.merge(rows_per_symbol, on="symbol", how="left")
+    else:
+        work = work.dropna(subset=["symbol", "value"]).copy()
+        if work.empty:
+            return [], 0, 0, 0
+
+        latest = work.groupby("symbol", as_index=False).agg(value=("value", "mean"), rowsContributing=("value", "size"))
+        latest["asOf"] = None
+
+    latest["value"] = pd.to_numeric(latest["value"], errors="coerce")
+    latest = latest.dropna(subset=["symbol", "value"])
+    if latest.empty:
+        return [], len(df), 0, 0
+
+    if is_percent_operator(operator):
+        if not (1 <= threshold <= 100):
+            raise HTTPException(status_code=400, detail="Percent threshold must be between 1 and 100.")
+        values = latest["value"].astype(float)
+        if values.empty:
+            return [], len(df), 0, 0
+
+        if operator == "bottom_percent":
+            cutoff = float(values.quantile(threshold / 100.0))
+            latest = latest.loc[latest["value"] <= cutoff]
+        else:
+            cutoff = float(values.quantile(1.0 - (threshold / 100.0)))
+            latest = latest.loc[latest["value"] >= cutoff]
+    else:
+        ops: Dict[str, Any] = {
+            "gt": lambda lhs, rhs: lhs > rhs,
+            "gte": lambda lhs, rhs: lhs >= rhs,
+            "lt": lambda lhs, rhs: lhs < rhs,
+            "lte": lambda lhs, rhs: lhs <= rhs,
+            "eq": lambda lhs, rhs: lhs == rhs,
+            "ne": lambda lhs, rhs: lhs != rhs,
+        }
+        comparator = ops.get(operator)
+        if comparator is None:
+            raise HTTPException(status_code=400, detail=f"Unsupported operator '{operator}'.")
+        latest = latest.loc[latest.apply(lambda row: bool(comparator(float(row["value"]), threshold)), axis=1)]
+
+    if latest.empty:
+        return [], len(df), 0, 0
+
+    latest = latest.loc[latest["rowsContributing"] >= int(min_rows)]
+    if latest.empty:
+        return [], len(df), 0, 0
+
+    latest["rowsContributing"] = pd.to_numeric(latest["rowsContributing"], errors="coerce").fillna(0).astype(int)
+    latest = latest.sort_values("value", ascending=False).reset_index(drop=True)
+
+    matched_value_total = int(latest["rowsContributing"].sum()) if "rowsContributing" in latest else 0
+    total = int(len(latest))
+    window = latest.iloc[offset : offset + limit]
+
+    matches: List[Dict[str, Any]] = []
+    for _, row in window.iterrows():
+        matched_value = row["value"]
+        as_of_value = row.get("asOf")
+        matches.append(
+            {
+                "symbol": str(row["symbol"]),
+                "matchedValue": float(matched_value),
+                "rowsContributing": int(row["rowsContributing"]),
+                "latestAsOf": _iso(as_of_value.to_pydatetime()) if pd.notna(as_of_value) else None,
+            }
+        )
+
+    return matches, len(df), total, matched_value_total
+
+
+def _build_purge_expression(
+    column: str,
+    operator: str,
+    value: float,
+) -> str:
+    operator = normalize_purge_rule_operator(operator)
+    display_value = float(value)
+    if operator == "gt":
+        return f"{column} > {display_value:g}"
+    if operator == "gte":
+        return f"{column} >= {display_value:g}"
+    if operator == "lt":
+        return f"{column} < {display_value:g}"
+    if operator == "lte":
+        return f"{column} <= {display_value:g}"
+    if operator == "eq":
+        return f"{column} == {display_value:g}"
+    if operator == "ne":
+        return f"{column} != {display_value:g}"
+    if operator == "top_percent":
+        return f"top {display_value:g}% by {column}"
+    if operator == "bottom_percent":
+        return f"bottom {display_value:g}% by {column}"
+    return f"{column} {operator} {display_value:g}"
+
+
+def _normalize_candidate_symbols(symbols: List[str]) -> List[str]:
+    seen = set()
+    normalized: List[str] = []
+    for symbol in symbols:
+        normalized_symbol = _normalize_purge_symbol(symbol)
+        if normalized_symbol in seen:
+            continue
+        seen.add(normalized_symbol)
+        normalized.append(normalized_symbol)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="At least one unique symbol is required.")
+    return normalized
+
+
+def _create_purge_symbols_operation(
+    symbols: List[str],
+    actor: Optional[str],
+    *,
+    scope_note: Optional[str],
+    dry_run: bool,
+) -> str:
+    operation_id = str(uuid.uuid4())
+    now = _utc_timestamp()
+    with _PURGE_OPERATIONS_LOCK:
+        _PURGE_OPERATIONS[operation_id] = {
+            "operationId": operation_id,
+            "status": "running",
+            "scope": "symbols",
+            "requestedBy": actor,
+            "symbols": symbols,
+            "symbolCount": len(symbols),
+            "scopeNote": scope_note,
+            "dryRun": bool(dry_run),
+            "createdAt": now,
+            "updatedAt": now,
+            "startedAt": now,
+            "completedAt": None,
+            "result": None,
+            "error": None,
+        }
+    return operation_id
+
+
+def _execute_purge_symbols_operation(
+    operation_id: str,
+    symbols: List[str],
+    *,
+    dry_run: bool,
+    scope_note: Optional[str],
+) -> None:
+    symbol_results: List[Dict[str, Any]] = []
+    succeeded = 0
+    failed = 0
+    skipped = 0
+    total_deleted = 0
+
+    for symbol in symbols:
+        if dry_run:
+            symbol_results.append(
+                {
+                    "symbol": symbol,
+                    "status": "skipped",
+                    "deleted": 0,
+                    "dryRun": True,
+                }
+            )
+            skipped += 1
+            continue
+
+        try:
+            result = _run_purge_symbol_operation(PurgeSymbolRequest(symbol=symbol, confirm=True))
+            deleted = int(result.get("totalDeleted") or 0)
+            symbol_results.append(
+                {
+                    "symbol": symbol,
+                    "status": "succeeded",
+                    "deleted": deleted,
+                    "targets": result.get("targets") or [],
+                }
+            )
+            total_deleted += deleted
+            succeeded += 1
+        except HTTPException as exc:
+            symbol_results.append(
+                {
+                    "symbol": symbol,
+                    "status": "failed",
+                    "deleted": 0,
+                    "error": str(exc.detail),
+                }
+            )
+            failed += 1
+        except Exception as exc:
+            symbol_results.append(
+                {
+                    "symbol": symbol,
+                    "status": "failed",
+                    "deleted": 0,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            failed += 1
+
+    summary = {
+        "scope": "symbols",
+        "dryRun": bool(dry_run),
+        "scopeNote": scope_note,
+        "requestedSymbols": symbols,
+        "requestedSymbolCount": len(symbols),
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+        "totalDeleted": total_deleted,
+        "symbolResults": symbol_results,
+    }
+    status = "succeeded" if failed == 0 and not skipped else ("failed" if failed > 0 else "succeeded")
+    if dry_run and status == "succeeded" and failed == 0 and skipped == len(symbols):
+        status = "succeeded"
+
+    logger.info(
+        "Purge-symbols operation finished: operation=%s symbols=%s succeeded=%s failed=%s skipped=%s dry_run=%s",
+        operation_id,
+        len(symbols),
+        succeeded,
+        failed,
+        skipped,
+        bool(dry_run),
+    )
+
+    if status == "succeeded":
+        _update_purge_operation(
+            operation_id,
+            {"status": "succeeded", "result": summary, "completedAt": _utc_timestamp()},
+        )
+    else:
+        _update_purge_operation(
+            operation_id,
+            {"status": "failed", "result": summary, "error": "One or more symbols failed.", "completedAt": _utc_timestamp()},
+        )
+
+
+def _execute_purge_rule(rule: PurgeRule, *, actor: Optional[str]) -> Dict[str, Any]:
+    symbol_values = _collect_rule_symbol_values(rule)
+    matches = sorted(symbol_values, key=lambda item: str(item[0]))
+    matched_symbols = [symbol for symbol, _ in matches]
+    matched_count = len(matched_symbols)
+    purged_count = 0
+    failed: List[str] = []
+    if not matched_symbols:
+        return {
+            "ruleId": rule.id,
+            "ruleName": rule.name,
+            "matchedCount": matched_count,
+            "purgedCount": purged_count,
+            "symbols": [],
+            "failedSymbols": [],
+        }
+
+    for symbol, metric in matches:
+        try:
+            payload = PurgeSymbolRequest(symbol=symbol, confirm=True)
+            result = _run_purge_symbol_operation(payload)
+            purged_count += int(result.get("totalDeleted") or 0)
+        except HTTPException as exc:
+            failed.append(f"{symbol}: {exc.detail}")
+        except Exception as exc:
+            failed.append(f"{symbol}: {type(exc).__name__}: {exc}")
+
+    status = "failed" if failed else "succeeded"
+    logger.info(
+        "Purge rule executed: id=%s name=%s actor=%s matched=%s purged=%s status=%s",
+        rule.id,
+        rule.name,
+        actor or "-",
+        matched_count,
+        purged_count,
+        status,
+    )
+    return {
+        "ruleId": rule.id,
+        "ruleName": rule.name,
+        "matchedCount": matched_count,
+        "purgedCount": purged_count,
+        "symbols": matched_symbols,
+        "failedSymbols": failed,
+    }
+_FINANCE_BRONZE_TABLE_TYPES: List[Tuple[str, str]] = [
+    ("balance_sheet", "quarterly_balance-sheet"),
+    ("income_statement", "quarterly_financials"),
+    ("cash_flow", "quarterly_cash-flow"),
+    ("valuation", "quarterly_valuation_measures"),
+]
+
+_BY_DATE_TABLES: Dict[str, Dict[str, str]] = {
+    "silver": {
+        "market": DataPaths.get_market_data_by_date_path(),
+        "finance": DataPaths.get_finance_by_date_path(),
+        "earnings": DataPaths.get_earnings_by_date_path(),
+        "price-target": DataPaths.get_price_targets_by_date_path(),
+    },
+    "gold": {
+        "market": DataPaths.get_gold_features_by_date_path(),
+        "finance": DataPaths.get_gold_finance_by_date_path(),
+        "earnings": DataPaths.get_gold_earnings_by_date_path(),
+        "price-target": DataPaths.get_gold_price_targets_by_date_path(),
+    },
+}
+
+
+def _normalize_purge_symbol(symbol: str) -> str:
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="symbol is required.")
+    return normalized
+
+
+def _market_symbol(symbol: str) -> str:
+    return _normalize_purge_symbol(symbol).replace(".", "-")
+
+
+def _symbol_variants(symbol: str) -> List[str]:
+    normalized = _normalize_purge_symbol(symbol)
+    market_symbol = normalized.replace(".", "-")
+    variants = [normalized]
+    if market_symbol != normalized:
+        variants.append(market_symbol)
+    return variants
+
+
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -758,6 +1349,309 @@ def _targets_for_layer_domain(layer: str, domain: str) -> List[Tuple[str, str]]:
         raise HTTPException(status_code=400, detail=f"Unknown domain '{domain}' for layer '{layer}'.")
     container = _resolve_container(layer)
     return [(container, prefix) for prefix in prefixes]
+
+
+def _delete_blob_if_exists(client: BlobStorageClient, path: str) -> int:
+    if client.file_exists(path):
+        client.delete_file(path)
+        return 1
+    return 0
+
+
+def _delete_prefix_if_exists(client: BlobStorageClient, path: str) -> int:
+    return int(client.delete_prefix(path))
+
+
+def _append_symbol_to_bronze_blacklists(client: BlobStorageClient, symbol: str) -> Dict[str, Any]:
+    normalized_symbol = _normalize_purge_symbol(symbol)
+    earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
+    blacklist_paths = [
+        "market-data/blacklist.csv",
+        "finance-data/blacklist.csv",
+        f"{earnings_prefix}/blacklist.csv",
+        "price-target-data/blacklist.csv",
+    ]
+
+    for path in blacklist_paths:
+        mdc.update_csv_set(path, normalized_symbol, client=client)
+
+    return {"updated": len(blacklist_paths), "paths": blacklist_paths}
+
+
+def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -> List[Dict[str, Any]]:
+    normalized_symbol = _normalize_purge_symbol(symbol)
+    market_symbol = _market_symbol(normalized_symbol)
+    earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
+
+    removed: List[Dict[str, Any]] = []
+
+    market_path = f"market-data/{market_symbol}.csv"
+    removed.append(
+        {
+            "layer": "bronze",
+            "domain": "market",
+            "container": client.container_name,
+            "path": market_path,
+            "deleted": _delete_blob_if_exists(client, path=market_path),
+        }
+    )
+
+    for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
+        finance_path = f"finance-data/{folder}/{normalized_symbol}_{suffix}.json"
+        removed.append(
+            {
+                "layer": "bronze",
+                "domain": "finance",
+                "container": client.container_name,
+                "path": finance_path,
+                "deleted": _delete_blob_if_exists(client, path=finance_path),
+            }
+        )
+
+    earnings_path = f"{earnings_prefix}/{normalized_symbol}.json"
+    removed.append(
+        {
+            "layer": "bronze",
+            "domain": "earnings",
+            "container": client.container_name,
+            "path": earnings_path,
+            "deleted": _delete_blob_if_exists(client, path=earnings_path),
+        }
+    )
+
+    price_target_path = f"price-target-data/{normalized_symbol}.parquet"
+    removed.append(
+        {
+            "layer": "bronze",
+            "domain": "price-target",
+            "container": client.container_name,
+            "path": price_target_path,
+            "deleted": _delete_blob_if_exists(client, path=price_target_path),
+        }
+    )
+
+    return removed
+
+
+def _remove_symbol_from_layer_storage(
+    client: BlobStorageClient,
+    container: str,
+    symbol: str,
+    layer: Literal["silver", "gold"],
+) -> List[Dict[str, Any]]:
+    normalized_symbol = _normalize_purge_symbol(symbol)
+    market_symbol = _market_symbol(normalized_symbol)
+    removed: List[Dict[str, Any]] = []
+
+    if layer == "silver":
+        market_path = DataPaths.get_market_data_path(market_symbol)
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "market",
+                "container": container,
+                "path": market_path,
+                "deleted": _delete_prefix_if_exists(client=client, path=market_path),
+            }
+        )
+
+        for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
+            finance_path = DataPaths.get_finance_path(folder, normalized_symbol, suffix)
+            removed.append(
+                {
+                    "layer": layer,
+                    "domain": "finance",
+                    "container": container,
+                    "path": finance_path,
+                    "deleted": _delete_prefix_if_exists(client=client, path=finance_path),
+                }
+            )
+
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "earnings",
+                "container": container,
+                "path": DataPaths.get_earnings_path(normalized_symbol),
+                "deleted": _delete_prefix_if_exists(
+                    client=client, path=DataPaths.get_earnings_path(normalized_symbol)
+                ),
+            }
+        )
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "price-target",
+                "container": container,
+                "path": DataPaths.get_price_target_path(normalized_symbol),
+                "deleted": _delete_prefix_if_exists(
+                    client=client, path=DataPaths.get_price_target_path(normalized_symbol)
+                ),
+            }
+        )
+    else:
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "market",
+                "container": container,
+                "path": DataPaths.get_gold_features_path(market_symbol),
+                "deleted": _delete_prefix_if_exists(
+                    client=client, path=DataPaths.get_gold_features_path(market_symbol)
+                ),
+            }
+        )
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "finance",
+                "container": container,
+                "path": DataPaths.get_gold_finance_path(normalized_symbol),
+                "deleted": _delete_prefix_if_exists(
+                    client=client, path=DataPaths.get_gold_finance_path(normalized_symbol)
+                ),
+            }
+        )
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "earnings",
+                "container": container,
+                "path": DataPaths.get_gold_earnings_path(normalized_symbol),
+                "deleted": _delete_prefix_if_exists(
+                    client=client, path=DataPaths.get_gold_earnings_path(normalized_symbol)
+                ),
+            }
+        )
+        removed.append(
+            {
+                "layer": layer,
+                "domain": "price-target",
+                "container": container,
+                "path": DataPaths.get_gold_price_targets_path(normalized_symbol),
+                "deleted": _delete_prefix_if_exists(
+                    client=client, path=DataPaths.get_gold_price_targets_path(normalized_symbol)
+                ),
+            }
+        )
+
+    return removed
+
+
+def _remove_symbol_from_by_date_storage(
+    container: str,
+    layer: Literal["silver", "gold"],
+    symbol: str,
+) -> List[Dict[str, Any]]:
+    normalized_symbol = _normalize_purge_symbol(symbol)
+    symbol_variants = set(_symbol_variants(normalized_symbol))
+    removed: List[Dict[str, Any]] = []
+    table_paths = _BY_DATE_TABLES.get(layer, {})
+
+    for domain, table_path in table_paths.items():
+        df = load_delta(container=container, path=table_path)
+        if df is None:
+            removed.append(
+                {
+                    "layer": layer,
+                    "domain": domain,
+                    "container": container,
+                    "path": table_path,
+                    "status": "not_found",
+                    "deletedRows": 0,
+                }
+            )
+            continue
+
+        if df.empty:
+            removed.append(
+                {
+                    "layer": layer,
+                    "domain": domain,
+                    "container": container,
+                    "path": table_path,
+                    "status": "empty",
+                    "deletedRows": 0,
+                }
+            )
+            continue
+
+        symbol_columns = [column for column in df.columns if str(column).strip().lower() in {"symbol", "ticker"}]
+        if not symbol_columns:
+            removed.append(
+                {
+                    "layer": layer,
+                    "domain": domain,
+                    "container": container,
+                    "path": table_path,
+                    "status": "no_symbol_column",
+                    "deletedRows": 0,
+                }
+            )
+            continue
+
+        matches = pd.Series(False, index=df.index)
+        for column in symbol_columns:
+            values = df[column].astype("string").str.upper().str.strip().fillna("")
+            matches = matches | values.isin(symbol_variants)
+
+        if not matches.any():
+            removed.append(
+                {
+                    "layer": layer,
+                    "domain": domain,
+                    "container": container,
+                    "path": table_path,
+                    "status": "no_match",
+                    "deletedRows": 0,
+                }
+            )
+            continue
+
+        remaining = df.loc[~matches].copy()
+        deleted_rows = int(matches.sum())
+
+        if remaining.empty:
+            by_date_client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+            deleted_files = _delete_prefix_if_exists(client=by_date_client, path=table_path)
+            removed.append(
+                {
+                    "layer": layer,
+                    "domain": domain,
+                    "container": container,
+                    "path": table_path,
+                    "status": "deleted_table",
+                    "deletedRows": deleted_rows,
+                    "deletedFiles": deleted_files,
+                }
+            )
+            continue
+
+        date_candidates = ["Date", "date", "obs_date"]
+        date_column = next((column for column in date_candidates if column in remaining.columns), None)
+        partition_by = ["year_month", date_column] if "year_month" in remaining.columns and date_column else None
+        store_delta(
+            remaining,
+            container=container,
+            path=table_path,
+            mode="overwrite",
+            partition_by=partition_by,
+            merge_schema=True,
+        )
+
+        removed.append(
+            {
+                "layer": layer,
+                "domain": domain,
+                "container": container,
+                "path": table_path,
+                "status": "rewritten",
+                "deletedRows": deleted_rows,
+                "remainingRows": int(len(remaining)),
+            }
+        )
+
+    return removed
 
 
 def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[str]) -> List[Dict[str, Optional[str]]]:
@@ -874,6 +1768,92 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     }
 
 
+def _run_purge_symbol_operation(payload: PurgeSymbolRequest) -> Dict[str, Any]:
+    normalized_symbol = _normalize_purge_symbol(payload.symbol)
+
+    container_bronze = _resolve_container("bronze")
+    container_silver = _resolve_container("silver")
+    container_gold = _resolve_container("gold")
+
+    bronze_client = BlobStorageClient(container_name=container_bronze, ensure_container_exists=False)
+    silver_client = BlobStorageClient(container_name=container_silver, ensure_container_exists=False)
+    gold_client = BlobStorageClient(container_name=container_gold, ensure_container_exists=False)
+
+    results: List[Dict[str, Any]] = []
+    total_deleted = 0
+
+    blacklist_update = _append_symbol_to_bronze_blacklists(bronze_client, normalized_symbol)
+    results.append(
+        {
+            "operation": "blacklist",
+            "layer": "bronze",
+            "domain": "all",
+            "container": container_bronze,
+            "status": "updated",
+            "paths": blacklist_update["paths"],
+            "updated": blacklist_update["updated"],
+        }
+    )
+
+    bronze_results = _remove_symbol_from_bronze_storage(bronze_client, normalized_symbol)
+    for outcome in bronze_results:
+        total_deleted += int(outcome.get("deleted") or 0)
+        results.append(outcome)
+
+    silver_results = _remove_symbol_from_layer_storage(
+        client=silver_client,
+        container=container_silver,
+        symbol=normalized_symbol,
+        layer="silver",
+    )
+    for outcome in silver_results:
+        total_deleted += int(outcome.get("deleted") or 0)
+        results.append(outcome)
+
+    gold_results = _remove_symbol_from_layer_storage(
+        client=gold_client,
+        container=container_gold,
+        symbol=normalized_symbol,
+        layer="gold",
+    )
+    for outcome in gold_results:
+        total_deleted += int(outcome.get("deleted") or 0)
+        results.append(outcome)
+
+    by_date_silver_results = _remove_symbol_from_by_date_storage(
+        container=container_silver,
+        layer="silver",
+        symbol=normalized_symbol,
+    )
+    for outcome in by_date_silver_results:
+        total_deleted += int(outcome.get("deletedRows") or 0)
+        results.append(outcome)
+
+    by_date_gold_results = _remove_symbol_from_by_date_storage(
+        container=container_gold,
+        layer="gold",
+        symbol=normalized_symbol,
+    )
+    for outcome in by_date_gold_results:
+        total_deleted += int(outcome.get("deletedRows") or 0)
+        results.append(outcome)
+
+    logger.warning(
+        "Purge-symbol completed: symbol=%s bronze=%s silver=%s gold=%s",
+        normalized_symbol,
+        container_bronze,
+        container_silver,
+        container_gold,
+    )
+
+    return {
+        "symbol": normalized_symbol,
+        "symbolVariants": _symbol_variants(normalized_symbol),
+        "totalDeleted": total_deleted,
+        "targets": results,
+    }
+
+
 def _execute_purge_operation(operation_id: str, payload: PurgeRequest) -> None:
     try:
         result = _run_purge_operation(payload)
@@ -911,6 +1891,358 @@ def _execute_purge_operation(operation_id: str, payload: PurgeRequest) -> None:
         )
 
 
+def _create_purge_symbol_operation(
+    payload: PurgeSymbolRequest,
+    actor: Optional[str],
+) -> str:
+    operation_id = str(uuid.uuid4())
+    now = _utc_timestamp()
+    with _PURGE_OPERATIONS_LOCK:
+        _PURGE_OPERATIONS[operation_id] = {
+            "operationId": operation_id,
+            "status": "running",
+            "scope": "symbol",
+            "symbol": payload.symbol,
+            "requestedBy": actor,
+            "createdAt": now,
+            "updatedAt": now,
+            "startedAt": now,
+            "completedAt": None,
+            "result": None,
+            "error": None,
+        }
+    return operation_id
+
+
+def _execute_purge_symbol_operation(operation_id: str, payload: PurgeSymbolRequest) -> None:
+    try:
+        result = _run_purge_symbol_operation(payload)
+        _update_purge_operation(
+            operation_id,
+            {"status": "succeeded", "result": result, "completedAt": _utc_timestamp()},
+        )
+    except HTTPException as exc:
+        logger.exception("Purge-symbol operation failed: operation=%s symbol=%s", operation_id, payload.symbol)
+        _update_purge_operation(
+            operation_id,
+            {"status": "failed", "error": str(exc.detail), "completedAt": _utc_timestamp()},
+        )
+    except Exception as exc:
+        logger.exception("Purge-symbol operation crashed: operation=%s symbol=%s", operation_id, payload.symbol)
+        _update_purge_operation(
+            operation_id,
+            {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+                "completedAt": _utc_timestamp(),
+            },
+        )
+
+
+def _run_due_purge_rules(dsn: str, *, actor: Optional[str]) -> Dict[str, Any]:
+    due_rules = list_due_purge_rules(dsn=dsn)
+    now = datetime.now(timezone.utc)
+    result = {
+        "checked": len(due_rules),
+        "executed": 0,
+        "succeeded": 0,
+        "failed": 0,
+    }
+
+    for rule in due_rules:
+        try:
+            if not claim_purge_rule_for_run(
+                dsn=dsn,
+                rule_id=rule.id,
+                now=now,
+                require_due=True,
+                actor=actor,
+            ):
+                continue
+        except Exception as exc:
+            logger.exception("Failed to claim purge rule for execution: id=%s", rule.id)
+            result["failed"] += 1
+            continue
+
+        try:
+            execution = _execute_purge_rule(rule=rule, actor=actor)
+            failed_symbols = execution.get("failedSymbols") or []
+            status = "failed" if failed_symbols else "succeeded"
+            complete_purge_rule_execution(
+                dsn=dsn,
+                rule_id=rule.id,
+                status=status,
+                error=None if not failed_symbols else "; ".join(failed_symbols),
+                matched_count=int(execution.get("matchedCount") or 0),
+                purged_count=int(execution.get("purgedCount") or 0),
+                run_interval_minutes=rule.run_interval_minutes,
+                actor=actor,
+                now=now,
+            )
+            result["executed"] += 1
+            if status == "succeeded":
+                result["succeeded"] += 1
+            else:
+                result["failed"] += 1
+        except Exception as exc:
+            logger.exception("Purge rule execution failed: id=%s name=%s", rule.id, rule.name)
+            try:
+                complete_purge_rule_execution(
+                    dsn=dsn,
+                    rule_id=rule.id,
+                    status="failed",
+                    error=f"{type(exc).__name__}: {exc}",
+                    matched_count=None,
+                    purged_count=None,
+                    run_interval_minutes=rule.run_interval_minutes,
+                    actor=actor,
+                    now=now,
+                )
+            except Exception:
+                logger.exception("Failed to persist purge-rule failure status: id=%s", rule.id)
+            result["failed"] += 1
+
+    return result
+
+
+def run_due_purge_rules(*, dsn: Optional[str], actor: Optional[str] = "system") -> Dict[str, Any]:
+    if not dsn:
+        raise ValueError("POSTGRES_DSN is not configured.")
+    return _run_due_purge_rules(dsn=dsn, actor=actor)
+
+
+@router.get("/purge-rules/operators")
+def list_purge_rule_operators(request: Request) -> JSONResponse:
+    validate_auth(request)
+    return JSONResponse({"operators": supported_purge_rule_operators()}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/purge-rules")
+def list_purge_rules_endpoint(
+    request: Request,
+    enabled_only: bool = Query(default=False),
+    layer: Optional[str] = Query(default=None),
+    domain: Optional[str] = Query(default=None),
+) -> JSONResponse:
+    validate_auth(request)
+    dsn = _require_postgres_dsn(request)
+    try:
+        normalized_layer = _normalize_layer(layer)
+        normalized_domain = _normalize_domain(domain)
+        rules = list_purge_rules(dsn=dsn, enabled_only=enabled_only, layer=normalized_layer, domain=normalized_domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid purge-rule query: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to list purge rules.")
+        raise HTTPException(status_code=503, detail=f"Failed to list purge rules: {exc}") from exc
+
+    return JSONResponse(
+        {"items": [_serialize_purge_rule(rule) for rule in rules]},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/purge-rules")
+def create_purge_rule_endpoint(payload: PurgeRuleCreateRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    dsn = _require_postgres_dsn(request)
+    actor = _get_actor(request)
+    normalized_layer = _normalize_layer(payload.layer)
+    normalized_domain = _normalize_domain(payload.domain)
+    if not normalized_layer or not normalized_domain:
+        raise HTTPException(status_code=400, detail="layer and domain are required.")
+    try:
+        operator = normalize_purge_rule_operator(payload.operator)
+        rule = create_purge_rule(
+            dsn=dsn,
+            name=payload.name,
+            layer=normalized_layer,
+            domain=normalized_domain,
+            column_name=payload.column_name,
+            operator=operator,
+            threshold=payload.threshold,
+            run_interval_minutes=payload.run_interval_minutes,
+            enabled=payload.enabled,
+            actor=actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid purge rule: {exc}") from exc
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to create purge rule: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to create purge rule.")
+        raise HTTPException(status_code=500, detail=f"Failed to create purge rule: {exc}") from exc
+
+    return JSONResponse(_serialize_purge_rule(rule), headers={"Cache-Control": "no-store"}, status_code=201)
+
+
+@router.patch("/purge-rules/{rule_id}")
+def update_purge_rule_endpoint(
+    rule_id: int,
+    payload: PurgeRuleUpdateRequest,
+    request: Request,
+) -> JSONResponse:
+    validate_auth(request)
+    dsn = _require_postgres_dsn(request)
+    actor = _get_actor(request)
+    if all(
+        value is None
+        for value in (
+            payload.name,
+            payload.layer,
+            payload.domain,
+            payload.column_name,
+            payload.operator,
+            payload.threshold,
+            payload.run_interval_minutes,
+            payload.enabled,
+        )
+    ):
+        raise HTTPException(status_code=400, detail="No fields supplied for purge rule update.")
+
+    try:
+        rule = update_purge_rule(
+            dsn=dsn,
+            rule_id=rule_id,
+            name=payload.name,
+            layer=(_normalize_layer(payload.layer) if payload.layer is not None else None),
+            domain=(_normalize_domain(payload.domain) if payload.domain is not None else None),
+            column_name=payload.column_name,
+            operator=normalize_purge_rule_operator(payload.operator) if payload.operator is not None else None,
+            threshold=payload.threshold,
+            run_interval_minutes=payload.run_interval_minutes,
+            enabled=payload.enabled,
+            actor=actor,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid purge-rule update: {exc}") from exc
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to update purge rule: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to update purge rule id=%s.", rule_id)
+        raise HTTPException(status_code=500, detail=f"Failed to update purge rule: {exc}") from exc
+
+    return JSONResponse(_serialize_purge_rule(rule), headers={"Cache-Control": "no-store"})
+
+
+@router.delete("/purge-rules/{rule_id}", status_code=200)
+def delete_purge_rule_endpoint(rule_id: int, request: Request) -> JSONResponse:
+    validate_auth(request)
+    dsn = _require_postgres_dsn(request)
+    deleted = False
+    try:
+        deleted = delete_purge_rule_row(dsn=dsn, rule_id=rule_id)
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to delete purge rule: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Failed to delete purge rule id=%s.", rule_id)
+        raise HTTPException(status_code=500, detail=f"Failed to delete purge rule: {exc}") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Purge rule id={rule_id} not found.")
+    return JSONResponse({"deleted": True, "id": rule_id}, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/purge-rules/{rule_id}/preview")
+def preview_purge_rule(rule_id: int, request: Request, payload: PurgeRulePreviewRequest) -> JSONResponse:
+    validate_auth(request)
+    dsn = _require_postgres_dsn(request)
+    rule = get_purge_rule(dsn=dsn, rule_id=rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Purge rule id={rule_id} not found.")
+
+    try:
+        matches = _collect_rule_symbol_values(rule)
+        matches = sorted(matches, key=lambda pair: str(pair[0]).strip().upper())
+        preview = [
+            {
+                "symbol": symbol,
+                "value": metric,
+            }
+            for symbol, metric in matches[: payload.max_symbols]
+        ]
+    except HTTPException as exc:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to preview purge rule id=%s.", rule_id)
+        raise HTTPException(status_code=500, detail=f"Failed to preview purge rule: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "rule": _serialize_purge_rule(rule),
+            "matchCount": len(matches),
+            "previewCount": len(preview),
+            "matches": preview,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/purge-rules/{rule_id}/run")
+def run_purge_rule_now(rule_id: int, request: Request) -> JSONResponse:
+    validate_auth(request)
+    dsn = _require_postgres_dsn(request)
+    actor = _get_actor(request)
+    now = datetime.now(timezone.utc)
+    rule = get_purge_rule(dsn=dsn, rule_id=rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Purge rule id={rule_id} not found.")
+
+    if not rule.enabled:
+        raise HTTPException(status_code=409, detail="Purge rule is disabled.")
+
+    if not claim_purge_rule_for_run(
+        dsn=dsn,
+        rule_id=rule.id,
+        now=now,
+        require_due=False,
+        actor=actor,
+    ):
+        raise HTTPException(status_code=409, detail="Purge rule is already running.")
+
+    try:
+        execution = _execute_purge_rule(rule=rule, actor=actor)
+        failed_symbols = execution.get("failedSymbols") or []
+        status = "failed" if failed_symbols else "succeeded"
+        complete_purge_rule_execution(
+            dsn=dsn,
+            rule_id=rule.id,
+            status=status,
+            error=None if not failed_symbols else "; ".join(failed_symbols),
+            matched_count=int(execution.get("matchedCount") or 0),
+            purged_count=int(execution.get("purgedCount") or 0),
+            run_interval_minutes=rule.run_interval_minutes,
+            actor=actor,
+            now=now,
+        )
+    except Exception as exc:
+        logger.exception("Failed to run purge rule id=%s now.", rule_id)
+        try:
+            complete_purge_rule_execution(
+                dsn=dsn,
+                rule_id=rule.id,
+                status="failed",
+                error=f"{type(exc).__name__}: {exc}",
+                matched_count=None,
+                purged_count=None,
+                run_interval_minutes=rule.run_interval_minutes,
+                actor=actor,
+                now=now,
+            )
+        except Exception:
+            logger.exception("Failed to persist purge-rule manual failure: id=%s", rule_id)
+        raise HTTPException(status_code=500, detail=f"Failed to run purge rule: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "rule": _serialize_purge_rule(get_purge_rule(dsn=dsn, rule_id=rule_id) or rule),
+            "execution": execution,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/purge")
 def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
     validate_auth(request)
@@ -929,6 +2261,175 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
             "scope": payload.scope,
             "layer": payload.layer,
             "domain": payload.domain,
+            "createdAt": _utc_timestamp(),
+            "updatedAt": _utc_timestamp(),
+            "startedAt": _utc_timestamp(),
+            "completedAt": None,
+            "result": None,
+            "error": None,
+        },
+        status_code=202,
+    )
+
+
+@router.get("/purge-candidates")
+def get_purge_candidates(
+    request: Request,
+    layer: str = Query(..., description="Layer key (bronze/silver/gold)"),
+    domain: str = Query(..., description="Domain key (market/finance/earnings/price-target)"),
+    column: str = Query(..., description="Column to evaluate"),
+    operator: str = Query(..., description="Supported operators: gt, gte, lt, lte, top_percent, bottom_percent"),
+    value: Optional[float] = Query(default=None, description="Numeric threshold (required for numeric operators)"),
+    percentile: Optional[float] = Query(default=None, description="Required for percent operators"),
+    as_of: Optional[str] = Query(default=None, description="Optional date limit (YYYY-MM-DD)"),
+    limit: int = Query(default=200, ge=1, le=5000, description="Max candidate rows to return"),
+    offset: int = Query(default=0, ge=0, description="Candidate result offset"),
+    min_rows: int = Query(default=1, ge=1, description="Minimum rows contributing per symbol"),
+) -> JSONResponse:
+    validate_auth(request)
+    normalized_layer = _normalize_layer(layer)
+    normalized_domain = _normalize_domain(domain)
+    resolved_column = str(column or "").strip()
+    if not normalized_layer:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not normalized_domain:
+        raise HTTPException(status_code=400, detail="domain is required.")
+    if not resolved_column:
+        raise HTTPException(status_code=400, detail="column is required.")
+
+    normalized_operator = normalize_purge_rule_operator(operator)
+    raw_value = percentile if is_percent_operator(normalized_operator) else value
+    if raw_value is None:
+        raise HTTPException(
+            status_code=400,
+            detail="value is required for numeric operators; percentile is required for top/bottom percent operators.",
+        )
+
+    if is_percent_operator(normalized_operator):
+        if percentile is None:
+            raw_value = value
+        if raw_value is None:
+            raise HTTPException(status_code=400, detail="percentile is required for percent operators.")
+    try:
+        candidate_layer = "silver" if normalized_layer == "bronze" else normalized_layer
+        matches, total_rows, matched, contrib = _collect_purge_candidates(
+            layer=candidate_layer,
+            domain=normalized_domain,
+            column=resolved_column,
+            operator=normalized_operator,
+            raw_value=float(raw_value),
+            as_of=as_of,
+            min_rows=min_rows,
+            limit=limit,
+            offset=offset,
+        )
+    except HTTPException as exc:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Failed to collect purge candidates: layer=%s domain=%s column=%s",
+            normalized_layer,
+            normalized_domain,
+            resolved_column,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to collect purge candidates: {exc}") from exc
+
+    criteria = {
+        "requestedLayer": normalized_layer,
+        "resolvedLayer": candidate_layer,
+        "domain": normalized_domain,
+        "column": resolved_column,
+        "operator": normalized_operator,
+        "value": float(raw_value),
+        "asOf": as_of,
+        "minRows": min_rows,
+    }
+    expression = _build_purge_expression(resolved_column, normalized_operator, float(raw_value))
+
+    return JSONResponse(
+        {
+            "criteria": criteria,
+            "expression": expression,
+            "summary": {
+                "totalRowsScanned": total_rows,
+                "symbolsMatched": matched,
+                "rowsContributing": contrib,
+                "estimatedDeletionTargets": matched,
+            },
+            "symbols": matches,
+            "offset": offset,
+            "limit": limit,
+            "total": matched,
+            "hasMore": offset + len(matches) < matched,
+            "note": "Bronze preview uses silver dataset for ranking; bronze-wide criteria are supported for runtime purge targets only." if normalized_layer == "bronze" else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/purge-symbols")
+def purge_symbols(payload: PurgeSymbolsBatchRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to purge symbols.")
+
+    actor = _get_actor(request)
+    normalized_symbols = _normalize_candidate_symbols(payload.symbols)
+    if not normalized_symbols:
+        raise HTTPException(status_code=400, detail="At least one symbol is required.")
+
+    operation_id = _create_purge_symbols_operation(
+        normalized_symbols,
+        actor,
+        scope_note=payload.scope_note,
+        dry_run=bool(payload.dry_run),
+    )
+    logger.info(
+        "Purge-symbols requested: operation=%s actor=%s symbols=%s dry_run=%s",
+        operation_id,
+        actor or "-",
+        len(normalized_symbols),
+        bool(payload.dry_run),
+    )
+    thread = threading.Thread(
+        target=_execute_purge_symbols_operation,
+        args=(
+            operation_id,
+            normalized_symbols,
+        ),
+        kwargs={"dry_run": bool(payload.dry_run), "scope_note": payload.scope_note},
+        daemon=True,
+    )
+    thread.start()
+
+    operation = _get_purge_operation(operation_id) or {}
+    if not isinstance(operation, dict):
+        raise HTTPException(status_code=500, detail="Failed to initialize purge-symbols operation.")
+
+    return JSONResponse(operation, status_code=202)
+
+
+@router.post("/purge-symbol")
+def purge_symbol(payload: PurgeSymbolRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to purge a symbol.")
+
+    actor = _get_actor(request)
+    normalized_symbol = _normalize_purge_symbol(payload.symbol)
+    symbol_payload = PurgeSymbolRequest(symbol=normalized_symbol, confirm=payload.confirm)
+    operation_id = _create_purge_symbol_operation(symbol_payload, actor)
+    thread = threading.Thread(target=_execute_purge_symbol_operation, args=(operation_id, symbol_payload), daemon=True)
+    thread.start()
+
+    return JSONResponse(
+        {
+            "operationId": operation_id,
+            "status": "running",
+            "scope": "symbol",
+            "symbol": normalized_symbol,
             "createdAt": _utc_timestamp(),
             "updatedAt": _utc_timestamp(),
             "startedAt": _utc_timestamp(),

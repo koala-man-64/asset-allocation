@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Sequence
+import re
+from typing import Any, Sequence
 
 import pandas as pd
 
@@ -12,11 +13,42 @@ class ContractViolation(ValueError):
     """Raised when job input does not satisfy a data contract."""
 
 
+_SNAKE_CASE_CAMEL_1 = re.compile(r"(.)([A-Z][a-z]+)")
+_SNAKE_CASE_CAMEL_2 = re.compile(r"([a-z0-9])([A-Z])")
+
+
 def _coerce_to_naive_datetime(series: pd.Series) -> pd.Series:
     parsed = pd.to_datetime(series, errors="coerce")
     if hasattr(parsed.dtype, "tz") and parsed.dtype.tz is not None:
         parsed = parsed.dt.tz_convert(None)
     return parsed
+
+
+def _to_snake_case(value: Any) -> str:
+    text = str(value).strip()
+    if not text:
+        return "col"
+
+    text = _SNAKE_CASE_CAMEL_1.sub(r"\1_\2", text)
+    text = _SNAKE_CASE_CAMEL_2.sub(r"\1_\2", text)
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_").lower()
+    return text or "col"
+
+
+def normalize_columns_to_snake_case(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    names = [_to_snake_case(col) for col in out.columns]
+
+    seen: dict[str, int] = {}
+    unique: list[str] = []
+    for name in names:
+        count = seen.get(name, 0) + 1
+        seen[name] = count
+        unique.append(name if count == 1 else f"{name}_{count}")
+
+    out.columns = unique
+    return out
 
 
 def require_non_empty_frame(df: pd.DataFrame, *, context: str) -> pd.DataFrame:
@@ -74,12 +106,21 @@ def align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.
     if not existing_cols:
         return df.reset_index(drop=True)
 
-    out = df.copy()
+    normalized_existing: list[str] = []
+    seen: set[str] = set()
     for col in existing_cols:
+        normalized = _to_snake_case(col)
+        if normalized in seen:
+            continue
+        normalized_existing.append(normalized)
+        seen.add(normalized)
+
+    out = normalize_columns_to_snake_case(df)
+    for col in normalized_existing:
         if col not in out.columns:
             out[col] = pd.NA
 
-    ordered_cols = list(existing_cols) + [col for col in out.columns if col not in existing_cols]
+    ordered_cols = normalized_existing + [col for col in out.columns if col not in normalized_existing]
     return out[ordered_cols].reset_index(drop=True)
 
 

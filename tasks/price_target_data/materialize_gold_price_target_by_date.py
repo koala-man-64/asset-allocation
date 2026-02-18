@@ -16,6 +16,7 @@ import pandas as pd
 from core.core import write_line, write_warning
 from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 _DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("obs_date", "date")
 
@@ -287,13 +288,19 @@ def materialize_targets_by_date(cfg: MaterializeConfig) -> int:
         write_line(f"No rows remain after year_month filter for {cfg.year_month}; nothing to materialize.")
         return 0
 
+    out = normalize_columns_to_snake_case(out)
+    date_col = "date" if "date" in out.columns else ("obs_date" if "obs_date" in out.columns else None)
+    if date_col is None:
+        write_line(f"No date column found for {cfg.year_month}; nothing to materialize.")
+        return 0
+
     predicate = f"year_month = '{cfg.year_month}'"
     store_delta(
         out,
         container=cfg.container,
         path=cfg.output_path,
         mode="overwrite",
-        partition_by=["year_month", "date"],
+        partition_by=["year_month", date_col],
         merge_schema=True,
         predicate=predicate,
     )

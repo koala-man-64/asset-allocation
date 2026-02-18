@@ -102,15 +102,29 @@ def get_daily_time_series(
 def get_short_interest(
     request: Request,
     symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
+    settlement_date_gte: Optional[str] = Query(default=None, description="Optional settlement date lower bound (YYYY-MM-DD)."),
+    settlement_date_lte: Optional[str] = Query(default=None, description="Optional settlement date upper bound (YYYY-MM-DD)."),
     gateway: MassiveGateway = Depends(_get_gateway),
 ) -> JSONResponse:
     validate_auth(request)
     sym = str(symbol or "").strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="symbol is required.")
+    parsed_settlement_date_gte = _parse_iso_date(settlement_date_gte, field_name="settlement_date_gte")
+    parsed_settlement_date_lte = _parse_iso_date(settlement_date_lte, field_name="settlement_date_lte")
+    if parsed_settlement_date_gte and parsed_settlement_date_lte and parsed_settlement_date_gte > parsed_settlement_date_lte:
+        raise HTTPException(status_code=400, detail="'settlement_date_gte' must be <= 'settlement_date_lte'.")
     try:
         with _caller_context(request):
-            payload = gateway.get_short_interest(symbol=sym)
+            query = {}
+            if parsed_settlement_date_gte is not None:
+                query["settlement_date_gte"] = parsed_settlement_date_gte
+            if parsed_settlement_date_lte is not None:
+                query["settlement_date_lte"] = parsed_settlement_date_lte
+            payload = gateway.get_short_interest(
+                symbol=sym,
+                **query,
+            )
     except Exception as exc:
         _handle_massive_error(exc)
         raise
@@ -121,15 +135,29 @@ def get_short_interest(
 def get_short_volume(
     request: Request,
     symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
+    date_gte: Optional[str] = Query(default=None, description="Optional trade date lower bound (YYYY-MM-DD)."),
+    date_lte: Optional[str] = Query(default=None, description="Optional trade date upper bound (YYYY-MM-DD)."),
     gateway: MassiveGateway = Depends(_get_gateway),
 ) -> JSONResponse:
     validate_auth(request)
     sym = str(symbol or "").strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="symbol is required.")
+    parsed_date_gte = _parse_iso_date(date_gte, field_name="date_gte")
+    parsed_date_lte = _parse_iso_date(date_lte, field_name="date_lte")
+    if parsed_date_gte and parsed_date_lte and parsed_date_gte > parsed_date_lte:
+        raise HTTPException(status_code=400, detail="'date_gte' must be <= 'date_lte'.")
     try:
         with _caller_context(request):
-            payload = gateway.get_short_volume(symbol=sym)
+            query = {}
+            if parsed_date_gte is not None:
+                query["date_gte"] = parsed_date_gte
+            if parsed_date_lte is not None:
+                query["date_lte"] = parsed_date_lte
+            payload = gateway.get_short_volume(
+                symbol=sym,
+                **query,
+            )
     except Exception as exc:
         _handle_massive_error(exc)
         raise

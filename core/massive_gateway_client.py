@@ -228,18 +228,38 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/time-series/daily", params=params)
         return str(resp.text or "")
 
-    def get_short_interest(self, *, symbol: str) -> dict[str, Any]:
-        resp = self._request("/api/providers/massive/fundamentals/short-interest", params={"symbol": symbol})
-        return resp.json()
-
-    def get_short_volume(self, *, symbol: str) -> dict[str, Any]:
-        resp = self._request("/api/providers/massive/fundamentals/short-volume", params={"symbol": symbol})
-        return resp.json()
-
-    def get_float(self, *, symbol: str, as_of: Optional[str] = None) -> dict[str, Any]:
+    def get_short_interest(
+        self,
+        *,
+        symbol: str,
+        settlement_date_gte: Optional[str] = None,
+        settlement_date_lte: Optional[str] = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {"symbol": symbol}
-        if as_of:
-            params["as_of"] = as_of
+        if settlement_date_gte:
+            params["settlement_date.gte"] = settlement_date_gte
+        if settlement_date_lte:
+            params["settlement_date.lte"] = settlement_date_lte
+        resp = self._request("/api/providers/massive/fundamentals/short-interest", params=params)
+        return resp.json()
+
+    def get_short_volume(
+        self,
+        *,
+        symbol: str,
+        date_gte: Optional[str] = None,
+        date_lte: Optional[str] = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if date_gte:
+            params["date.gte"] = date_gte
+        if date_lte:
+            params["date.lte"] = date_lte
+        resp = self._request("/api/providers/massive/fundamentals/short-volume", params=params)
+        return resp.json()
+
+    def get_float(self, *, symbol: str) -> dict[str, Any]:
+        params = {"symbol": symbol}
         resp = self._request("/api/providers/massive/fundamentals/float", params=params)
         return resp.json()
 

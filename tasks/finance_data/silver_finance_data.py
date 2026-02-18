@@ -22,6 +22,7 @@ from tasks.common.silver_contracts import (
     log_contract_violation,
     normalize_date_column,
     require_non_empty_frame,
+    normalize_columns_to_snake_case,
 )
 
 # Initialize Clients
@@ -445,11 +446,16 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
     return df_daily.reset_index()
 
 def _try_get_delta_max_date(container: str, path: str) -> Optional[pd.Timestamp]:
-    df = delta_core.load_delta(container, path, columns=["Date"])
-    if df is None or df.empty or "Date" not in df.columns:
+    date_col = None
+    for candidate in ("Date", "date"):
+        df = delta_core.load_delta(container, path, columns=[candidate])
+        if df is not None and not df.empty and candidate in df.columns:
+            date_col = candidate
+            break
+    if date_col is None:
         return None
 
-    dates = pd.to_datetime(df["Date"], errors="coerce")
+    dates = pd.to_datetime(df[date_col], errors="coerce")
     dates = dates.dropna()
     if dates.empty:
         return None
@@ -638,6 +644,7 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
         # Assuming overwrite for the partition/table is safest for now to avoid specific duplicates.
         
         df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
+        df_clean = normalize_columns_to_snake_case(df_clean)
         delta_core.store_delta(
             df_clean,
             cfg.AZURE_CONTAINER_SILVER,

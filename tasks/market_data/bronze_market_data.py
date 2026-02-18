@@ -71,6 +71,67 @@ def _extract_payload_rows(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _extract_row_date(payload: dict[str, Any]) -> str | None:
+    normalized = {_normalize_key(k): v for k, v in payload.items()}
+    date_candidates = (
+        "date",
+        "filingdate",
+        "filing_date",
+        "settlement_date",
+        "settlementdate",
+        "effective_date",
+        "effectivedate",
+        "as_of",
+        "asof",
+        "session",
+        "day",
+        "start",
+        "start_date",
+        "startdate",
+        "timestamp",
+        "t",
+        "time",
+        "window_start",
+        "windowstart",
+        "report_date",
+        "reportdate",
+        "calendar_date",
+        "calendardate",
+    )
+    for key in date_candidates:
+        out = _extract_iso_date(normalized.get(key))
+        if out:
+            return out
+    return None
+
+
+def _is_within_window(
+    date_str: str | None,
+    *,
+    min_date: str | None = None,
+    max_date: str | None = None,
+) -> bool:
+    parsed = _extract_iso_date(date_str)
+    if parsed is None:
+        return False
+    if min_date:
+        window_min = _extract_iso_date(min_date)
+        if window_min and parsed < window_min:
+            return False
+    if max_date:
+        window_max = _extract_iso_date(max_date)
+        if window_max and parsed > window_max:
+            return False
+    return True
+
+
+def _normalize_window_bound(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = _extract_iso_date(value)
+    return normalized
+
+
 def _extract_first_numeric(payload: dict[str, Any], keys: tuple[str, ...]) -> float | None:
     normalized = {_normalize_key(k): v for k, v in payload.items()}
     for key in keys:
@@ -110,37 +171,15 @@ def _extract_iso_date(raw: Any) -> str | None:
     return parsed.date().isoformat()
 
 
-def _extract_row_date(payload: dict[str, Any]) -> str | None:
-    normalized = {_normalize_key(k): v for k, v in payload.items()}
-    for key in (
-        "date",
-        "settlement_date",
-        "effective_date",
-        "as_of",
-        "asof",
-        "session",
-        "day",
-        "start",
-        "start_date",
-        "timestamp",
-        "t",
-        "time",
-        "window_start",
-        "report_date",
-        "calendar_date",
-    ):
-        out = _extract_iso_date(normalized.get(_normalize_key(key)))
-        if out:
-            return out
-    return None
-
-
 def _build_metric_series(
     payload: Any,
     *,
     metric_column: str,
     value_keys: tuple[str, ...],
     fallback_date: str,
+    *,
+    min_date: str | None = None,
+    max_date: str | None = None,
 ) -> pd.DataFrame:
     rows = _extract_payload_rows(payload)
     out_rows: list[dict[str, Any]] = []
@@ -149,7 +188,9 @@ def _build_metric_series(
         value = _extract_first_numeric(row, value_keys)
         if value is None:
             continue
-        date_str = _extract_row_date(row) or fallback_date
+        date_str = _extract_row_date(row)
+        if date_str is None or not _is_within_window(date_str, min_date=min_date, max_date=max_date):
+            continue
         out_rows.append({"Date": date_str, metric_column: value})
 
     if not out_rows and isinstance(payload, dict):
@@ -223,23 +264,50 @@ def _merge_market_fundamentals(
 ) -> pd.DataFrame:
     out = df_daily.copy()
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    metric_min_date = out["Date"].dropna().min()
+    metric_max_date = out["Date"].dropna().max()
 
-    fallback_date = str(out["Date"].dropna().iloc[-1]) if not out.empty else _utc_today().isoformat()
+    fallback_date = str(metric_max_date) if not out.empty else _utc_today().isoformat()
+    normalized_min = _normalize_window_bound(metric_min_date)
+    normalized_max = _normalize_window_bound(metric_max_date)
     metric_specs = (
         (
             "ShortInterest",
             short_interest_payload,
-            ("short_interest", "shortinterest", "short_interest_shares", "sharesshort", "value"),
+            (
+                "short_interest",
+                "shortinterest",
+                "shortinterestshares",
+                "short_interest_shares",
+                "sharesshort",
+                "value",
+            ),
         ),
         (
             "ShortVolume",
             short_volume_payload,
-            ("short_volume", "shortvolume", "short_volume_shares", "volumeshort", "value"),
+            (
+                "short_volume",
+                "shortvolume",
+                "shortvolumeshares",
+                "short_volume_shares",
+                "volumeshort",
+                "value",
+            ),
         ),
         (
             "FloatShares",
             float_payload,
-            ("float_shares", "shares_float", "sharesfloat", "float", "free_float", "value"),
+            (
+                "float_shares",
+                "shares_float",
+                "sharesfloat",
+                "floatshares",
+                "floatshares",
+                "float",
+                "free_float",
+                "value",
+            ),
         ),
     )
 
@@ -249,6 +317,8 @@ def _merge_market_fundamentals(
             metric_column=column_name,
             value_keys=value_keys,
             fallback_date=fallback_date,
+            min_date=normalized_min,
+            max_date=normalized_max,
         )
         if df_metric.empty:
             out[column_name] = pd.NA
@@ -552,13 +622,23 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
         df_daily = _normalize_provider_daily_df(raw_text)
 
         try:
-            short_interest_payload = massive_client.get_short_interest(symbol=symbol)
+            short_interest_payload = massive_client.get_short_interest(
+                symbol=symbol,
+                settlement_date_gte=from_date,
+                settlement_date_lte=to_date,
+            )
         except MassiveGatewayNotFoundError:
             short_interest_payload = {}
+
         try:
-            short_volume_payload = massive_client.get_short_volume(symbol=symbol)
+            short_volume_payload = massive_client.get_short_volume(
+                symbol=symbol,
+                date_gte=from_date,
+                date_lte=to_date,
+            )
         except MassiveGatewayNotFoundError:
             short_volume_payload = {}
+
         try:
             float_payload = massive_client.get_float(symbol=symbol)
         except MassiveGatewayNotFoundError:

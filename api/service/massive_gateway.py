@@ -315,24 +315,47 @@ class MassiveGateway:
         rows = self._normalize_ohlcv_rows([b for b in bars if isinstance(b, dict)])
         return self._to_csv(rows)
 
-    def get_short_interest(self, *, symbol: str) -> Any:
+    def get_short_interest(
+        self,
+        *,
+        symbol: str,
+        settlement_date_gte: Optional[str] = None,
+        settlement_date_lte: Optional[str] = None,
+    ) -> Any:
+        params = {"sort": "settlement_date.asc", "limit": 50000}
+        if settlement_date_gte:
+            params["settlement_date.gte"] = settlement_date_gte
+        if settlement_date_lte:
+            params["settlement_date.lte"] = settlement_date_lte
         return self.get_client().get_short_interest(
             ticker=str(symbol).strip().upper(),
-            params={"sort": "settlement_date.asc", "limit": 50000},
+            params=params,
             pagination=True,
         )
 
-    def get_short_volume(self, *, symbol: str) -> Any:
+    def get_short_volume(
+        self,
+        *,
+        symbol: str,
+        date_gte: Optional[str] = None,
+        date_lte: Optional[str] = None,
+    ) -> Any:
+        params = {"sort": "date.asc", "limit": 50000}
+        if date_gte:
+            params["date.gte"] = date_gte
+        if date_lte:
+            params["date.lte"] = date_lte
         return self.get_client().get_short_volume(
             ticker=str(symbol).strip().upper(),
-            params={"sort": "date.asc", "limit": 50000},
+            params=params,
             pagination=True,
         )
 
     def get_float(self, *, symbol: str, as_of: Optional[str] = None) -> Any:
+        # Massive's current float endpoint does not document as-of/date filters.
+        # Keep the parameter for compatibility but do not forward query filters.
         return self.get_client().get_float(
             ticker=str(symbol).strip().upper(),
-            as_of=as_of,
             params={"sort": "effective_date.asc", "limit": 5000},
             pagination=True,
         )

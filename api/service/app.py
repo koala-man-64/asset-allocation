@@ -92,7 +92,9 @@ def create_app() -> FastAPI:
         app.state.massive_gateway = MassiveGateway()
 
         stop_refresh = asyncio.Event()
+        stop_purge_rules = asyncio.Event()
         refresh_task: asyncio.Task[None] | None = None
+        purge_rules_task: asyncio.Task[None] | None = None
 
         if settings.postgres_dsn:
             app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
@@ -196,6 +198,49 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 logger.warning("Runtime config overrides not applied: %s", exc)
 
+            def _get_purge_rules_interval_seconds() -> float:
+                raw = os.environ.get("PURGE_RULES_INTERVAL_SECONDS", "300")
+                try:
+                    seconds = float(str(raw).strip() or "300")
+                except Exception:
+                    return 300.0
+                return seconds if seconds >= 5 else 5.0
+
+            def _purge_rules_enabled() -> bool:
+                raw = os.environ.get("PURGE_RULES_ENABLED", "true")
+                return str(raw).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+            async def _periodic_purge_rules() -> None:
+                if not _purge_rules_enabled():
+                    return
+                while not stop_purge_rules.is_set():
+                    try:
+                        await asyncio.wait_for(stop_purge_rules.wait(), timeout=_get_purge_rules_interval_seconds())
+                        break
+                    except asyncio.TimeoutError:
+                        pass
+
+                    try:
+                        if not settings.postgres_dsn:
+                            continue
+                        summary = await asyncio.to_thread(
+                            system.run_due_purge_rules,
+                            dsn=settings.postgres_dsn,
+                            actor="system",
+                        )
+                        if summary.get("executed"):
+                            logger.info(
+                                "Periodic purge rules executed: checked=%s executed=%s succeeded=%s failed=%s",
+                                summary.get("checked", 0),
+                                summary.get("executed", 0),
+                                summary.get("succeeded", 0),
+                                summary.get("failed", 0),
+                            )
+                    except Exception as exc:
+                        logger.warning("Periodic purge-rule execution failed: %s", exc)
+
+            purge_rules_task = asyncio.create_task(_periodic_purge_rules())
+
         def _system_health_ttl_seconds() -> float:
             raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "300")
             try:
@@ -229,10 +274,17 @@ def create_app() -> FastAPI:
         yield
 
         stop_refresh.set()
+        stop_purge_rules.set()
         if refresh_task is not None:
             refresh_task.cancel()
             try:
                 await refresh_task
+            except Exception:
+                pass
+        if purge_rules_task is not None:
+            purge_rules_task.cancel()
+            try:
+                await purge_rules_task
             except Exception:
                 pass
 

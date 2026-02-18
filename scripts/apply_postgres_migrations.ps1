@@ -1,13 +1,18 @@
 param(
-  [Parameter(Mandatory = $true)]
   [string]$Dsn,
-
-  [string]$MigrationsDir = "deploy/sql/postgres/migrations",
   [switch]$UseDockerPsql
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..") -ErrorAction Stop).Path
+$MigrationsDir = Join-Path $RepoRoot "deploy/sql/postgres/migrations"
+
+function Is-CompleteDsn {
+  param([string]$Value)
+  return ($Value -match "^[a-zA-Z][a-zA-Z0-9+.-]*://")
+}
 
 function Assert-CommandExists {
   param([Parameter(Mandatory = $true)][string]$Name)
@@ -16,12 +21,50 @@ function Assert-CommandExists {
   }
 }
 
+function Get-EnvValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+
+  if (-not (Test-Path $Path)) {
+    return ""
+  }
+
+  $keyPattern = "^{0}\s*=" -f [regex]::Escape($Key)
+  foreach ($line in Get-Content $Path) {
+    $trimmed = $line.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#")) {
+      continue
+    }
+
+    if ($trimmed -notmatch $keyPattern) {
+      continue
+    }
+
+    $parts = $trimmed -split "=", 2
+    if ($parts.Count -ne 2) {
+      continue
+    }
+
+    $value = $parts[1].Trim()
+    if ($value.StartsWith('"') -and $value.EndsWith('"') -and $value.Length -ge 2) {
+      $value = $value.Substring(1, $value.Length - 2)
+    }
+    return $value
+  }
+
+  return ""
+}
+
 function Invoke-Psql {
   param(
     [Parameter(Mandatory = $true)][string[]]$Args
   )
 
-  if ($UseDockerPsql) {
+  $preferDocker = $UseDockerPsql.IsPresent
+
+  if ($preferDocker) {
     Assert-CommandExists -Name "docker"
     $cmd = @("run", "--rm", "postgres:16-alpine", "psql") + $Args
     & docker @cmd
@@ -32,6 +75,27 @@ function Invoke-Psql {
   Assert-CommandExists -Name "psql"
   & psql @Args
   if (-not $?) { throw "psql failed." }
+}
+
+if (-not $Dsn) {
+  $DsnFromEnv = Get-EnvValue -Path (Join-Path $RepoRoot ".env") -Key "POSTGRES_DSN"
+  if (-not $DsnFromEnv) {
+    $DsnFromEnv = $env:POSTGRES_DSN
+    if (-not $DsnFromEnv) {
+      $DsnFromEnv = Get-EnvValue -Path (Join-Path (Split-Path $PSScriptRoot) ".env") -Key "POSTGRES_DSN"
+    }
+  }
+  if ($DsnFromEnv) {
+    $Dsn = $DsnFromEnv
+  }
+}
+
+if (-not $Dsn) {
+  throw "POSTGRES_DSN is not configured. Set POSTGRES_DSN in `.env` or pass -Dsn."
+}
+
+if (-not (Is-CompleteDsn -Value $Dsn)) {
+  throw "Invalid or incomplete POSTGRES_DSN: '$Dsn'. Expected full DSN format, e.g. postgresql://user:pass@host:5432/db?sslmode=require"
 }
 
 $resolvedDir = (Resolve-Path $MigrationsDir -ErrorAction Stop).Path

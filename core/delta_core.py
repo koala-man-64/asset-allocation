@@ -13,6 +13,89 @@ from deltalake import DeltaTable, write_deltalake
 logger = logging.getLogger(__name__)
 _checked_containers = set()
 
+def _looks_float_type(schema_type: str) -> bool:
+    """
+    Heuristic for identifying numeric schema columns likely to fail on bad string values.
+    """
+    normalized = (schema_type or "").lower()
+    numeric_markers = [
+        "float",
+        "double",
+        "decimal",
+        "int",
+        "bigint",
+        "smallint",
+        "integer",
+        "long",
+    ]
+    return any(marker in normalized for marker in numeric_markers)
+
+
+def _log_delta_cast_candidates(df: pd.DataFrame, container: str, path: str, error_text: str) -> None:
+    """
+    Best-effort column-level diagnostics for delta write cast failures.
+    """
+    try:
+        uri = get_delta_table_uri(container, path)
+        opts = get_delta_storage_options(container)
+        dt = DeltaTable(uri, storage_options=opts)
+
+        table_types = {}
+        for field in dt.schema().fields:
+            table_types[field.name] = str(getattr(field, "data_type", ""))
+
+        suspect_columns = []
+        for column in df.columns:
+            col_name = str(column)
+            field_type = table_types.get(col_name, "")
+            if field_type and not _looks_float_type(field_type):
+                continue
+
+            series = df[column]
+            if pd.api.types.is_numeric_dtype(series.dtype):
+                continue
+
+            non_null = series.dropna()
+            if non_null.empty:
+                continue
+
+            parsed = pd.to_numeric(non_null, errors="coerce")
+            invalid = non_null[pd.isna(parsed)]
+            if invalid.empty:
+                continue
+
+            samples = [str(v) for v in invalid.astype(str).head(5).tolist()]
+            has_none = any(v.lower() == "none" for v in invalid.astype(str).tolist())
+            suspect_columns.append(
+                f"{col_name}(invalid={len(invalid)}, type={field_type or 'unknown'}, "
+                f"samples={samples}, has_none_literal={has_none})"
+            )
+
+        if suspect_columns:
+            logger.error(
+                "Potential cast failure columns for %s (error=%s): %s",
+                path,
+                error_text,
+                suspect_columns,
+            )
+        else:
+            string_invalid = [
+                str(column)
+                for column in df.columns
+                if not pd.api.types.is_numeric_dtype(df[column].dtype)
+                and pd.Series(df[column].astype(str), dtype=str).eq("None").any()
+            ]
+
+            if string_invalid:
+                logger.error(
+                    "Potential cast failure columns for %s (error=%s): string columns with 'None' literal=%s",
+                    path,
+                    error_text,
+                    string_invalid,
+                )
+    except Exception as exc:
+        logger.warning(f"Failed to compute cast candidate diagnostics for {path}: {exc}")
+
 
 def _get_existing_delta_schema_columns(uri: str, storage_options: Dict[str, str]) -> Optional[List[str]]:
     try:
@@ -354,6 +437,8 @@ def store_delta(
     except Exception as e:
         logger.error(f"Failed to write Delta table {path}: {e}")
         error_text = str(e)
+        if "Cannot cast" in error_text:
+            _log_delta_cast_candidates(df, container, path, error_text)
         if "Cannot cast schema" in error_text or "number of fields does not match" in error_text:
             _log_delta_schema_mismatch(df, container, path)
         raise

@@ -8,6 +8,7 @@ from core import delta_core
 from core.pipeline import DataPaths
 from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest_only_flag
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 # Suppress warnings
 
@@ -198,6 +199,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
 
     # 7. Write to Silver
     try:
+        df_merged = normalize_columns_to_snake_case(df_merged)
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")

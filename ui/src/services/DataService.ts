@@ -21,6 +21,7 @@ import type {
   RuntimeConfigCatalogResponse,
   RuntimeConfigItem,
   RuntimeConfigListResponse,
+  PurgeCandidatesResponse,
   ValidationReport,
   SymbolSyncState,
   DataProfilingResponse,
@@ -231,6 +232,16 @@ export const DataService = {
 
   getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
     return apiService.getPurgeOperation(operationId);
+  },
+
+  getPurgeCandidates(
+    payload: Parameters<typeof apiService.getPurgeCandidates>[0]
+  ): Promise<PurgeCandidatesResponse> {
+    return apiService.getPurgeCandidates(payload);
+  },
+
+  purgeSymbolsBatch(payload: Parameters<typeof apiService.purgeSymbolsBatch>[0]): Promise<PurgeOperationResponse> {
+    return apiService.purgeSymbolsBatch(payload);
   },
 
   getDebugSymbols(): Promise<DebugSymbolsResponse> {

@@ -172,6 +172,64 @@ export interface PurgeRequest {
   confirm: boolean;
 }
 
+export interface PurgeCandidateRow {
+  symbol: string;
+  matchedValue: number;
+  rowsContributing: number;
+  latestAsOf: string | null;
+}
+
+export interface PurgeCandidatesCriteria {
+  requestedLayer: string;
+  resolvedLayer: string;
+  domain: string;
+  column: string;
+  operator: string;
+  value: number;
+  asOf?: string | null;
+  minRows: number;
+}
+
+export interface PurgeCandidatesSummary {
+  totalRowsScanned: number;
+  symbolsMatched: number;
+  rowsContributing: number;
+  estimatedDeletionTargets: number;
+}
+
+export interface PurgeCandidatesResponse {
+  criteria: PurgeCandidatesCriteria;
+  expression: string;
+  summary: PurgeCandidatesSummary;
+  symbols: PurgeCandidateRow[];
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+  note?: string | null;
+}
+
+export interface PurgeSymbolResultItem {
+  symbol: string;
+  status: 'succeeded' | 'failed' | 'skipped';
+  deleted?: number;
+  dryRun?: boolean;
+  error?: string;
+}
+
+export interface PurgeBatchOperationResult {
+  scope: 'symbols';
+  dryRun: boolean;
+  scopeNote?: string | null;
+  requestedSymbols: string[];
+  requestedSymbolCount: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  totalDeleted: number;
+  symbolResults: PurgeSymbolResultItem[];
+}
+
 export interface PurgeOperationResponse {
   operationId: string;
   status: 'running' | 'succeeded' | 'failed';
@@ -182,7 +240,7 @@ export interface PurgeOperationResponse {
   updatedAt: string;
   startedAt: string;
   completedAt?: string | null;
-  result?: PurgeResponse;
+  result?: PurgeResponse | PurgeBatchOperationResult;
   error?: string | null;
 }
 
@@ -540,8 +598,35 @@ export const apiService = {
     });
   },
 
+  getPurgeCandidates(payload: {
+    layer: 'bronze' | 'silver' | 'gold';
+    domain: 'market' | 'finance' | 'earnings' | 'price-target';
+    column: string;
+    operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne' | 'top_percent' | 'bottom_percent';
+    value?: number;
+    percentile?: number;
+    as_of?: string;
+    limit?: number;
+    offset?: number;
+    min_rows?: number;
+  }): Promise<PurgeCandidatesResponse> {
+    return request<PurgeCandidatesResponse>('/system/purge-candidates', { params: payload });
+  },
+
   getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
     return request<PurgeOperationResponse>(`/system/purge/${encodeURIComponent(operationId)}`);
+  },
+
+  purgeSymbolsBatch(payload: {
+    symbols: string[];
+    confirm: boolean;
+    scope_note?: string;
+    dry_run?: boolean;
+  }): Promise<PurgeOperationResponse> {
+    return request<PurgeOperationResponse>('/system/purge-symbols', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   },
 
   getDebugSymbols(): Promise<DebugSymbolsResponse> {

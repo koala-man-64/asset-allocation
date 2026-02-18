@@ -6,6 +6,7 @@ import pandas as pd
 
 from core import delta_core
 from monitoring.domain_metadata import collect_delta_table_metadata
+from deltalake.exceptions import TableNotFoundError
 
 
 def test_collect_delta_table_metadata_reports_rows_and_date_range(tmp_path) -> None:
@@ -242,4 +243,23 @@ def test_collect_delta_table_metadata_uses_partition_values(monkeypatch) -> None
     assert meta["dateRange"]["column"] == "Date"
     assert datetime.fromisoformat(meta["dateRange"]["min"]).date().isoformat() == "2024-05-03"
     assert datetime.fromisoformat(meta["dateRange"]["max"]).date().isoformat() == "2024-05-03"
+
+
+def test_collect_delta_table_metadata_handles_no_files_in_log_segment(monkeypatch) -> None:
+    def _raise(*_args, **_kwargs) -> None:
+        raise TableNotFoundError("Generic delta kernel error: No files in log segment")
+
+    monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _raise)
+
+    warnings: list[str] = []
+    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+
+    assert meta["deltaVersion"] is None
+    assert meta["fileCount"] == 0
+    assert meta["totalBytes"] == 0
+    assert meta["totalRows"] == 0
+    assert meta["dateRange"] is None
+    assert warnings == [
+        "Delta table not readable at market-data-by-date; no commit files found in _delta_log yet."
+    ]
 

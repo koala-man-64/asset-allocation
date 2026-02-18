@@ -14,6 +14,7 @@ from tasks.common.silver_contracts import (
     assert_no_unexpected_mixed_empty,
     log_contract_violation,
     normalize_date_column,
+    normalize_columns_to_snake_case,
 )
 
 # Initialize Clients
@@ -121,6 +122,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     # Dedup: Keep LAST (Newest information for that Earnings Date)
     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
     df_merged = df_merged.reset_index(drop=True)
+    df_merged = normalize_columns_to_snake_case(df_merged)
     
     # 5. Write to Silver
     try:

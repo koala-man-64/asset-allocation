@@ -20,6 +20,7 @@ import pandas as pd
 from core.core import write_line, write_warning
 from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,9 @@ class MaterializeConfig:
     year_month: str
     output_path: str
     max_tickers: Optional[int]
+
+
+_DATE_COLUMN_CANDIDATES: Tuple[str, ...] = ("Date", "date")
 
 
 def _normalize_object_columns(df: pd.DataFrame, *, exclude: set[str]) -> pd.DataFrame:
@@ -53,6 +57,47 @@ def _parse_year_month_bounds(year_month: str) -> Tuple[pd.Timestamp, pd.Timestam
         raise ValueError(f"Invalid year_month '{year_month}'. Expected YYYY-MM.") from exc
     end = start + pd.offsets.MonthBegin(1)
     return start, end
+
+
+def _load_first_available_date_projection(
+    *, container: str, src_path: str
+) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
+    for date_col in _DATE_COLUMN_CANDIDATES:
+        df = load_delta(container, src_path, columns=[date_col])
+        if df is None or df.empty:
+            continue
+        if date_col in df.columns:
+            return date_col, df
+    return None, None
+
+
+def _load_first_available_date_range(
+    *,
+    container: str,
+    src_path: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
+    start_dt = start.to_pydatetime()
+    end_dt = end.to_pydatetime()
+    for date_col in _DATE_COLUMN_CANDIDATES:
+        df = load_delta(
+            container,
+            src_path,
+            filters=[(date_col, ">=", start_dt), (date_col, "<", end_dt)],
+        )
+        if df is None or df.empty:
+            continue
+        if date_col in df.columns:
+            return date_col, df
+
+    df = load_delta(container, src_path)
+    if df is None or df.empty:
+        return None, None
+    date_col = "Date" if "Date" in df.columns else ("date" if "date" in df.columns else None)
+    if date_col is None:
+        return None, None
+    return date_col, df
 
 
 def _load_ticker_universe() -> List[str]:
@@ -189,11 +234,11 @@ def discover_year_months_from_data(
     year_months: set[str] = set()
     for ticker in tickers:
         src_path = DataPaths.get_gold_finance_path(ticker)
-        df = load_delta(container, src_path, columns=["date"])
-        if df is None or df.empty or "date" not in df.columns:
+        date_col, df = _load_first_available_date_projection(container=container, src_path=src_path)
+        if date_col is None or df is None or df.empty:
             continue
 
-        dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+        dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
         if dates.empty:
             continue
         for value in dates.dt.strftime("%Y-%m").unique().tolist():
@@ -233,13 +278,16 @@ def materialize_finance_by_date(cfg: MaterializeConfig) -> int:
     frames = []
     for ticker in tickers:
         src_path = DataPaths.get_gold_finance_path(ticker)
-        df = load_delta(
-            cfg.container,
-            src_path,
-            filters=[("date", ">=", start.to_pydatetime()), ("date", "<", end.to_pydatetime())],
+        date_col, df = _load_first_available_date_range(
+            container=cfg.container,
+            src_path=src_path,
+            start=start,
+            end=end,
         )
         if df is None or df.empty:
             continue
+        if date_col != "date" and date_col is not None and "date" not in df.columns:
+            df = df.rename(columns={date_col: "date"})
         # Inject ticker col if missing? usually DataPaths implies ticker is key, but wide table needs it
         if "symbol" not in df.columns and "Symbol" not in df.columns:
             df["symbol"] = ticker
@@ -263,11 +311,17 @@ def materialize_finance_by_date(cfg: MaterializeConfig) -> int:
         write_line(f"No rows remain after year_month filter for {cfg.year_month}; nothing to materialize.")
         return 0
 
+    out = normalize_columns_to_snake_case(out)
+    date_col = "date" if "date" in out.columns else ("obs_date" if "obs_date" in out.columns else None)
+    if date_col is None:
+        write_line(f"No date column found for {cfg.year_month}; nothing to materialize.")
+        return 0
+
     if "Symbol" in out.columns:
         out["Symbol"] = out["Symbol"].astype("string")
     if "symbol" in out.columns:
         out["symbol"] = out["symbol"].astype("string")
-    out = _normalize_object_columns(out, exclude={"date", "year_month", "Symbol", "symbol"})
+    out = _normalize_object_columns(out, exclude={date_col, "year_month", "Symbol", "symbol"})
 
     predicate = f"year_month = '{cfg.year_month}'"
     store_delta(
@@ -275,7 +329,7 @@ def materialize_finance_by_date(cfg: MaterializeConfig) -> int:
         container=cfg.container,
         path=cfg.output_path,
         mode="overwrite",
-        partition_by=["year_month", "date"],
+        partition_by=["year_month", date_col],
         merge_schema=True,
         predicate=predicate,
     )

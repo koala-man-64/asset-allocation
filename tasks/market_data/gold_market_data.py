@@ -14,6 +14,7 @@ from tasks.technical_analysis.technical_indicators import (
     add_candlestick_patterns,
     add_heikin_ashi_and_ichimoku,
 )
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,8 @@ def _process_ticker(task: Tuple[str, str, str, str, str]) -> Dict[str, Any]:
         df_features = compute_features(df_raw)
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
+
+    df_features = normalize_columns_to_snake_case(df_features)
 
     try:
         delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")

@@ -17,11 +17,13 @@ const SystemStatusPage = lazy(() => import('@/app/components/pages/SystemStatusP
 const DataQualityPage = lazy(() => import('@/app/components/pages/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
 const StockExplorerPage = lazy(() => import('@/app/components/pages/StockExplorerPage').then(m => ({ default: m.StockExplorerPage })));
 const StockDetailPage = lazy(() => import('@/app/components/pages/StockDetailPage').then(m => ({ default: m.StockDetailPage })));
-const PostgresExplorerPage = lazy(() => import('@/app/components/pages/PostgresExplorerPage').then(m => ({ default: m.PostgresExplorerPage })));
 const DebugSymbolsPage = lazy(() => import('@/app/components/pages/DebugSymbolsPage').then(m => ({ default: m.DebugSymbolsPage })));
 const DataProfilingPage = lazy(() => import('@/app/components/pages/DataProfilingPage').then(m => ({ default: m.DataProfilingPage })));
 const RuntimeConfigPage = lazy(() => import('@/app/components/pages/RuntimeConfigPage').then(m => ({ default: m.RuntimeConfigPage })));
 const StrategyConfigPage = lazy(() => import('@/app/components/pages/StrategyConfigPage').then(m => ({ default: m.StrategyConfigPage })));
+const SymbolPurgeByCriteriaPage = lazy(() =>
+  import('@/app/components/pages/SymbolPurgeByCriteriaPage').then((m) => ({ default: m.SymbolPurgeByCriteriaPage }))
+);
 
 import { Toaster } from '@/app/components/ui/sonner';
 
@@ -51,9 +53,10 @@ function AppContent() {
                 <Route path="/system-status" element={<SystemStatusPage />} />
                 <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
                 <Route path="/runtime-config" element={<RuntimeConfigPage />} />
+                <Route path="/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
+                <Route path="/data-admin/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
                 <Route path="/stock-explorer" element={<StockExplorerPage />} />
                 <Route path="/strategies" element={<StrategyConfigPage />} />
-                <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
                 <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

@@ -493,7 +493,29 @@ def collect_delta_table_metadata(
 
     uri = delta_core.get_delta_table_uri(container, table_path)
     opts = delta_core.get_delta_storage_options(container)
-    dt = DeltaTable(uri, storage_options=opts)
+    try:
+        dt = DeltaTable(uri, storage_options=opts)
+    except Exception as exc:
+        message = str(exc).lower()
+        is_no_files_error = "no files in log segment" in message
+        is_table_not_found_error = exc.__class__.__name__ == "TableNotFoundError"
+        if is_no_files_error or is_table_not_found_error:
+            local_warnings.append(
+                f"Delta table not readable at {table_path}; no commit files found in _delta_log yet."
+            )
+            return {
+                "deltaVersion": None,
+                "fileCount": 0,
+                "totalBytes": 0,
+                "totalRows": 0,
+                "dateRange": None,
+            }
+        logger.exception(
+            "Failed to open Delta table for metadata collection: container=%s table=%s",
+            container,
+            table_path,
+        )
+        raise
 
     version = int(dt.version())
     add_actions = dt.get_add_actions(flatten=True).to_struct_array().to_pylist()

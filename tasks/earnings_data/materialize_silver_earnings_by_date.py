@@ -16,6 +16,7 @@ import pandas as pd
 from core.core import write_line, write_warning
 from core.delta_core import load_delta, store_delta
 from core.pipeline import DataPaths
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 
 def _normalize_mixed_columns(
@@ -283,8 +284,13 @@ def materialize_silver_earnings_by_date(cfg: MaterializeConfig) -> int:
         return 0
 
     out = pd.concat(frames, ignore_index=True)
-    date_col = "Date" if "Date" in out.columns else "date"
     predicate = f"year_month = '{cfg.year_month}'"
+
+    out = normalize_columns_to_snake_case(out)
+    date_col = "date" if "date" in out.columns else ("obs_date" if "obs_date" in out.columns else None)
+    if date_col is None:
+        write_line(f"No date column found for {cfg.year_month}; nothing to materialize.")
+        return 0
 
     # Ensure Arrow-friendly column types before writing.
     if "Symbol" in out.columns:
