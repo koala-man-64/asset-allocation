@@ -73,6 +73,7 @@ REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
 
 _PURGE_OPERATIONS: Dict[str, Dict[str, Any]] = {}
 _PURGE_OPERATIONS_LOCK = threading.Lock()
+_PURGE_RULE_AUDIT_INTERVAL_MINUTES = 60 * 24 * 365
 
 
 def _emit_realtime(topic: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -675,11 +676,25 @@ class PurgeSymbolRequest(BaseModel):
     confirm: bool = False
 
 
+class PurgeRuleAuditRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    column_name: str = Field(..., min_length=1, max_length=128)
+    operator: str = Field(..., min_length=1, max_length=24)
+    threshold: float
+    aggregation: Optional[str] = Field(default=None, min_length=1, max_length=24)
+    recent_rows: Optional[int] = Field(default=None, ge=1, le=5000)
+    expression: Optional[str] = Field(default=None, max_length=512)
+    selected_symbol_count: Optional[int] = Field(default=None, ge=0)
+    matched_symbol_count: Optional[int] = Field(default=None, ge=0)
+
+
 class PurgeSymbolsBatchRequest(BaseModel):
     symbols: List[str] = Field(..., min_length=1)
     confirm: bool = False
     scope_note: Optional[str] = None
     dry_run: bool = False
+    audit_rule: Optional[PurgeRuleAuditRequest] = None
 
 
 class PurgeRuleCreateRequest(BaseModel):
@@ -864,6 +879,39 @@ def _collect_rule_symbol_values(rule: PurgeRule) -> List[tuple[str, float]]:
     ]
 
 
+_CANDIDATE_AGGREGATION_ALIASES: Dict[str, str] = {
+    "average": "avg",
+    "mean": "avg",
+    "std": "stddev",
+    "stdev": "stddev",
+    "std_dev": "stddev",
+    "standard_deviation": "stddev",
+}
+_SUPPORTED_CANDIDATE_AGGREGATIONS = {"min", "max", "avg", "stddev"}
+
+
+def _normalize_candidate_aggregation(value: object) -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_")
+    resolved = _CANDIDATE_AGGREGATION_ALIASES.get(normalized, normalized)
+    if resolved not in _SUPPORTED_CANDIDATE_AGGREGATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported aggregation '{value}'. Supported: avg, min, max, stddev.",
+        )
+    return resolved
+
+
+def _aggregate_series(values: pd.Series, aggregation: str) -> float:
+    if aggregation == "min":
+        return float(values.min())
+    if aggregation == "max":
+        return float(values.max())
+    if aggregation == "stddev":
+        # Use population stddev so a single-row window is deterministic (0.0).
+        return float(values.std(ddof=0))
+    return float(values.mean())
+
+
 def _collect_purge_candidates(
     layer: str,
     domain: str,
@@ -872,7 +920,9 @@ def _collect_purge_candidates(
     raw_value: float,
     as_of: Optional[str] = None,
     min_rows: int = 1,
-    limit: int = 200,
+    recent_rows: int = 1,
+    aggregation: str = "avg",
+    limit: Optional[int] = None,
     offset: int = 0,
 ) -> tuple[List[Dict[str, Any]], int, int, int]:
     normalized_layer = _normalize_layer(layer)
@@ -884,6 +934,10 @@ def _collect_purge_candidates(
     threshold = float(raw_value)
     if not pd.notna(threshold) or not pd.api.types.is_number(threshold):
         raise HTTPException(status_code=400, detail="value must be a finite number.")
+    recent_rows = int(recent_rows)
+    if recent_rows < 1:
+        raise HTTPException(status_code=400, detail="recent_rows must be >= 1.")
+    resolved_aggregation = _normalize_candidate_aggregation(aggregation)
 
     container, table = _resolve_purge_rule_table(normalized_layer, normalized_domain)
     df = load_delta(container=container, path=table)
@@ -914,15 +968,27 @@ def _collect_purge_candidates(
         if work.empty:
             return [], 0, 0, 0
 
-        rows_per_symbol = work.groupby("symbol", as_index=False).size().rename(columns={"size": "rowsContributing"})
-        latest = work.sort_values("asOf").groupby("symbol", as_index=False).tail(1)
-        latest = latest.merge(rows_per_symbol, on="symbol", how="left")
+        work = work.sort_values(["symbol", "asOf"]).reset_index(drop=True)
+        windowed = work.groupby("symbol", as_index=False, group_keys=False).tail(recent_rows)
+        rows_per_symbol = windowed.groupby("symbol", as_index=False).size().rename(columns={"size": "rowsContributing"})
+        latest = (
+            windowed.groupby("symbol", as_index=False)
+            .agg(
+                value=("value", lambda series: _aggregate_series(series.astype(float), resolved_aggregation)),
+                asOf=("asOf", "max"),
+            )
+            .merge(rows_per_symbol, on="symbol", how="left")
+        )
     else:
         work = work.dropna(subset=["symbol", "value"]).copy()
         if work.empty:
             return [], 0, 0, 0
 
-        latest = work.groupby("symbol", as_index=False).agg(value=("value", "mean"), rowsContributing=("value", "size"))
+        windowed = work.groupby("symbol", as_index=False, group_keys=False).tail(recent_rows)
+        latest = windowed.groupby("symbol", as_index=False).agg(
+            value=("value", lambda series: _aggregate_series(series.astype(float), resolved_aggregation)),
+            rowsContributing=("value", "size"),
+        )
         latest["asOf"] = None
 
     latest["value"] = pd.to_numeric(latest["value"], errors="coerce")
@@ -969,7 +1035,10 @@ def _collect_purge_candidates(
 
     matched_value_total = int(latest["rowsContributing"].sum()) if "rowsContributing" in latest else 0
     total = int(len(latest))
-    window = latest.iloc[offset : offset + limit]
+    if limit is None:
+        window = latest.iloc[offset:]
+    else:
+        window = latest.iloc[offset : offset + int(limit)]
 
     matches: List[Dict[str, Any]] = []
     for _, row in window.iterrows():
@@ -991,26 +1060,108 @@ def _build_purge_expression(
     column: str,
     operator: str,
     value: float,
+    *,
+    recent_rows: int = 1,
+    aggregation: str = "avg",
 ) -> str:
     operator = normalize_purge_rule_operator(operator)
     display_value = float(value)
+    resolved_aggregation = _normalize_candidate_aggregation(aggregation)
+    metric = (
+        str(column)
+        if int(recent_rows) == 1 and resolved_aggregation == "avg"
+        else f"{resolved_aggregation}({column}) over last {int(recent_rows)} rows"
+    )
     if operator == "gt":
-        return f"{column} > {display_value:g}"
+        return f"{metric} > {display_value:g}"
     if operator == "gte":
-        return f"{column} >= {display_value:g}"
+        return f"{metric} >= {display_value:g}"
     if operator == "lt":
-        return f"{column} < {display_value:g}"
+        return f"{metric} < {display_value:g}"
     if operator == "lte":
-        return f"{column} <= {display_value:g}"
+        return f"{metric} <= {display_value:g}"
     if operator == "eq":
-        return f"{column} == {display_value:g}"
+        return f"{metric} == {display_value:g}"
     if operator == "ne":
-        return f"{column} != {display_value:g}"
+        return f"{metric} != {display_value:g}"
     if operator == "top_percent":
-        return f"top {display_value:g}% by {column}"
+        return f"top {display_value:g}% by {metric}"
     if operator == "bottom_percent":
-        return f"bottom {display_value:g}% by {column}"
-    return f"{column} {operator} {display_value:g}"
+        return f"bottom {display_value:g}% by {metric}"
+    return f"{metric} {operator} {display_value:g}"
+
+
+def _persist_purge_symbols_audit_rule(
+    *,
+    dsn: str,
+    audit_rule: PurgeRuleAuditRequest,
+    actor: Optional[str],
+) -> PurgeRule:
+    normalized_layer = _normalize_layer(audit_rule.layer)
+    normalized_domain = _normalize_domain(audit_rule.domain)
+    if not normalized_layer or not normalized_domain:
+        raise HTTPException(status_code=400, detail="audit_rule.layer and audit_rule.domain are required.")
+
+    resolved_column = str(audit_rule.column_name or "").strip()
+    if not resolved_column:
+        raise HTTPException(status_code=400, detail="audit_rule.column_name is required.")
+
+    normalized_operator = normalize_purge_rule_operator(audit_rule.operator)
+    threshold = float(audit_rule.threshold)
+    if not pd.notna(threshold) or threshold in {float("inf"), float("-inf")}:
+        raise HTTPException(status_code=400, detail="audit_rule.threshold must be a finite number.")
+    if is_percent_operator(normalized_operator) and not (0 <= threshold <= 100):
+        raise HTTPException(
+            status_code=400,
+            detail="audit_rule.threshold must be between 0 and 100 for percentile operators.",
+        )
+
+    recent_rows = int(audit_rule.recent_rows or 1)
+    normalized_aggregation = _normalize_candidate_aggregation(audit_rule.aggregation or "avg")
+    expression = str(audit_rule.expression or "").strip() or _build_purge_expression(
+        resolved_column,
+        normalized_operator,
+        threshold,
+        recent_rows=recent_rows,
+        aggregation=normalized_aggregation,
+    )
+
+    details: List[str] = []
+    if audit_rule.matched_symbol_count is not None:
+        details.append(f"matched={int(audit_rule.matched_symbol_count)}")
+    if audit_rule.selected_symbol_count is not None:
+        details.append(f"selected={int(audit_rule.selected_symbol_count)}")
+    detail_suffix = f" ({', '.join(details)})" if details else ""
+    audit_name = f"audit {normalized_layer}/{normalized_domain}: {expression}{detail_suffix}"
+
+    try:
+        return create_purge_rule(
+            dsn=dsn,
+            name=audit_name,
+            layer=normalized_layer,
+            domain=normalized_domain,
+            column_name=resolved_column,
+            operator=normalized_operator,
+            threshold=threshold,
+            run_interval_minutes=_PURGE_RULE_AUDIT_INTERVAL_MINUTES,
+            enabled=False,
+            actor=actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid audit_rule payload: {exc}") from exc
+    except PostgresError as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to persist audit purge rule: {exc}") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Failed to persist audit purge rule: layer=%s domain=%s column=%s operator=%s",
+            normalized_layer,
+            normalized_domain,
+            resolved_column,
+            normalized_operator,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to persist audit purge rule: {exc}") from exc
 
 
 def _normalize_candidate_symbols(symbols: List[str]) -> List[str]:
@@ -1033,6 +1184,7 @@ def _create_purge_symbols_operation(
     *,
     scope_note: Optional[str],
     dry_run: bool,
+    audit_rule_id: Optional[int] = None,
 ) -> str:
     operation_id = str(uuid.uuid4())
     now = _utc_timestamp()
@@ -1052,6 +1204,7 @@ def _create_purge_symbols_operation(
             "completedAt": None,
             "result": None,
             "error": None,
+            "auditRuleId": int(audit_rule_id) if audit_rule_id else None,
         }
     return operation_id
 
@@ -2250,9 +2403,24 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Confirmation required to purge data.")
 
     actor = _get_actor(request)
+    logger.info(
+        "Purge request received: actor=%s scope=%s layer=%s domain=%s",
+        actor or "-",
+        payload.scope,
+        payload.layer,
+        payload.domain,
+    )
     operation_id = _create_purge_operation(payload, actor)
     thread = threading.Thread(target=_execute_purge_operation, args=(operation_id, payload), daemon=True)
     thread.start()
+    logger.info(
+        "Purge operation queued: operation=%s actor=%s scope=%s layer=%s domain=%s",
+        operation_id,
+        actor or "-",
+        payload.scope,
+        payload.layer,
+        payload.domain,
+    )
 
     return JSONResponse(
         {
@@ -2282,7 +2450,9 @@ def get_purge_candidates(
     value: Optional[float] = Query(default=None, description="Numeric threshold (required for numeric operators)"),
     percentile: Optional[float] = Query(default=None, description="Required for percent operators"),
     as_of: Optional[str] = Query(default=None, description="Optional date limit (YYYY-MM-DD)"),
-    limit: int = Query(default=200, ge=1, le=5000, description="Max candidate rows to return"),
+    recent_rows: int = Query(default=1, ge=1, le=5000, description="Recent rows per symbol used for aggregation"),
+    aggregation: str = Query(default="avg", description="Aggregation over recent rows: min|max|avg|stddev"),
+    limit: Optional[int] = Query(default=None, ge=1, le=5000, description="Deprecated: optional max candidate rows"),
     offset: int = Query(default=0, ge=0, description="Candidate result offset"),
     min_rows: int = Query(default=1, ge=1, description="Minimum rows contributing per symbol"),
 ) -> JSONResponse:
@@ -2298,6 +2468,7 @@ def get_purge_candidates(
         raise HTTPException(status_code=400, detail="column is required.")
 
     normalized_operator = normalize_purge_rule_operator(operator)
+    normalized_aggregation = _normalize_candidate_aggregation(aggregation)
     raw_value = percentile if is_percent_operator(normalized_operator) else value
     if raw_value is None:
         raise HTTPException(
@@ -2320,6 +2491,8 @@ def get_purge_candidates(
             raw_value=float(raw_value),
             as_of=as_of,
             min_rows=min_rows,
+            recent_rows=recent_rows,
+            aggregation=normalized_aggregation,
             limit=limit,
             offset=offset,
         )
@@ -2345,8 +2518,16 @@ def get_purge_candidates(
         "value": float(raw_value),
         "asOf": as_of,
         "minRows": min_rows,
+        "recentRows": recent_rows,
+        "aggregation": normalized_aggregation,
     }
-    expression = _build_purge_expression(resolved_column, normalized_operator, float(raw_value))
+    expression = _build_purge_expression(
+        resolved_column,
+        normalized_operator,
+        float(raw_value),
+        recent_rows=recent_rows,
+        aggregation=normalized_aggregation,
+    )
 
     return JSONResponse(
         {
@@ -2360,9 +2541,9 @@ def get_purge_candidates(
             },
             "symbols": matches,
             "offset": offset,
-            "limit": limit,
+            "limit": limit if limit is not None else len(matches),
             "total": matched,
-            "hasMore": offset + len(matches) < matched,
+            "hasMore": bool(limit is not None and (offset + len(matches) < matched)),
             "note": "Bronze preview uses silver dataset for ranking; bronze-wide criteria are supported for runtime purge targets only." if normalized_layer == "bronze" else None,
         },
         headers={"Cache-Control": "no-store"},
@@ -2380,18 +2561,29 @@ def purge_symbols(payload: PurgeSymbolsBatchRequest, request: Request) -> JSONRe
     if not normalized_symbols:
         raise HTTPException(status_code=400, detail="At least one symbol is required.")
 
+    audit_rule: Optional[PurgeRule] = None
+    if payload.audit_rule and not payload.dry_run:
+        dsn = _require_postgres_dsn(request)
+        audit_rule = _persist_purge_symbols_audit_rule(
+            dsn=dsn,
+            audit_rule=payload.audit_rule,
+            actor=actor,
+        )
+
     operation_id = _create_purge_symbols_operation(
         normalized_symbols,
         actor,
         scope_note=payload.scope_note,
         dry_run=bool(payload.dry_run),
+        audit_rule_id=(audit_rule.id if audit_rule else None),
     )
     logger.info(
-        "Purge-symbols requested: operation=%s actor=%s symbols=%s dry_run=%s",
+        "Purge-symbols requested: operation=%s actor=%s symbols=%s dry_run=%s audit_rule_id=%s",
         operation_id,
         actor or "-",
         len(normalized_symbols),
         bool(payload.dry_run),
+        (audit_rule.id if audit_rule else None),
     )
     thread = threading.Thread(
         target=_execute_purge_symbols_operation,

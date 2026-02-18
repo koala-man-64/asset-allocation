@@ -64,6 +64,7 @@ import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
+import { JobKillSwitchInline, type ManagedContainerJob } from './JobKillSwitchPanel';
 
 const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
@@ -87,6 +88,7 @@ interface StatusOverviewProps {
   dataLayers: DataLayer[];
   recentJobs: JobRun[];
   jobStates?: Record<string, string>;
+  managedContainerJobs?: ManagedContainerJob[];
   onRefresh?: () => void;
   isRefreshing?: boolean;
   isFetching?: boolean;
@@ -97,6 +99,7 @@ export function StatusOverview({
   dataLayers,
   recentJobs,
   jobStates,
+  managedContainerJobs = [],
   onRefresh,
   isRefreshing,
   isFetching
@@ -590,25 +593,28 @@ export function StatusOverview({
 
       {/* Domain x Layer Matrix (Recovered from 1bba1b8f presentation) */}
       <div className="rounded-[1.6rem] border-2 border-mcm-walnut bg-mcm-paper p-6 shadow-[8px_8px_0px_0px_rgba(119,63,26,0.1)] overflow-hidden">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <div className="flex items-center gap-2 whitespace-nowrap">
-                <ScrollText className="h-4 w-4 text-mcm-walnut/70" />
-                <h2 className="text-lg font-black tracking-tighter uppercase text-mcm-walnut">
-                  Pipeline Health & Control Matrix
-                </h2>
+        <div className="mb-4 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                  <ScrollText className="h-4 w-4 text-mcm-walnut/70" />
+                  <h2 className="text-lg font-black tracking-tighter uppercase text-mcm-walnut">
+                    Pipeline Health & Control Matrix
+                  </h2>
+                </div>
+                <p className="text-sm italic text-mcm-olive">
+                  Layer-by-layer health, data freshness, and operational controls for each domain.
+                </p>
               </div>
-              <p className="text-sm italic text-mcm-olive">
-                Layer-by-layer health, data freshness, and operational controls for each domain.
-              </p>
+            </div>
+            <div
+              className={`${StatusTypos.HEADER} inline-flex items-center whitespace-nowrap rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 text-mcm-olive`}
+            >
+              Domain × Layer
             </div>
           </div>
-          <div
-            className={`${StatusTypos.HEADER} inline-flex items-center whitespace-nowrap rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 text-mcm-olive`}
-          >
-            Domain × Layer
-          </div>
+          <JobKillSwitchInline jobs={managedContainerJobs} />
         </div>
         <div className="relative rounded-[1.6rem] overflow-hidden bg-mcm-paper">
           <Table className="text-[11px] table-fixed border-collapse border-spacing-0">

@@ -29,10 +29,16 @@ import type {
 type MedallionLayer = 'bronze' | 'silver' | 'gold';
 type DomainKey = 'market' | 'finance' | 'earnings' | 'price-target';
 type OperatorKey = 'gt' | 'gte' | 'lt' | 'lte' | 'top_percent' | 'bottom_percent';
+type AggregationKey = 'min' | 'max' | 'avg' | 'stddev';
 type SortDirection = 'asc' | 'desc';
 
 interface OperatorOption {
   value: OperatorKey;
+  label: string;
+}
+
+interface AggregationOption {
+  value: AggregationKey;
   label: string;
 }
 
@@ -51,6 +57,13 @@ const operatorOptions: OperatorOption[] = [
   { value: 'lte', label: 'Numeric <=' },
   { value: 'top_percent', label: 'Top N%' },
   { value: 'bottom_percent', label: 'Bottom N%' }
+];
+
+const aggregationOptions: AggregationOption[] = [
+  { value: 'avg', label: 'Average' },
+  { value: 'min', label: 'Min' },
+  { value: 'max', label: 'Max' },
+  { value: 'stddev', label: 'Std Dev' }
 ];
 
 const formFieldClass = 'space-y-1.5';
@@ -74,23 +87,31 @@ const formatDate = (value: string | null | undefined): string => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function buildPurgeExpression(operator: OperatorKey, column: string, value: number): string {
+function buildPurgeExpression(
+  operator: OperatorKey,
+  column: string,
+  value: number,
+  aggregation: AggregationKey,
+  recentRows: number
+): string {
   const display = Number.isInteger(value) ? `${value}` : `${value}`.replace(/0+$/, '').replace(/\.$/, '');
+  const metric =
+    recentRows === 1 && aggregation === 'avg' ? column : `${aggregation}(${column}) over last ${recentRows} rows`;
   switch (operator) {
     case 'gt':
-      return `${column} > ${display}`;
+      return `${metric} > ${display}`;
     case 'gte':
-      return `${column} >= ${display}`;
+      return `${metric} >= ${display}`;
     case 'lt':
-      return `${column} < ${display}`;
+      return `${metric} < ${display}`;
     case 'lte':
-      return `${column} <= ${display}`;
+      return `${metric} <= ${display}`;
     case 'top_percent':
-      return `top ${display}% by ${column}`;
+      return `top ${display}% by ${metric}`;
     case 'bottom_percent':
-      return `bottom ${display}% by ${column}`;
+      return `bottom ${display}% by ${metric}`;
     default:
-      return `${column} ${operator} ${display}`;
+      return `${metric} ${operator} ${display}`;
   }
 }
 
@@ -135,10 +156,9 @@ export function SymbolPurgeByCriteriaPage() {
   const [columnsError, setColumnsError] = useState<string | null>(null);
 
   const [operator, setOperator] = useState<OperatorKey>('gt');
+  const [aggregation, setAggregation] = useState<AggregationKey>('avg');
   const [value, setValue] = useState<string>('90');
-  const [asOf, setAsOf] = useState<string>('');
-  const [minRows, setMinRows] = useState<number>(1);
-  const [limit, setLimit] = useState<number>(200);
+  const [recentRows, setRecentRows] = useState<number>(1);
 
   const [candidateResponse, setCandidateResponse] = useState<PurgeCandidatesResponse | null>(null);
   const [candidateRows, setCandidateRows] = useState<PurgeCandidateRow[]>([]);
@@ -172,8 +192,9 @@ export function SymbolPurgeByCriteriaPage() {
   const hasColumnSelection = Boolean(column);
 
   const previewExpression = useMemo(
-    () => (isValueValid ? buildPurgeExpression(operator, column || 'column', parsedValue) : ''),
-    [operator, column, isValueValid, parsedValue]
+    () =>
+      isValueValid ? buildPurgeExpression(operator, column || 'column', parsedValue, aggregation, recentRows) : '',
+    [operator, column, isValueValid, parsedValue, aggregation, recentRows]
   );
 
   const loadColumns = useCallback(async () => {
@@ -221,7 +242,7 @@ export function SymbolPurgeByCriteriaPage() {
     setCompletionSummary(null);
     setConfirmChecked(false);
     setConfirmText('');
-  }, [layer, domain, operator, column, asOf, minRows, limit]);
+  }, [layer, domain, operator, aggregation, column, recentRows]);
 
   const sortedCandidates = useMemo(() => {
     const rows = [...candidateRows];
@@ -318,11 +339,10 @@ export function SymbolPurgeByCriteriaPage() {
         domain,
         column,
         operator,
+        aggregation,
         value: isPercentMode ? undefined : parsedValue,
         percentile: isPercentMode ? parsedValue : undefined,
-        as_of: asOf || undefined,
-        min_rows: minRows,
-        limit,
+        recent_rows: recentRows,
         offset: 0
       };
 
@@ -394,7 +414,19 @@ export function SymbolPurgeByCriteriaPage() {
         symbols: Array.from(selectedSymbols),
         confirm: true,
         scope_note: `${previewExpression} / ${candidateRows.length} matched / selected ${selectedCount}`,
-        dry_run: false
+        dry_run: false,
+        audit_rule: {
+          layer,
+          domain,
+          column_name: column,
+          operator,
+          threshold: parsedValue,
+          aggregation,
+          recent_rows: recentRows,
+          expression: previewExpression,
+          selected_symbol_count: selectedCount,
+          matched_symbol_count: candidateRows.length
+        }
       });
 
       setOperationId(response.operationId);
@@ -522,71 +554,63 @@ export function SymbolPurgeByCriteriaPage() {
             {columnsError ? <p className="text-[11px] text-destructive">{columnsError}</p> : null}
           </div>
 
-          <div className={formFieldClass}>
-            <label className={formLabelClass}>Rule type</label>
-            <select
-              value={operator}
-              className={formSelectClass}
-              onChange={(event) => setOperator(event.target.value as OperatorKey)}
-            >
-              {operatorOptions.map((entry) => (
-                <option key={entry.value} value={entry.value}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className={formFieldClass}>
-            <label className={formLabelClass}>
-              {isPercentMode ? 'Percent (1-100)' : 'Numeric value'}
-            </label>
-            <Input
-              type="text"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              className={formInputClass}
-              placeholder={isPercentMode ? 'e.g. 90' : 'e.g. 100'}
-            />
-            {!isValueValid || !isPercentValid ? (
-              <p className="text-[11px] text-destructive">
-                {isValueValid ? 'Percentile must be between 1 and 100.' : 'Numeric value must be finite.'}
-              </p>
-            ) : null}
-          </div>
-
-          <div className={formFieldClass}>
-            <label className={formLabelClass}>
-              As-of date (optional, default latest)
-            </label>
-            <Input
-              type="date"
-              value={asOf}
-              onChange={(event) => setAsOf(event.target.value)}
-              className={formInputClass}
-            />
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className={formFieldClass}>
+              <label className={formLabelClass}>Rule type</label>
+              <select
+                value={operator}
+                className={formSelectClass}
+                onChange={(event) => setOperator(event.target.value as OperatorKey)}
+              >
+                {operatorOptions.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={formFieldClass}>
+              <label className={formLabelClass}>
+                {isPercentMode ? 'Percent (1-100)' : 'Numeric value'}
+              </label>
+              <Input
+                type="text"
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                className={formInputClass}
+                placeholder={isPercentMode ? 'e.g. 90' : 'e.g. 100'}
+              />
+              {!isValueValid || !isPercentValid ? (
+                <p className="text-[11px] text-destructive">
+                  {isValueValid ? 'Percentile must be between 1 and 100.' : 'Numeric value must be finite.'}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
             <div className={formFieldClass}>
-              <label className={formLabelClass}>
-                Minimum rows per symbol
-              </label>
-              <Input
-                type="number"
-                min={1}
-                value={minRows}
-                onChange={(event) => setMinRows(Number(event.target.value) || 1)}
-                className={formInputClass}
-              />
+              <label className={formLabelClass}>Aggregation</label>
+              <select
+                value={aggregation}
+                className={formSelectClass}
+                onChange={(event) => setAggregation(event.target.value as AggregationKey)}
+              >
+                {aggregationOptions.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
             </div>
+
             <div className={formFieldClass}>
-              <label className={formLabelClass}>Limit</label>
+              <label className={formLabelClass}>Recent Row Count</label>
               <Input
                 type="number"
                 min={1}
-                value={limit}
-                onChange={(event) => setLimit(Number(event.target.value) || 200)}
+                value={recentRows}
+                onChange={(event) => setRecentRows(Number(event.target.value) || 1)}
                 className={formInputClass}
               />
             </div>
@@ -611,7 +635,7 @@ export function SymbolPurgeByCriteriaPage() {
       </section>
 
       <section className="space-y-4">
-        <div className="mcm-panel p-4 sm:p-5">
+        <div className="mcm-panel h-[620px] p-4 sm:p-5 flex flex-col">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="text-lg font-black uppercase">Candidate review</h2>
@@ -643,9 +667,9 @@ export function SymbolPurgeByCriteriaPage() {
             {candidateError ? `Failed: ${candidateError}` : ''}
           </p>
 
-          <div className="mt-3 overflow-x-auto rounded-md border border-border/80">
+          <div className="mt-3 flex-1 min-h-0 overflow-y-auto rounded-md border border-border/80">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10">
                 <TableRow>
                   <TableHead className="w-12">Select</TableHead>
                   <TableHead>Symbol</TableHead>
@@ -695,7 +719,14 @@ export function SymbolPurgeByCriteriaPage() {
         </div>
 
         <div className="mcm-panel p-4 sm:p-5">
-          <h2 className="text-lg font-black uppercase">Execution panel</h2>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-lg font-black uppercase">Execution panel</h2>
+            {candidateResponse ? (
+              <p className="text-xs text-muted-foreground">
+                Filter: <span className="font-mono">{candidateResponse.expression}</span>
+              </p>
+            ) : null}
+          </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-border/70 bg-muted/30 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected symbols</p>
@@ -715,33 +746,24 @@ export function SymbolPurgeByCriteriaPage() {
             </p>
           ) : null}
 
-          {candidateResponse ? (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Filter: <span className="font-mono">{candidateResponse.expression}</span>
-            </p>
-          ) : null}
-
-          <div className="mt-4 space-y-3">
-            <label className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide">
+          <div className="mt-4 flex items-center gap-3 overflow-x-auto pb-1">
+            <label className="inline-flex shrink-0 items-center gap-3 text-xs font-semibold uppercase tracking-wide">
               <Checkbox checked={confirmChecked} onCheckedChange={(next) => setConfirmChecked(Boolean(next))} />
               I understand this is destructive and cannot be undone.
             </label>
 
-            <label className="space-y-1 block">
-              <span className="text-xs font-semibold uppercase tracking-wide">Type PURGE to confirm</span>
+            <label className="inline-flex items-center gap-2 shrink-0">
+              <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Type PURGE to confirm</span>
               <Input
                 value={confirmText}
                 onChange={(event) => setConfirmText(event.target.value)}
                 placeholder="PURGE"
-                className={formInputClass}
+                className={`${formInputClass} h-9 w-[180px]`}
               />
             </label>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
             <Button
               onClick={() => void handleRunPurge()}
-              className="h-10 gap-2"
+              className="h-9 shrink-0 gap-2"
               disabled={!canSubmit}
               variant="destructive"
             >
@@ -752,11 +774,11 @@ export function SymbolPurgeByCriteriaPage() {
               )}
               {isSubmitting || operationStatus === 'running' ? 'Running purge…' : 'Run purge for selected symbols'}
             </Button>
-
-            {operationId ? (
-              <p className="self-center text-xs text-muted-foreground">Operation: {operationId}</p>
-            ) : null}
           </div>
+
+          {operationId ? (
+            <p className="mt-2 text-xs text-muted-foreground">Operation: {operationId}</p>
+          ) : null}
 
           {operationStatus && (
             <p

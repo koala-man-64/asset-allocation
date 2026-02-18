@@ -17,9 +17,6 @@ const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonit
 const ContainerAppsPanel = lazy(() =>
   import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
 );
-const JobKillSwitchPanel = lazy(() =>
-  import('./system-status/JobKillSwitchPanel').then((m) => ({ default: m.JobKillSwitchPanel }))
-);
 
 import {
   getAzurePortalUrl,
@@ -174,17 +171,11 @@ export function SystemStatusPage() {
             dataLayers={displayDataLayers}
             recentJobs={recentJobs}
             jobStates={jobStates}
+            managedContainerJobs={managedContainerJobs}
             onRefresh={handleRefresh}
             isRefreshing={isRefreshing}
             isFetching={isFetching}
           />
-        </Suspense>
-      </ErrorBoundary>
-
-      {/* Emergency Job Kill Switch */}
-      <ErrorBoundary>
-        <Suspense fallback={<Skeleton className="h-[170px] w-full rounded-xl bg-muted/20" />}>
-          <JobKillSwitchPanel jobs={managedContainerJobs} />
         </Suspense>
       </ErrorBoundary>
 

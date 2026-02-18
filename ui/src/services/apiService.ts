@@ -188,6 +188,8 @@ export interface PurgeCandidatesCriteria {
   value: number;
   asOf?: string | null;
   minRows: number;
+  recentRows: number;
+  aggregation: 'min' | 'max' | 'avg' | 'stddev';
 }
 
 export interface PurgeCandidatesSummary {
@@ -603,10 +605,11 @@ export const apiService = {
     domain: 'market' | 'finance' | 'earnings' | 'price-target';
     column: string;
     operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne' | 'top_percent' | 'bottom_percent';
+    aggregation?: 'min' | 'max' | 'avg' | 'stddev';
     value?: number;
     percentile?: number;
     as_of?: string;
-    limit?: number;
+    recent_rows?: number;
     offset?: number;
     min_rows?: number;
   }): Promise<PurgeCandidatesResponse> {
@@ -622,6 +625,18 @@ export const apiService = {
     confirm: boolean;
     scope_note?: string;
     dry_run?: boolean;
+    audit_rule?: {
+      layer: 'bronze' | 'silver' | 'gold';
+      domain: 'market' | 'finance' | 'earnings' | 'price-target';
+      column_name: string;
+      operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne' | 'top_percent' | 'bottom_percent';
+      threshold: number;
+      aggregation?: 'min' | 'max' | 'avg' | 'stddev';
+      recent_rows?: number;
+      expression?: string;
+      selected_symbol_count?: number;
+      matched_symbol_count?: number;
+    };
   }): Promise<PurgeOperationResponse> {
     return request<PurgeOperationResponse>('/system/purge-symbols', {
       method: 'POST',

@@ -12,7 +12,7 @@ os.environ.setdefault("LOG_LEVEL", "INFO")
 os.environ.setdefault("ALPHA_VANTAGE_API_KEY", "test_alpha_vantage_key")
 os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "test_account")
 os.environ["AZURE_STORAGE_CONNECTION_STRING"] = "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net"
-os.environ.setdefault("TEST_MODE", "True")
+os.environ["TEST_MODE"] = "true"
 # Keep tests hermetic even when local shell has production-like env values.
 os.environ.pop("POSTGRES_DSN", None)
 os.environ.pop("MARKET_BACKFILL_START_DATE", None)

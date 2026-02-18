@@ -14,6 +14,8 @@ export interface ManagedContainerJob {
   runningState?: string | null;
 }
 
+type KillSwitchVariant = 'panel' | 'inline';
+
 type JobAction = 'stop' | 'suspend' | 'resume';
 
 type ActionSummary = {
@@ -79,6 +81,20 @@ function formatFailureSuffix(failed: string[]): string {
 }
 
 export function JobKillSwitchPanel({ jobs }: { jobs: ManagedContainerJob[] }) {
+  return <KillSwitchControl jobs={jobs} variant="panel" />;
+}
+
+export function JobKillSwitchInline({ jobs }: { jobs: ManagedContainerJob[] }) {
+  return <KillSwitchControl jobs={jobs} variant="inline" />;
+}
+
+function KillSwitchControl({
+  jobs,
+  variant
+}: {
+  jobs: ManagedContainerJob[];
+  variant: KillSwitchVariant;
+}) {
   const queryClient = useQueryClient();
   const [isApplying, setIsApplying] = useState(false);
   const [optimisticChecked, setOptimisticChecked] = useState<boolean | null>(null);
@@ -107,6 +123,11 @@ export function JobKillSwitchPanel({ jobs }: { jobs: ManagedContainerJob[] }) {
 
   const inferredChecked = jobNames.length > 0 && suspendedCount === jobNames.length;
   const checked = optimisticChecked ?? inferredChecked;
+  const statusText = checked ? 'Kill switch is ON (jobs disabled)' : 'Kill switch is OFF (jobs enabled)';
+  const helperText =
+    jobNames.length > 0
+      ? 'Use only for emergency stop or maintenance windows.'
+      : 'No Azure jobs were detected in the latest system-health payload.';
 
   useEffect(() => {
     if (optimisticChecked === null) return;
@@ -164,6 +185,28 @@ export function JobKillSwitchPanel({ jobs }: { jobs: ManagedContainerJob[] }) {
     }
   };
 
+  if (variant === 'inline') {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-mcm-walnut/15 bg-mcm-cream/55 px-4 py-2.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-mcm-walnut">{statusText}</p>
+          <p className="text-xs text-mcm-olive">{helperText}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {isApplying ? <Loader2 className="h-4 w-4 animate-spin text-mcm-walnut/65" /> : null}
+          <Switch
+            checked={checked}
+            disabled={isApplying || jobNames.length === 0}
+            onCheckedChange={(next) => {
+              void applyKillSwitch(next);
+            }}
+            aria-label="Toggle job kill switch"
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Card className="h-full">
       <CardHeader className="gap-2">
@@ -179,14 +222,8 @@ export function JobKillSwitchPanel({ jobs }: { jobs: ManagedContainerJob[] }) {
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-3">
           <div className="space-y-1">
-            <p className="text-sm font-semibold">
-              {checked ? 'Kill switch is ON (jobs disabled)' : 'Kill switch is OFF (jobs enabled)'}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {jobNames.length > 0
-                ? 'Use only for emergency stop or maintenance windows.'
-                : 'No Azure jobs were detected in the latest system-health payload.'}
-            </p>
+            <p className="text-sm font-semibold">{statusText}</p>
+            <p className="text-xs text-muted-foreground">{helperText}</p>
           </div>
           <div className="flex items-center gap-2">
             {isApplying ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}

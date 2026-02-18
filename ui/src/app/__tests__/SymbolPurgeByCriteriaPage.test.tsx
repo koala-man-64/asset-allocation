@@ -57,7 +57,9 @@ function makeCandidateResponse(
       operator: 'lt',
       value: 1,
       asOf: null,
-      minRows: 1
+      minRows: 1,
+      recentRows: 1,
+      aggregation: 'avg'
     },
     expression: 'Close < 1',
     summary: {
@@ -168,11 +170,10 @@ describe('SymbolPurgeByCriteriaPage', () => {
       domain: 'market',
       column: 'Close',
       operator: 'lt',
+      aggregation: 'avg',
       value: 1,
       percentile: undefined,
-      as_of: undefined,
-      min_rows: 1,
-      limit: 200,
+      recent_rows: 1,
       offset: 0
     });
 
@@ -272,7 +273,19 @@ describe('SymbolPurgeByCriteriaPage', () => {
         symbols: ['AAA', 'BBB'],
         confirm: true,
         scope_note: 'Close > 90 / 2 matched / selected 2',
-        dry_run: false
+        dry_run: false,
+        audit_rule: {
+          layer: 'silver',
+          domain: 'market',
+          column_name: 'Close',
+          operator: 'gt',
+          threshold: 90,
+          aggregation: 'avg',
+          recent_rows: 1,
+          expression: 'Close > 90',
+          selected_symbol_count: 2,
+          matched_symbol_count: 2
+        }
       });
     });
 
