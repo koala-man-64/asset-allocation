@@ -33,7 +33,7 @@ from core import core as mdc
 from core.blob_storage import BlobStorageClient
 from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
 from core.core import get_symbol_sync_state
-from core.delta_core import load_delta, store_delta
+from core.delta_core import load_delta
 from core.pipeline import DataPaths
 from core.postgres import PostgresError
 from core.runtime_config import (
@@ -760,11 +760,47 @@ def _serialize_purge_rule(rule: PurgeRule) -> Dict[str, Any]:
 
 
 def _resolve_purge_rule_table(layer: str, domain: str) -> tuple[str, str]:
-    table = _BY_DATE_TABLES.get(layer, {}).get(domain)
-    if not table:
+    prefix = _RULE_DATA_PREFIXES.get(layer, {}).get(domain)
+    if not prefix:
         raise HTTPException(status_code=400, detail=f"Unsupported purge layer/domain: {layer}/{domain}.")
     container = _resolve_container(layer)
-    return container, table
+    return container, prefix
+
+
+def _discover_delta_tables_for_prefix(*, container: str, prefix: str) -> List[str]:
+    client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+    normalized = f"{str(prefix or '').strip().strip('/')}/"
+    if normalized == "/":
+        return []
+    roots: set[str] = set()
+    for blob_name in client.list_files(name_starts_with=normalized):
+        text = str(blob_name or "")
+        marker = "/_delta_log/"
+        if marker not in text:
+            continue
+        root = text.split(marker, 1)[0].strip("/")
+        if root and root.startswith(normalized.rstrip("/")):
+            roots.add(root)
+    return sorted(roots)
+
+
+def _load_rule_frame(layer: str, domain: str) -> pd.DataFrame:
+    container, prefix = _resolve_purge_rule_table(layer, domain)
+    table_paths = _discover_delta_tables_for_prefix(container=container, prefix=prefix)
+    if not table_paths:
+        return pd.DataFrame()
+    frames: List[pd.DataFrame] = []
+    for table_path in table_paths:
+        try:
+            df = load_delta(container=container, path=table_path)
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        frames.append(df)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
 
 def _resolve_rule_symbol_column(df: pd.DataFrame) -> str:
@@ -799,8 +835,7 @@ def _collect_rule_symbol_values(rule: PurgeRule) -> List[tuple[str, float]]:
     layer = _rule_normalize_column_name(rule.layer)
     domain = rule.domain
     operator = rule.operator
-    container, table = _resolve_purge_rule_table(layer, domain)
-    df = load_delta(container=container, path=table)
+    df = _load_rule_frame(layer, domain)
 
     if df is None or df.empty:
         return []
@@ -939,8 +974,7 @@ def _collect_purge_candidates(
         raise HTTPException(status_code=400, detail="recent_rows must be >= 1.")
     resolved_aggregation = _normalize_candidate_aggregation(aggregation)
 
-    container, table = _resolve_purge_rule_table(normalized_layer, normalized_domain)
-    df = load_delta(container=container, path=table)
+    df = _load_rule_frame(normalized_layer, normalized_domain)
 
     if df is None or df.empty:
         return [], 0, 0, 0
@@ -1281,9 +1315,7 @@ def _execute_purge_symbols_operation(
         "totalDeleted": total_deleted,
         "symbolResults": symbol_results,
     }
-    status = "succeeded" if failed == 0 and not skipped else ("failed" if failed > 0 else "succeeded")
-    if dry_run and status == "succeeded" and failed == 0 and skipped == len(symbols):
-        status = "succeeded"
+    status = "failed" if failed > 0 else "succeeded"
 
     logger.info(
         "Purge-symbols operation finished: operation=%s symbols=%s succeeded=%s failed=%s skipped=%s dry_run=%s",
@@ -1301,9 +1333,10 @@ def _execute_purge_symbols_operation(
             {"status": "succeeded", "result": summary, "completedAt": _utc_timestamp()},
         )
     else:
+        operation_error = "One or more symbols failed."
         _update_purge_operation(
             operation_id,
-            {"status": "failed", "result": summary, "error": "One or more symbols failed.", "completedAt": _utc_timestamp()},
+            {"status": "failed", "result": summary, "error": operation_error, "completedAt": _utc_timestamp()},
         )
 
 
@@ -1359,18 +1392,18 @@ _FINANCE_BRONZE_TABLE_TYPES: List[Tuple[str, str]] = [
     ("valuation", "quarterly_valuation_measures"),
 ]
 
-_BY_DATE_TABLES: Dict[str, Dict[str, str]] = {
+_RULE_DATA_PREFIXES: Dict[str, Dict[str, str]] = {
     "silver": {
-        "market": DataPaths.get_market_data_by_date_path(),
-        "finance": DataPaths.get_finance_by_date_path(),
-        "earnings": DataPaths.get_earnings_by_date_path(),
-        "price-target": DataPaths.get_price_targets_by_date_path(),
+        "market": "market-data/",
+        "finance": "finance-data/",
+        "earnings": "earnings-data/",
+        "price-target": "price-target-data/",
     },
     "gold": {
-        "market": DataPaths.get_gold_features_by_date_path(),
-        "finance": DataPaths.get_gold_finance_by_date_path(),
-        "earnings": DataPaths.get_gold_earnings_by_date_path(),
-        "price-target": DataPaths.get_gold_price_targets_by_date_path(),
+        "market": "market/",
+        "finance": "finance/",
+        "earnings": "earnings/",
+        "price-target": "targets/",
     },
 }
 
@@ -1469,16 +1502,16 @@ _DOMAIN_PREFIXES: Dict[str, Dict[str, List[str]]] = {
         "price-target": ["price-target-data/"],
     },
     "silver": {
-        "market": ["market-data/", "market-data-by-date"],
-        "finance": ["finance-data/", "finance-data-by-date"],
-        "earnings": ["earnings-data/", "earnings-data-by-date"],
-        "price-target": ["price-target-data/", "price-target-data-by-date"],
+        "market": ["market-data/"],
+        "finance": ["finance-data/"],
+        "earnings": ["earnings-data/"],
+        "price-target": ["price-target-data/"],
     },
     "gold": {
-        "market": ["market/", "market_by_date"],
-        "finance": ["finance/", "finance_by_date"],
-        "earnings": ["earnings/", "earnings_by_date"],
-        "price-target": ["targets/", "targets_by_date"],
+        "market": ["market/"],
+        "finance": ["finance/"],
+        "earnings": ["earnings/"],
+        "price-target": ["targets/"],
     },
     "platinum": {
         "platinum": ["platinum/"],
@@ -1691,122 +1724,6 @@ def _remove_symbol_from_layer_storage(
     return removed
 
 
-def _remove_symbol_from_by_date_storage(
-    container: str,
-    layer: Literal["silver", "gold"],
-    symbol: str,
-) -> List[Dict[str, Any]]:
-    normalized_symbol = _normalize_purge_symbol(symbol)
-    symbol_variants = set(_symbol_variants(normalized_symbol))
-    removed: List[Dict[str, Any]] = []
-    table_paths = _BY_DATE_TABLES.get(layer, {})
-
-    for domain, table_path in table_paths.items():
-        df = load_delta(container=container, path=table_path)
-        if df is None:
-            removed.append(
-                {
-                    "layer": layer,
-                    "domain": domain,
-                    "container": container,
-                    "path": table_path,
-                    "status": "not_found",
-                    "deletedRows": 0,
-                }
-            )
-            continue
-
-        if df.empty:
-            removed.append(
-                {
-                    "layer": layer,
-                    "domain": domain,
-                    "container": container,
-                    "path": table_path,
-                    "status": "empty",
-                    "deletedRows": 0,
-                }
-            )
-            continue
-
-        symbol_columns = [column for column in df.columns if str(column).strip().lower() in {"symbol", "ticker"}]
-        if not symbol_columns:
-            removed.append(
-                {
-                    "layer": layer,
-                    "domain": domain,
-                    "container": container,
-                    "path": table_path,
-                    "status": "no_symbol_column",
-                    "deletedRows": 0,
-                }
-            )
-            continue
-
-        matches = pd.Series(False, index=df.index)
-        for column in symbol_columns:
-            values = df[column].astype("string").str.upper().str.strip().fillna("")
-            matches = matches | values.isin(symbol_variants)
-
-        if not matches.any():
-            removed.append(
-                {
-                    "layer": layer,
-                    "domain": domain,
-                    "container": container,
-                    "path": table_path,
-                    "status": "no_match",
-                    "deletedRows": 0,
-                }
-            )
-            continue
-
-        remaining = df.loc[~matches].copy()
-        deleted_rows = int(matches.sum())
-
-        if remaining.empty:
-            by_date_client = BlobStorageClient(container_name=container, ensure_container_exists=False)
-            deleted_files = _delete_prefix_if_exists(client=by_date_client, path=table_path)
-            removed.append(
-                {
-                    "layer": layer,
-                    "domain": domain,
-                    "container": container,
-                    "path": table_path,
-                    "status": "deleted_table",
-                    "deletedRows": deleted_rows,
-                    "deletedFiles": deleted_files,
-                }
-            )
-            continue
-
-        date_candidates = ["Date", "date", "obs_date"]
-        date_column = next((column for column in date_candidates if column in remaining.columns), None)
-        partition_by = ["year_month", date_column] if "year_month" in remaining.columns and date_column else None
-        store_delta(
-            remaining,
-            container=container,
-            path=table_path,
-            mode="overwrite",
-            partition_by=partition_by,
-            merge_schema=True,
-        )
-
-        removed.append(
-            {
-                "layer": layer,
-                "domain": domain,
-                "container": container,
-                "path": table_path,
-                "status": "rewritten",
-                "deletedRows": deleted_rows,
-                "remainingRows": int(len(remaining)),
-            }
-        )
-
-    return removed
-
-
 def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[str]) -> List[Dict[str, Optional[str]]]:
     scope = scope.strip().lower()
     layer_norm = _normalize_layer(layer)
@@ -1921,7 +1838,9 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     }
 
 
-def _run_purge_symbol_operation(payload: PurgeSymbolRequest) -> Dict[str, Any]:
+def _run_purge_symbol_operation(
+    payload: PurgeSymbolRequest,
+) -> Dict[str, Any]:
     normalized_symbol = _normalize_purge_symbol(payload.symbol)
 
     container_bronze = _resolve_container("bronze")
@@ -1971,24 +1890,6 @@ def _run_purge_symbol_operation(payload: PurgeSymbolRequest) -> Dict[str, Any]:
     )
     for outcome in gold_results:
         total_deleted += int(outcome.get("deleted") or 0)
-        results.append(outcome)
-
-    by_date_silver_results = _remove_symbol_from_by_date_storage(
-        container=container_silver,
-        layer="silver",
-        symbol=normalized_symbol,
-    )
-    for outcome in by_date_silver_results:
-        total_deleted += int(outcome.get("deletedRows") or 0)
-        results.append(outcome)
-
-    by_date_gold_results = _remove_symbol_from_by_date_storage(
-        container=container_gold,
-        layer="gold",
-        symbol=normalized_symbol,
-    )
-    for outcome in by_date_gold_results:
-        total_deleted += int(outcome.get("deletedRows") or 0)
         results.append(outcome)
 
     logger.warning(
@@ -2718,18 +2619,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "SILVER_PRICE_TARGET_LATEST_ONLY": {
         "description": "Domain override for price-target silver latest-only behavior.",
         "example": "true",
-    },
-    "MATERIALIZE_YEAR_MONTH": {
-        "description": "Override year-month partition for by-date materialization (YYYY-MM).",
-        "example": "2026-01",
-    },
-    "MATERIALIZE_WINDOW_MONTHS": {
-        "description": "How many year-month partitions to materialize (integer).",
-        "example": "1",
-    },
-    "MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR": {
-        "description": "Optional UTC hour gate for by-date runs (0-23). Empty disables gating.",
-        "example": "0",
     },
     "FEATURE_ENGINEERING_MAX_WORKERS": {
         "description": "Max workers for feature engineering concurrency (integer).",

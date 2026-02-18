@@ -677,30 +677,6 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
         )
 
 
-def discover_year_months_for_routine_materialization() -> list[str]:
-    from tasks.finance_data.materialize_silver_finance_by_date import discover_year_months_from_data
-
-    discovery_started = time.perf_counter()
-    discovered = sorted({str(value).strip() for value in discover_year_months_from_data() if str(value).strip()})
-    discovery_elapsed = time.perf_counter() - discovery_started
-
-    override = os.environ.get("MATERIALIZE_YEAR_MONTH", "").strip()
-    if override:
-        mdc.write_line(
-            f"Silver finance by-date month selection: override={override}, discovered={len(discovered)}, "
-            f"selected={len(discovered)}, elapsedSec={discovery_elapsed:.2f}."
-        )
-        return discovered
-
-    preview = ", ".join(discovered[-min(6, len(discovered)) :]) if discovered else "none"
-    mdc.write_line(
-        "Silver finance by-date month selection: "
-        f"discovered={len(discovered)} ({preview}), selected={len(discovered)} ({preview}), "
-        f"mode=all_discovered, elapsedSec={discovery_elapsed:.2f}."
-    )
-    return discovered
-
-
 def main() -> int:
     mdc.log_environment_diagnostics()
 
@@ -774,20 +750,11 @@ def main() -> int:
     return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
-    from core.by_date_pipeline import run_partner_then_by_date
-    from tasks.finance_data.materialize_silver_finance_by_date import (
-        main as by_date_main,
-    )
     from tasks.common.job_trigger import trigger_next_job_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-finance-job"
-    exit_code = run_partner_then_by_date(
-        job_name=job_name,
-        partner_main=main,
-        by_date_main=by_date_main,
-        year_months_provider=discover_year_months_for_routine_materialization,
-    )
+    exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="silver", domain="finance", job_name=job_name)
         trigger_next_job_from_env()

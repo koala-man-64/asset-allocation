@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Optional
@@ -48,9 +47,6 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "SILVER_FINANCE_LATEST_ONLY",
     "SILVER_EARNINGS_LATEST_ONLY",
     "SILVER_PRICE_TARGET_LATEST_ONLY",
-    "MATERIALIZE_YEAR_MONTH",
-    "MATERIALIZE_WINDOW_MONTHS",
-    "MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR",
     "FEATURE_ENGINEERING_MAX_WORKERS",
     "TRIGGER_NEXT_JOB_NAME",
     "TRIGGER_NEXT_JOB_REQUIRED",
@@ -93,11 +89,7 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "DOMAIN_METADATA_MAX_SCANNED_BLOBS",
 }
 
-_RE_YEAR_MONTH = re.compile(r"^[0-9]{4}-[0-9]{2}$")
-
 _DATE_KEYS = {"BACKFILL_START_DATE", "BACKFILL_END_DATE"}
-_YEAR_MONTH_KEYS = {"MATERIALIZE_YEAR_MONTH"}
-_UTC_HOUR_KEYS = {"MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR"}
 _INT_KEYS = {
     "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN",
     "ALPHA_VANTAGE_MAX_WORKERS",
@@ -105,7 +97,6 @@ _INT_KEYS = {
     "ALPHA_VANTAGE_FINANCE_FRESH_DAYS",
     "MASSIVE_MAX_WORKERS",
     "MASSIVE_FINANCE_FRESH_DAYS",
-    "MATERIALIZE_WINDOW_MONTHS",
     "FEATURE_ENGINEERING_MAX_WORKERS",
     "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS",
     "SYSTEM_HEALTH_MAX_AGE_SECONDS",
@@ -170,28 +161,6 @@ def normalize_env_override(key: str, value: object) -> str:
         except Exception as exc:
             raise ValueError(f"{resolved_key} must be YYYY-MM-DD.") from exc
         return dt.isoformat()
-
-    if resolved_key in _YEAR_MONTH_KEYS:
-        if not text:
-            return ""
-        if not _RE_YEAR_MONTH.fullmatch(text):
-            raise ValueError(f"{resolved_key} must be YYYY-MM.")
-        # month range check (01-12)
-        month = int(text.split("-")[1])
-        if month < 1 or month > 12:
-            raise ValueError(f"{resolved_key} month must be 01-12.")
-        return text
-
-    if resolved_key in _UTC_HOUR_KEYS:
-        if not text:
-            return ""
-        try:
-            hour = int(text)
-        except Exception as exc:
-            raise ValueError(f"{resolved_key} must be an integer hour 0-23.") from exc
-        if hour < 0 or hour > 23:
-            raise ValueError(f"{resolved_key} must be 0-23.")
-        return str(hour)
 
     if resolved_key in _INT_KEYS:
         if not text:

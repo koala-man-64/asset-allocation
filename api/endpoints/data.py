@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Dict, Optional, Sequence
 
 import pandas as pd
@@ -41,10 +41,10 @@ _STORAGE_USAGE_CATALOG = (
         "AZURE_CONTAINER_SILVER",
         "Silver",
         (
-            "market-data-by-date",
-            "finance-data-by-date",
-            "earnings-data-by-date",
-            "price-target-data-by-date",
+            "market-data",
+            "finance-data",
+            "earnings-data",
+            "price-target-data",
         ),
     ),
     (
@@ -52,10 +52,10 @@ _STORAGE_USAGE_CATALOG = (
         "AZURE_CONTAINER_GOLD",
         "Gold",
         (
-            "market_by_date",
-            "finance_by_date",
-            "earnings_by_date",
-            "targets_by_date",
+            "market",
+            "finance",
+            "earnings",
+            "targets",
         ),
     ),
     (
@@ -285,25 +285,35 @@ def get_storage_usage(
 def _find_latest_market_date(
     *,
     gold_container: str,
-    gold_path: str,
-    max_lookback_days: int = 14,
+    symbols: Sequence[str],
+    max_symbols: int = 300,
 ) -> Optional[date]:
-    today = datetime.utcnow().date()
-    lookback = max(1, min(int(max_lookback_days), 60))
-    for days_ago in range(0, lookback):
-        candidate = today - timedelta(days=days_ago)
-        candidate_dt = datetime(candidate.year, candidate.month, candidate.day)
-        ym = candidate.strftime("%Y-%m")
-
-        df = load_delta(
-            gold_container,
-            gold_path,
-            columns=["date", "symbol"],
-            filters=[("year_month", "=", ym), ("date", "=", candidate_dt)],
-        )
-        if df is not None and not df.empty:
-            return candidate
-    return None
+    latest: Optional[date] = None
+    scanned = 0
+    for symbol_raw in symbols:
+        if scanned >= int(max_symbols):
+            break
+        symbol = str(symbol_raw or "").strip().upper()
+        if not symbol:
+            continue
+        scanned += 1
+        path = DataPaths.get_gold_features_path(symbol)
+        try:
+            df = load_delta(gold_container, path, columns=["date"])
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        date_col = _first_present(df.columns.tolist(), ["date", "Date"])
+        if not date_col:
+            continue
+        values = pd.to_datetime(df[date_col], errors="coerce").dropna()
+        if values.empty:
+            continue
+        candidate = values.max().date()
+        if latest is None or candidate > latest:
+            latest = candidate
+    return latest
 
 
 def _query_symbols(conn, *, q: Optional[str] = None) -> pd.DataFrame:  # type: ignore[no-untyped-def]
@@ -398,17 +408,6 @@ def get_stock_screener(
     if not (gold_container and silver_container):
         raise HTTPException(status_code=503, detail="Storage containers are not configured (AZURE_CONTAINER_SILVER/AZURE_CONTAINER_GOLD).")
 
-    gold_path = DataPaths.get_gold_features_by_date_path()
-    silver_path = DataPaths.get_market_data_by_date_path()
-
-    requested = _parse_iso_date(as_of)
-    resolved_date = requested or _find_latest_market_date(gold_container=gold_container, gold_path=gold_path)
-    if resolved_date is None:
-        raise HTTPException(status_code=503, detail="No Gold market feature data found for recent dates.")
-
-    ym = resolved_date.strftime("%Y-%m")
-    resolved_dt = datetime(resolved_date.year, resolved_date.month, resolved_date.day)
-
     try:
         with connect(dsn) as conn:
             symbols_df = _query_symbols(conn, q=q)
@@ -416,6 +415,14 @@ def get_stock_screener(
         raise HTTPException(status_code=503, detail=f"Symbols unavailable: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Symbols query failed: {exc}") from exc
+
+    symbol_list = symbols_df["symbol"].astype(str).str.upper().tolist() if not symbols_df.empty else []
+    requested = _parse_iso_date(as_of)
+    resolved_date = requested or _find_latest_market_date(gold_container=gold_container, symbols=symbol_list)
+    if resolved_date is None:
+        raise HTTPException(status_code=503, detail="No Gold market feature data found for recent dates.")
+
+    resolved_dt = datetime(resolved_date.year, resolved_date.month, resolved_date.day)
 
     gold_cols = [
         "return_1d",
@@ -433,37 +440,61 @@ def get_stock_screener(
         "volume_z_20d",
         "volume_pct_rank_252d",
     ]
-    gold_df = load_delta(
-        gold_container,
-        gold_path,
-        columns=["date", "year_month", "symbol", *gold_cols],
-        filters=[("year_month", "=", ym), ("date", "=", resolved_dt)],
-    )
+    gold_rows: list[Dict[str, Any]] = []
+    silver_rows: list[Dict[str, Any]] = []
+    for symbol in symbol_list:
+        gold_path = DataPaths.get_gold_features_path(symbol)
+        try:
+            gold_src = load_delta(gold_container, gold_path, columns=["date", "symbol", *gold_cols])
+        except Exception:
+            gold_src = None
+        if gold_src is not None and not gold_src.empty:
+            gdf = gold_src.copy()
+            g_date_col = _first_present(gdf.columns.tolist(), ["date", "Date"])
+            if g_date_col:
+                gdf[g_date_col] = pd.to_datetime(gdf[g_date_col], errors="coerce").dt.normalize()
+                gdf = gdf[gdf[g_date_col] == resolved_dt]
+                if not gdf.empty:
+                    row = gdf.iloc[-1].to_dict()
+                    row["symbol"] = str(row.get("symbol") or symbol).upper()
+                    gold_rows.append(row)
 
-    silver_df = load_delta(
-        silver_container,
-        silver_path,
-        columns=["year_month", "Date", "Symbol", "Open", "High", "Low", "Close", "Volume"],
-        filters=[("year_month", "=", ym), ("Date", "=", resolved_dt)],
-    )
+        silver_path = DataPaths.get_market_data_path(symbol)
+        try:
+            silver_src = load_delta(
+                silver_container,
+                silver_path,
+                columns=["Date", "date", "Symbol", "symbol", "Open", "High", "Low", "Close", "Volume"],
+            )
+        except Exception:
+            silver_src = None
+        if silver_src is not None and not silver_src.empty:
+            sdf = silver_src.copy()
+            s_date_col = _first_present(sdf.columns.tolist(), ["Date", "date"])
+            if s_date_col:
+                sdf[s_date_col] = pd.to_datetime(sdf[s_date_col], errors="coerce").dt.normalize()
+                sdf = sdf[sdf[s_date_col] == resolved_dt]
+                if not sdf.empty:
+                    row = sdf.iloc[-1].to_dict()
+                    sym_col = _first_present(list(row.keys()), ["Symbol", "symbol"])
+                    row["symbol"] = str(row.get(sym_col) or symbol).upper() if sym_col else symbol
+                    silver_rows.append(row)
 
-    if gold_df is None or gold_df.empty:
+    gold_df = pd.DataFrame(gold_rows)
+    silver_df = pd.DataFrame(silver_rows)
+
+    if gold_df.empty:
         raise HTTPException(status_code=503, detail=f"Gold market features unavailable for {resolved_date.isoformat()}.")
-    if silver_df is None or silver_df.empty:
+    if silver_df.empty:
         raise HTTPException(status_code=503, detail=f"Silver market data unavailable for {resolved_date.isoformat()}.")
 
-    gold_df = gold_df.copy()
     gold_df["symbol"] = gold_df["symbol"].astype(str).str.upper()
-
-    silver_df = silver_df.copy()
-    symbol_col = _first_present(silver_df.columns.tolist(), ["Symbol", "symbol"])
-    date_col = _first_present(silver_df.columns.tolist(), ["Date", "date"])
-    if not symbol_col or not date_col:
-        raise HTTPException(status_code=500, detail="Silver market-data-by-date schema missing Symbol/Date columns.")
-
+    silver_symbol_col = _first_present(silver_df.columns.tolist(), ["symbol", "Symbol"])
+    if not silver_symbol_col:
+        raise HTTPException(status_code=500, detail="Silver market schema missing Symbol/date columns.")
     silver_df = silver_df.rename(
         columns={
-            symbol_col: "symbol",
+            silver_symbol_col: "symbol",
             "Open": "open",
             "High": "high",
             "Low": "low",

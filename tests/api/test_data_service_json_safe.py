@@ -33,17 +33,30 @@ def test_delta_inf_values_are_json_safe(monkeypatch):
     assert rows[1]["eps"] is None
 
 
-def test_finance_by_date_is_supported_for_silver(monkeypatch):
+def test_finance_regular_folders_are_supported_for_silver(monkeypatch):
     calls = []
+
+    monkeypatch.setattr(
+        DataService,
+        "_discover_delta_table_paths",
+        lambda _container, _prefix: [
+            "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
+            "finance-data/income_statement/MSFT_quarterly_financials",
+        ],
+    )
 
     def fake_load_delta(_container, path):
         calls.append(path)
-        return pd.DataFrame([{"symbol": "AAPL", "metric": 123}])
+        symbol = "AAPL" if "AAPL_" in path else "MSFT"
+        return pd.DataFrame([{"symbol": symbol, "metric": 123}])
 
     monkeypatch.setattr(data_service_module.delta_core, "load_delta", fake_load_delta)
 
-    rows = DataService.get_data("silver", "finance", limit=1)
+    rows = DataService.get_data("silver", "finance", limit=10)
 
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert rows[0]["symbol"] == "AAPL"
-    assert calls == ["finance-data-by-date"]
+    assert calls == [
+        "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
+        "finance-data/income_statement/MSFT_quarterly_financials",
+    ]

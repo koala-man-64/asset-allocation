@@ -815,23 +815,8 @@ export function StatusOverview({
                           <TableCell className={`${matrixCell} text-center`}>
                             {domain ? (
                               (() => {
-                                const pathText = String(domain.path || '').toLowerCase();
-                                const isByDate =
-                                  pathText.includes('by-date') || pathText.includes('_by_date');
-
                                 const domainPortalUrl = normalizeAzurePortalUrl(domain.portalUrl);
-                                const byDateFolderUrl = isByDate ? domainPortalUrl : '';
-                                const baseFolderUrl = (() => {
-                                  if (!domainPortalUrl) return '';
-                                  if (!isByDate) return domainPortalUrl;
-                                  const derived = domainPortalUrl
-                                    .replace(/\/by-date\b/gi, '')
-                                    .replace(/-by-date\b/gi, '')
-                                    .replace(/_by_date\b/gi, '');
-                                  return derived === domainPortalUrl ? domainPortalUrl : derived;
-                                })();
-                                const showByDateFolder =
-                                  Boolean(byDateFolderUrl) && baseFolderUrl !== byDateFolderUrl;
+                                const baseFolderUrl = domainPortalUrl || '';
 
                                 const extractAzureJobName = (
                                   jobUrl?: string | null
@@ -904,10 +889,7 @@ export function StatusOverview({
                                   return key.toUpperCase();
                                 })();
 
-                                const hasLinks =
-                                  Boolean(baseFolderUrl) ||
-                                  Boolean(showByDateFolder) ||
-                                  Boolean(jobPortalUrl);
+                                const hasLinks = Boolean(baseFolderUrl) || Boolean(jobPortalUrl);
 
                                 return (
                                   <div className="flex items-center justify-center gap-2 whitespace-nowrap py-1">
@@ -1027,24 +1009,7 @@ export function StatusOverview({
                                               </a>
                                             </DropdownMenuItem>
                                           ) : null}
-                                          {showByDateFolder ? (
-                                            <DropdownMenuItem asChild>
-                                              <a
-                                                href={byDateFolderUrl}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                              >
-                                                <CalendarDays className="h-4 w-4 shrink-0" />
-                                                <span className="flex-1 leading-none">
-                                                  By-date folder
-                                                </span>
-                                                <DropdownMenuShortcut>
-                                                  {updatedAgo}
-                                                </DropdownMenuShortcut>
-                                              </a>
-                                            </DropdownMenuItem>
-                                          ) : null}
-                                          {(baseFolderUrl || showByDateFolder) && jobPortalUrl ? (
+                                          {baseFolderUrl && jobPortalUrl ? (
                                             <DropdownMenuSeparator />
                                           ) : null}
                                           {jobPortalUrl ? (

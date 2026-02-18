@@ -16,7 +16,7 @@ describe('useDataProbes', () => {
       layerName: 'Silver',
       domain: {
         name: 'market',
-        path: 'market-data-by-date',
+        path: 'market-data/',
         type: 'delta',
         lastUpdated: new Date().toISOString(),
         status: 'healthy'

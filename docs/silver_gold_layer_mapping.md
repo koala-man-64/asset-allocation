@@ -10,10 +10,10 @@ The following table maps the data flow from Silver to Gold layers.
 
 | Domain | Silver Job | Gold Job | Transformation Logic | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Market Data** | `silver_market_data` | `gold_market_data` | Select all (Date specific in materializer) | Verified |
-| **Finance Data** | `silver_finance_data` | `gold_finance_data` | Select all (Date specific in materializer) | Verified |
-| **Earnings Data** | `silver_earnings_data` | `gold_earnings_data` | Select all (Date specific in materializer) | Verified |
-| **Price Target** | `silver_price_target_data` | `gold_price_target_data` | Select all (Date specific in materializer) | Verified |
+| **Market Data** | `silver_market_data` | `gold_market_data` | Per-symbol transform from Silver to Gold | Verified |
+| **Finance Data** | `silver_finance_data` | `gold_finance_data` | Per-symbol transform from Silver to Gold | Verified |
+| **Earnings Data** | `silver_earnings_data` | `gold_earnings_data` | Per-symbol transform from Silver to Gold | Verified |
+| **Price Target** | `silver_price_target_data` | `gold_price_target_data` | Per-symbol transform from Silver to Gold | Verified |
 
 ## 3. Detailed Column Mapping
 
@@ -91,5 +91,5 @@ Columns: `symbol`, `published_date`, `news_url`, `title`, `text`, `sentiment`, `
 
 ## 4. Recommendations for Gold Layer
 
-1.  **Deduplication/Audit:** The Gold layer seems to currently just replicate Silver data for specific dates (via the `materialize_*_by_date.py` scripts). Ensure this intended redundancy serves a business purpose (e.g. freezing datasets for reporting).
+1.  **Deduplication/Audit:** The Gold layer still carries overlap with Silver in some domains. Periodically validate that each Gold feature set remains necessary for downstream analytics.
 2.  **Naming:** If the Silver layer is renamed (e.g. for the News Sentiment finding), the Gold layer must also be updated to reflect the new source table names.

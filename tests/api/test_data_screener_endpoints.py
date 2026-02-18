@@ -84,10 +84,18 @@ async def test_screener_endpoint_returns_joined_snapshot(monkeypatch: pytest.Mon
         return symbols_df[mask].copy()
 
     def fake_load_delta(_container: str, path: str, version: int = None, columns=None, filters=None):  # type: ignore[no-untyped-def]
-        if path == "market_by_date":
-            return gold_df.copy()
-        if path == "market-data-by-date":
-            return silver_df.copy()
+        if path == "market/AAPL":
+            return gold_df.loc[gold_df["symbol"] == "AAPL"].copy()
+        if path == "market/MSFT":
+            return gold_df.loc[gold_df["symbol"] == "MSFT"].copy()
+        if path == "market/ZZZZ":
+            return pd.DataFrame()
+        if path == "market-data/AAPL":
+            return silver_df.loc[silver_df["Symbol"] == "AAPL"].copy()
+        if path == "market-data/MSFT":
+            return silver_df.loc[silver_df["Symbol"] == "MSFT"].copy()
+        if path == "market-data/ZZZZ":
+            return pd.DataFrame()
         raise AssertionError(f"Unexpected delta path: {path}")
 
     monkeypatch.setattr("api.endpoints.data.connect", fake_connect)

@@ -91,25 +91,7 @@ def _layer_container_env(layer: LayerKey) -> str:
 
 
 def _delta_table_path(layer: LayerKey, domain: DomainKey) -> Optional[str]:
-    layer_key = _normalize_key(layer)
-    domain_key = _normalize_key(domain)
-
-    if layer_key == "silver":
-        return {
-            "market": "market-data-by-date",
-            "finance": "finance-data-by-date",
-            "earnings": "earnings-data-by-date",
-            "price-target": "price-target-data-by-date",
-        }.get(domain_key)
-
-    if layer_key == "gold":
-        return {
-            "market": "market_by_date",
-            "finance": "finance_by_date",
-            "earnings": "earnings_by_date",
-            "price-target": "targets_by_date",
-        }.get(domain_key)
-
+    # Domain metadata now operates on regular per-symbol prefixes.
     return None
 
 
@@ -124,6 +106,16 @@ def _blob_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
             return "price-target-data/"
         if domain_key == "platinum":
             return "platinum/"
+    if layer_key == "silver":
+        if domain_key in {"market", "finance", "earnings"}:
+            return f"{domain_key}-data/"
+        if domain_key == "price-target":
+            return "price-target-data/"
+    if layer_key == "gold":
+        if domain_key in {"market", "finance", "earnings"}:
+            return f"{domain_key}/"
+        if domain_key == "price-target":
+            return "targets/"
     if layer_key == "platinum":
         return "platinum/"
     return None
@@ -657,7 +649,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         if truncated:
             warnings.append(f"Blob listing truncated after {max_scanned_blobs} blobs.")
 
-        whitelist_path = _whitelist_path(domain_key)
+        whitelist_path = _whitelist_path(domain_key) if layer_key == "bronze" else None
         symbol_count = None
         if whitelist_path:
             try:
@@ -666,7 +658,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
                 warnings.append(f"Unable to read whitelist.csv: {exc}")
 
         blacklisted_symbol_count = None
-        blacklist_path = _blacklist_path(domain_key)
+        blacklist_path = _blacklist_path(domain_key) if layer_key == "bronze" else None
         if blacklist_path:
             try:
                 blacklisted_symbol_count = _parse_list_size(client.download_data(blacklist_path))

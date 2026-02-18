@@ -48,12 +48,12 @@ Cross-reference external data providers to:
 ## Silver/Gold Path Crosswalk
 Paths are defined centrally in `core/pipeline.py` (`DataPaths`):
 
-| Domain | Silver By-Date Path | Gold By-Date Path | Per-Symbol Gold Path |
-|---|---|---|---|
-| Market | `market-data-by-date` | `market_by_date` | `market/{ticker}` |
-| Earnings | `earnings-data-by-date` | `earnings_by_date` | `earnings/{ticker}` |
-| Finance | `finance-data-by-date` | `finance_by_date` | `finance/{ticker}` |
-| Price targets | `price-target-data-by-date` | `targets_by_date` | `targets/{ticker}` |
+| Domain | Silver Per-Symbol Path | Gold Per-Symbol Path |
+|---|---|---|
+| Market | `market-data/{ticker}` | `market/{ticker}` |
+| Earnings | `earnings-data/{ticker}` | `earnings/{ticker}` |
+| Finance | `finance-data/{folder}/{ticker}_{suffix}` | `finance/{ticker}` |
+| Price targets | `price-target-data/{ticker}` | `targets/{ticker}` |
 
 ## Postgres Symbol Flags
 `public.symbols` provider availability columns:
@@ -84,4 +84,3 @@ WHERE COALESCE(source_massive, FALSE) = TRUE
   AND COALESCE(source_nasdaq, FALSE) = FALSE
 ORDER BY symbol;
 ```
-

@@ -11,10 +11,10 @@ describe('formatSystemStatusText', () => {
 
   it('strips ANSI markers from JSON-wrapped log lines', () => {
     const raw =
-      '- {"detail":"Domain metadata unavailable: Kernel error -> \\u001b[31mpermission denied\\u001b[0m for path market-data-by-date/_delta_log/_last_checkpoint\\nError performing GET"}';
+      '- {"detail":"Domain metadata unavailable: Kernel error -> \\u001b[31mpermission denied\\u001b[0m for path market-data/AAPL/_delta_log/_last_checkpoint\\nError performing GET"}';
 
     expect(formatSystemStatusText(raw)).toBe(
-      'Domain metadata unavailable: Kernel error -> permission denied for path market-data-by-date/_delta_log/_last_checkpoint Error performing GET'
+      'Domain metadata unavailable: Kernel error -> permission denied for path market-data/AAPL/_delta_log/_last_checkpoint Error performing GET'
     );
   });
 

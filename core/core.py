@@ -201,8 +201,6 @@ def log_environment_diagnostics():
         # Job behavior toggles
         "LOG_FORMAT",
         "FEATURE_ENGINEERING_MAX_WORKERS",
-        "MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR",
-        "MATERIALIZE_YEAR_MONTH",
         "TEST_MODE",
     ]
 

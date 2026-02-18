@@ -306,20 +306,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    from core.by_date_pipeline import run_partner_then_by_date
-    from tasks.earnings_data.materialize_gold_earnings_by_date import (
-        discover_year_months_from_data,
-        main as by_date_main,
-    )
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "gold-earnings-job"
-    exit_code = run_partner_then_by_date(
-        job_name=job_name,
-        partner_main=main,
-        by_date_main=by_date_main,
-        year_months_provider=discover_year_months_from_data,
-    )
+    exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="gold", domain="earnings", job_name=job_name)
     raise SystemExit(exit_code)

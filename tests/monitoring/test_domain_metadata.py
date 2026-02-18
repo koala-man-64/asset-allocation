@@ -12,7 +12,7 @@ from deltalake.exceptions import TableNotFoundError
 def test_collect_delta_table_metadata_reports_rows_and_date_range(tmp_path) -> None:
     # Use the test storage redirection fixture (see tests/conftest.py) which patches delta URIs to local paths.
     container = "test-container"
-    table_path = "market-data-by-date"
+    table_path = "market-data/AAPL"
 
     df = pd.DataFrame(
         {
@@ -83,7 +83,7 @@ def test_collect_delta_table_metadata_parses_string_date_stats(monkeypatch) -> N
 
     monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _FakeDeltaTable)
     warnings: list[str] = []
-    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+    meta = collect_delta_table_metadata("test-container", "market-data/AAPL", warnings=warnings)
 
     assert warnings == []
     assert meta["dateRange"] is not None
@@ -148,7 +148,7 @@ def test_collect_delta_table_metadata_uses_partition_date_when_available(monkeyp
 
     monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _FakeDeltaTable)
     warnings: list[str] = []
-    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+    meta = collect_delta_table_metadata("test-container", "market-data/AAPL", warnings=warnings)
 
     assert warnings == []
     assert meta["dateRange"] is not None
@@ -197,7 +197,7 @@ def test_collect_delta_table_metadata_prefers_partition_over_stats(monkeypatch) 
 
     monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _FakeDeltaTable)
     warnings: list[str] = []
-    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+    meta = collect_delta_table_metadata("test-container", "market-data/AAPL", warnings=warnings)
 
     assert warnings == []
     assert meta["dateRange"] is not None
@@ -235,7 +235,7 @@ def test_collect_delta_table_metadata_uses_partition_values(monkeypatch) -> None
 
     monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _FakeDeltaTable)
     warnings: list[str] = []
-    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+    meta = collect_delta_table_metadata("test-container", "market-data/AAPL", warnings=warnings)
 
     assert warnings == []
     assert meta["dateRange"] is not None
@@ -252,7 +252,7 @@ def test_collect_delta_table_metadata_handles_no_files_in_log_segment(monkeypatc
     monkeypatch.setattr("monitoring.domain_metadata.DeltaTable", _raise)
 
     warnings: list[str] = []
-    meta = collect_delta_table_metadata("test-container", "market-data-by-date", warnings=warnings)
+    meta = collect_delta_table_metadata("test-container", "market-data/AAPL", warnings=warnings)
 
     assert meta["deltaVersion"] is None
     assert meta["fileCount"] == 0
@@ -260,6 +260,6 @@ def test_collect_delta_table_metadata_handles_no_files_in_log_segment(monkeypatc
     assert meta["totalRows"] == 0
     assert meta["dateRange"] is None
     assert warnings == [
-        "Delta table not readable at market-data-by-date; no commit files found in _delta_log yet."
+        "Delta table not readable at market-data/AAPL; no commit files found in _delta_log yet."
     ]
 

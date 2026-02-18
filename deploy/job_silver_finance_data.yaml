@@ -70,8 +70,6 @@ properties:
         value: ${AZURE_CONTAINER_COMMON}
       - name: SILVER_FINANCE_INGEST_MAX_WORKERS
         value: "4"
-      - name: SILVER_FINANCE_BY_DATE_MAX_WORKERS
-        value: "2"
       image: ${JOB_IMAGE}
       imageType: ContainerImage
       name: silver-finance-job

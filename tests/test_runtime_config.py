@@ -43,29 +43,3 @@ def test_normalize_env_override_date_rejects_invalid():
         raise AssertionError("Expected ValueError for invalid date")
 
 
-def test_normalize_env_override_year_month():
-    assert normalize_env_override("MATERIALIZE_YEAR_MONTH", "2026-01") == "2026-01"
-
-
-def test_normalize_env_override_year_month_rejects_invalid():
-    for value in ("2026-1", "2026-13", "abcd-ef"):
-        try:
-            normalize_env_override("MATERIALIZE_YEAR_MONTH", value)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"Expected ValueError for {value!r}")
-
-
-def test_normalize_env_override_utc_hour_allows_empty():
-    assert normalize_env_override("MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR", "") == ""
-
-
-def test_normalize_env_override_utc_hour_rejects_invalid():
-    for value in ("abc", "-1", "24"):
-        try:
-            normalize_env_override("MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR", value)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"Expected ValueError for {value!r}")

@@ -36,8 +36,6 @@ properties:
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_FOLDER_TARGETS
         value: ${AZURE_CONTAINER_GOLD}
-      - name: MATERIALIZE_BY_DATE_RUN_AT_UTC_HOUR
-        value: "22"
       - name: AZURE_CONTAINER_BRONZE
         value: ${AZURE_CONTAINER_BRONZE}
       - name: LOG_FORMAT

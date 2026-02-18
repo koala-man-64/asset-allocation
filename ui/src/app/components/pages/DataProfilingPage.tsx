@@ -16,7 +16,7 @@ interface DomainOption {
 const containerOptions: ContainerLayer[] = ['bronze', 'silver', 'gold'];
 const domainOptions: DomainOption[] = [
   { value: 'market', label: 'Market' },
-  { value: 'finance', label: 'Finance (by-date)' },
+  { value: 'finance', label: 'Finance' },
   { value: 'earnings', label: 'Earnings' },
   { value: 'price-target', label: 'Price Target' }
 ];

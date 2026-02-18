@@ -532,12 +532,13 @@ def _resolve_last_updated_with_marker_fallback(
 
 def _domain_name_from_marker_path(path: str) -> str:
     d_name = os.path.dirname(path) or path
-    return d_name.replace("/whitelist.csv", "").replace("-data", "")
+    normalized = d_name.replace("/whitelist.csv", "").replace("-data", "")
+    return "price-target" if normalized == "targets" else normalized
 
 
 def _domain_name_from_delta_path(path: str) -> str:
     d_name = path
-    name_clean = d_name.split("/")[-1].replace("_by_date", "").replace("-by-date", "").replace("-data", "")
+    name_clean = d_name.split("/")[-1].replace("-data", "")
     if "/signals/" in d_name:
         name_clean = "signals"
     if name_clean == "targets":
@@ -770,11 +771,11 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Cleaned, standardized tabular data. Enforced schemas for reliable querying.",
             container_env="AZURE_CONTAINER_SILVER",
             max_age_seconds=max_age_default,
-            delta_tables=(
-                DomainSpec("market-data-by-date", CRON_SILVER_MARKET),
-                DomainSpec("finance-data-by-date", CRON_SILVER_FINANCE),
-                DomainSpec("earnings-data-by-date", CRON_SILVER_EARNINGS),
-                DomainSpec("price-target-data-by-date", CRON_SILVER_PRICE_TARGET),
+            marker_blobs=(
+                DomainSpec("market-data/", CRON_SILVER_MARKET),
+                DomainSpec("finance-data/", CRON_SILVER_FINANCE),
+                DomainSpec("earnings-data/", CRON_SILVER_EARNINGS),
+                DomainSpec("price-target-data/", CRON_SILVER_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(
@@ -782,11 +783,11 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Entity-resolved feature store. Financial metrics ready for modeling.",
             container_env="AZURE_CONTAINER_GOLD",
             max_age_seconds=max_age_default,
-            delta_tables=(
-                DomainSpec("market_by_date", CRON_GOLD_MARKET),
-                DomainSpec("finance_by_date", CRON_GOLD_FINANCE),
-                DomainSpec("earnings_by_date", CRON_GOLD_EARNINGS),
-                DomainSpec("targets_by_date", CRON_GOLD_PRICE_TARGET),
+            marker_blobs=(
+                DomainSpec("market/", CRON_GOLD_MARKET),
+                DomainSpec("finance/", CRON_GOLD_FINANCE),
+                DomainSpec("earnings/", CRON_GOLD_EARNINGS),
+                DomainSpec("targets/", CRON_GOLD_PRICE_TARGET),
             ),
         ),
         LayerProbeSpec(

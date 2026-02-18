@@ -13,6 +13,15 @@ from core import core as mdc
 from core import delta_core
 from core.pipeline import DataPaths
 
+
+_FINANCE_SILVER_FOLDERS: dict[str, tuple[str, str]] = {
+    "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
+    "income_statement": ("Income Statement", "quarterly_financials"),
+    "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
+    "valuation": ("Valuation", "quarterly_valuation_measures"),
+}
+
+
 class DataService:
     """
     Service layer for accessing financial data from Delta Lake storage.
@@ -102,6 +111,110 @@ class DataService:
         if key == "bronze":
             return cfg.AZURE_CONTAINER_BRONZE
         raise ValueError(f"Unsupported layer: {layer!r}")
+
+    @staticmethod
+    def _require_storage_client(container: str) -> Any:
+        client = mdc.get_storage_client(container)
+        if client is None:
+            raise FileNotFoundError(
+                f"Storage client unavailable for container={container!r}. "
+                "Set Azure storage env vars to enable Delta table discovery."
+            )
+        return client
+
+    @staticmethod
+    def _discover_delta_table_paths(container: str, prefix: str) -> List[str]:
+        normalized = str(prefix or "").strip().strip("/")
+        if not normalized:
+            raise ValueError("prefix is required to discover Delta tables.")
+
+        client = DataService._require_storage_client(container)
+        list_files = getattr(client, "list_files", None)
+        if not callable(list_files):
+            raise FileNotFoundError("Storage client does not support listing Delta table paths.")
+
+        roots: set[str] = set()
+        search_prefix = f"{normalized}/"
+        for name in list_files(name_starts_with=search_prefix):
+            text = str(name or "")
+            marker = "/_delta_log/"
+            if marker not in text:
+                continue
+            root = text.split(marker, 1)[0].strip("/")
+            if root and root.startswith(search_prefix.rstrip("/")):
+                roots.add(root)
+        return sorted(roots)
+
+    @staticmethod
+    def _collect_delta_frames(
+        container: str,
+        paths: List[str],
+        *,
+        limit: Optional[int] = None,
+        enrich: Optional[Any] = None,
+    ) -> List[pd.DataFrame]:
+        frames: List[pd.DataFrame] = []
+        row_budget = int(limit) if limit is not None else None
+        rows_collected = 0
+        for path in paths:
+            try:
+                df = delta_core.load_delta(container, path)
+            except Exception:
+                continue
+            if df is None or df.empty:
+                continue
+            if enrich is not None:
+                df = enrich(df, path)
+            frames.append(df)
+            rows_collected += int(len(df))
+            if row_budget is not None and rows_collected >= row_budget:
+                break
+        return frames
+
+    @staticmethod
+    def _frames_to_records(frames: List[pd.DataFrame], *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        if not frames:
+            return []
+        merged = pd.concat(frames, ignore_index=True)
+        return DataService._df_to_records_json_safe(merged, limit=limit)
+
+    @staticmethod
+    def _read_cross_section_from_prefix(container: str, prefix: str, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        paths = DataService._discover_delta_table_paths(container, prefix)
+        frames = DataService._collect_delta_frames(container, paths, limit=limit)
+        return DataService._frames_to_records(frames, limit=limit)
+
+    @staticmethod
+    def _read_silver_finance_regular(
+        *,
+        container: str,
+        ticker: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        symbol = str(ticker or "").strip().upper()
+        if symbol:
+            paths = [
+                DataPaths.get_finance_path(folder, symbol, suffix)
+                for folder, suffix in _FINANCE_SILVER_FOLDERS.values()
+            ]
+        else:
+            paths = DataService._discover_delta_table_paths(container, "finance-data")
+
+        def _enrich(df: pd.DataFrame, path: str) -> pd.DataFrame:
+            out = df.copy()
+            parts = str(path or "").split("/")
+            sub_domain = parts[1] if len(parts) > 2 else ""
+            table_name = parts[2] if len(parts) > 2 else ""
+            if sub_domain and "sub_domain" not in out.columns:
+                out["sub_domain"] = sub_domain
+            if "symbol" not in out.columns and "Symbol" not in out.columns:
+                guessed = table_name.split("_", 1)[0].strip().upper()
+                if guessed:
+                    out["symbol"] = guessed
+            return out
+
+        frames = DataService._collect_delta_frames(container, paths, limit=limit, enrich=_enrich)
+        return DataService._frames_to_records(frames, limit=limit)
     
     @staticmethod
     def get_data(
@@ -115,46 +228,55 @@ class DataService:
 
         Notes
         - Silver/Gold use Delta tables.
-        - Bronze stores raw source files (CSV/JSON/Parquet) partitioned by ticker and does not
-          materialize by-date tables.
+        - Bronze stores raw source files (CSV/JSON/Parquet) partitioned by ticker.
+        - Cross-sectional requests are assembled from regular per-symbol Delta folders.
         """
         resolved_layer = str(layer or "").strip().lower()
-        resolved_domain = str(domain or "").strip().lower()
+        raw_domain = str(domain or "").strip().lower()
+        resolved_domain = "price-target" if raw_domain in {"price-target", "price_target"} else raw_domain
         container = DataService._container_for_layer(resolved_layer)
 
         if resolved_layer == "bronze":
             return DataService._get_bronze_data(container=container, domain=resolved_domain, ticker=ticker, limit=limit)
-        
-        # Determine Path based on Domain & Layer
-        path = ""
-        is_raw = resolved_layer == "silver"
+
+        if resolved_domain.startswith("finance/"):
+            _, _, sub_domain = resolved_domain.partition("/")
+            if not sub_domain:
+                raise ValueError("finance domain requires a sub-domain, e.g. finance/balance_sheet")
+            return DataService.get_finance_data(resolved_layer, sub_domain, ticker=ticker, limit=limit)
+
+        is_silver = resolved_layer == "silver"
+        symbol = str(ticker or "").strip().upper()
 
         if resolved_domain == "market":
-            if ticker:
-                path = DataPaths.get_market_data_path(ticker) if is_raw else DataPaths.get_gold_features_path(ticker)
-            else:
-                path = DataPaths.get_market_data_by_date_path() if is_raw else DataPaths.get_gold_features_by_date_path()
-        elif resolved_domain == "finance":
-            if is_raw:
-                # Silver finance probing defaults to the by-date dataset (all symbols/sub-domains).
-                path = DataPaths.get_finance_by_date_path()
-            else:
-                # Gold supports per-ticker and by-date datasets.
-                path = DataPaths.get_gold_finance_path(ticker) if ticker else DataPaths.get_gold_finance_by_date_path()
-        elif resolved_domain == "earnings":
-            if ticker:
-                path = DataPaths.get_earnings_path(ticker) if is_raw else DataPaths.get_gold_earnings_path(ticker)
-            else:
-                path = DataPaths.get_earnings_by_date_path() if is_raw else DataPaths.get_gold_earnings_by_date_path()
-        elif resolved_domain in {"price-target", "price_target"}:
-            if ticker:
-                path = DataPaths.get_price_target_path(ticker) if is_raw else DataPaths.get_gold_price_targets_path(ticker)
-            else:
-                path = DataPaths.get_price_targets_by_date_path() if is_raw else DataPaths.get_gold_price_targets_by_date_path()
-        else:
-             raise ValueError(f"Domain '{domain}' not supported on generic endpoint")
-             
-        return DataService._read_delta(container, path, limit=limit)
+            if symbol:
+                path = DataPaths.get_market_data_path(symbol) if is_silver else DataPaths.get_gold_features_path(symbol)
+                return DataService._read_delta(container, path, limit=limit)
+            prefix = "market-data" if is_silver else "market"
+            return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
+
+        if resolved_domain == "finance":
+            if is_silver:
+                return DataService._read_silver_finance_regular(container=container, ticker=symbol or None, limit=limit)
+            if symbol:
+                return DataService._read_delta(container, DataPaths.get_gold_finance_path(symbol), limit=limit)
+            return DataService._read_cross_section_from_prefix(container, "finance", limit=limit)
+
+        if resolved_domain == "earnings":
+            if symbol:
+                path = DataPaths.get_earnings_path(symbol) if is_silver else DataPaths.get_gold_earnings_path(symbol)
+                return DataService._read_delta(container, path, limit=limit)
+            prefix = (getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data") if is_silver else "earnings"
+            return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
+
+        if resolved_domain == "price-target":
+            if symbol:
+                path = DataPaths.get_price_target_path(symbol) if is_silver else DataPaths.get_gold_price_targets_path(symbol)
+                return DataService._read_delta(container, path, limit=limit)
+            prefix = "price-target-data" if is_silver else "targets"
+            return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
+
+        raise ValueError(f"Domain '{domain}' not supported on generic endpoint")
 
     @staticmethod
     def get_finance_data(
@@ -178,16 +300,10 @@ class DataService:
                     "Set Azure storage env vars to enable Bronze exploration."
                 )
 
-            folder_map = {
-                "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
-                "income_statement": ("Income Statement", "quarterly_financials"),
-                "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
-                "valuation": ("Valuation", "quarterly_valuation_measures"),
-            }
-            if resolved_sub not in folder_map:
+            if resolved_sub not in _FINANCE_SILVER_FOLDERS:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
 
-            folder, suffix = folder_map[resolved_sub]
+            folder, suffix = _FINANCE_SILVER_FOLDERS[resolved_sub]
             symbol = str(ticker or "").strip().upper() if ticker else ""
             blob_path = (
                 f"finance-data/{folder}/{symbol}_{suffix}.csv"
@@ -204,16 +320,10 @@ class DataService:
         if resolved_layer == "silver":
             if not ticker:
                 raise ValueError("ticker is required for Silver finance data.")
-            folder_map = {
-                "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
-                "income_statement": ("Income Statement", "quarterly_financials"),
-                "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
-                "valuation": ("Valuation", "quarterly_valuation_measures")
-            }
-            if resolved_sub not in folder_map:
+            if resolved_sub not in _FINANCE_SILVER_FOLDERS:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
             
-            folder, suffix = folder_map[resolved_sub]
+            folder, suffix = _FINANCE_SILVER_FOLDERS[resolved_sub]
             path = DataPaths.get_finance_path(folder, ticker, suffix)
         else:
             # Gold logic

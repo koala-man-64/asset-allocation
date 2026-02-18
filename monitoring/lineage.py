@@ -40,19 +40,19 @@ def get_lineage_snapshot() -> Dict[str, Any]:
             {
                 "layer": "silver",
                 "domains": [
-                    {"domain": "market", "artifact": "market-data-by-date (delta)"},
-                    {"domain": "finance", "artifact": "finance-data-by-date (delta)"},
-                    {"domain": "earnings", "artifact": "earnings-data-by-date (delta)"},
-                    {"domain": "price-target", "artifact": "price-target-data-by-date (delta)"},
+                    {"domain": "market", "artifact": "market-data/<ticker> (delta)"},
+                    {"domain": "finance", "artifact": "finance-data/<subdomain>/<ticker>_* (delta)"},
+                    {"domain": "earnings", "artifact": "earnings-data/<ticker> (delta)"},
+                    {"domain": "price-target", "artifact": "price-target-data/<ticker> (delta)"},
                 ],
             },
             {
                 "layer": "gold",
                 "domains": [
-                    {"domain": "market", "artifact": "market_by_date (delta)"},
-                    {"domain": "finance", "artifact": "finance_by_date (delta)"},
-                    {"domain": "earnings", "artifact": "earnings_by_date (delta)"},
-                    {"domain": "price-target", "artifact": "targets_by_date (delta)"},
+                    {"domain": "market", "artifact": "market/<ticker> (delta)"},
+                    {"domain": "finance", "artifact": "finance/<ticker> (delta)"},
+                    {"domain": "earnings", "artifact": "earnings/<ticker> (delta)"},
+                    {"domain": "price-target", "artifact": "targets/<ticker> (delta)"},
                 ],
             },
             {

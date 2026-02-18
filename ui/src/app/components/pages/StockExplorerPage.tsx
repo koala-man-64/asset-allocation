@@ -220,7 +220,7 @@ export function StockExplorerPage() {
               <div className="p-6 font-mono text-xs text-destructive">
                 {formatSystemStatusText(screenerQuery.error) || 'Failed to load screener.'}
                 <div className="mt-2 text-muted-foreground">
-                  Requires Postgres (`core.symbols`) + Silver/Gold by-date Delta tables.
+                  Requires Postgres (`core.symbols`) + Silver/Gold regular Delta folders.
                 </div>
               </div>
             ) : (

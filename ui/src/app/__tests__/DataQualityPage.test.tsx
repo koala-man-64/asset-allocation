@@ -44,7 +44,7 @@ function makeHealthData(): SystemHealth {
           {
             name: 'market',
             type: 'delta',
-            path: 'market-data-by-date',
+            path: 'market-data/',
             lastUpdated: '2026-02-06T00:00:00Z',
             status: 'healthy',
             portalUrl: 'https://portal.azure.com/#resource/foo',

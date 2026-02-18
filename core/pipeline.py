@@ -19,26 +19,13 @@ class DataPaths:
         return f"market-data/{ticker.replace('.', '-')}"
 
     @staticmethod
-    def get_market_data_by_date_path() -> str:
-        return "market-data-by-date"
-
-    @staticmethod
     def get_gold_features_path(ticker: str) -> str:
         return f"market/{ticker}"
-
-    @staticmethod
-    def get_gold_features_by_date_path() -> str:
-        return "market_by_date"
 
     @staticmethod
     def get_technical_analysis_path(ticker: str) -> str:
         """Per-ticker technical analysis indicator table path."""
         return f"technical-analysis/{ticker}"
-
-    @staticmethod
-    def get_technical_analysis_by_date_path() -> str:
-        """Cross-sectional (by-date) technical analysis indicator table path."""
-        return "technical_analysis_by_date"
 
     @staticmethod
     def get_gold_earnings_path(ticker: str) -> str:
@@ -70,31 +57,6 @@ class DataPaths:
         """
         clean_folder = folder.lower().replace(' ', '_')
         return f"finance-data/{clean_folder}/{ticker}_{file_suffix}"
-
-
-    @staticmethod
-    def get_gold_finance_by_date_path() -> str:
-        return "finance_by_date"
-
-    @staticmethod
-    def get_finance_by_date_path() -> str:
-        return "finance-data-by-date"
-
-    @staticmethod
-    def get_earnings_by_date_path() -> str:
-        return "earnings-data-by-date"
-
-    @staticmethod
-    def get_gold_earnings_by_date_path() -> str:
-        return "earnings_by_date"
-
-    @staticmethod
-    def get_price_targets_by_date_path() -> str:
-        return "price-target-data-by-date"
-
-    @staticmethod
-    def get_gold_price_targets_by_date_path() -> str:
-        return "targets_by_date"
 
 
 class ListManager:

@@ -28,18 +28,16 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
   - Finance: `core.pipeline.DataPaths.get_finance_path()` (written by `tasks/finance_data/silver_finance_data.py`)
   - Earnings: `core.pipeline.DataPaths.get_earnings_path()` (written by `tasks/earnings_data/silver_earnings_data.py`)
   - Price Target: `core.pipeline.DataPaths.get_price_target_path()` (written by `tasks/price_target_data/silver_price_target_data.py`)
-- Materialized “by-date” Delta tables (used for freshness probes):
-  - `tasks/*/materialize_silver_*_by_date.py` → `market-data-by-date`, `finance-data-by-date`, `earnings-data-by-date`, `price-target-data-by-date`
 
 ### Gold (feature store)
 
 - Container: `AZURE_CONTAINER_GOLD`
 - Feature engineering jobs (examples):
-  - Market features: `tasks/market_data/gold_market_data.py` → `market/<ticker>` and `market_by_date`
+  - Market features: `tasks/market_data/gold_market_data.py` → `market/<ticker>`
     - Includes technical features such as candlestick patterns, Heikin-Ashi (`ha_*`), and Ichimoku (`ichimoku_*`) columns.
-  - Finance features: `tasks/finance_data/gold_finance_data.py` → `finance/<ticker>` and `finance_by_date`
-  - Earnings features: `tasks/earnings_data/gold_earnings_data.py` → `earnings/<ticker>` and `earnings_by_date`
-  - Price target features: `tasks/price_target_data/gold_price_target_data.py` → `targets/<ticker>` and `targets_by_date`
+  - Finance features: `tasks/finance_data/gold_finance_data.py` → `finance/<ticker>`
+  - Earnings features: `tasks/earnings_data/gold_earnings_data.py` → `earnings/<ticker>`
+  - Price target features: `tasks/price_target_data/gold_price_target_data.py` → `targets/<ticker>`
 
 ### Platinum (reserved)
 
@@ -68,10 +66,7 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
   - Path: `system/watermarks/gold_*` (JSON map keyed by ticker).
 - If watermarks are unavailable, Gold falls back to full recompute per ticker.
 
-### By-date materialization
-- Default runs yesterday’s month.
-- `MATERIALIZE_WINDOW_MONTHS` expands to the last N months (e.g., `3` → current + prior 2).
-- `MATERIALIZE_YEAR_MONTH` overrides with a single partition when set.
+### System health markers
 - Successful Bronze/Silver/Gold jobs emit system-health markers under
   `system/health_markers/<layer>/<domain>.json` in `AZURE_CONTAINER_COMMON`;
   system-health probes use markers first (configurable fallback to legacy scans).
