@@ -28,6 +28,7 @@ vi.mock('lucide-react', () => ({
   Zap: () => <div data-testid="icon-zap" />,
   TrendingUp: () => <div data-testid="icon-trending" />,
   Bell: () => <div data-testid="icon-bell" />,
+  BarChart3: () => <div data-testid="icon-bar-chart" />,
   ScanSearch: () => <div data-testid="icon-scan" />,
   ChevronLeft: () => <span>icon-left</span>,
   ChevronRight: () => <span>icon-right</span>,
@@ -35,6 +36,7 @@ vi.mock('lucide-react', () => ({
   PinOff: () => <div data-testid="icon-pinoff" />,
   Globe: () => <div data-testid="icon-globe" />,
   Bug: () => <div data-testid="icon-bug" />,
+  Filter: () => <div data-testid="icon-filter" />,
   SlidersHorizontal: () => <div data-testid="icon-sliders" />,
   ChevronUp: () => <div data-testid="icon-up" />,
   ChevronDown: () => <div data-testid="icon-down" />

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { DataQualityPage } from '@/app/components/pages/DataQualityPage';
 import { DataService } from '@/services/DataService';
@@ -144,9 +144,18 @@ describe('DataQualityPage', () => {
     expect(await screen.findByTestId('mock-data-pipeline-panel')).toBeInTheDocument();
 
     // Ledger Table (Inline)
-    expect(screen.getByRole('table')).toBeInTheDocument();
-    expect(screen.getByText(/Layer/i)).toBeInTheDocument();
-    expect(screen.getByText(/Domain/i)).toBeInTheDocument();
+    const tables = screen.getAllByRole('table');
+    expect(tables.length).toBeGreaterThan(0);
+
+    const ledgerTable = tables.find((table) =>
+      within(table).queryByRole('columnheader', { name: /Domain/i })
+    );
+    if (!ledgerTable) {
+      throw new Error('Validation ledger table not found');
+    }
+
+    expect(within(ledgerTable).getByRole('columnheader', { name: /Layer/i })).toBeInTheDocument();
+    expect(within(ledgerTable).getByRole('columnheader', { name: /Domain/i })).toBeInTheDocument();
   });
 
   it('renders loading state', () => {
