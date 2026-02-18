@@ -6,6 +6,7 @@ import { DataTable } from '@/app/components/common/DataTable';
 import { StrategyEditor } from '@/app/components/pages/StrategyEditor';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { PageLoader } from '@/app/components/common/PageLoader';
 
 export function StrategyConfigPage() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -52,7 +53,7 @@ export function StrategyConfigPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center py-4">Loading strategies...</div>
+            <PageLoader text="Loading strategies..." className="h-64" />
           ) : (
             <DataTable
               data={strategies}

@@ -446,10 +446,7 @@ $accountLabel = if ([string]::IsNullOrWhiteSpace($StorageAccountName)) { "<from 
 Write-Host "Loaded configuration from $envLabel" -ForegroundColor Cyan
 Write-Host "Storage account: $accountLabel" -ForegroundColor Cyan
 Write-Host "File systems: $($FileSystems -join ', ')" -ForegroundColor Cyan
-Write-Host "Hierarchy depth: $MaxDepth" -ForegroundColor Cyan
-if ($TopPerLevel -gt 0) {
-  Write-Host "Top entries per level: $TopPerLevel" -ForegroundColor Cyan
-}
+Write-Host "View: container-level usage only" -ForegroundColor Cyan
 Write-Host ""
 
 $accountNode = New-UsageNode -Name "/" -Path "" -Depth 0
@@ -489,25 +486,6 @@ foreach ($fileSystem in $FileSystems) {
 
     $fileSystemNode.Bytes += $size
     $accountNode.Bytes += $size
-
-    $segments = @($name.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries))
-    $directorySegments = @()
-    if ($segments.Count -gt 1) {
-      $rawDirectorySegments = @($segments[0..($segments.Count - 2)])
-      $directorySegments = @(Normalize-DirectorySegments -Segments $rawDirectorySegments)
-    }
-
-    $levelsToApply = [Math]::Min($MaxDepth, @($directorySegments).Count)
-    $current = $fileSystemNode
-
-    for ($i = 0; $i -lt $levelsToApply; $i++) {
-      $segment = $directorySegments[$i]
-      $current = Ensure-ChildNode -Parent $current -ChildName $segment
-      $current.Bytes += $size
-    }
-
-    $filesNode = Ensure-ChildNode -Parent $current -ChildName "[files]"
-    $filesNode.Bytes += $size
   }
 }
 
@@ -516,18 +494,29 @@ if ($accountNode.Bytes -le 0) {
   exit 0
 }
 
-$rows = New-Object System.Collections.Generic.List[object]
-Add-NodeRows -Node $accountNode -TotalBytes $accountNode.Bytes -TopPerLevel $TopPerLevel -Rows $rows -IndentLevel 0
+$rows = @(
+  $accountNode.Children.Values |
+    Sort-Object -Property Bytes -Descending |
+    ForEach-Object {
+      $percentOfTotal = if ($accountNode.Bytes -gt 0) { ([double]$_.Bytes / [double]$accountNode.Bytes) * 100.0 } else { 0.0 }
+      [PSCustomObject]@{
+        Container      = $_.Name
+        Used           = Format-Bytes -Bytes $_.Bytes
+        Bytes          = [int64]$_.Bytes
+        PercentOfTotal = $percentOfTotal
+      }
+    }
+)
 
 Write-Host ""
-Write-Host "ADLS usage hierarchy" -ForegroundColor Green
+Write-Host "ADLS container usage summary" -ForegroundColor Green
 Write-Host "Total used: $(Format-Bytes -Bytes $accountNode.Bytes) ($($accountNode.Bytes) bytes)" -ForegroundColor Green
 Write-Host ""
 
 $rows |
   Select-Object `
-    @{ Name = "Path"; Expression = { $_.Path } }, `
-    @{ Name = "Used"; Expression = { $_.HumanReadable } }, `
+    @{ Name = "Container"; Expression = { $_.Container } }, `
+    @{ Name = "Used"; Expression = { $_.Used } }, `
     @{ Name = "Bytes"; Expression = { $_.Bytes } }, `
     @{ Name = "% of Total"; Expression = { "{0:N2}%" -f $_.PercentOfTotal } } |
   Format-Table -AutoSize

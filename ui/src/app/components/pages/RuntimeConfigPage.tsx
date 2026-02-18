@@ -32,6 +32,7 @@ import {
 import { formatTimeAgo } from '@/app/components/pages/system-status/SystemStatusHelpers';
 import type { RuntimeConfigItem } from '@/services/apiService';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
+import { PageLoader } from '@/app/components/common/PageLoader';
 
 type EditState = {
   key: string;
@@ -156,6 +157,10 @@ export function RuntimeConfigPage() {
 
   const isLoading = catalogQuery.isLoading || configQuery.isLoading;
   const hasError = Boolean(catalogQuery.error || configQuery.error);
+
+  if (isLoading) {
+    return <PageLoader text="Loading Runtime Configuration..." />;
+  }
 
   if (hasError) {
     const message =

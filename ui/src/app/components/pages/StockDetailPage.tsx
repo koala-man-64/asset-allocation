@@ -24,6 +24,7 @@ import {
   TableRow
 } from '@/app/components/ui/table';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
+import { PageLoader } from '@/app/components/common/PageLoader';
 
 export function StockDetailPage() {
   const { ticker: paramTicker } = useParams();
@@ -127,7 +128,9 @@ export function StockDetailPage() {
       )}
 
       {/* Main Content Area */}
-      {stats.length > 0 && (
+      {loading ? (
+        <PageLoader text="Loading Live Market Data..." className="h-[60vh]" />
+      ) : stats.length > 0 ? (
         <div className="grid grid-cols-12 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           {/* Header Stats Card */}
           <div className="col-span-12">
@@ -286,7 +289,7 @@ export function StockDetailPage() {
             </Card>
           </div>
         </div>
-      )}
+      ) : null}
 
       {!loading && stats.length === 0 && !error && (
         <div className="mcm-panel flex h-64 flex-col items-center justify-center border-2 border-dashed border-border/50 bg-muted/20">

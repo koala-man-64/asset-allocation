@@ -4,6 +4,7 @@ import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { Skeleton } from '@/app/components/ui/skeleton';
+import { PageLoader } from '@/app/components/common/PageLoader';
 import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
 
 // Lazy load components to reduce initial bundle size of the page
@@ -141,16 +142,7 @@ export function SystemStatusPage() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-          <p className="text-muted-foreground text-sm font-mono tracking-widest uppercase">
-            Initializing System Link...
-          </p>
-        </div>
-      </div>
-    );
+    return <PageLoader text="Initializing System Link..." />;
   }
 
   if (error || !data) {

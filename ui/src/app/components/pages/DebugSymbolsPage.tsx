@@ -11,6 +11,7 @@ import { Textarea } from '@/app/components/ui/textarea';
 import { Badge } from '@/app/components/ui/badge';
 import { formatTimeAgo } from '@/app/components/pages/system-status/SystemStatusHelpers';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
+import { PageLoader } from '@/app/components/common/PageLoader';
 
 const MAX_PREVIEW = 20;
 
@@ -87,6 +88,10 @@ export function DebugSymbolsPage() {
       setIsSaving(false);
     }
   };
+
+  if (debugSymbolsQuery.isLoading) {
+    return <PageLoader text="Loading Debug Configuration..." />;
+  }
 
   if (debugSymbolsQuery.error) {
     return (
