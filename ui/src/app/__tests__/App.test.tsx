@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 // Mocking AppContent since App.tsx usually has providers which we might duplicate or want to skip
 // Actually App.tsx has AuthProvider and QueryProvider.
@@ -61,10 +61,40 @@ vi.mock('@/app/components/pages/SystemStatusPage', () => ({
   SystemStatusPage: () => <div data-testid="mock-system-status">Mock System Status</div>
 }));
 
+vi.mock('@/app/components/pages/DataExplorerPage', () => ({
+  DataExplorerPage: () => <div data-testid="mock-data-explorer">Mock Data Explorer</div>
+}));
+
 describe('App Smoke Test', () => {
   it('renders without crashing', async () => {
     window.history.pushState({}, 'System Status', '/system-status');
     renderWithProviders(<App />);
     expect(await screen.findByTestId('mock-system-status')).toBeInTheDocument();
+  });
+
+  it('shows a transition indicator when navigating between routes', async () => {
+    window.history.pushState({}, 'System Status', '/system-status');
+    renderWithProviders(<App />);
+    expect(await screen.findByTestId('mock-system-status')).toBeInTheDocument();
+
+    const indicator = screen.getByTestId('route-transition-indicator');
+    expect(indicator).toHaveAttribute('data-state', 'idle');
+
+    act(() => {
+      window.history.pushState({}, 'Data Explorer', '/data-explorer');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-data-explorer')).toBeInTheDocument();
+      expect(indicator).not.toHaveAttribute('data-state', 'idle');
+    });
+
+    await waitFor(
+      () => {
+        expect(indicator).toHaveAttribute('data-state', 'idle');
+      },
+      { timeout: 2000 }
+    );
   });
 });

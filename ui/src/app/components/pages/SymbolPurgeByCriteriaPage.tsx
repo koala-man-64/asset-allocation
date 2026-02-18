@@ -53,7 +53,11 @@ const operatorOptions: OperatorOption[] = [
   { value: 'bottom_percent', label: 'Bottom N%' }
 ];
 
-const formInputClass = 'h-10 bg-card border-input';
+const formFieldClass = 'space-y-1.5';
+const formLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground';
+const formInputClass = 'h-10 bg-input-background';
+const formSelectClass =
+  'h-10 w-full rounded-xl border-2 border-mcm-walnut bg-input-background px-3 text-sm font-semibold text-foreground outline-none transition-[color,box-shadow] focus-visible:border-mcm-teal focus-visible:ring-mcm-teal/40 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50';
 
 const formatNumber = (value: number | null | undefined): string => {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -71,7 +75,7 @@ const formatDate = (value: string | null | undefined): string => {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function buildPurgeExpression(operator: OperatorKey, column: string, value: number): string {
-  const display = `${value}`.replace(/\.?0+$/, '');
+  const display = Number.isInteger(value) ? `${value}` : `${value}`.replace(/0+$/, '').replace(/\.$/, '');
   switch (operator) {
     case 'gt':
       return `${column} > ${display}`;
@@ -438,34 +442,36 @@ export function SymbolPurgeByCriteriaPage() {
   return (
     <div className="grid gap-4 lg:grid-cols-[390px_1fr]">
       <section className="mcm-panel p-4 sm:p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <p className="page-kicker">Live Operations</p>
-            <h1 className="page-title">Symbol Purge Console</h1>
-            <p className="page-subtitle">
+            <h1 className="page-title leading-[1.05]">Symbol Purge Console</h1>
+            <p className="page-subtitle mt-1 max-w-[30ch] leading-relaxed">
               Build a rule, review candidate symbols, then execute a destructive bulk purge.
             </p>
           </div>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
+              <Button
                 type="button"
-                className="rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground"
+                variant="outline"
+                size="sm"
+                className="h-9 px-4"
                 onClick={() => void runPreview()}
               >
                 Preview
-              </button>
+              </Button>
             </TooltipTrigger>
             <TooltipContent>Run candidate preview</TooltipContent>
           </Tooltip>
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Medallion layer</label>
+        <div className="space-y-3">
+          <div className={formFieldClass}>
+            <label className={formLabelClass}>Medallion layer</label>
             <select
               value={layer}
-              className={formInputClass}
+              className={formSelectClass}
               onChange={(event) => setLayer(event.target.value as MedallionLayer)}
             >
               {layerOptions.map((layerKey) => (
@@ -475,17 +481,17 @@ export function SymbolPurgeByCriteriaPage() {
               ))}
             </select>
             {showBronzeWarning ? (
-              <p className="text-xs text-amber-600">
+              <p className="text-[11px] leading-relaxed text-amber-600">
                 Bronze-wide criteria are approximated from the silver preview layer. Silver/gold is recommended.
               </p>
             ) : null}
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Domain</label>
+          <div className={formFieldClass}>
+            <label className={formLabelClass}>Domain</label>
             <select
               value={domain}
-              className={formInputClass}
+              className={formSelectClass}
               onChange={(event) => setDomain(event.target.value as DomainKey)}
             >
               {domainOptions.map((entry) => (
@@ -496,11 +502,11 @@ export function SymbolPurgeByCriteriaPage() {
             </select>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Column</label>
+          <div className={formFieldClass}>
+            <label className={formLabelClass}>Column</label>
             <select
               value={column}
-              className={formInputClass}
+              className={formSelectClass}
               disabled={columnsLoading}
               onChange={(event) => setColumn(event.target.value)}
             >
@@ -513,12 +519,16 @@ export function SymbolPurgeByCriteriaPage() {
                 </option>
               ))}
             </select>
-            {columnsError ? <p className="text-xs text-destructive">{columnsError}</p> : null}
+            {columnsError ? <p className="text-[11px] text-destructive">{columnsError}</p> : null}
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Rule type</label>
-            <select value={operator} className={formInputClass} onChange={(event) => setOperator(event.target.value as OperatorKey)}>
+          <div className={formFieldClass}>
+            <label className={formLabelClass}>Rule type</label>
+            <select
+              value={operator}
+              className={formSelectClass}
+              onChange={(event) => setOperator(event.target.value as OperatorKey)}
+            >
               {operatorOptions.map((entry) => (
                 <option key={entry.value} value={entry.value}>
                   {entry.label}
@@ -527,8 +537,8 @@ export function SymbolPurgeByCriteriaPage() {
             </select>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className={formFieldClass}>
+            <label className={formLabelClass}>
               {isPercentMode ? 'Percent (1-100)' : 'Numeric value'}
             </label>
             <Input
@@ -539,14 +549,14 @@ export function SymbolPurgeByCriteriaPage() {
               placeholder={isPercentMode ? 'e.g. 90' : 'e.g. 100'}
             />
             {!isValueValid || !isPercentValid ? (
-              <p className="text-xs text-destructive">
+              <p className="text-[11px] text-destructive">
                 {isValueValid ? 'Percentile must be between 1 and 100.' : 'Numeric value must be finite.'}
               </p>
             ) : null}
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className={formFieldClass}>
+            <label className={formLabelClass}>
               As-of date (optional, default latest)
             </label>
             <Input
@@ -557,9 +567,9 @@ export function SymbolPurgeByCriteriaPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className={formFieldClass}>
+              <label className={formLabelClass}>
                 Minimum rows per symbol
               </label>
               <Input
@@ -570,8 +580,8 @@ export function SymbolPurgeByCriteriaPage() {
                 className={formInputClass}
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Limit</label>
+            <div className={formFieldClass}>
+              <label className={formLabelClass}>Limit</label>
               <Input
                 type="number"
                 min={1}
@@ -591,9 +601,9 @@ export function SymbolPurgeByCriteriaPage() {
             {candidateLoading ? 'Previewing…' : 'Preview symbols'}
           </Button>
 
-          {validationError ? <p className="text-xs text-destructive">{validationError}</p> : null}
+          {validationError ? <p className="text-[11px] text-destructive">{validationError}</p> : null}
 
-          <div className="rounded-md border border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
+          <div className="rounded-xl border border-border/70 bg-muted/30 p-2.5 text-xs text-muted-foreground">
             <p className="font-semibold text-foreground">Rule summary</p>
             <p className="font-mono break-words mt-1">{previewExpression || 'No valid rule yet.'}</p>
           </div>
