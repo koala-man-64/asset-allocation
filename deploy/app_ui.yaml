@@ -27,8 +27,8 @@ properties:
       imageType: ContainerImage
       name: asset-allocation-ui
       resources:
-        cpu: 0.5
-        memory: 1Gi
+        cpu: 2.0
+        memory: 4Gi
       probes: []
     scale:
       minReplicas: 0
