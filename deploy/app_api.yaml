@@ -15,7 +15,7 @@ properties:
       transport: auto
       allowInsecure: false
     registries:
-    - server: assetallocationacr.azurecr.io
+    - server: ${ACR_LOGIN_SERVER}
       identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
     - name: api-key
@@ -31,12 +31,12 @@ properties:
   template:
     serviceAccountName: ${SERVICE_ACCOUNT_NAME}
     containers:
-    - image: assetallocationacr.azurecr.io/asset-allocation-api:${IMAGE_TAG}
+    - image: ${ACR_LOGIN_SERVER}/asset-allocation-api:${IMAGE_TAG}
       imageType: ContainerImage
       name: asset-allocation-api
       env:
       - name: AZURE_STORAGE_ACCOUNT_NAME
-        value: assetallocstorage001
+        value: "${AZURE_STORAGE_ACCOUNT_NAME}"
       - name: AZURE_STORAGE_CONNECTION_STRING
         secretRef: azure-storage-connection-string
       - name: AZURE_CLIENT_ID
@@ -182,7 +182,31 @@ properties:
       resources:
         cpu: 2.0
         memory: 4Gi
-      probes: []
+      probes:
+      - type: Liveness
+        httpGet:
+          path: /healthz
+          port: 8000
+        initialDelaySeconds: 15
+        periodSeconds: 30
+        failureThreshold: 3
+        timeoutSeconds: 5
+      - type: Readiness
+        httpGet:
+          path: /readyz
+          port: 8000
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        failureThreshold: 3
+        timeoutSeconds: 5
+      - type: Startup
+        httpGet:
+          path: /healthz
+          port: 8000
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        failureThreshold: 30
+        timeoutSeconds: 5
     scale:
       minReplicas: 0
       maxReplicas: 1

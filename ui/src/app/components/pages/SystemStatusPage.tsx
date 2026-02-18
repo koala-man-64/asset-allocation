@@ -4,6 +4,7 @@ import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { Skeleton } from '@/app/components/ui/skeleton';
+import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
 
 // Lazy load components to reduce initial bundle size of the page
 const StatusOverview = lazy(() => import('./system-status/StatusOverview').then(m => ({ default: m.StatusOverview })));
@@ -15,6 +16,9 @@ const DomainLayerComparisonPanel = lazy(() =>
 const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonitor').then(m => ({ default: m.ScheduledJobMonitor })));
 const ContainerAppsPanel = lazy(() =>
   import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
+);
+const JobKillSwitchPanel = lazy(() =>
+  import('./system-status/JobKillSwitchPanel').then((m) => ({ default: m.JobKillSwitchPanel }))
 );
 
 import {
@@ -89,6 +93,25 @@ export function SystemStatusPage() {
     return states;
   }, [data]);
 
+  const managedContainerJobs = useMemo<ManagedContainerJob[]>(() => {
+    const seen = new Set<string>();
+    const items: ManagedContainerJob[] = [];
+    for (const resource of data?.resources || []) {
+      if (resource.resourceType !== 'Microsoft.App/jobs') continue;
+      const rawName = String(resource.name || '').trim();
+      if (!rawName) continue;
+      const normalizedName = normalizeAzureJobName(rawName);
+      const dedupeKey = normalizedName || rawName.toLowerCase();
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      items.push({
+        name: rawName,
+        runningState: resource.runningState || null
+      });
+    }
+    return items;
+  }, [data]);
+
   useEffect(() => {
     const errorMessage = error instanceof Error ? error.message : error ? String(error) : null;
     console.info('[SystemStatusPage] system health query state', {
@@ -155,6 +178,13 @@ export function SystemStatusPage() {
             isRefreshing={isRefreshing}
             isFetching={isFetching}
           />
+        </Suspense>
+      </ErrorBoundary>
+
+      {/* Emergency Job Kill Switch */}
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-[170px] w-full rounded-xl bg-muted/20" />}>
+          <JobKillSwitchPanel jobs={managedContainerJobs} />
         </Suspense>
       </ErrorBoundary>
 

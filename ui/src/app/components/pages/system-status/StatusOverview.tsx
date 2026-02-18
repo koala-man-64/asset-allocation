@@ -596,11 +596,11 @@ export function StatusOverview({
               <div className="flex items-center gap-2 whitespace-nowrap">
                 <ScrollText className="h-4 w-4 text-mcm-walnut/70" />
                 <h2 className="text-lg font-black tracking-tighter uppercase text-mcm-walnut">
-                  Status Matrix
+                  Pipeline Health & Control Matrix
                 </h2>
               </div>
               <p className="text-sm italic text-mcm-olive">
-                At-a-glance health, freshness, and quick links across the medallion layers.
+                Layer-by-layer health, data freshness, and operational controls for each domain.
               </p>
             </div>
           </div>
