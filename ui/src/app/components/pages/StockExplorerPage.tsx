@@ -20,6 +20,7 @@ import type { StockScreenerRow, StockScreenerResponse } from '@/services/backtes
 import { DataService } from '@/services/DataService';
 import { cn } from '@/app/components/ui/utils';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
+import { PageLoader } from '@/app/components/common/PageLoader';
 
 type SortDirection = 'asc' | 'desc';
 
@@ -427,13 +428,8 @@ export function StockExplorerPage() {
 
                   {screenerQuery.isFetching && rows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={12} className="py-16">
-                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span className="font-mono text-xs uppercase tracking-widest">
-                            Loading snapshot…
-                          </span>
-                        </div>
+                      <TableCell colSpan={12} className="p-0">
+                        <PageLoader text="Loading snapshot..." className="h-[60vh] border-0" />
                       </TableCell>
                     </TableRow>
                   )}

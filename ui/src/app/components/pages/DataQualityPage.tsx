@@ -49,6 +49,7 @@ import {
 const DataPipelinePanel = lazy(() => import('@/app/components/pages/data-quality/DataPipelinePanel').then(m => ({ default: m.DataPipelinePanel })));
 
 import { useDataProbes, ProbeStatus } from '@/hooks/useDataProbes';
+import { PageLoader } from '@/app/components/common/PageLoader';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -249,17 +250,7 @@ export function DataQualityPage() {
   const headerStatus = getStatusConfig(summary.overall);
 
   if (health.isLoading) {
-    return (
-      <div className="dq min-h-[calc(100vh-6rem)] flex items-center justify-center">
-        <div className="dq-panel px-6 py-5 flex items-center gap-3">
-          <RefreshCw className="h-5 w-5 animate-spin text-[color:var(--dq-accent)]" />
-          <div>
-            <div className="dq-kicker">DATA QUALITY</div>
-            <div className="dq-title text-base">Loading validation ledger…</div>
-          </div>
-        </div>
-      </div>
-    );
+    return <PageLoader text="Loading validation ledger..." />;
   }
 
   if (health.error || !health.data) {
