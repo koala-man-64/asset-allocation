@@ -166,8 +166,8 @@ properties:
       - name: SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON
         value: "${SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON}"
       resources:
-        cpu: 1.0
-        memory: 2Gi
+        cpu: 2.0
+        memory: 4Gi
       probes: []
     scale:
       minReplicas: 0
