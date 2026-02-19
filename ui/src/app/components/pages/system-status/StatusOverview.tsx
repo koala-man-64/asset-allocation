@@ -614,21 +614,21 @@ export function StatusOverview({
       {/* Domain x Layer Matrix (Recovered from 1bba1b8f presentation) */}
       <div className="rounded-[1.6rem] border-2 border-mcm-walnut bg-mcm-paper p-6 shadow-[8px_8px_0px_0px_rgba(119,63,26,0.1)] overflow-hidden">
         <div className="mb-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <div className="flex items-center gap-2 whitespace-nowrap">
-                  <ScrollText className="h-4 w-4 text-mcm-walnut/70" />
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-start gap-2">
+                <ScrollText className="mt-0.5 h-4 w-4 shrink-0 text-mcm-walnut/70" />
+                <div className="min-w-0">
                   <h2 className="text-lg font-black tracking-tighter uppercase text-mcm-walnut">
                     Pipeline Health & Control Matrix
                   </h2>
+                  <p className="text-sm italic text-mcm-olive">
+                    Layer-by-layer health, data freshness, and operational controls for each domain.
+                  </p>
                 </div>
-                <p className="text-sm italic text-mcm-olive">
-                  Layer-by-layer health, data freshness, and operational controls for each domain.
-                </p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-3">
+            <div className="flex flex-wrap items-center gap-3 self-start xl:justify-end">
               <JobKillSwitchInline jobs={managedContainerJobs} />
               <div
                 className={`${StatusTypos.HEADER} inline-flex items-center whitespace-nowrap rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 text-mcm-olive`}

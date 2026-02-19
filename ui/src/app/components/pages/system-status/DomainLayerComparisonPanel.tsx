@@ -260,17 +260,19 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
   return (
     <Card className="h-full">
       <CardHeader className="gap-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2">
-              <GitCompareArrows className="h-5 w-5" />
-              Domain Layer Coverage
-            </CardTitle>
-            <CardDescription>
-              Compare symbol counts and date windows layer-to-layer for each domain.
-            </CardDescription>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-start gap-2">
+              <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="min-w-0">
+                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+                <CardDescription className="mt-1">
+                  Compare symbol counts and date windows layer-to-layer for each domain.
+                </CardDescription>
+              </div>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-2 self-start xl:justify-end">
             <Button
               variant="outline"
               size="sm"
