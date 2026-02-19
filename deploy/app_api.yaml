@@ -102,7 +102,7 @@ properties:
       - name: API_CORS_ALLOW_ORIGINS
         value: "${API_CORS_ALLOW_ORIGINS}"
       - name: SYSTEM_HEALTH_TTL_SECONDS
-        value: "10"
+        value: "300"
       - name: SYSTEM_HEALTH_MAX_AGE_SECONDS
         value: "129600"
       - name: SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON

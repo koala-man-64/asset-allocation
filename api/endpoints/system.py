@@ -1791,11 +1791,18 @@ def _execute_purge_rule(rule: PurgeRule, *, actor: Optional[str]) -> Dict[str, A
         "failedSymbols": failed,
     }
 _FINANCE_BRONZE_TABLE_TYPES: List[Tuple[str, str]] = [
-    ("balance_sheet", "quarterly_balance-sheet"),
-    ("income_statement", "quarterly_financials"),
-    ("cash_flow", "quarterly_cash-flow"),
-    ("valuation", "quarterly_valuation_measures"),
+    ("Balance Sheet", "quarterly_balance-sheet"),
+    ("Income Statement", "quarterly_financials"),
+    ("Cash Flow", "quarterly_cash-flow"),
+    ("Valuation", "quarterly_valuation_measures"),
 ]
+
+_FINANCE_BRONZE_FOLDER_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "Balance Sheet": ("Balance Sheet", "balance_sheet"),
+    "Income Statement": ("Income Statement", "income_statement"),
+    "Cash Flow": ("Cash Flow", "cash_flow"),
+    "Valuation": ("Valuation", "valuation"),
+}
 
 _RULE_DATA_PREFIXES: Dict[str, Dict[str, str]] = {
     "silver": {
@@ -1988,16 +1995,18 @@ def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -
     )
 
     for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
-        finance_path = f"finance-data/{folder}/{normalized_symbol}_{suffix}.json"
-        removed.append(
-            {
-                "layer": "bronze",
-                "domain": "finance",
-                "container": client.container_name,
-                "path": finance_path,
-                "deleted": _delete_blob_if_exists(client, path=finance_path),
-            }
-        )
+        folder_candidates = _FINANCE_BRONZE_FOLDER_ALIASES.get(folder, (folder,))
+        for folder_candidate in folder_candidates:
+            finance_path = f"finance-data/{folder_candidate}/{normalized_symbol}_{suffix}.json"
+            removed.append(
+                {
+                    "layer": "bronze",
+                    "domain": "finance",
+                    "container": client.container_name,
+                    "path": finance_path,
+                    "deleted": _delete_blob_if_exists(client, path=finance_path),
+                }
+            )
 
     earnings_path = f"{earnings_prefix}/{normalized_symbol}.json"
     removed.append(

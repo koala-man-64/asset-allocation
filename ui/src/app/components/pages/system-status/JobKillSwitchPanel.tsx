@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/app/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Switch } from '@/app/components/ui/switch';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { backtestApi } from '@/services/backtestApi';
@@ -214,10 +214,6 @@ function KillSwitchControl({
           {checked ? <ShieldAlert className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
           Container App Job Kill Switch
         </CardTitle>
-        <CardDescription>
-          Emergency control for all Azure Container App Jobs. Turning ON stops active runs, then suspends jobs.
-          Turning OFF resumes suspended jobs.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-3">

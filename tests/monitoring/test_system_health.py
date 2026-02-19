@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -64,6 +66,55 @@ def test_ttl_cache_returns_stale_value_on_refresh_error() -> None:
     assert third.value == "value-1"
     assert third.cache_hit is True
     assert third.refresh_error is not None
+
+
+def test_ttl_cache_coalesces_refresh_after_wait_timeout() -> None:
+    cache: TtlCache[str] = TtlCache(ttl_seconds=10.0, refresh_wait_seconds=0.01)
+
+    started = threading.Event()
+    release = threading.Event()
+    calls_lock = threading.Lock()
+    calls = {"count": 0}
+
+    def refresh() -> str:
+        with calls_lock:
+            calls["count"] += 1
+            call_number = calls["count"]
+        if call_number == 1:
+            started.set()
+            assert release.wait(timeout=1.0)
+        return f"value-{call_number}"
+
+    results: list[Any] = []
+    errors: list[Exception] = []
+
+    def invoke() -> None:
+        try:
+            results.append(cache.get(refresh))
+        except Exception as exc:  # pragma: no cover - defensive guard
+            errors.append(exc)
+
+    worker1 = threading.Thread(target=invoke)
+    worker2 = threading.Thread(target=invoke)
+
+    worker1.start()
+    assert started.wait(timeout=0.2)
+
+    worker2.start()
+    time.sleep(0.08)
+    with calls_lock:
+        assert calls["count"] == 1
+
+    release.set()
+    worker1.join(timeout=1.0)
+    worker2.join(timeout=1.0)
+
+    assert not errors
+    assert len(results) == 2
+    with calls_lock:
+        assert calls["count"] == 1
+    assert sorted(result.value for result in results) == ["value-1", "value-1"]
+    assert sorted(result.cache_hit for result in results) == [False, True]
 
 
 def test_make_job_portal_url_uses_resource_anchor() -> None:
