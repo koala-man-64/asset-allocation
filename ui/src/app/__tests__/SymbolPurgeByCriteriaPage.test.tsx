@@ -26,7 +26,8 @@ vi.mock('sonner', () => ({
 
 vi.mock('@/services/DataService', () => ({
   DataService: {
-    getGenericData: vi.fn(),
+    getDomainColumns: vi.fn(),
+    refreshDomainColumns: vi.fn(),
     getPurgeCandidates: vi.fn(),
     purgeSymbolsBatch: vi.fn(),
     getPurgeOperation: vi.fn()
@@ -126,7 +127,7 @@ function makeBatchSucceededOperation(
 
 async function waitForColumns(): Promise<void> {
   await waitFor(() => {
-    expect(DataService.getGenericData).toHaveBeenCalled();
+    expect(DataService.getDomainColumns).toHaveBeenCalled();
   });
   await waitFor(() => {
     expect(screen.getByDisplayValue('Close')).toBeInTheDocument();
@@ -143,7 +144,26 @@ async function previewCandidates(): Promise<void> {
 describe('SymbolPurgeByCriteriaPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(DataService.getGenericData).mockResolvedValue([{ Close: 0.99, Volume: 100, Symbol: 'AAA' }]);
+    vi.mocked(DataService.getDomainColumns).mockResolvedValue({
+      layer: 'silver',
+      domain: 'market',
+      columns: ['Close', 'Volume', 'Symbol'],
+      found: true,
+      promptRetrieve: false,
+      source: 'common-file',
+      cachePath: 'metadata/domain-columns.json',
+      updatedAt: TIMESTAMP
+    });
+    vi.mocked(DataService.refreshDomainColumns).mockResolvedValue({
+      layer: 'silver',
+      domain: 'market',
+      columns: ['Close', 'Volume', 'Symbol'],
+      found: true,
+      promptRetrieve: false,
+      source: 'common-file',
+      cachePath: 'metadata/domain-columns.json',
+      updatedAt: TIMESTAMP
+    });
     vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse());
     vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchSucceededOperation('op-default'));
     vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-default'));
@@ -203,7 +223,7 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
     fireEvent.change(screen.getByDisplayValue('SILVER'), { target: { value: 'bronze' } });
     await waitFor(() => {
-      expect(vi.mocked(DataService.getGenericData).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(vi.mocked(DataService.getDomainColumns).mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
     expect(
@@ -297,5 +317,43 @@ describe('SymbolPurgeByCriteriaPage', () => {
     expect(await screen.findByText('Purge completed successfully. Deleted 5')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /symbol execution status/i })).toBeInTheDocument();
     expect(screen.getAllByText('SUCCEEDED').length).toBeGreaterThan(0);
+  });
+
+  it('prompts to retrieve columns when cache is missing and refreshes on demand', async () => {
+    vi.mocked(DataService.getDomainColumns).mockResolvedValueOnce({
+      layer: 'silver',
+      domain: 'market',
+      columns: [],
+      found: false,
+      promptRetrieve: true,
+      source: 'common-file',
+      cachePath: 'metadata/domain-columns.json',
+      updatedAt: null
+    });
+    vi.mocked(DataService.refreshDomainColumns).mockResolvedValueOnce({
+      layer: 'silver',
+      domain: 'market',
+      columns: ['Close', 'Volume'],
+      found: true,
+      promptRetrieve: false,
+      source: 'common-file',
+      cachePath: 'metadata/domain-columns.json',
+      updatedAt: TIMESTAMP
+    });
+
+    renderWithProviders(<SymbolPurgeByCriteriaPage />);
+
+    expect(await screen.findByText('Columns are not cached for this layer/domain yet.')).toBeInTheDocument();
+    const retrieveButton = screen.getByRole('button', { name: /retrieve columns/i });
+    fireEvent.click(retrieveButton);
+
+    await waitFor(() => {
+      expect(DataService.refreshDomainColumns).toHaveBeenCalledWith({
+        layer: 'silver',
+        domain: 'market',
+        sample_limit: 500
+      });
+    });
+    expect(await screen.findByDisplayValue('Close')).toBeInTheDocument();
   });
 });

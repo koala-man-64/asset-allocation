@@ -45,6 +45,17 @@ def _iter_workflow_run_steps(workflow_doc: dict):
             yield job_name, step_name, script
 
 
+def _workflow_on_block(doc: dict) -> dict:
+    # PyYAML treats `on` as a boolean key in YAML 1.1.
+    if "on" in doc:
+        value = doc.get("on")
+    else:
+        value = doc.get(True)
+    if not isinstance(value, dict):
+        raise AssertionError("Workflow document must define an `on` mapping.")
+    return value
+
+
 def test_workflow_run_scripts_do_not_embed_github_expr_in_quoted_query() -> None:
     """Prevents shellcheck/actionlint parse failures for --query strings in run steps."""
     repo_root = Path(__file__).resolve().parents[1]
@@ -109,4 +120,77 @@ def test_run_tests_workflow_does_not_define_windows_lifespan_regression_job() ->
     assert isinstance(jobs, dict), "run_tests.yml must define a jobs mapping."
     assert "api-lifespan-windows" not in jobs, (
         "run_tests.yml should not define job 'api-lifespan-windows' after workflow cleanup."
+    )
+
+
+def test_manual_trigger_workflow_is_single_job_only() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow_file = repo_root / ".github" / "workflows" / "trigger_all_jobs.yml"
+    doc = yaml.safe_load(workflow_file.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), "trigger_all_jobs.yml must parse to a workflow document object."
+
+    on_block = _workflow_on_block(doc)
+    workflow_dispatch = on_block.get("workflow_dispatch")
+    assert isinstance(workflow_dispatch, dict), "trigger_all_jobs.yml must define workflow_dispatch."
+
+    inputs = workflow_dispatch.get("inputs")
+    assert isinstance(inputs, dict), "workflow_dispatch must define inputs."
+    job_input = inputs.get("job")
+    assert isinstance(job_input, dict), "workflow_dispatch inputs must include a job selector."
+
+    assert job_input.get("required") is True, "Manual trigger job input must be required."
+    assert job_input.get("type") == "choice", "Manual trigger job input must use choice type."
+
+    options = job_input.get("options")
+    assert isinstance(options, list) and options, "Manual trigger job input must define selectable options."
+    assert "all" not in options, "Manual trigger workflow must not offer an all-jobs option."
+
+    expected = {
+        "bronze_market",
+        "bronze_finance",
+        "bronze_price_target",
+        "bronze_earnings",
+        "silver_market",
+        "silver_finance",
+        "silver_price_target",
+        "silver_earnings",
+        "gold_market",
+        "gold_finance",
+        "gold_price_target",
+        "gold_earnings",
+    }
+    assert set(options) == expected, "Manual trigger options must enumerate the supported single-job set."
+
+    text = workflow_file.read_text(encoding="utf-8")
+    assert "job == 'all'" not in text, "Manual trigger workflow must not contain all-job conditional logic."
+    assert "default: all" not in text, "Manual trigger workflow must not default to all."
+
+
+def test_deploy_workflow_bronze_bootstrap_is_opt_in() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow_file = repo_root / ".github" / "workflows" / "deploy.yml"
+    doc = yaml.safe_load(workflow_file.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), "deploy.yml must parse to a workflow document object."
+
+    on_block = _workflow_on_block(doc)
+    workflow_dispatch = on_block.get("workflow_dispatch")
+    assert isinstance(workflow_dispatch, dict), "deploy.yml must define workflow_dispatch."
+    inputs = workflow_dispatch.get("inputs")
+    assert isinstance(inputs, dict), "workflow_dispatch must define inputs."
+
+    bootstrap_input = inputs.get("bootstrap_bronze_runs")
+    assert isinstance(bootstrap_input, dict), "deploy.yml must declare bootstrap_bronze_runs input."
+    assert bootstrap_input.get("type") == "boolean"
+    assert bootstrap_input.get("required") is False
+    assert bootstrap_input.get("default") is False, "bootstrap_bronze_runs must default to false."
+
+    env = doc.get("env")
+    assert isinstance(env, dict), "deploy.yml must define env mapping."
+    bootstrap_env = env.get("BOOTSTRAP_BRONZE_RUNS")
+    assert isinstance(bootstrap_env, str), "deploy.yml must define BOOTSTRAP_BRONZE_RUNS env expression."
+    assert "bootstrap_bronze_runs" in bootstrap_env
+
+    text = workflow_file.read_text(encoding="utf-8")
+    assert text.count('if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then') == 4, (
+        "All Bronze deploy blocks must gate immediate starts behind BOOTSTRAP_BRONZE_RUNS."
     )

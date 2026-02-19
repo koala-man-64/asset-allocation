@@ -14,6 +14,7 @@ const API_BASE_URL = normalizeApiBaseUrl(runtimeConfig.apiBaseUrl || uiConfig.ap
 
 export interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
+  timeoutMs?: number;
 }
 
 export interface RequestMeta {
@@ -43,7 +44,7 @@ async function performRequest<T>(
   endpoint: string,
   config: RequestConfig = {}
 ): Promise<ResponseWithMeta<T>> {
-  const { params, headers, ...customConfig } = config;
+  const { params, headers, timeoutMs, ...customConfig } = config;
 
   let url = `${API_BASE_URL}${endpoint}`;
   if (params) {
@@ -68,14 +69,53 @@ async function performRequest<T>(
     requestHeaders.set('X-Request-ID', createRequestId());
   }
   const authHeaders = await appendAuthHeaders(requestHeaders);
+  const requestId = authHeaders.get('X-Request-ID') || '';
+
+  let timeoutController: AbortController | undefined;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let mergedSignal: AbortSignal | null | undefined = customConfig.signal;
+  let removeExternalAbortListener: (() => void) | undefined;
+
+  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutController = new AbortController();
+    timeoutHandle = setTimeout(() => {
+      timeoutController?.abort();
+    }, Math.max(1, Math.floor(timeoutMs)));
+
+    if (customConfig.signal) {
+      if (customConfig.signal.aborted) {
+        timeoutController.abort();
+      } else {
+        const relayAbort = () => timeoutController?.abort();
+        customConfig.signal.addEventListener('abort', relayAbort, { once: true });
+        removeExternalAbortListener = () => customConfig.signal?.removeEventListener('abort', relayAbort);
+      }
+    }
+    mergedSignal = timeoutController.signal;
+  }
 
   const startedAt = performance.now();
-  const response = await fetch(url, {
-    headers: authHeaders,
-    ...customConfig
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: authHeaders,
+      ...customConfig,
+      signal: mergedSignal ?? undefined
+    });
+  } catch (error) {
+    if (timeoutController?.signal.aborted && !(customConfig.signal?.aborted)) {
+      throw new Error(`API timeout after ${Math.floor(timeoutMs || 0)}ms [requestId=${requestId}] - ${endpoint}`);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    if (removeExternalAbortListener) {
+      removeExternalAbortListener();
+    }
+  }
   const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
-  const requestId = authHeaders.get('X-Request-ID') || '';
 
   if (!response.ok) {
     const errorBody = await response.text();
@@ -170,6 +210,17 @@ export interface PurgeRequest {
   layer?: string;
   domain?: string;
   confirm: boolean;
+}
+
+export interface DomainColumnsResponse {
+  layer: 'bronze' | 'silver' | 'gold';
+  domain: string;
+  columns: string[];
+  found: boolean;
+  promptRetrieve: boolean;
+  source: 'common-file';
+  cachePath: string;
+  updatedAt?: string | null;
 }
 
 export interface PurgeCandidateRow {
@@ -445,6 +496,28 @@ export const apiService = {
   ): Promise<DomainMetadata> {
     return request<DomainMetadata>('/system/domain-metadata', {
       params: { layer, domain, ...params }
+    });
+  },
+
+  getDomainColumns(
+    layer: 'bronze' | 'silver' | 'gold',
+    domain: string
+  ): Promise<DomainColumnsResponse> {
+    return request<DomainColumnsResponse>('/system/domain-columns', {
+      params: { layer, domain },
+      timeoutMs: 10000
+    });
+  },
+
+  refreshDomainColumns(payload: {
+    layer: 'bronze' | 'silver' | 'gold';
+    domain: string;
+    sample_limit?: number;
+  }): Promise<DomainColumnsResponse> {
+    return request<DomainColumnsResponse>('/system/domain-columns/refresh', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 30000
     });
   },
 

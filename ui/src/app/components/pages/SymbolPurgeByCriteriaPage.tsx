@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   ClipboardCopy,
   Loader2,
+  RefreshCw,
   Search,
   Trash2
 } from 'lucide-react';
@@ -154,6 +155,7 @@ export function SymbolPurgeByCriteriaPage() {
   const [column, setColumn] = useState<string>('volume');
   const [columnsLoading, setColumnsLoading] = useState<boolean>(false);
   const [columnsError, setColumnsError] = useState<string | null>(null);
+  const [columnsRequireRetrieve, setColumnsRequireRetrieve] = useState<boolean>(false);
 
   const [operator, setOperator] = useState<OperatorKey>('gt');
   const [aggregation, setAggregation] = useState<AggregationKey>('avg');
@@ -200,18 +202,23 @@ export function SymbolPurgeByCriteriaPage() {
   const loadColumns = useCallback(async () => {
     setColumnsLoading(true);
     setColumnsError(null);
+    setColumnsRequireRetrieve(false);
 
     try {
-      const data = await DataService.getGenericData(layer, domain, undefined, 500);
-      const keys = data.length ? Object.keys(data[0] ?? {}) : [];
+      const payload = await DataService.getDomainColumns(layer, domain);
+      const keys = payload.columns || [];
 
       if (!keys.length) {
         setAvailableColumns([]);
         setColumn('');
-        setColumnsError(`No data available for ${layer}/${domain} preview sample.`);
+        setColumnsRequireRetrieve(true);
+        setColumnsError(
+          `No cached columns found for ${layer}/${domain}. Click "Retrieve Columns" to fetch and cache them.`
+        );
         return;
       }
 
+      setColumnsRequireRetrieve(false);
       setAvailableColumns(keys);
       if (!column || !keys.includes(column)) {
         setColumn(keys[0] ?? '');
@@ -219,7 +226,44 @@ export function SymbolPurgeByCriteriaPage() {
     } catch (error: unknown) {
       setAvailableColumns([]);
       setColumn('');
-      setColumnsError(formatSystemStatusText(error) || 'Unable to load sample columns.');
+      setColumnsRequireRetrieve(false);
+      setColumnsError(formatSystemStatusText(error) || 'Unable to load cached columns.');
+    } finally {
+      setColumnsLoading(false);
+    }
+  }, [column, domain, layer]);
+
+  const refreshColumns = useCallback(async () => {
+    setColumnsLoading(true);
+    setColumnsError(null);
+
+    try {
+      const payload = await DataService.refreshDomainColumns({
+        layer,
+        domain,
+        sample_limit: 500
+      });
+      const keys = payload.columns || [];
+      if (!keys.length) {
+        setAvailableColumns([]);
+        setColumn('');
+        setColumnsRequireRetrieve(true);
+        setColumnsError(
+          `No columns discovered for ${layer}/${domain}. Verify the dataset has rows, then retry.`
+        );
+        return;
+      }
+
+      setAvailableColumns(keys);
+      setColumnsRequireRetrieve(false);
+      if (!column || !keys.includes(column)) {
+        setColumn(keys[0] ?? '');
+      }
+      toast.success(`Retrieved ${keys.length} cached column${keys.length === 1 ? '' : 's'} for ${layer}/${domain}.`);
+    } catch (error: unknown) {
+      const message = formatSystemStatusText(error) || 'Unable to refresh columns.';
+      setColumnsError(message);
+      toast.error(message);
     } finally {
       setColumnsLoading(false);
     }
@@ -551,6 +595,23 @@ export function SymbolPurgeByCriteriaPage() {
                 </option>
               ))}
             </select>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                onClick={() => void refreshColumns()}
+                disabled={columnsLoading}
+              >
+                {columnsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {columnsRequireRetrieve ? 'Retrieve Columns' : 'Refresh Columns'}
+              </Button>
+              <p className="text-[11px] text-muted-foreground">Source: common ADLS cache</p>
+            </div>
+            {columnsRequireRetrieve ? (
+              <p className="text-[11px] text-amber-600">Columns are not cached for this layer/domain yet.</p>
+            ) : null}
             {columnsError ? <p className="text-[11px] text-destructive">{columnsError}</p> : null}
           </div>
 

@@ -13,6 +13,7 @@ import type {
   ContainerAppLogsResponse,
   ContainerAppControlResponse,
   ContainerAppsStatusResponse,
+  DomainColumnsResponse,
   DebugSymbolsResponse,
   JobLogsResponse,
   PurgeRequest,
@@ -113,6 +114,21 @@ export const DataService = {
     params: { refresh?: boolean } = {}
   ): Promise<DomainMetadata> {
     return apiService.getDomainMetadata(layer, domain, params);
+  },
+
+  getDomainColumns(
+    layer: 'bronze' | 'silver' | 'gold',
+    domain: string
+  ): Promise<DomainColumnsResponse> {
+    return apiService.getDomainColumns(layer, domain);
+  },
+
+  refreshDomainColumns(payload: {
+    layer: 'bronze' | 'silver' | 'gold';
+    domain: string;
+    sample_limit?: number;
+  }): Promise<DomainColumnsResponse> {
+    return apiService.refreshDomainColumns(payload);
   },
 
   getLineage(): Promise<unknown> {

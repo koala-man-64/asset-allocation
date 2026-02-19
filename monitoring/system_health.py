@@ -641,23 +641,32 @@ def _resolve_domain_schedule(
     *,
     job_name: str,
     default_cron: str,
+    default_trigger_type: str = "schedule",
     job_schedule_metadata: Dict[str, JobScheduleMetadata],
 ) -> tuple[str, str]:
     schedule = job_schedule_metadata.get(str(job_name or "").strip().lower())
+    default_cron_clean = str(default_cron or "").strip()
+    default_trigger = str(default_trigger_type or "").strip().lower()
+
     if schedule is None:
-        cron = str(default_cron or "").strip()
-        return cron, _describe_cron(cron) if cron else ""
+        if default_trigger == "manual":
+            return "", "Manual trigger"
+        if default_trigger == "schedule":
+            return default_cron_clean, _describe_cron(default_cron_clean) if default_cron_clean else "Scheduled trigger"
+        if default_trigger:
+            return "", f"{default_trigger.title()} trigger"
+        return default_cron_clean, _describe_cron(default_cron_clean) if default_cron_clean else ""
 
     trigger = schedule.trigger_type
     if trigger == "manual":
         return "", "Manual trigger"
     if trigger == "schedule":
-        cron = schedule.cron_expression or str(default_cron or "").strip()
+        cron = schedule.cron_expression or default_cron_clean
         return cron, _describe_cron(cron) if cron else "Scheduled trigger"
     if trigger:
         return "", f"{trigger.title()} trigger"
 
-    cron = schedule.cron_expression or str(default_cron or "").strip()
+    cron = schedule.cron_expression or default_cron_clean
     return cron, _describe_cron(cron) if cron else ""
 
 
@@ -665,6 +674,7 @@ def _resolve_domain_schedule(
 class DomainSpec:
     path: str
     cron: str = "0 0 * * *"  # Default Daily
+    trigger_type: str = "schedule"
 
 
 @dataclass(frozen=True)
@@ -736,21 +746,12 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
 def _default_layer_specs() -> List[LayerProbeSpec]:
     max_age_default = _require_int("SYSTEM_HEALTH_MAX_AGE_SECONDS")
 
-    # Deployed job schedules (see deploy/job_*.yaml)
+    # Deployed job schedules (see deploy/job_*.yaml).
+    # Bronze jobs are scheduled; Silver/Gold are manual and triggered downstream.
     CRON_BRONZE_MARKET = "0 22 * * 1-5"
     CRON_BRONZE_PRICE_TARGET = "0 4 * * 1-5"
     CRON_BRONZE_EARNINGS = "0 10 * * 1-5"
     CRON_BRONZE_FINANCE = "0 16 * * 1-5"
-
-    CRON_SILVER_MARKET = "30 14-23 * * *"
-    CRON_SILVER_FINANCE = "30 0 * * *"
-    CRON_SILVER_PRICE_TARGET = "30 1 * * *"
-    CRON_SILVER_EARNINGS = "30 23 * * *"
-
-    CRON_GOLD_MARKET = "30 14-22 * * *"
-    CRON_GOLD_FINANCE = "30 22 * * *"
-    CRON_GOLD_EARNINGS = "30 23 * * *"
-    CRON_GOLD_PRICE_TARGET = "30 12 * * *"
     CRON_PLATINUM = "0 0 * * *"
 
     return [
@@ -760,10 +761,10 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             container_env="AZURE_CONTAINER_BRONZE",
             max_age_seconds=max_age_default,
             marker_blobs=(
-                DomainSpec("market-data/whitelist.csv", CRON_BRONZE_MARKET),
-                DomainSpec("finance-data/whitelist.csv", CRON_BRONZE_FINANCE),
-                DomainSpec("earnings-data/whitelist.csv", CRON_BRONZE_EARNINGS),
-                DomainSpec("price-target-data/whitelist.csv", CRON_BRONZE_PRICE_TARGET),
+                DomainSpec("market-data/whitelist.csv", cron=CRON_BRONZE_MARKET, trigger_type="schedule"),
+                DomainSpec("finance-data/whitelist.csv", cron=CRON_BRONZE_FINANCE, trigger_type="schedule"),
+                DomainSpec("earnings-data/whitelist.csv", cron=CRON_BRONZE_EARNINGS, trigger_type="schedule"),
+                DomainSpec("price-target-data/whitelist.csv", cron=CRON_BRONZE_PRICE_TARGET, trigger_type="schedule"),
             ),
         ),
         LayerProbeSpec(
@@ -772,10 +773,10 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             container_env="AZURE_CONTAINER_SILVER",
             max_age_seconds=max_age_default,
             marker_blobs=(
-                DomainSpec("market-data/", CRON_SILVER_MARKET),
-                DomainSpec("finance-data/", CRON_SILVER_FINANCE),
-                DomainSpec("earnings-data/", CRON_SILVER_EARNINGS),
-                DomainSpec("price-target-data/", CRON_SILVER_PRICE_TARGET),
+                DomainSpec("market-data/", trigger_type="manual"),
+                DomainSpec("finance-data/", trigger_type="manual"),
+                DomainSpec("earnings-data/", trigger_type="manual"),
+                DomainSpec("price-target-data/", trigger_type="manual"),
             ),
         ),
         LayerProbeSpec(
@@ -784,10 +785,10 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             container_env="AZURE_CONTAINER_GOLD",
             max_age_seconds=max_age_default,
             marker_blobs=(
-                DomainSpec("market/", CRON_GOLD_MARKET),
-                DomainSpec("finance/", CRON_GOLD_FINANCE),
-                DomainSpec("earnings/", CRON_GOLD_EARNINGS),
-                DomainSpec("targets/", CRON_GOLD_PRICE_TARGET),
+                DomainSpec("market/", trigger_type="manual"),
+                DomainSpec("finance/", trigger_type="manual"),
+                DomainSpec("earnings/", trigger_type="manual"),
+                DomainSpec("targets/", trigger_type="manual"),
             ),
         ),
         LayerProbeSpec(
@@ -795,7 +796,7 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
             description="Curated/derived datasets (reserved)",
             container_env="AZURE_CONTAINER_PLATINUM",
             max_age_seconds=max_age_default,
-            marker_blobs=(DomainSpec("platinum/", CRON_PLATINUM),),
+            marker_blobs=(DomainSpec("platinum/", cron=CRON_PLATINUM, trigger_type="schedule"),),
         ),
     ]
 
@@ -1066,6 +1067,7 @@ def collect_system_health_snapshot(
             domain_cron, domain_frequency = _resolve_domain_schedule(
                 job_name=job_name,
                 default_cron=domain_spec.cron,
+                default_trigger_type=domain_spec.trigger_type,
                 job_schedule_metadata=job_schedule_metadata,
             )
             policy = _resolve_freshness_policy(
@@ -1153,6 +1155,7 @@ def collect_system_health_snapshot(
             domain_cron, domain_frequency = _resolve_domain_schedule(
                 job_name=job_name,
                 default_cron=domain_spec.cron,
+                default_trigger_type=domain_spec.trigger_type,
                 job_schedule_metadata=job_schedule_metadata,
             )
             policy = _resolve_freshness_policy(

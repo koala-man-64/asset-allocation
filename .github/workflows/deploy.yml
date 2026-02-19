@@ -11,6 +11,11 @@ on:
         required: false
         type: boolean
         default: false
+      bootstrap_bronze_runs:
+        description: Start Bronze jobs immediately after deploy/update (manual dispatch only)
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -22,6 +27,7 @@ permissions:
 
 env:
   FORCE_REDEPLOY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_redeploy == 'true' }}
+  BOOTSTRAP_BRONZE_RUNS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap_bronze_runs == 'true' }}
   ACR_NAME: assetallocationacr
   RESOURCE_GROUP: AssetAllocationRG
   # User-assigned managed identity used by Container Apps/Jobs to pull from ACR on first create.
@@ -976,7 +982,7 @@ jobs:
         run: |
           echo "market_data_job_exists=${{ steps.market_data_job_check.outputs.job_exists }}"
 
-      - name: Update and Start Market Bronze Job
+      - name: Update Market Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.market_changes.outputs.bronze_market == 'true' || steps.market_data_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
@@ -1040,20 +1046,24 @@ jobs:
               --yaml "$tmp"
           fi
           
-          set +e
-          start_output="$(az containerapp job start \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
-          start_status=$?
-          set -e
-          if [ "$start_status" -eq 0 ]; then
-            [ -n "$start_output" ] && echo "$start_output"
-          elif echo "$start_output" | grep -qi "is suspended"; then
-            echo "::warning::Skipping immediate start for ${{ env.BRONZE_MARKET_JOB }} because the job is suspended."
+          if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
+            set +e
+            start_output="$(az containerapp job start \
+              --name ${{ env.BRONZE_MARKET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+            start_status=$?
+            set -e
+            if [ "$start_status" -eq 0 ]; then
+              [ -n "$start_output" ] && echo "$start_output"
+            elif echo "$start_output" | grep -qi "is suspended"; then
+              echo "::warning::Skipping immediate start for ${{ env.BRONZE_MARKET_JOB }} because the job is suspended."
+            else
+              [ -n "$start_output" ] && echo "$start_output"
+              echo "::error::Failed to start ${{ env.BRONZE_MARKET_JOB }}."
+              exit "$start_status"
+            fi
           else
-            [ -n "$start_output" ] && echo "$start_output"
-            echo "::error::Failed to start ${{ env.BRONZE_MARKET_JOB }}."
-            exit "$start_status"
+            echo "Skipping immediate bootstrap start for ${{ env.BRONZE_MARKET_JOB }} (BOOTSTRAP_BRONZE_RUNS=false)."
           fi
 
       - name: Check Market Silver Job Exists
@@ -1211,7 +1221,7 @@ jobs:
       - name: Log Finance Bronze Job check
         run: |
           echo "finance_data_job_exists=${{ steps.finance_data_job_check.outputs.job_exists }}"
-      - name: Update and Start Finance Bronze Job
+      - name: Update Finance Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.finance_changes.outputs.bronze_finance == 'true' || steps.finance_data_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
@@ -1275,20 +1285,24 @@ jobs:
               --yaml "$tmp"
           fi
           
-          set +e
-          start_output="$(az containerapp job start \
-            --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
-          start_status=$?
-          set -e
-          if [ "$start_status" -eq 0 ]; then
-            [ -n "$start_output" ] && echo "$start_output"
-          elif echo "$start_output" | grep -qi "is suspended"; then
-            echo "::warning::Skipping immediate start for ${{ env.BRONZE_FINANCE_JOB }} because the job is suspended."
+          if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
+            set +e
+            start_output="$(az containerapp job start \
+              --name ${{ env.BRONZE_FINANCE_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+            start_status=$?
+            set -e
+            if [ "$start_status" -eq 0 ]; then
+              [ -n "$start_output" ] && echo "$start_output"
+            elif echo "$start_output" | grep -qi "is suspended"; then
+              echo "::warning::Skipping immediate start for ${{ env.BRONZE_FINANCE_JOB }} because the job is suspended."
+            else
+              [ -n "$start_output" ] && echo "$start_output"
+              echo "::error::Failed to start ${{ env.BRONZE_FINANCE_JOB }}."
+              exit "$start_status"
+            fi
           else
-            [ -n "$start_output" ] && echo "$start_output"
-            echo "::error::Failed to start ${{ env.BRONZE_FINANCE_JOB }}."
-            exit "$start_status"
+            echo "Skipping immediate bootstrap start for ${{ env.BRONZE_FINANCE_JOB }} (BOOTSTRAP_BRONZE_RUNS=false)."
           fi
 
       - name: Check Finance Silver Job Exists
@@ -1446,7 +1460,7 @@ jobs:
       - name: Log Price Target job check
         run: |
           echo "price_target_job_exists=${{ steps.price_target_job_check.outputs.job_exists }}"
-      - name: Update and Start Price Target Job
+      - name: Update Price Target Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.price_target_changes.outputs.bronze_price_target == 'true' || steps.price_target_job_check.outputs.job_exists == 'false'
         env:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
@@ -1507,20 +1521,24 @@ jobs:
               --yaml "$tmp"
           fi
           
-          set +e
-          start_output="$(az containerapp job start \
-            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
-          start_status=$?
-          set -e
-          if [ "$start_status" -eq 0 ]; then
-            [ -n "$start_output" ] && echo "$start_output"
-          elif echo "$start_output" | grep -qi "is suspended"; then
-            echo "::warning::Skipping immediate start for ${{ env.BRONZE_PRICE_TARGET_JOB }} because the job is suspended."
+          if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
+            set +e
+            start_output="$(az containerapp job start \
+              --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+            start_status=$?
+            set -e
+            if [ "$start_status" -eq 0 ]; then
+              [ -n "$start_output" ] && echo "$start_output"
+            elif echo "$start_output" | grep -qi "is suspended"; then
+              echo "::warning::Skipping immediate start for ${{ env.BRONZE_PRICE_TARGET_JOB }} because the job is suspended."
+            else
+              [ -n "$start_output" ] && echo "$start_output"
+              echo "::error::Failed to start ${{ env.BRONZE_PRICE_TARGET_JOB }}."
+              exit "$start_status"
+            fi
           else
-            [ -n "$start_output" ] && echo "$start_output"
-            echo "::error::Failed to start ${{ env.BRONZE_PRICE_TARGET_JOB }}."
-            exit "$start_status"
+            echo "Skipping immediate bootstrap start for ${{ env.BRONZE_PRICE_TARGET_JOB }} (BOOTSTRAP_BRONZE_RUNS=false)."
           fi
 
       - name: Check Price Target Silver Job Exists
@@ -1678,7 +1696,7 @@ jobs:
       - name: Log Earnings Bronze Job check
         run: |
           echo "earnings_data_job_exists=${{ steps.earnings_data_job_check.outputs.job_exists }}"
-      - name: Update and Start Earnings Bronze Job
+      - name: Update Earnings Bronze Job
         if: env.FORCE_REDEPLOY == 'true' || steps.earnings_changes.outputs.bronze_earnings == 'true' || steps.earnings_data_job_check.outputs.job_exists == 'false'
         env:
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
@@ -1742,20 +1760,24 @@ jobs:
               --yaml "$tmp"
           fi
           
-          set +e
-          start_output="$(az containerapp job start \
-            --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
-          start_status=$?
-          set -e
-          if [ "$start_status" -eq 0 ]; then
-            [ -n "$start_output" ] && echo "$start_output"
-          elif echo "$start_output" | grep -qi "is suspended"; then
-            echo "::warning::Skipping immediate start for ${{ env.BRONZE_EARNINGS_JOB }} because the job is suspended."
+          if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
+            set +e
+            start_output="$(az containerapp job start \
+              --name ${{ env.BRONZE_EARNINGS_JOB }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} 2>&1)"
+            start_status=$?
+            set -e
+            if [ "$start_status" -eq 0 ]; then
+              [ -n "$start_output" ] && echo "$start_output"
+            elif echo "$start_output" | grep -qi "is suspended"; then
+              echo "::warning::Skipping immediate start for ${{ env.BRONZE_EARNINGS_JOB }} because the job is suspended."
+            else
+              [ -n "$start_output" ] && echo "$start_output"
+              echo "::error::Failed to start ${{ env.BRONZE_EARNINGS_JOB }}."
+              exit "$start_status"
+            fi
           else
-            [ -n "$start_output" ] && echo "$start_output"
-            echo "::error::Failed to start ${{ env.BRONZE_EARNINGS_JOB }}."
-            exit "$start_status"
+            echo "Skipping immediate bootstrap start for ${{ env.BRONZE_EARNINGS_JOB }} (BOOTSTRAP_BRONZE_RUNS=false)."
           fi
 
       - name: Check Earnings Silver Job Exists

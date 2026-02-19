@@ -183,3 +183,14 @@ def test_resolve_domain_schedule_uses_manual_trigger_metadata() -> None:
     )
     assert cron == ""
     assert frequency == "Manual trigger"
+
+
+def test_resolve_domain_schedule_defaults_to_manual_trigger_when_metadata_missing() -> None:
+    cron, frequency = system_health._resolve_domain_schedule(
+        job_name="silver-market-job",
+        default_cron="",
+        default_trigger_type="manual",
+        job_schedule_metadata={},
+    )
+    assert cron == ""
+    assert frequency == "Manual trigger"

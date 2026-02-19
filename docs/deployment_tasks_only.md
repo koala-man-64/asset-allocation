@@ -4,7 +4,9 @@ As of 2026-01-28, this repository's production deployment target is **tasks-only
 
 ## In Scope
 - Build and publish the **task/job** container image (currently `asset-allocation-scraper`).
-- Deploy and run scheduled Container Apps **Jobs** using `deploy/job_*.yaml`.
+- Deploy Container Apps **Jobs** using `deploy/job_*.yaml`:
+  - Bronze jobs are schedule-triggered.
+  - Silver and Gold jobs are manual and are typically triggered downstream from upstream job completion.
 
 ## Out of Scope (Deprecated for Production)
 - Deploying the **API** container app (`deploy/app_backtest_api.yaml`).
@@ -13,4 +15,3 @@ As of 2026-01-28, this repository's production deployment target is **tasks-only
 ## Notes
 - Jobs specify their own `command` in the job YAML templates (e.g. `python -m tasks.*`), so the image `CMD` is not relied upon.
 - Local development for API/UI may still be supported, but production CI/CD should not require or deploy API/UI artifacts.
-

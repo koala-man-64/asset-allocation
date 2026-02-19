@@ -6,7 +6,7 @@ import threading
 import uuid
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Literal, Tuple
+from typing import Any, Callable, Dict, List, Optional, Literal, Tuple, TypeVar
 
 import httpx
 from anyio import from_thread
@@ -34,6 +34,7 @@ from core.blob_storage import BlobStorageClient
 from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
 from core.core import get_symbol_sync_state
 from core.delta_core import load_delta
+from core.delta_core import get_delta_schema_columns
 from core.pipeline import DataPaths
 from core.postgres import PostgresError
 from core.runtime_config import (
@@ -74,6 +75,7 @@ REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
 _PURGE_OPERATIONS: Dict[str, Dict[str, Any]] = {}
 _PURGE_OPERATIONS_LOCK = threading.Lock()
 _PURGE_RULE_AUDIT_INTERVAL_MINUTES = 60 * 24 * 365
+_T = TypeVar("_T")
 
 
 def _emit_realtime(topic: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -520,6 +522,409 @@ def domain_metadata(
         raise HTTPException(status_code=503, detail=f"Domain metadata unavailable: {exc}") from exc
 
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+class DomainColumnsResponse(BaseModel):
+    layer: str
+    domain: str
+    columns: List[str] = Field(default_factory=list)
+    found: bool = False
+    promptRetrieve: bool = False
+    source: Literal["common-file"] = "common-file"
+    cachePath: str
+    updatedAt: Optional[str] = None
+
+
+class DomainColumnsRefreshRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    sample_limit: int = Field(default=500, ge=1, le=5000)
+
+
+_DOMAIN_COLUMNS_CACHE_FILE_DEFAULT = "metadata/domain-columns.json"
+_DOMAIN_COLUMNS_READ_TIMEOUT_SECONDS_DEFAULT = 8.0
+_DOMAIN_COLUMNS_REFRESH_TIMEOUT_SECONDS_DEFAULT = 25.0
+
+
+def _domain_columns_cache_path() -> str:
+    configured = (os.environ.get("DOMAIN_COLUMNS_CACHE_PATH") or "").strip()
+    return configured or _DOMAIN_COLUMNS_CACHE_FILE_DEFAULT
+
+
+def _parse_timeout_seconds_env(env_name: str, default_value: float) -> float:
+    raw = (os.environ.get(env_name) or "").strip()
+    if not raw:
+        return float(default_value)
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%s. Using default=%s", env_name, raw, default_value)
+        return float(default_value)
+    if value <= 0:
+        return float(default_value)
+    return value
+
+
+def _domain_columns_read_timeout_seconds() -> float:
+    return _parse_timeout_seconds_env(
+        "DOMAIN_COLUMNS_READ_TIMEOUT_SECONDS",
+        _DOMAIN_COLUMNS_READ_TIMEOUT_SECONDS_DEFAULT,
+    )
+
+
+def _domain_columns_refresh_timeout_seconds() -> float:
+    return _parse_timeout_seconds_env(
+        "DOMAIN_COLUMNS_REFRESH_TIMEOUT_SECONDS",
+        _DOMAIN_COLUMNS_REFRESH_TIMEOUT_SECONDS_DEFAULT,
+    )
+
+
+def _run_with_timeout(fn: Callable[[], _T], *, timeout_seconds: float, timeout_message: str) -> _T:
+    if timeout_seconds <= 0:
+        return fn()
+
+    done = threading.Event()
+    state: Dict[str, Any] = {}
+
+    def _worker() -> None:
+        try:
+            state["result"] = fn()
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    if not done.wait(timeout_seconds):
+        raise TimeoutError(timeout_message)
+
+    if "error" in state:
+        raise state["error"]
+    return state["result"]
+
+
+def _require_common_storage_for_domain_columns() -> None:
+    if getattr(mdc, "common_storage_client", None) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Common storage is unavailable (AZURE_CONTAINER_COMMON).",
+        )
+
+
+def _normalize_columns_list(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    normalized: List[str] = []
+    for value in values:
+        column = str(value or "").strip()
+        if not column or column in seen:
+            continue
+        seen.add(column)
+        normalized.append(column)
+    return normalized
+
+
+def _domain_columns_cache_key(layer: str, domain: str) -> str:
+    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
+    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
+    return f"{normalized_layer}/{normalized_domain}"
+
+
+def _default_domain_columns_document() -> Dict[str, Any]:
+    return {"version": 1, "updatedAt": None, "entries": {}}
+
+
+def _load_domain_columns_document() -> Dict[str, Any]:
+    path = _domain_columns_cache_path()
+    payload = mdc.get_common_json_content(path)
+    if not isinstance(payload, dict):
+        return _default_domain_columns_document()
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        payload["entries"] = {}
+    return payload
+
+
+def _read_cached_domain_columns(layer: str, domain: str) -> tuple[List[str], Optional[str], bool]:
+    key = _domain_columns_cache_key(layer, domain)
+    payload = _load_domain_columns_document()
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        return [], None, False
+
+    raw_entry = entries.get(key)
+    if isinstance(raw_entry, list):
+        columns = _normalize_columns_list(raw_entry)
+        updated_at = payload.get("updatedAt")
+        return columns, (str(updated_at) if isinstance(updated_at, str) else None), bool(columns)
+    if not isinstance(raw_entry, dict):
+        return [], None, False
+
+    columns = _normalize_columns_list(raw_entry.get("columns"))
+    updated_at = raw_entry.get("updatedAt")
+    return columns, (str(updated_at) if isinstance(updated_at, str) else None), bool(columns)
+
+
+def _write_cached_domain_columns(layer: str, domain: str, columns: List[str]) -> tuple[List[str], str]:
+    normalized_columns = _normalize_columns_list(columns)
+    if not normalized_columns:
+        raise ValueError("No columns were discovered for cache update.")
+
+    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
+    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
+    key = _domain_columns_cache_key(normalized_layer, normalized_domain)
+
+    payload = _load_domain_columns_document()
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+        payload["entries"] = entries
+
+    now = _utc_timestamp()
+    entries[key] = {
+        "layer": normalized_layer,
+        "domain": normalized_domain,
+        "columns": normalized_columns,
+        "updatedAt": now,
+    }
+    payload["version"] = 1
+    payload["updatedAt"] = now
+    mdc.save_common_json_content(payload, _domain_columns_cache_path())
+    return normalized_columns, now
+
+
+def _discover_first_delta_table_for_prefix(*, container: str, prefix: str) -> Optional[str]:
+    normalized = f"{str(prefix or '').strip().strip('/')}/"
+    if normalized == "/":
+        return None
+
+    client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+    marker = "/_delta_log/"
+    for blob in client.container_client.list_blobs(name_starts_with=normalized):
+        name = str(getattr(blob, "name", "") or "")
+        if marker not in name:
+            continue
+        root = name.split(marker, 1)[0].strip("/")
+        if root and root.startswith(normalized.rstrip("/")):
+            return root
+    return None
+
+
+def _retrieve_domain_columns_from_schema(layer: str, domain: str) -> List[str]:
+    normalized_layer = _normalize_layer(layer)
+    normalized_domain = _normalize_domain(domain)
+    if normalized_layer not in {"silver", "gold"}:
+        return []
+    if not normalized_domain:
+        return []
+
+    prefix = _RULE_DATA_PREFIXES.get(normalized_layer, {}).get(normalized_domain)
+    if not prefix:
+        return []
+
+    container = _resolve_container(normalized_layer)
+    first_table = _discover_first_delta_table_for_prefix(container=container, prefix=prefix)
+    if not first_table:
+        return []
+
+    schema_columns = get_delta_schema_columns(container, first_table)
+    return _normalize_columns_list(schema_columns or [])
+
+
+def _retrieve_domain_columns(layer: str, domain: str, sample_limit: int) -> List[str]:
+    normalized_layer = _normalize_layer(layer)
+    normalized_domain = _normalize_domain(domain)
+    if normalized_layer not in {"bronze", "silver", "gold"}:
+        raise HTTPException(status_code=400, detail="layer must be bronze, silver, or gold.")
+    if not normalized_domain:
+        raise HTTPException(status_code=400, detail="domain is required.")
+
+    try:
+        schema_columns = _retrieve_domain_columns_from_schema(normalized_layer, normalized_domain)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Schema-first column retrieval failed; falling back to sampled retrieval. layer=%s domain=%s err=%s",
+            normalized_layer,
+            normalized_domain,
+            exc,
+        )
+        schema_columns = []
+
+    if schema_columns:
+        return schema_columns
+
+    try:
+        from api.data_service import DataService
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Data service unavailable: {exc}") from exc
+
+    try:
+        rows = DataService.get_data(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            ticker=None,
+            limit=int(sample_limit),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Domain columns retrieval failed: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve domain columns: {exc}") from exc
+
+    for row in rows or []:
+        if isinstance(row, dict) and row:
+            return _normalize_columns_list(list(row.keys()))
+    return []
+
+
+@router.get("/domain-columns", response_model=DomainColumnsResponse)
+def get_domain_columns(
+    request: Request,
+    layer: str = Query(..., description="Medallion layer key (bronze|silver|gold)"),
+    domain: str = Query(..., description="Domain key (market|finance|earnings|price-target)"),
+) -> JSONResponse:
+    validate_auth(request)
+    normalized_layer = _normalize_layer(layer)
+    normalized_domain = _normalize_domain(domain)
+    if not normalized_layer:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not normalized_domain:
+        raise HTTPException(status_code=400, detail="domain is required.")
+    _require_common_storage_for_domain_columns()
+
+    read_timeout = _domain_columns_read_timeout_seconds()
+    try:
+        columns, updated_at, found = _run_with_timeout(
+            lambda: _read_cached_domain_columns(normalized_layer, normalized_domain),
+            timeout_seconds=read_timeout,
+            timeout_message=(
+                f"Domain columns cache read timed out after {read_timeout:.1f}s for "
+                f"{normalized_layer}/{normalized_domain}."
+            ),
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Domain columns cache read failed: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(status_code=503, detail=f"Domain columns cache unavailable: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "layer": normalized_layer,
+            "domain": normalized_domain,
+            "columns": columns,
+            "found": found,
+            "promptRetrieve": not found,
+            "source": "common-file",
+            "cachePath": _domain_columns_cache_path(),
+            "updatedAt": updated_at,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/domain-columns/refresh", response_model=DomainColumnsResponse)
+def refresh_domain_columns(payload: DomainColumnsRefreshRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    normalized_layer = _normalize_layer(payload.layer)
+    normalized_domain = _normalize_domain(payload.domain)
+    if not normalized_layer:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not normalized_domain:
+        raise HTTPException(status_code=400, detail="domain is required.")
+    _require_common_storage_for_domain_columns()
+
+    refresh_timeout = _domain_columns_refresh_timeout_seconds()
+    try:
+        columns = _run_with_timeout(
+            lambda: _retrieve_domain_columns(normalized_layer, normalized_domain, int(payload.sample_limit)),
+            timeout_seconds=refresh_timeout,
+            timeout_message=(
+                f"Domain columns retrieval timed out after {refresh_timeout:.1f}s for "
+                f"{normalized_layer}/{normalized_domain}."
+            ),
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Domain columns refresh retrieval failed: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(status_code=503, detail=f"Domain columns retrieval unavailable: {exc}") from exc
+
+    if not columns:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No columns discovered for {normalized_layer}/{normalized_domain}. "
+                "Verify data exists and retry refresh."
+            ),
+        )
+
+    try:
+        cached_columns, updated_at = _run_with_timeout(
+            lambda: _write_cached_domain_columns(normalized_layer, normalized_domain, columns),
+            timeout_seconds=refresh_timeout,
+            timeout_message=(
+                f"Domain columns cache write timed out after {refresh_timeout:.1f}s for "
+                f"{normalized_layer}/{normalized_domain}."
+            ),
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Common storage is unavailable for column cache updates: {exc}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Domain columns cache update failed: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to update domain columns cache: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "layer": normalized_layer,
+            "domain": normalized_domain,
+            "columns": cached_columns,
+            "found": True,
+            "promptRetrieve": False,
+            "source": "common-file",
+            "cachePath": _domain_columns_cache_path(),
+            "updatedAt": updated_at,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 class SnoozeRequest(BaseModel):
