@@ -1386,10 +1386,12 @@ def _execute_purge_rule(rule: PurgeRule, *, actor: Optional[str]) -> Dict[str, A
         "failedSymbols": failed,
     }
 _FINANCE_BRONZE_TABLE_TYPES: List[Tuple[str, str]] = [
-    ("balance_sheet", "quarterly_balance-sheet"),
-    ("income_statement", "quarterly_financials"),
-    ("cash_flow", "quarterly_cash-flow"),
-    ("valuation", "quarterly_valuation_measures"),
+    # Bronze finance raw files are written to title-cased folders with spaces.
+    # Keep these names aligned with tasks/finance_data/bronze_finance_data.py::REPORTS.
+    ("Balance Sheet", "quarterly_balance-sheet"),
+    ("Income Statement", "quarterly_financials"),
+    ("Cash Flow", "quarterly_cash-flow"),
+    ("Valuation", "quarterly_valuation_measures"),
 ]
 
 _RULE_DATA_PREFIXES: Dict[str, Dict[str, str]] = {

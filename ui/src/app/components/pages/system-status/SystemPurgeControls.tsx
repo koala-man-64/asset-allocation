@@ -69,8 +69,7 @@ export function PurgeActionIcon({
       let operation: unknown;
       try {
         operation = await DataService.getPurgeOperation(operationId);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+      } catch {
         if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
           throw new Error(
             `Purge status polling is still failing after timeout. Operation may still be running. Check system status. operationId=${operationId}`
@@ -110,10 +109,9 @@ export function PurgeActionIcon({
   };
 
   const describePurgeFailure = (operationId: string | null, error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
     return operationId
-      ? `Purge failed for operation ${operationId}: ${message}`
-      : `Purge failed: ${message}`;
+      ? `Purge failed for operation ${operationId}: ${error instanceof Error ? error.message : String(error)}`
+      : `Purge failed: ${error instanceof Error ? error.message : String(error)}`;
   };
 
   const handleConfirm = async () => {

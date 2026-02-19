@@ -136,7 +136,7 @@ export function StatusOverview({
       let operation: unknown;
       try {
         operation = await DataService.getPurgeOperation(operationId);
-      } catch (error) {
+      } catch {
         if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
           throw new Error(
             `Purge status polling is still failing after timeout. Check system status for progress. operationId=${operationId}`
@@ -795,7 +795,7 @@ export function StatusOverview({
             </TableHeader>
 
             <TableBody>
-                {domainNames.map((domainName) => {
+              {domainNames.map((domainName) => {
                 const domainKey = normalizeDomainKey(domainName);
                 return (
                   <TableRow
@@ -1093,7 +1093,7 @@ export function StatusOverview({
                                 const isTriggering =
                                   Boolean(actionJobName) && triggeringJob === actionJobName;
                                 const runningState = jobKey ? jobStates?.[jobKey] : undefined;
-                                        const isSuspended =
+                                const isSuspended =
                                   String(runningState || '')
                                     .trim()
                                     .toLowerCase() === 'suspended';
@@ -1177,12 +1177,12 @@ export function StatusOverview({
                                               void setJobSuspended(actionJobName, !isSuspended)
                                             }
                                           >
-                                              {isControlling ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                              ) : isSuspended ? (
-                                                <CirclePlay className="h-4 w-4" />
-                                              ) : (
-                                                <CirclePause className="h-4 w-4" />
+                                            {isControlling ? (
+                                              <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : isSuspended ? (
+                                              <CirclePlay className="h-4 w-4" />
+                                            ) : (
+                                              <CirclePause className="h-4 w-4" />
                                             )}
                                           </button>
                                         )}
@@ -1203,16 +1203,16 @@ export function StatusOverview({
                                             {isRunning ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                                           </span>
                                         ) : (
-                                            <button
-                                              type="button"
-                                              className={actionButtonBase}
-                                              aria-label={isRunning ? `Stop ${actionJobName}` : 'Trigger job'}
-                                              disabled={!jobName || isControlDisabled}
-                                              onClick={() =>
-                                                isRunning
-                                                  ? void setJobSuspended(actionJobName, true)
-                                                  : void triggerJob(actionJobName)
-                                              }
+                                          <button
+                                            type="button"
+                                            className={actionButtonBase}
+                                            aria-label={isRunning ? `Stop ${actionJobName}` : 'Trigger job'}
+                                            disabled={!jobName || isControlDisabled}
+                                            onClick={() =>
+                                              isRunning
+                                                ? void setJobSuspended(actionJobName, true)
+                                                : void triggerJob(actionJobName)
+                                            }
                                           >
                                             {isControlling ? (
                                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1248,9 +1248,8 @@ export function StatusOverview({
                                           }
                                         >
                                           <Trash2
-                                            className={`h-4 w-4 ${
-                                              isPurgingThisTarget ? 'animate-spin text-rose-600' : ''
-                                            }`}
+                                            className={`h-4 w-4 ${isPurgingThisTarget ? 'animate-spin text-rose-600' : ''
+                                              }`}
                                           />
                                         </button>
                                       </TooltipTrigger>
