@@ -62,6 +62,7 @@ import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
+import { Switch } from '@/app/components/ui/switch';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
 import { JobKillSwitchInline, type ManagedContainerJob } from './JobKillSwitchPanel';
@@ -90,6 +91,8 @@ interface StatusOverviewProps {
   jobStates?: Record<string, string>;
   managedContainerJobs?: ManagedContainerJob[];
   onRefresh?: () => void;
+  isAutoRefreshEnabled?: boolean;
+  onAutoRefreshChange?: (enabled: boolean) => void;
   isRefreshing?: boolean;
   isFetching?: boolean;
 }
@@ -101,6 +104,8 @@ export function StatusOverview({
   jobStates,
   managedContainerJobs = [],
   onRefresh,
+  isAutoRefreshEnabled,
+  onAutoRefreshChange,
   isRefreshing,
   isFetching
 }: StatusOverviewProps) {
@@ -575,18 +580,33 @@ export function StatusOverview({
               </span>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 w-[220px] px-3 gap-2 text-xs"
-              onClick={onRefresh}
-              disabled={!onRefresh || isFetching || isRefreshing}
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`}
-              />
-              Refresh
-            </Button>
+            <div className="flex w-[220px] items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 flex-1 px-3 gap-2 text-xs"
+                onClick={onRefresh}
+                disabled={!onRefresh || isFetching || isRefreshing}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`}
+                />
+                Refresh
+              </Button>
+              <label
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-2"
+                aria-label="Auto refresh toggle"
+              >
+                <Switch
+                  checked={Boolean(isAutoRefreshEnabled)}
+                  onCheckedChange={onAutoRefreshChange}
+                  aria-label="Toggle auto refresh"
+                />
+                <span className={`${StatusTypos.MONO} text-[9px] tracking-[0.16em] text-mcm-walnut/70`}>
+                  AUTO
+                </span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
