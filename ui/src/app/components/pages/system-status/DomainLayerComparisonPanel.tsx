@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
-import { useQueries } from '@tanstack/react-query';
-import { AlertTriangle, GitCompareArrows, Info, Layers, Loader2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, GitCompareArrows, Info, Layers, Loader2, RefreshCw } from 'lucide-react';
 import { Badge } from '@/app/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Button } from '@/app/components/ui/button';
 import {
   Table,
   TableBody,
@@ -131,6 +132,9 @@ function compareDateRanges(current: DomainMetadata, previous: DomainMetadata): {
 }
 
 export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLayer[] }) {
+  const queryClient = useQueryClient();
+  const [isManualRefreshRunning, setIsManualRefreshRunning] = useState(false);
+
   const layersByKey = useMemo(() => {
     const index = new Map<LayerKey, DataLayer>();
     for (const layer of dataLayers || []) {
@@ -194,8 +198,11 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     queries: queryPairs.map((pair) => ({
       queryKey: queryKeys.domainMetadata(pair.layerKey, pair.domainKey),
       queryFn: () => DataService.getDomainMetadata(pair.layerKey, pair.domainKey),
-      staleTime: 5 * 60 * 1000,
-      refetchInterval: false
+      staleTime: Number.POSITIVE_INFINITY,
+      refetchInterval: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false
     }))
   });
 
@@ -223,6 +230,32 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
   const loadedCells = metadataByCell.size;
   const failedCells = errorByCell.size;
   const pendingCells = pendingByCell.size;
+  const isRefreshDisabled = isManualRefreshRunning || pendingCells > 0 || queryPairs.length === 0;
+
+  const handleManualRefresh = async () => {
+    if (isRefreshDisabled) return;
+    setIsManualRefreshRunning(true);
+    try {
+      const results = await Promise.allSettled(
+        queryPairs.map(async (pair) => {
+          const metadata = await DataService.getDomainMetadata(pair.layerKey, pair.domainKey, {
+            refresh: true
+          });
+          queryClient.setQueryData(queryKeys.domainMetadata(pair.layerKey, pair.domainKey), metadata);
+        })
+      );
+
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      if (failed > 0) {
+        console.error('[DomainLayerComparisonPanel] manual refresh failed', {
+          failed,
+          total: queryPairs.length
+        });
+      }
+    } finally {
+      setIsManualRefreshRunning(false);
+    }
+  };
 
   return (
     <Card className="h-full">
@@ -238,6 +271,16 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
             </CardDescription>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-2 px-3 text-xs"
+              onClick={() => void handleManualRefresh()}
+              disabled={isRefreshDisabled}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isManualRefreshRunning ? 'animate-spin' : ''}`} />
+              Refresh Lineage
+            </Button>
             <Badge variant="outline" className="inline-flex items-center gap-1">
               <Layers className="h-3.5 w-3.5" />
               {layerColumns.length} layer{layerColumns.length === 1 ? '' : 's'}

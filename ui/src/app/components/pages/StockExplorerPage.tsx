@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, ArrowUpDown, Database, Loader2, RefreshCcw, Search } from 'lucide-react';
+import { ArrowRight, ArrowUpDown, Database, RefreshCcw, Search } from 'lucide-react';
 
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';

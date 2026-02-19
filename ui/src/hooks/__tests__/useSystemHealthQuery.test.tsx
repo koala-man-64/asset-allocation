@@ -10,6 +10,11 @@ function Probe() {
   return null;
 }
 
+function ProbeNoAutoRefresh() {
+  useSystemHealthQuery({ autoRefresh: false });
+  return null;
+}
+
 describe('useSystemHealthQuery', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -35,6 +40,43 @@ describe('useSystemHealthQuery', () => {
     ]);
 
     await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not poll when auto refresh is disabled', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const getSystemHealthSpy = vi.spyOn(DataService, 'getSystemHealthWithMeta').mockResolvedValue({
+      data: {
+        overall: 'healthy',
+        dataLayers: [],
+        recentJobs: [],
+        alerts: [],
+        resources: []
+      },
+      meta: {
+        status: 200,
+        durationMs: 10,
+        url: '/api/system/health',
+        cacheDegraded: false,
+        stale: false,
+        requestId: 'test-request-id'
+      }
+    });
+
+    renderWithProviders(<ProbeNoAutoRefresh />);
+
+    await Promise.all([
+      waitFor(() => {
+        expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
+      }),
+      vi.advanceTimersByTimeAsync(1000)
+    ]);
+
+    await vi.advanceTimersByTimeAsync(90_000);
 
     expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
   });

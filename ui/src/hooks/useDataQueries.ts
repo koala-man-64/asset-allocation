@@ -31,6 +31,10 @@ export function getLastSystemHealthMeta(): RequestMeta | null {
   return lastSystemHealthMeta;
 }
 
+export interface UseSystemHealthQueryOptions {
+  autoRefresh?: boolean;
+}
+
 function systemHealthRefetchInterval(query: {
   state: { error: unknown; data: unknown };
 }): false | number {
@@ -60,7 +64,10 @@ export const queryKeys = {
  * System & Health Queries
  */
 
-export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
+export function useSystemHealthQuery(
+  options: UseSystemHealthQueryOptions = {}
+): UseQueryResult<SystemHealth> {
+  const autoRefresh = options.autoRefresh ?? true;
   const query = useQuery<SystemHealth>({
     queryKey: queryKeys.systemHealth(),
     queryFn: async () => {
@@ -87,7 +94,7 @@ export function useSystemHealthQuery(): UseQueryResult<SystemHealth> {
       }
     },
     retry: (failureCount, error) => (isApiNotFoundError(error) ? false : failureCount < 3),
-    refetchInterval: systemHealthRefetchInterval
+    refetchInterval: autoRefresh ? systemHealthRefetchInterval : false
   });
 
   useEffect(() => {

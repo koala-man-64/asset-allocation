@@ -27,7 +27,10 @@ import {
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
 export function SystemStatusPage() {
-  const { data, isLoading, error, isFetching } = useSystemHealthQuery();
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
+  const { data, isLoading, error, isFetching } = useSystemHealthQuery({
+    autoRefresh: isAutoRefreshEnabled
+  });
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -165,6 +168,8 @@ export function SystemStatusPage() {
             jobStates={jobStates}
             managedContainerJobs={managedContainerJobs}
             onRefresh={handleRefresh}
+            isAutoRefreshEnabled={isAutoRefreshEnabled}
+            onAutoRefreshChange={setIsAutoRefreshEnabled}
             isRefreshing={isRefreshing}
             isFetching={isFetching}
           />

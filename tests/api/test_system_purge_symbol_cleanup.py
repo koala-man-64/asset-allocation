@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
@@ -137,6 +138,68 @@ def test_run_purge_symbol_operation_returns_regular_targets(monkeypatch) -> None
     assert len(result["targets"]) == 6
     assert "affectedByDateTargets" not in result
     assert "byDatePurges" not in result
+
+
+def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
+    blob_paths: List[str] = []
+    prefix_paths: List[str] = []
+
+    monkeypatch.setattr(system, "BlobStorageClient", _DummyBlobClient)
+    monkeypatch.setattr(
+        system,
+        "_resolve_container",
+        lambda layer: {
+            "bronze": "bronze-container",
+            "silver": "silver-container",
+            "gold": "gold-container",
+        }[layer],
+    )
+    monkeypatch.setattr(
+        system,
+        "_append_symbol_to_bronze_blacklists",
+        lambda client, symbol: {"updated": 4, "paths": ["a.csv", "b.csv", "c.csv", "d.csv"]},
+    )
+    monkeypatch.setattr(system, "_delete_blob_if_exists", lambda client, path: blob_paths.append(path) or 1)
+    monkeypatch.setattr(system, "_delete_prefix_if_exists", lambda client, path: prefix_paths.append(path) or 1)
+
+    result = system._run_purge_symbol_operation(system.PurgeSymbolRequest(symbol="AAPL", confirm=True))
+
+    data_targets = [item for item in result["targets"] if item.get("operation") != "blacklist"]
+    counts = Counter((item["layer"], item["domain"]) for item in data_targets)
+    assert counts == Counter(
+        {
+            ("bronze", "market"): 1,
+            ("bronze", "finance"): 4,
+            ("bronze", "earnings"): 1,
+            ("bronze", "price-target"): 1,
+            ("silver", "market"): 1,
+            ("silver", "finance"): 4,
+            ("silver", "earnings"): 1,
+            ("silver", "price-target"): 1,
+            ("gold", "market"): 1,
+            ("gold", "finance"): 1,
+            ("gold", "earnings"): 1,
+            ("gold", "price-target"): 1,
+        }
+    )
+
+    assert result["totalDeleted"] == 18
+    assert len(blob_paths) == 7
+    assert len(prefix_paths) == 11
+
+    bronze_finance_paths = sorted(
+        item["path"]
+        for item in data_targets
+        if item["layer"] == "bronze" and item["domain"] == "finance"
+    )
+    assert bronze_finance_paths == sorted(
+        [
+            "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json",
+            "finance-data/Income Statement/AAPL_quarterly_financials.json",
+            "finance-data/Cash Flow/AAPL_quarterly_cash-flow.json",
+            "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
+        ]
+    )
 
 
 def test_execute_purge_symbols_operation_tracks_partial_failures(monkeypatch) -> None:

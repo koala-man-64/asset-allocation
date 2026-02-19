@@ -108,36 +108,33 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {recentJobs.slice(0, 5).map((job, idx) => (
-                <TableRow key={idx}>
-                  <TableCell className="py-2">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm">{job.jobName}</span>
-                      {(() => {
-                        const portalLink = getJobPortalLink(job.jobName);
-                        const jobKey = normalizeAzureJobName(job.jobName);
-                        const latestRun = jobKey ? latestRunByJob.get(jobKey) : undefined;
-                        const runStatus = latestRun?.status
-                          ? String(latestRun.status).toUpperCase()
-                          : 'UNKNOWN';
-                        const runTimeAgo = latestRun?.startTime
-                          ? `${formatTimeAgo(latestRun.startTime)} ago`
-                          : 'UNKNOWN';
-                        const isRunning =
-                          String(job.status || '').trim().toLowerCase() === 'running';
-                        const isTriggering = Boolean(job.jobName) && triggeringJob === job.jobName;
-                        const isStopping =
-                          Boolean(job.jobName) &&
-                          jobControl?.jobName === job.jobName &&
-                          (jobControl.action === 'suspend' || jobControl.action === 'stop');
-                        const isBusy = Boolean(isTriggering || isStopping);
-                        const canTrigger =
-                          Boolean(job.jobName) && !Boolean(triggeringJob) && !Boolean(jobControl);
+              {recentJobs.slice(0, 5).map((job, idx) => {
+                const portalLink = getJobPortalLink(job.jobName);
+                const executionsUrl = getAzureJobExecutionsUrl(portalLink);
+                const jobKey = normalizeAzureJobName(job.jobName);
+                const latestRun = jobKey ? latestRunByJob.get(jobKey) : undefined;
+                const runStatus = latestRun?.status
+                  ? String(latestRun.status).toUpperCase()
+                  : 'UNKNOWN';
+                const runTimeAgo = latestRun?.startTime
+                  ? `${formatTimeAgo(latestRun.startTime)} ago`
+                  : 'UNKNOWN';
+                const isRunning = String(job.status || '').trim().toLowerCase() === 'running';
+                const isTriggering = Boolean(job.jobName) && triggeringJob === job.jobName;
+                const isStopping =
+                  Boolean(job.jobName) &&
+                  jobControl?.jobName === job.jobName &&
+                  (jobControl.action === 'suspend' || jobControl.action === 'stop');
+                const isBusy = isTriggering || isStopping;
+                const canTrigger = Boolean(job.jobName) && !triggeringJob && !jobControl;
 
-                        if (!portalLink) return null;
-
-                        return (
+                return (
+                  <TableRow key={idx}>
+                    <TableCell className="py-2">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{job.jobName}</span>
+                          {portalLink && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <a
@@ -156,69 +153,62 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                                   : 'No recent run info'}
                               </TooltipContent>
                             </Tooltip>
-                          );
-                        })()}
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">{job.jobType}</span>
+                        <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                          <span>Trigger: {job.triggeredBy || 'schedule'}</span>
+                          <span>Duration: {formatDuration(job.duration)}</span>
+                          {job.recordsProcessed !== undefined && (
+                            <span>Records: {formatRecordCount(job.recordsProcessed)}</span>
+                          )}
+                        </div>
                       </div>
-                      <span className="text-xs text-muted-foreground">{job.jobType}</span>
-                      <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                        <span>Trigger: {job.triggeredBy || 'schedule'}</span>
-                        <span>Duration: {formatDuration(job.duration)}</span>
-                        {job.recordsProcessed !== undefined && (
-                          <span>Records: {formatRecordCount(job.recordsProcessed)}</span>
-                        )}
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(job.status)}
+                        {getStatusBadge(job.status)}
                       </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-2">
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(job.status)}
-                      {getStatusBadge(job.status)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-2 font-mono text-sm">
-                    <div>{formatTimestamp(job.startTime)}</div>
-                  </TableCell>
-                  <TableCell className="py-2 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {(() => {
-                        const executionsUrl = getAzureJobExecutionsUrl(
-                          getJobPortalLink(job.jobName)
-                        );
-                        return (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              {executionsUrl ? (
-                                <Button
-                                  asChild
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  aria-label={`Open ${job.jobName} executions in Azure`}
-                                >
-                                  <a href={executionsUrl} target="_blank" rel="noreferrer">
-                                    <ScrollText className="h-4 w-4" />
-                                  </a>
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  disabled
-                                  aria-label={`No Azure portal link for ${job.jobName}`}
-                                >
+                    </TableCell>
+                    <TableCell className="py-2 font-mono text-sm">
+                      <div>{formatTimestamp(job.startTime)}</div>
+                    </TableCell>
+                    <TableCell className="py-2 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {executionsUrl ? (
+                              <Button
+                                asChild
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label={`Open ${job.jobName} executions in Azure`}
+                              >
+                                <a href={executionsUrl} target="_blank" rel="noreferrer">
                                   <ScrollText className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </TooltipTrigger>
-                            <TooltipContent side="left">
-                              {executionsUrl
-                                ? 'Open execution history'
-                                : 'Azure link not configured'}
-                            </TooltipContent>
-                          </Tooltip>
-                        );
-                      })()}
+                                </a>
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                disabled
+                                aria-label={`No Azure portal link for ${job.jobName}`}
+                              >
+                                <ScrollText className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent side="left">
+                            {executionsUrl
+                              ? 'Open execution history'
+                              : 'Azure link not configured'}
+                          </TooltipContent>
+                        </Tooltip>
+
 
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -248,9 +238,10 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
                           </TooltipContent>
                         </Tooltip>
                       </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
               {recentJobs.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground text-sm py-4">
@@ -260,8 +251,8 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
               )}
             </TableBody>
           </Table>
-        </div>
-      </CardContent>
-    </Card>
+        </div >
+      </CardContent >
+    </Card >
   );
 }
