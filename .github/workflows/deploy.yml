@@ -500,10 +500,17 @@ jobs:
           fi
 
           acr_id="$(az acr show --name "${{ env.ACR_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query id -o tsv --only-show-errors | tr -d '\r')"
+          acr_login_server="$(az acr show --name "${{ env.ACR_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --query loginServer -o tsv --only-show-errors | tr -d '\r')"
           principal_id="$(az identity show --ids "$identity_id" --query principalId -o tsv --only-show-errors | tr -d '\r')"
           client_id="$(az identity show --ids "$identity_id" --query clientId -o tsv --only-show-errors | tr -d '\r')"
           echo "ACR_PULL_IDENTITY_CLIENT_ID=$client_id" >> "$GITHUB_ENV"
           echo "Using ACR pull identity clientId: $client_id"
+          if [ -z "$acr_login_server" ]; then
+            echo "::error::Failed to resolve ACR login server for '${{ env.ACR_NAME }}'."
+            exit 1
+          fi
+          echo "ACR_LOGIN_SERVER=$acr_login_server" >> "$GITHUB_ENV"
+          echo "Using ACR login server: $acr_login_server"
 
           # Ensure AcrPull on ACR for the UAMI used by Container Apps/Jobs.
           query="length([?roleDefinitionName=='AcrPull'])"
@@ -650,6 +657,7 @@ jobs:
           set -euo pipefail
           : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
           : "${ACR_PULL_IDENTITY_CLIENT_ID:?ACR_PULL_IDENTITY_CLIENT_ID is required}"
+          : "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"
           : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
           : "${IMAGE_TAG:?IMAGE_TAG is required}"
 
@@ -829,6 +837,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
+          : "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"
           : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
           : "${IMAGE_TAG:?IMAGE_TAG is required}"
 

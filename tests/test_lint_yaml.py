@@ -194,3 +194,19 @@ def test_deploy_workflow_bronze_bootstrap_is_opt_in() -> None:
     assert text.count('if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then') == 4, (
         "All Bronze deploy blocks must gate immediate starts behind BOOTSTRAP_BRONZE_RUNS."
     )
+
+
+def test_deploy_workflow_exports_acr_login_server_for_yaml_templates() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow_file = repo_root / ".github" / "workflows" / "deploy.yml"
+    text = workflow_file.read_text(encoding="utf-8")
+
+    assert 'acr_login_server="$(az acr show --name' in text, (
+        "deploy.yml must resolve ACR login server from Azure before rendering app YAML templates."
+    )
+    assert 'echo "ACR_LOGIN_SERVER=$acr_login_server" >> "$GITHUB_ENV"' in text, (
+        "deploy.yml must export ACR_LOGIN_SERVER to GITHUB_ENV for envsubst templates."
+    )
+    assert text.count(': "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"') >= 2, (
+        "API/UI deploy steps must fail fast when ACR_LOGIN_SERVER is missing."
+    )
