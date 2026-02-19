@@ -220,9 +220,7 @@ export function SymbolPurgeByCriteriaPage() {
 
       setColumnsRequireRetrieve(false);
       setAvailableColumns(keys);
-      if (!column || !keys.includes(column)) {
-        setColumn(keys[0] ?? '');
-      }
+      setColumn((previous) => (!previous || !keys.includes(previous) ? (keys[0] ?? '') : previous));
     } catch (error: unknown) {
       setAvailableColumns([]);
       setColumn('');
@@ -231,7 +229,7 @@ export function SymbolPurgeByCriteriaPage() {
     } finally {
       setColumnsLoading(false);
     }
-  }, [column, domain, layer]);
+  }, [domain, layer]);
 
   const refreshColumns = useCallback(async () => {
     setColumnsLoading(true);
@@ -256,9 +254,7 @@ export function SymbolPurgeByCriteriaPage() {
 
       setAvailableColumns(keys);
       setColumnsRequireRetrieve(false);
-      if (!column || !keys.includes(column)) {
-        setColumn(keys[0] ?? '');
-      }
+      setColumn((previous) => (!previous || !keys.includes(previous) ? (keys[0] ?? '') : previous));
       toast.success(`Retrieved ${keys.length} cached column${keys.length === 1 ? '' : 's'} for ${layer}/${domain}.`);
     } catch (error: unknown) {
       const message = formatSystemStatusText(error) || 'Unable to refresh columns.';
@@ -267,7 +263,7 @@ export function SymbolPurgeByCriteriaPage() {
     } finally {
       setColumnsLoading(false);
     }
-  }, [column, domain, layer]);
+  }, [domain, layer]);
 
   useEffect(() => {
     void loadColumns();
