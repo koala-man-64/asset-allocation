@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Literal, Tuple, TypeVar
@@ -74,7 +75,10 @@ REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
 
 _PURGE_OPERATIONS: Dict[str, Dict[str, Any]] = {}
 _PURGE_OPERATIONS_LOCK = threading.Lock()
+_PURGE_BLACKLIST_UPDATE_LOCK = threading.Lock()
 _PURGE_RULE_AUDIT_INTERVAL_MINUTES = 60 * 24 * 365
+_DEFAULT_PURGE_SYMBOL_MAX_WORKERS = 8
+_MAX_PURGE_SYMBOL_MAX_WORKERS = 32
 _T = TypeVar("_T")
 
 
@@ -1617,6 +1621,55 @@ def _normalize_candidate_symbols(symbols: List[str]) -> List[str]:
     return normalized
 
 
+def _resolve_purge_symbol_workers(symbol_count: int) -> int:
+    if symbol_count <= 0:
+        return 1
+    default_workers = min(_DEFAULT_PURGE_SYMBOL_MAX_WORKERS, symbol_count)
+    raw = str(os.environ.get("PURGE_SYMBOL_MAX_WORKERS") or "").strip()
+    if not raw:
+        return default_workers
+    try:
+        requested = int(raw)
+    except Exception:
+        return default_workers
+    bounded = max(1, min(requested, _MAX_PURGE_SYMBOL_MAX_WORKERS))
+    return min(symbol_count, bounded)
+
+
+def _build_purge_symbols_summary(
+    *,
+    symbols: List[str],
+    scope_note: Optional[str],
+    dry_run: bool,
+    succeeded: int,
+    failed: int,
+    skipped: int,
+    total_deleted: int,
+    symbol_results: List[Dict[str, Any]],
+    in_progress: int = 0,
+) -> Dict[str, Any]:
+    requested = len(symbols)
+    completed = int(succeeded) + int(failed) + int(skipped)
+    pending = max(0, requested - completed - max(0, int(in_progress)))
+    progress_pct = float((completed / requested) * 100.0) if requested > 0 else 100.0
+    return {
+        "scope": "symbols",
+        "dryRun": bool(dry_run),
+        "scopeNote": scope_note,
+        "requestedSymbols": symbols,
+        "requestedSymbolCount": requested,
+        "completed": completed,
+        "pending": pending,
+        "inProgress": max(0, int(in_progress)),
+        "progressPct": round(progress_pct, 2),
+        "succeeded": int(succeeded),
+        "failed": int(failed),
+        "skipped": int(skipped),
+        "totalDeleted": int(total_deleted),
+        "symbolResults": list(symbol_results),
+    }
+
+
 def _create_purge_symbols_operation(
     symbols: List[str],
     actor: Optional[str],
@@ -1627,6 +1680,17 @@ def _create_purge_symbols_operation(
 ) -> str:
     operation_id = str(uuid.uuid4())
     now = _utc_timestamp()
+    initial_summary = _build_purge_symbols_summary(
+        symbols=symbols,
+        scope_note=scope_note,
+        dry_run=bool(dry_run),
+        succeeded=0,
+        failed=0,
+        skipped=0,
+        total_deleted=0,
+        symbol_results=[],
+        in_progress=0,
+    )
     with _PURGE_OPERATIONS_LOCK:
         _PURGE_OPERATIONS[operation_id] = {
             "operationId": operation_id,
@@ -1641,7 +1705,7 @@ def _create_purge_symbols_operation(
             "updatedAt": now,
             "startedAt": now,
             "completedAt": None,
-            "result": None,
+            "result": initial_summary,
             "error": None,
             "auditRuleId": int(audit_rule_id) if audit_rule_id else None,
         }
@@ -1661,8 +1725,27 @@ def _execute_purge_symbols_operation(
     skipped = 0
     total_deleted = 0
 
-    for symbol in symbols:
-        if dry_run:
+    def _publish_progress(*, in_progress: int) -> None:
+        summary = _build_purge_symbols_summary(
+            symbols=symbols,
+            scope_note=scope_note,
+            dry_run=bool(dry_run),
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+            total_deleted=total_deleted,
+            symbol_results=symbol_results,
+            in_progress=in_progress,
+        )
+        _update_purge_operation(
+            operation_id,
+            {"status": "running", "result": summary},
+        )
+
+    _publish_progress(in_progress=0)
+
+    if dry_run:
+        for index, symbol in enumerate(symbols, start=1):
             symbol_results.append(
                 {
                     "symbol": symbol,
@@ -1672,54 +1755,89 @@ def _execute_purge_symbols_operation(
                 }
             )
             skipped += 1
-            continue
+            _publish_progress(in_progress=0)
+            logger.info(
+                "Purge-symbols dry-run progress: operation=%s completed=%s/%s",
+                operation_id,
+                index,
+                len(symbols),
+            )
+    else:
+        worker_count = _resolve_purge_symbol_workers(len(symbols))
+        logger.info(
+            "Purge-symbols operation started: operation=%s symbols=%s workers=%s",
+            operation_id,
+            len(symbols),
+            worker_count,
+        )
+        in_progress = len(symbols)
+        _publish_progress(in_progress=in_progress)
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="purge-symbols") as executor:
+            future_to_symbol = {
+                executor.submit(
+                    _run_purge_symbol_operation,
+                    PurgeSymbolRequest(symbol=symbol, confirm=True),
+                ): symbol
+                for symbol in symbols
+            }
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                in_progress = max(0, in_progress - 1)
+                try:
+                    result = future.result()
+                    deleted = int(result.get("totalDeleted") or 0)
+                    symbol_results.append(
+                        {
+                            "symbol": symbol,
+                            "status": "succeeded",
+                            "deleted": deleted,
+                            "targets": result.get("targets") or [],
+                        }
+                    )
+                    total_deleted += deleted
+                    succeeded += 1
+                except HTTPException as exc:
+                    symbol_results.append(
+                        {
+                            "symbol": symbol,
+                            "status": "failed",
+                            "deleted": 0,
+                            "error": str(exc.detail),
+                        }
+                    )
+                    failed += 1
+                except Exception as exc:
+                    symbol_results.append(
+                        {
+                            "symbol": symbol,
+                            "status": "failed",
+                            "deleted": 0,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    failed += 1
+                _publish_progress(in_progress=in_progress)
+                logger.info(
+                    "Purge-symbols progress: operation=%s completed=%s/%s succeeded=%s failed=%s in_progress=%s",
+                    operation_id,
+                    len(symbol_results),
+                    len(symbols),
+                    succeeded,
+                    failed,
+                    in_progress,
+                )
 
-        try:
-            result = _run_purge_symbol_operation(PurgeSymbolRequest(symbol=symbol, confirm=True))
-            deleted = int(result.get("totalDeleted") or 0)
-            symbol_results.append(
-                {
-                    "symbol": symbol,
-                    "status": "succeeded",
-                    "deleted": deleted,
-                    "targets": result.get("targets") or [],
-                }
-            )
-            total_deleted += deleted
-            succeeded += 1
-        except HTTPException as exc:
-            symbol_results.append(
-                {
-                    "symbol": symbol,
-                    "status": "failed",
-                    "deleted": 0,
-                    "error": str(exc.detail),
-                }
-            )
-            failed += 1
-        except Exception as exc:
-            symbol_results.append(
-                {
-                    "symbol": symbol,
-                    "status": "failed",
-                    "deleted": 0,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            )
-            failed += 1
-
-    summary = {
-        "scope": "symbols",
-        "dryRun": bool(dry_run),
-        "scopeNote": scope_note,
-        "requestedSymbols": symbols,
-        "requestedSymbolCount": len(symbols),
-        "succeeded": succeeded,
-        "failed": failed,
-        "skipped": skipped,
-        "totalDeleted": total_deleted,
-        "symbolResults": symbol_results,
-    }
+    summary = _build_purge_symbols_summary(
+        symbols=symbols,
+        scope_note=scope_note,
+        dry_run=bool(dry_run),
+        succeeded=succeeded,
+        failed=failed,
+        skipped=skipped,
+        total_deleted=total_deleted,
+        symbol_results=symbol_results,
+        in_progress=0,
+    )
     status = "failed" if failed > 0 else "succeeded"
 
     logger.info(
@@ -2256,6 +2374,8 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
 
 def _run_purge_symbol_operation(
     payload: PurgeSymbolRequest,
+    *,
+    update_blacklist: bool = True,
 ) -> Dict[str, Any]:
     normalized_symbol = _normalize_purge_symbol(payload.symbol)
 
@@ -2270,18 +2390,20 @@ def _run_purge_symbol_operation(
     results: List[Dict[str, Any]] = []
     total_deleted = 0
 
-    blacklist_update = _append_symbol_to_bronze_blacklists(bronze_client, normalized_symbol)
-    results.append(
-        {
-            "operation": "blacklist",
-            "layer": "bronze",
-            "domain": "all",
-            "container": container_bronze,
-            "status": "updated",
-            "paths": blacklist_update["paths"],
-            "updated": blacklist_update["updated"],
-        }
-    )
+    if update_blacklist:
+        with _PURGE_BLACKLIST_UPDATE_LOCK:
+            blacklist_update = _append_symbol_to_bronze_blacklists(bronze_client, normalized_symbol)
+        results.append(
+            {
+                "operation": "blacklist",
+                "layer": "bronze",
+                "domain": "all",
+                "container": container_bronze,
+                "status": "updated",
+                "paths": blacklist_update["paths"],
+                "updated": blacklist_update["updated"],
+            }
+        )
 
     bronze_results = _remove_symbol_from_bronze_storage(bronze_client, normalized_symbol)
     for outcome in bronze_results:

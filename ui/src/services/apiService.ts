@@ -11,6 +11,164 @@ interface WindowWithConfig extends Window {
 }
 const runtimeConfig = (window as WindowWithConfig).__API_UI_CONFIG__ || {};
 const API_BASE_URL = normalizeApiBaseUrl(runtimeConfig.apiBaseUrl || uiConfig.apiBaseUrl, '/api');
+const API_WARMUP_PATH = '/healthz';
+const API_COLD_START_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const API_WARMUP_MAX_ATTEMPTS = 3;
+const API_WARMUP_BASE_DELAY_MS = 500;
+const API_WARMUP_MAX_DELAY_MS = 4000;
+const API_WARMUP_TIMEOUT_MS = 5000;
+const API_REQUEST_MAX_ATTEMPTS = 3;
+const API_REQUEST_RETRY_BASE_DELAY_MS = 500;
+const API_REQUEST_RETRY_MAX_DELAY_MS = 4000;
+
+let apiWarmupAttempted = false;
+let apiWarmupInFlight: Promise<void> | null = null;
+
+function isRetryableStatusCode(statusCode: number): boolean {
+  return API_COLD_START_RETRYABLE_STATUS_CODES.has(statusCode);
+}
+
+function isRetryableFetchError(error: unknown, externalSignal?: AbortSignal | null): boolean {
+  if (externalSignal?.aborted) {
+    return false;
+  }
+
+  if (error instanceof Error && error.message.startsWith('API timeout after ')) {
+    return true;
+  }
+
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true;
+  }
+
+  if (error instanceof TypeError) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return (
+    message.includes('network') ||
+    message.includes('failed to fetch') ||
+    message.includes('connection refused') ||
+    message.includes('load failed')
+  );
+}
+
+function resolveWarmupUrl(): string {
+  const base = API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/i, '');
+  return `${base || ''}${API_WARMUP_PATH}`;
+}
+
+async function wait(delayMs: number): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+async function fetchWithOptionalTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number | undefined,
+  endpointLabel: string,
+  requestId: string
+): Promise<Response> {
+  let timeoutController: AbortController | undefined;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let mergedSignal: AbortSignal | null | undefined = init.signal;
+  let removeExternalAbortListener: (() => void) | undefined;
+
+  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutController = new AbortController();
+    timeoutHandle = setTimeout(() => {
+      timeoutController?.abort();
+    }, Math.max(1, Math.floor(timeoutMs)));
+
+    if (init.signal) {
+      if (init.signal.aborted) {
+        timeoutController.abort();
+      } else {
+        const relayAbort = () => timeoutController?.abort();
+        init.signal.addEventListener('abort', relayAbort, { once: true });
+        removeExternalAbortListener = () => init.signal?.removeEventListener('abort', relayAbort);
+      }
+    }
+    mergedSignal = timeoutController.signal;
+  }
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: mergedSignal ?? undefined
+    });
+  } catch (error) {
+    if (timeoutController?.signal.aborted && !(init.signal?.aborted)) {
+      throw new Error(
+        `API timeout after ${Math.floor(timeoutMs || 0)}ms [requestId=${requestId}] - ${endpointLabel}`
+      );
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    if (removeExternalAbortListener) {
+      removeExternalAbortListener();
+    }
+  }
+}
+
+async function warmUpApiOnce(): Promise<void> {
+  if (apiWarmupAttempted) {
+    return;
+  }
+
+  if (!apiWarmupInFlight) {
+    apiWarmupInFlight = (async () => {
+      let delayMs = API_WARMUP_BASE_DELAY_MS;
+      const warmupUrl = resolveWarmupUrl();
+
+      try {
+        for (let attempt = 1; attempt <= API_WARMUP_MAX_ATTEMPTS; attempt += 1) {
+          const shouldRetry = attempt < API_WARMUP_MAX_ATTEMPTS;
+          try {
+            const response = await fetchWithOptionalTimeout(
+              warmupUrl,
+              {
+                method: 'GET',
+                headers: new Headers({ 'X-Request-ID': createRequestId() }),
+                cache: 'no-store'
+              },
+              API_WARMUP_TIMEOUT_MS,
+              API_WARMUP_PATH,
+              'warmup'
+            );
+            if (response.status < 400) {
+              return;
+            }
+            if (!shouldRetry || !isRetryableStatusCode(response.status)) {
+              return;
+            }
+          } catch (error) {
+            if (!shouldRetry || !isRetryableFetchError(error)) {
+              return;
+            }
+          }
+
+          await wait(delayMs);
+          delayMs = Math.min(API_WARMUP_MAX_DELAY_MS, Math.max(delayMs * 2, 100));
+        }
+      } finally {
+        apiWarmupAttempted = true;
+        apiWarmupInFlight = null;
+      }
+    })();
+  }
+
+  await apiWarmupInFlight;
+}
 
 export interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -70,51 +228,49 @@ async function performRequest<T>(
   }
   const authHeaders = await appendAuthHeaders(requestHeaders);
   const requestId = authHeaders.get('X-Request-ID') || '';
+  await warmUpApiOnce();
 
-  let timeoutController: AbortController | undefined;
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  let mergedSignal: AbortSignal | null | undefined = customConfig.signal;
-  let removeExternalAbortListener: (() => void) | undefined;
-
-  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
-    timeoutController = new AbortController();
-    timeoutHandle = setTimeout(() => {
-      timeoutController?.abort();
-    }, Math.max(1, Math.floor(timeoutMs)));
-
-    if (customConfig.signal) {
-      if (customConfig.signal.aborted) {
-        timeoutController.abort();
-      } else {
-        const relayAbort = () => timeoutController?.abort();
-        customConfig.signal.addEventListener('abort', relayAbort, { once: true });
-        removeExternalAbortListener = () => customConfig.signal?.removeEventListener('abort', relayAbort);
-      }
-    }
-    mergedSignal = timeoutController.signal;
-  }
-
+  let retryDelayMs = API_REQUEST_RETRY_BASE_DELAY_MS;
+  let response: Response | null = null;
   const startedAt = performance.now();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: authHeaders,
-      ...customConfig,
-      signal: mergedSignal ?? undefined
-    });
-  } catch (error) {
-    if (timeoutController?.signal.aborted && !(customConfig.signal?.aborted)) {
-      throw new Error(`API timeout after ${Math.floor(timeoutMs || 0)}ms [requestId=${requestId}] - ${endpoint}`);
+  for (let attempt = 1; attempt <= API_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    const shouldRetry = attempt < API_REQUEST_MAX_ATTEMPTS;
+    try {
+      response = await fetchWithOptionalTimeout(
+        url,
+        {
+          headers: authHeaders,
+          ...customConfig
+        },
+        timeoutMs,
+        endpoint,
+        requestId
+      );
+    } catch (error) {
+      if (!shouldRetry || !isRetryableFetchError(error, customConfig.signal)) {
+        throw error;
+      }
+      await wait(retryDelayMs);
+      retryDelayMs = Math.min(API_REQUEST_RETRY_MAX_DELAY_MS, Math.max(retryDelayMs * 2, 100));
+      continue;
     }
-    throw error;
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
+
+    if (response.ok) {
+      break;
     }
-    if (removeExternalAbortListener) {
-      removeExternalAbortListener();
+
+    if (!shouldRetry || !isRetryableStatusCode(response.status)) {
+      break;
     }
+
+    await wait(retryDelayMs);
+    retryDelayMs = Math.min(API_REQUEST_RETRY_MAX_DELAY_MS, Math.max(retryDelayMs * 2, 100));
   }
+
+  if (!response) {
+    throw new Error(`API request failed with no response [requestId=${requestId}] - ${endpoint}`);
+  }
+
   const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
 
   if (!response.ok) {
@@ -276,6 +432,10 @@ export interface PurgeBatchOperationResult {
   scopeNote?: string | null;
   requestedSymbols: string[];
   requestedSymbolCount: number;
+  completed?: number;
+  pending?: number;
+  inProgress?: number;
+  progressPct?: number;
   succeeded: number;
   failed: number;
   skipped: number;

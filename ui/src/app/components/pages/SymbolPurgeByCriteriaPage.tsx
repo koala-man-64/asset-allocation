@@ -121,6 +121,10 @@ function extractBatchResult(
 ): {
   symbolResults: PurgeSymbolResultItem[];
   requestedSymbolCount: number;
+  completed: number;
+  pending: number;
+  inProgress: number;
+  progressPct: number;
   succeeded: number;
   failed: number;
   skipped: number;
@@ -130,18 +134,35 @@ function extractBatchResult(
     scope?: string;
     symbolResults?: PurgeSymbolResultItem[];
     requestedSymbolCount?: number;
+    completed?: number;
+    pending?: number;
+    inProgress?: number;
+    progressPct?: number;
     succeeded?: number;
     failed?: number;
     skipped?: number;
     totalDeleted?: number;
   };
   if (!result || result.scope !== 'symbols') return null;
+  const requestedSymbolCount = result.requestedSymbolCount || 0;
+  const succeeded = result.succeeded || 0;
+  const failed = result.failed || 0;
+  const skipped = result.skipped || 0;
+  const completed = result.completed ?? succeeded + failed + skipped;
+  const pending = result.pending ?? Math.max(requestedSymbolCount - completed - (result.inProgress || 0), 0);
+  const inProgress = result.inProgress || 0;
+  const progressPct =
+    result.progressPct ?? (requestedSymbolCount > 0 ? Number(((completed / requestedSymbolCount) * 100).toFixed(2)) : 100);
   return {
     symbolResults: result.symbolResults || [],
-    requestedSymbolCount: result.requestedSymbolCount || 0,
-    succeeded: result.succeeded || 0,
-    failed: result.failed || 0,
-    skipped: result.skipped || 0,
+    requestedSymbolCount,
+    completed,
+    pending,
+    inProgress,
+    progressPct,
+    succeeded,
+    failed,
+    skipped,
     totalDeleted: result.totalDeleted || 0
   };
 }
@@ -179,6 +200,10 @@ export function SymbolPurgeByCriteriaPage() {
   const [symbolExecutionResults, setSymbolExecutionResults] = useState<PurgeSymbolResultItem[]>([]);
   const [completionSummary, setCompletionSummary] = useState<{
     requested: number;
+    completed: number;
+    pending: number;
+    inProgress: number;
+    progressPct: number;
     succeeded: number;
     failed: number;
     skipped: number;
@@ -306,7 +331,28 @@ export function SymbolPurgeByCriteriaPage() {
     isConfirmPhraseValid &&
     !isSubmitting;
 
-  const pollOperation = async (targetOperationId: string): Promise<PurgeOperationResponse> => {
+  const applyOperationProgress = useCallback((operation: PurgeOperationResponse): void => {
+    setOperationStatus(operation.status);
+    setOperationError(operation.status === 'failed' ? (operation.error || null) : null);
+
+    const result = extractBatchResult(operation);
+    if (!result) return;
+
+    setSymbolExecutionResults(result.symbolResults);
+    setCompletionSummary({
+      requested: result.requestedSymbolCount,
+      completed: result.completed,
+      pending: result.pending,
+      inProgress: result.inProgress,
+      progressPct: result.progressPct,
+      succeeded: result.succeeded,
+      failed: result.failed,
+      skipped: result.skipped,
+      totalDeleted: result.totalDeleted
+    });
+  }, []);
+
+  const pollOperation = useCallback(async (targetOperationId: string): Promise<PurgeOperationResponse> => {
     const startedAt = Date.now();
     const timeoutMs = 5 * 60_000;
     let attempt = 0;
@@ -321,13 +367,14 @@ export function SymbolPurgeByCriteriaPage() {
           throw new Error(message || 'Purge did not complete before timeout.');
         }
 
-        const delay = 1000 + Math.min(attempt * 200, 1600);
+        const delay = 700 + Math.min(attempt * 150, 900);
         attempt += 1;
         await sleep(delay);
         continue;
       }
 
       const operation = polledOperation as PurgeOperationResponse;
+      applyOperationProgress(operation);
       if (operation.status === 'succeeded') {
         if (!operation.result) {
           throw new Error('Purge completed without a result payload.');
@@ -349,11 +396,11 @@ export function SymbolPurgeByCriteriaPage() {
         );
       }
 
-      const delay = 1000 + Math.min(attempt * 200, 1600);
+      const delay = 700 + Math.min(attempt * 150, 900);
       attempt += 1;
       await sleep(delay);
     }
-  };
+  }, [applyOperationProgress]);
 
   const runPreview = async () => {
     if (!canPreview) {
@@ -470,23 +517,13 @@ export function SymbolPurgeByCriteriaPage() {
       });
 
       setOperationId(response.operationId);
+      applyOperationProgress(response);
       const finished = response.status === 'succeeded' ? response : await pollOperation(response.operationId);
-      setOperationStatus(finished.status);
-      setOperationError(finished.status === 'failed' ? (finished.error || null) : null);
 
       const result = extractBatchResult(finished);
       if (!result) {
         throw new Error('Purge completed without batch result payload.');
       }
-
-      setSymbolExecutionResults(result.symbolResults);
-      setCompletionSummary({
-        requested: result.requestedSymbolCount,
-        succeeded: result.succeeded,
-        failed: result.failed,
-        skipped: result.skipped,
-        totalDeleted: result.totalDeleted
-      });
 
       if (result.failed > 0 || finished.status === 'failed') {
         toast.error(`Purge completed with ${result.failed} failed symbol(s).`);
@@ -842,7 +879,9 @@ export function SymbolPurgeByCriteriaPage() {
               className={`mt-3 text-xs ${operationStatus === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}
             >
               {operationStatus === 'running'
-                ? 'Purge is running. Polling status updates from /system/purge/{operationId}.'
+                ? completionSummary
+                  ? `Purge running: ${completionSummary.completed}/${completionSummary.requested} completed (${formatNumber(completionSummary.progressPct)}%). Succeeded ${completionSummary.succeeded}, failed ${completionSummary.failed}, in progress ${completionSummary.inProgress}, pending ${completionSummary.pending}.`
+                  : 'Purge is running. Polling status updates from /system/purge/{operationId}.'
                 : operationStatus === 'succeeded'
                   ? `Purge completed successfully.${completionSummary ? ` Deleted ${formatNumber(completionSummary.totalDeleted)}` : ''}`
                   : operationError || 'Purge failed.'}
@@ -850,10 +889,18 @@ export function SymbolPurgeByCriteriaPage() {
           )}
 
           {completionSummary ? (
-            <div className="mt-3 grid gap-3 sm:grid-cols-4">
+            <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Requested</div>
                 <div className="font-black font-mono">{completionSummary.requested}</div>
+              </div>
+              <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Completed</div>
+                <div className="font-black font-mono">{completionSummary.completed}</div>
+              </div>
+              <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">In Progress</div>
+                <div className="font-black font-mono text-amber-600">{completionSummary.inProgress}</div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Succeeded</div>
@@ -864,8 +911,8 @@ export function SymbolPurgeByCriteriaPage() {
                 <div className="font-black font-mono text-destructive">{completionSummary.failed}</div>
               </div>
               <div className="rounded-md border border-border/70 bg-muted/30 p-2 text-sm">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Skipped</div>
-                <div className="font-black font-mono">{completionSummary.skipped}</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Deleted</div>
+                <div className="font-black font-mono">{formatNumber(completionSummary.totalDeleted)}</div>
               </div>
             </div>
           ) : null}

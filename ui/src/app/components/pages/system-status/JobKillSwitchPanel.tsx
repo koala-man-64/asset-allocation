@@ -190,7 +190,6 @@ function KillSwitchControl({
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-mcm-walnut/15 bg-mcm-cream/55 px-4 py-2.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-mcm-walnut">{statusText}</p>
-          <p className="text-xs text-mcm-olive">{helperText}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {isApplying ? <Loader2 className="h-4 w-4 animate-spin text-mcm-walnut/65" /> : null}

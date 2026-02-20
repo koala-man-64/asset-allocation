@@ -622,19 +622,14 @@ export function StatusOverview({
                   <h2 className="text-lg font-black tracking-tighter uppercase text-mcm-walnut">
                     Pipeline Health & Control Matrix
                   </h2>
-                  <p className="text-sm italic text-mcm-olive">
+                  <p className="max-w-[52ch] text-sm italic text-mcm-olive">
                     Layer-by-layer health, data freshness, and operational controls for each domain.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3 self-start xl:justify-end">
+            <div className="flex w-full flex-wrap items-center gap-3 self-start xl:w-auto xl:justify-end">
               <JobKillSwitchInline jobs={managedContainerJobs} />
-              <div
-                className={`${StatusTypos.HEADER} inline-flex items-center whitespace-nowrap rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 text-mcm-olive`}
-              >
-                Domain × Layer
-              </div>
             </div>
           </div>
         </div>

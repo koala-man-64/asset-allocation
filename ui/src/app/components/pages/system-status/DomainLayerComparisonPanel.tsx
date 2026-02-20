@@ -266,13 +266,13 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
               <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
               <div className="min-w-0">
                 <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
-                <CardDescription className="mt-1">
+                <CardDescription className="mt-1 max-w-[52ch] text-sm">
                   Compare symbol counts and date windows layer-to-layer for each domain.
                 </CardDescription>
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 self-start xl:justify-end">
+          <div className="flex w-full flex-wrap items-center gap-2 self-start xl:w-auto xl:justify-end">
             <Button
               variant="outline"
               size="sm"

@@ -93,6 +93,44 @@ function makeBatchRunningOperation(operationId: string): PurgeOperationResponse 
   };
 }
 
+function makeBatchRunningOperationWithProgress(
+  operationId: string,
+  symbols: PurgeCandidateRow[] = makeCandidateRows()
+): PurgeOperationResponse {
+  return {
+    operationId,
+    status: 'running',
+    scope: 'symbols',
+    createdAt: TIMESTAMP,
+    updatedAt: TIMESTAMP,
+    startedAt: TIMESTAMP,
+    completedAt: null,
+    result: {
+      scope: 'symbols',
+      dryRun: false,
+      scopeNote: 'Close < 1 / 2 matched / selected 2',
+      requestedSymbols: symbols.map((row) => row.symbol),
+      requestedSymbolCount: symbols.length,
+      completed: 1,
+      pending: 0,
+      inProgress: 1,
+      progressPct: 50,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      totalDeleted: 3,
+      symbolResults: [
+        {
+          symbol: symbols[0]?.symbol || 'AAA',
+          status: 'succeeded',
+          deleted: 3
+        }
+      ]
+    },
+    error: null
+  };
+}
+
 function makeBatchSucceededOperation(
   operationId: string,
   symbols: PurgeCandidateRow[] = makeCandidateRows()
@@ -317,6 +355,28 @@ describe('SymbolPurgeByCriteriaPage', () => {
     expect(await screen.findByText('Purge completed successfully. Deleted 5')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /symbol execution status/i })).toBeInTheDocument();
     expect(screen.getAllByText('SUCCEEDED').length).toBeGreaterThan(0);
+  });
+
+  it('renders live progress while symbols are being purged', async () => {
+    const rows = makeCandidateRows();
+    vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse({}, rows));
+    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-live'));
+    vi.mocked(DataService.getPurgeOperation)
+      .mockResolvedValueOnce(makeBatchRunningOperationWithProgress('op-live', rows))
+      .mockResolvedValueOnce(makeBatchSucceededOperation('op-live', rows));
+
+    renderWithProviders(<SymbolPurgeByCriteriaPage />);
+    await waitForColumns();
+    await previewCandidates();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /i understand this is destructive/i }));
+    fireEvent.change(screen.getByPlaceholderText('PURGE'), { target: { value: 'PURGE' } });
+    fireEvent.click(screen.getByRole('button', { name: /run purge for selected symbols/i }));
+
+    expect(await screen.findByText(/Purge running: 1\/2 completed/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /symbol execution status/i })).toBeInTheDocument();
+
+    expect(await screen.findByText('Purge completed successfully. Deleted 5')).toBeInTheDocument();
   });
 
   it('prompts to retrieve columns when cache is missing and refreshes on demand', async () => {

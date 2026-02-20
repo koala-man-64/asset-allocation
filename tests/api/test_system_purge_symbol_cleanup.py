@@ -169,7 +169,7 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
     assert counts == Counter(
         {
             ("bronze", "market"): 1,
-            ("bronze", "finance"): 4,
+            ("bronze", "finance"): 8,
             ("bronze", "earnings"): 1,
             ("bronze", "price-target"): 1,
             ("silver", "market"): 1,
@@ -183,8 +183,8 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
         }
     )
 
-    assert result["totalDeleted"] == 18
-    assert len(blob_paths) == 7
+    assert result["totalDeleted"] == 22
+    assert len(blob_paths) == 11
     assert len(prefix_paths) == 11
 
     bronze_finance_paths = sorted(
@@ -198,6 +198,10 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
             "finance-data/Income Statement/AAPL_quarterly_financials.json",
             "finance-data/Cash Flow/AAPL_quarterly_cash-flow.json",
             "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
+            "finance-data/balance_sheet/AAPL_quarterly_balance-sheet.json",
+            "finance-data/income_statement/AAPL_quarterly_financials.json",
+            "finance-data/cash_flow/AAPL_quarterly_cash-flow.json",
+            "finance-data/valuation/AAPL_quarterly_valuation_measures.json",
         ]
     )
 
@@ -219,6 +223,7 @@ def test_execute_purge_symbols_operation_tracks_partial_failures(monkeypatch) ->
         update_calls.append({"operationId": operation_id, "patch": patch})
         return True
 
+    monkeypatch.setenv("PURGE_SYMBOL_MAX_WORKERS", "2")
     monkeypatch.setattr(system, "_run_purge_symbol_operation", fake_run_purge_symbol_operation)
     monkeypatch.setattr(system, "_update_purge_operation", fake_update_purge_operation)
 
@@ -229,15 +234,23 @@ def test_execute_purge_symbols_operation_tracks_partial_failures(monkeypatch) ->
         scope_note="batch",
     )
 
-    assert run_calls == ["AAA", "BBB"]
-    assert len(update_calls) == 1
-    patch = update_calls[0]["patch"]
-    assert patch["status"] == "failed"
-    assert patch["error"] == "One or more symbols failed."
-    assert patch["result"]["totalDeleted"] == 3
-    assert patch["result"]["succeeded"] == 1
-    assert patch["result"]["failed"] == 1
-    assert "byDatePurges" not in patch["result"]
+    assert sorted(run_calls) == ["AAA", "BBB"]
+    assert len(update_calls) >= 3
+
+    running_patches = [entry["patch"] for entry in update_calls if entry["patch"].get("status") == "running"]
+    assert running_patches
+    assert any(int(patch["result"]["completed"]) >= 1 for patch in running_patches)
+
+    final_patch = update_calls[-1]["patch"]
+    assert final_patch["status"] == "failed"
+    assert final_patch["error"] == "One or more symbols failed."
+    assert final_patch["result"]["totalDeleted"] == 3
+    assert final_patch["result"]["succeeded"] == 1
+    assert final_patch["result"]["failed"] == 1
+    assert final_patch["result"]["completed"] == 2
+    assert final_patch["result"]["pending"] == 0
+    assert final_patch["result"]["inProgress"] == 0
+    assert "byDatePurges" not in final_patch["result"]
 
 
 def test_execute_purge_rule_runs_symbol_purges_without_extra_cleanup(monkeypatch) -> None:
