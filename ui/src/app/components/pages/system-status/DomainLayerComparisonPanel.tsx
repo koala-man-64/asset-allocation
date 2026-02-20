@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, GitCompareArrows, Info, Layers, Loader2, RefreshCw } from 'lucide-react';
-import { Badge } from '@/app/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { GitCompareArrows, Info, Loader2, RefreshCw } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
 import {
   Table,
@@ -23,6 +22,11 @@ import { formatSystemStatusText } from './systemStatusText';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
+const NO_CACHED_SNAPSHOT_TEXT = 'no cached domain metadata snapshot found';
+const MATRIX_HEAD_CLASS =
+  'min-w-[190px] border-b border-mcm-walnut/25 bg-mcm-cream/55';
+const MATRIX_BODY_CELL_CLASS =
+  'align-top border-0 border-b border-mcm-walnut/20 first:rounded-none last:rounded-none first:border-l-0 last:border-r-0';
 
 type LayerColumn = {
   key: LayerKey;
@@ -91,6 +95,11 @@ function dateRangeUnavailableReason(metadata: DomainMetadata | undefined): strin
   return 'Date range is not available for this metadata source.';
 }
 
+function isMissingCachedMetadataError(error: unknown): boolean {
+  const message = formatSystemStatusText(error).toLowerCase();
+  return message.includes(NO_CACHED_SNAPSHOT_TEXT);
+}
+
 function compareSymbols(current: DomainMetadata, previous: DomainMetadata): {
   text: string;
   className: string;
@@ -133,7 +142,7 @@ function compareDateRanges(current: DomainMetadata, previous: DomainMetadata): {
 
 export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLayer[] }) {
   const queryClient = useQueryClient();
-  const [isManualRefreshRunning, setIsManualRefreshRunning] = useState(false);
+  const [refreshingCells, setRefreshingCells] = useState<Set<string>>(new Set());
 
   const layersByKey = useMemo(() => {
     const index = new Map<LayerKey, DataLayer>();
@@ -197,7 +206,8 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
   const metadataQueries = useQueries({
     queries: queryPairs.map((pair) => ({
       queryKey: queryKeys.domainMetadata(pair.layerKey, pair.domainKey),
-      queryFn: () => DataService.getDomainMetadata(pair.layerKey, pair.domainKey),
+      queryFn: () => DataService.getDomainMetadata(pair.layerKey, pair.domainKey, { cacheOnly: true }),
+      enabled: true,
       staleTime: Number.POSITIVE_INFINITY,
       refetchInterval: false,
       refetchOnWindowFocus: false,
@@ -217,8 +227,10 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       const key = makeCellKey(pair.layerKey, pair.domainKey);
       if (query.data) metadata.set(key, query.data);
       if (query.error) {
-        const message = formatSystemStatusText(query.error);
-        errors.set(key, message);
+        if (!isMissingCachedMetadataError(query.error)) {
+          const message = formatSystemStatusText(query.error);
+          errors.set(key, message);
+        }
       }
       if (query.isLoading || query.isFetching) pending.add(key);
     });
@@ -226,88 +238,50 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     return { metadataByCell: metadata, errorByCell: errors, pendingByCell: pending };
   }, [metadataQueries, queryPairs]);
 
-  const totalCells = queryPairs.length;
-  const loadedCells = metadataByCell.size;
-  const failedCells = errorByCell.size;
-  const pendingCells = pendingByCell.size;
-  const isRefreshDisabled = isManualRefreshRunning || pendingCells > 0 || queryPairs.length === 0;
+  const handleCellRefresh = useCallback(
+    async (layerKey: LayerKey, domainKey: string) => {
+      const cellKey = makeCellKey(layerKey, domainKey);
+      if (refreshingCells.has(cellKey)) return;
 
-  const handleManualRefresh = async () => {
-    if (isRefreshDisabled) return;
-    setIsManualRefreshRunning(true);
-    try {
-      const results = await Promise.allSettled(
-        queryPairs.map(async (pair) => {
-          const metadata = await DataService.getDomainMetadata(pair.layerKey, pair.domainKey, {
-            refresh: true
-          });
-          queryClient.setQueryData(queryKeys.domainMetadata(pair.layerKey, pair.domainKey), metadata);
-        })
-      );
+      setRefreshingCells((previous) => {
+        const next = new Set(previous);
+        next.add(cellKey);
+        return next;
+      });
 
-      const failed = results.filter((result) => result.status === 'rejected').length;
-      if (failed > 0) {
-        console.error('[DomainLayerComparisonPanel] manual refresh failed', {
-          failed,
-          total: queryPairs.length
+      try {
+        const metadata = await DataService.getDomainMetadata(layerKey, domainKey, { refresh: true });
+        queryClient.setQueryData(queryKeys.domainMetadata(layerKey, domainKey), metadata);
+      } catch (error) {
+        console.error('[DomainLayerComparisonPanel] cell refresh failed', {
+          layerKey,
+          domainKey,
+          error: formatSystemStatusText(error)
+        });
+      } finally {
+        setRefreshingCells((previous) => {
+          if (!previous.has(cellKey)) return previous;
+          const next = new Set(previous);
+          next.delete(cellKey);
+          return next;
         });
       }
-    } finally {
-      setIsManualRefreshRunning(false);
-    }
-  };
+    },
+    [queryClient, refreshingCells]
+  );
 
   return (
     <Card className="h-full">
       <CardHeader className="gap-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-start gap-2">
-              <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
-              <div className="min-w-0">
-                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
-                <CardDescription className="mt-1 max-w-[52ch] text-sm">
-                  Compare symbol counts and date windows layer-to-layer for each domain.
-                </CardDescription>
-              </div>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-start gap-2">
+            <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+              <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Compare symbol counts and date windows layer-to-layer for each domain.
+              </p>
             </div>
-          </div>
-          <div className="flex w-full flex-wrap items-center gap-2 self-start xl:w-auto xl:justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-2 px-3 text-xs"
-              onClick={() => void handleManualRefresh()}
-              disabled={isRefreshDisabled}
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${isManualRefreshRunning ? 'animate-spin' : ''}`} />
-              Refresh Lineage
-            </Button>
-            <Badge variant="outline" className="inline-flex items-center gap-1">
-              <Layers className="h-3.5 w-3.5" />
-              {layerColumns.length} layer{layerColumns.length === 1 ? '' : 's'}
-            </Badge>
-            <Badge variant="outline" className={StatusTypos.MONO}>
-              {domainRows.length} domain{domainRows.length === 1 ? '' : 's'}
-            </Badge>
-            <Badge variant="outline" className={StatusTypos.MONO}>
-              {loadedCells}/{totalCells || 0} cells
-            </Badge>
-            {pendingCells > 0 ? (
-              <Badge variant="outline" className="inline-flex items-center gap-1">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Updating
-              </Badge>
-            ) : null}
-            {failedCells > 0 ? (
-              <Badge
-                variant="outline"
-                className="inline-flex items-center gap-1 border-destructive/40 text-destructive"
-              >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {failedCells} unavailable
-              </Badge>
-            ) : null}
           </div>
         </div>
       </CardHeader>
@@ -322,17 +296,19 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
             No domains found to compare.
           </div>
         ) : (
-          <div className="rounded-[1.2rem] border-2 border-mcm-walnut/20 bg-mcm-cream/30 overflow-hidden">
+          <div className="rounded-[1.2rem] border border-mcm-walnut/20 bg-mcm-cream/30 overflow-hidden">
             <div className="overflow-x-auto">
-              <Table className="min-w-[960px]">
+              <Table className="min-w-[960px] border-collapse border-spacing-y-0">
                 <caption className="sr-only">
                   Layer-by-layer domain comparison of symbol count and date ranges.
                 </caption>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[180px]">Domain</TableHead>
+                    <TableHead className="w-[180px] border-b border-mcm-walnut/25 bg-mcm-cream/55">
+                      Domain
+                    </TableHead>
                     {layerColumns.map((layer) => (
-                      <TableHead key={layer.key} className="min-w-[190px]">
+                      <TableHead key={layer.key} className={MATRIX_HEAD_CLASS}>
                         <div className="flex flex-col gap-0.5">
                           <span>{layer.label}</span>
                           <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
@@ -348,7 +324,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                     const domainsForRow = domainsByLayer.get(row.key);
                     return (
                       <TableRow key={row.key} className="even:[&>td]:bg-mcm-cream/20">
-                        <TableCell className="align-top">
+                        <TableCell className={MATRIX_BODY_CELL_CLASS}>
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold text-mcm-walnut">{row.label}</span>
                             <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
@@ -362,7 +338,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                             return (
                               <TableCell
                                 key={`${row.key}-${layerColumn.key}`}
-                                className={`${StatusTypos.MONO} align-top text-[11px] text-mcm-walnut/45`}
+                                className={`${StatusTypos.MONO} ${MATRIX_BODY_CELL_CLASS} text-[11px] text-mcm-walnut/45`}
                               >
                                 Not configured
                               </TableCell>
@@ -373,27 +349,62 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                           const metadata = metadataByCell.get(key);
                           const error = errorByCell.get(key);
                           const isPending = pendingByCell.has(key);
+                          const isCellRefreshing = refreshingCells.has(key);
+                          const isCellBusy = isCellRefreshing || isPending;
+                          const refreshButton = (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
+                                    onClick={() => void handleCellRefresh(layerColumn.key, row.key)}
+                                  disabled={isCellBusy}
+                                    aria-label={`Refresh ${layerColumn.label} ${row.label} lineage`}
+                                  >
+                                  {isCellBusy ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                Refresh {layerColumn.label} • {row.label}
+                              </TooltipContent>
+                            </Tooltip>
+                          );
 
                           if (!metadata && isPending) {
                             return (
                               <TableCell
                                 key={`${row.key}-${layerColumn.key}`}
-                                className={`${StatusTypos.MONO} align-top text-[11px] text-mcm-walnut/60`}
+                                className={`${StatusTypos.MONO} ${MATRIX_BODY_CELL_CLASS} text-[11px] text-mcm-walnut/60`}
                               >
-                                <span className="inline-flex items-center gap-1.5">
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  Loading metadata
-                                </span>
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Loading metadata
+                                  </span>
+                                  {refreshButton}
+                                </div>
                               </TableCell>
                             );
                           }
 
                           if (!metadata && error) {
                             return (
-                              <TableCell key={`${row.key}-${layerColumn.key}`} className="align-top">
+                              <TableCell
+                                key={`${row.key}-${layerColumn.key}`}
+                                className={MATRIX_BODY_CELL_CLASS}
+                              >
                                 <div className="space-y-1.5">
-                                  <div className={`${StatusTypos.MONO} text-[11px] text-destructive`}>
-                                    Metadata unavailable
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className={`${StatusTypos.MONO} text-[11px] text-destructive`}>
+                                      Metadata unavailable
+                                    </div>
+                                    {refreshButton}
                                   </div>
                                   <div
                                     className={`${StatusTypos.MONO} text-[10px] text-destructive/80 break-words`}
@@ -409,9 +420,12 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                             return (
                               <TableCell
                                 key={`${row.key}-${layerColumn.key}`}
-                                className={`${StatusTypos.MONO} align-top text-[11px] text-mcm-walnut/55`}
+                                className={`${StatusTypos.MONO} ${MATRIX_BODY_CELL_CLASS} text-[11px] text-mcm-walnut/55`}
                               >
-                                Awaiting metadata
+                                <div className="flex items-start justify-between gap-2">
+                                  <span>Awaiting metadata</span>
+                                  {refreshButton}
+                                </div>
                               </TableCell>
                             );
                           }
@@ -437,13 +451,19 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                           const dateRangeReason = dateRangeUnavailableReason(metadata);
 
                           return (
-                            <TableCell key={`${row.key}-${layerColumn.key}`} className="align-top">
+                            <TableCell
+                              key={`${row.key}-${layerColumn.key}`}
+                              className={MATRIX_BODY_CELL_CLASS}
+                            >
                               <div className="space-y-1.5">
-                                <div className={`${StatusTypos.MONO} text-base font-black text-mcm-walnut`}>
-                                  {formatInt(metadata.symbolCount)}
-                                  <span className="ml-1 text-[10px] uppercase tracking-widest text-mcm-walnut/55">
-                                    symbols
-                                  </span>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className={`${StatusTypos.MONO} text-base font-black text-mcm-walnut`}>
+                                    {formatInt(metadata.symbolCount)}
+                                    <span className="ml-1 text-[10px] uppercase tracking-widest text-mcm-walnut/55">
+                                      symbols
+                                    </span>
+                                  </div>
+                                  {refreshButton}
                                 </div>
                                 <div className={`${StatusTypos.MONO} text-[11px] font-semibold text-mcm-walnut/80`}>
                                   {dateRangeReason ? (

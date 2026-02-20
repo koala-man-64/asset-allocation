@@ -111,7 +111,7 @@ export const DataService = {
   getDomainMetadata(
     layer: 'bronze' | 'silver' | 'gold' | 'platinum',
     domain: string,
-    params: { refresh?: boolean } = {}
+    params: { refresh?: boolean; cacheOnly?: boolean } = {}
   ): Promise<DomainMetadata> {
     return apiService.getDomainMetadata(layer, domain, params);
   },

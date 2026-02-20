@@ -150,6 +150,8 @@ export interface DomainMetadata {
   container: string;
   type: 'blob' | 'delta';
   computedAt: string;
+  cachedAt?: string | null;
+  cacheSource?: 'snapshot' | 'live-refresh' | null;
   symbolCount?: number | null;
   blacklistedSymbolCount?: number | null;
   dateRange?: DomainDateRange | null;

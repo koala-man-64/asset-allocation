@@ -618,11 +618,11 @@ export function StatusOverview({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-start gap-2">
                 <ScrollText className="mt-0.5 h-4 w-4 shrink-0 text-mcm-walnut/70" />
-                <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
                   <h2 className="text-lg font-black tracking-tighter uppercase text-mcm-walnut">
                     Pipeline Health & Control Matrix
                   </h2>
-                  <p className="max-w-[52ch] text-sm italic text-mcm-olive">
+                  <p className="text-sm italic text-mcm-olive">
                     Layer-by-layer health, data freshness, and operational controls for each domain.
                   </p>
                 </div>

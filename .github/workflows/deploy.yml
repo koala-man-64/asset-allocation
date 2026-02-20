@@ -1933,29 +1933,6 @@ jobs:
               --yaml "$tmp"
           fi
       
-      - name: Delete Deprecated By-Date Jobs
-        run: |
-          set -euo pipefail
-
-          delete_job_if_exists() {
-            local job_name="$1"
-            if az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" > /dev/null 2>&1; then
-              echo "Deleting deprecated job $job_name..."
-              az containerapp job delete --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --yes
-            else
-              echo "Deprecated job $job_name not found; skipping."
-            fi
-          }
-
-          delete_job_if_exists "silver-market-by-date-job"
-          delete_job_if_exists "silver-finance-by-date-job"
-          delete_job_if_exists "silver-price-target-by-date-job"
-          delete_job_if_exists "silver-earnings-by-date-job"
-          delete_job_if_exists "gold-market-by-date-job"
-          delete_job_if_exists "gold-finance-by-date-job"
-          delete_job_if_exists "gold-price-target-by-date-job"
-          delete_job_if_exists "gold-earnings-by-date-job"
-
       - name: Verify Updated Images
         run: |
           set -euo pipefail
