@@ -17,6 +17,9 @@ _DEFAULT_API_WARMUP_MAX_ATTEMPTS = 3
 _DEFAULT_API_WARMUP_BASE_DELAY_SECONDS = 1.0
 _DEFAULT_API_WARMUP_MAX_DELAY_SECONDS = 8.0
 _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS = 5.0
+_DEFAULT_API_READINESS_ENABLED = True
+_DEFAULT_API_READINESS_MAX_ATTEMPTS = 6
+_DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 
@@ -102,6 +105,9 @@ class AlphaVantageGatewayClientConfig:
     warmup_base_delay_seconds: float = _DEFAULT_API_WARMUP_BASE_DELAY_SECONDS
     warmup_max_delay_seconds: float = _DEFAULT_API_WARMUP_MAX_DELAY_SECONDS
     warmup_probe_timeout_seconds: float = _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS
+    readiness_enabled: bool = _DEFAULT_API_READINESS_ENABLED
+    readiness_max_attempts: int = _DEFAULT_API_READINESS_MAX_ATTEMPTS
+    readiness_sleep_seconds: float = _DEFAULT_API_READINESS_SLEEP_SECONDS
 
 
 class AlphaVantageGatewayClient:
@@ -122,6 +128,10 @@ class AlphaVantageGatewayClient:
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(config.timeout_seconds), trust_env=False)
         self._warmup_lock = threading.Lock()
         self._warmup_attempted = False
+        self._warmup_succeeded = not config.warmup_enabled
+        self._readiness_lock = threading.Lock()
+        self._readiness_attempted = False
+        self._readiness_succeeded = not config.readiness_enabled
 
     @staticmethod
     def from_env() -> "AlphaVantageGatewayClient":
@@ -166,6 +176,15 @@ class AlphaVantageGatewayClient:
             0.1,
             _env_float("ASSET_ALLOCATION_API_WARMUP_PROBE_TIMEOUT_SECONDS", _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS),
         )
+        readiness_enabled = _env_bool("ASSET_ALLOCATION_API_READINESS_ENABLED", _DEFAULT_API_READINESS_ENABLED)
+        readiness_max_attempts = max(
+            1,
+            _env_int("ASSET_ALLOCATION_API_READINESS_ATTEMPTS", _DEFAULT_API_READINESS_MAX_ATTEMPTS),
+        )
+        readiness_sleep_seconds = max(
+            0.0,
+            _env_float("ASSET_ALLOCATION_API_READINESS_SLEEP_SECONDS", _DEFAULT_API_READINESS_SLEEP_SECONDS),
+        )
 
         return AlphaVantageGatewayClient(
             AlphaVantageGatewayClientConfig(
@@ -178,6 +197,9 @@ class AlphaVantageGatewayClient:
                 warmup_base_delay_seconds=warmup_base_delay_seconds,
                 warmup_max_delay_seconds=warmup_max_delay_seconds,
                 warmup_probe_timeout_seconds=warmup_probe_timeout_seconds,
+                readiness_enabled=readiness_enabled,
+                readiness_max_attempts=readiness_max_attempts,
+                readiness_sleep_seconds=readiness_sleep_seconds,
             )
         )
 
@@ -218,13 +240,19 @@ class AlphaVantageGatewayClient:
             return payload.strip()
         return response.reason_phrase
 
-    def _warm_up_gateway(self) -> None:
-        if not self.config.warmup_enabled or self._warmup_attempted:
-            return
+    def _warm_up_gateway(self) -> bool:
+        if not self.config.warmup_enabled:
+            return True
+        if self._warmup_attempted:
+            return self._warmup_succeeded
 
         with self._warmup_lock:
-            if not self.config.warmup_enabled or self._warmup_attempted:
-                return
+            if not self.config.warmup_enabled:
+                self._warmup_succeeded = True
+                return True
+            if self._warmup_attempted:
+                return self._warmup_succeeded
+            warmup_succeeded = False
             try:
                 delay_seconds = max(0.0, float(self.config.warmup_base_delay_seconds))
                 max_delay_seconds = max(delay_seconds, float(self.config.warmup_max_delay_seconds))
@@ -238,13 +266,14 @@ class AlphaVantageGatewayClient:
                     try:
                         resp = self._http.get(probe_url, headers=self._build_headers(), timeout=warmup_timeout)
                         if resp.status_code < 400:
+                            warmup_succeeded = True
                             if attempt > 1:
                                 logger.info(
                                     "Alpha Vantage gateway warm-up recovered after %s attempts (url=%s).",
                                     attempt,
                                     probe_url,
                                 )
-                            return
+                            return True
 
                         if resp.status_code not in _RETRYABLE_WARMUP_STATUS_CODES or not should_retry:
                             logger.warning(
@@ -254,7 +283,7 @@ class AlphaVantageGatewayClient:
                                 attempts,
                                 probe_url,
                             )
-                            return
+                            return False
                         logger.info(
                             "Alpha Vantage gateway warm-up probe retrying after status=%s (attempt=%s/%s, sleep=%.1fs).",
                             resp.status_code,
@@ -270,7 +299,7 @@ class AlphaVantageGatewayClient:
                                 probe_url,
                                 exc,
                             )
-                            return
+                            return False
                         logger.info(
                             "Alpha Vantage gateway warm-up timeout (attempt=%s/%s, sleep=%.1fs): %s",
                             attempt,
@@ -287,7 +316,7 @@ class AlphaVantageGatewayClient:
                                 type(exc).__name__,
                                 exc,
                             )
-                            return
+                            return False
                         logger.info(
                             "Alpha Vantage gateway warm-up transient failure (attempt=%s/%s, sleep=%.1fs): %s: %s",
                             attempt,
@@ -300,11 +329,72 @@ class AlphaVantageGatewayClient:
                     if delay_seconds > 0.0:
                         time.sleep(delay_seconds)
                     delay_seconds = min(max_delay_seconds, max(delay_seconds * 2.0, 0.1))
+                return warmup_succeeded
             finally:
                 self._warmup_attempted = True
+                self._warmup_succeeded = warmup_succeeded
+
+    def warm_up_gateway(self, *, force: bool = False) -> bool:
+        if force:
+            with self._warmup_lock:
+                self._warmup_attempted = False
+                self._warmup_succeeded = not self.config.warmup_enabled
+        return self._warm_up_gateway()
+
+    def _ensure_gateway_ready(self) -> bool:
+        if not self.config.readiness_enabled:
+            return self._warm_up_gateway()
+        if self._readiness_attempted:
+            return self._readiness_succeeded
+
+        with self._readiness_lock:
+            if self._readiness_attempted:
+                return self._readiness_succeeded
+
+            attempts = max(1, int(self.config.readiness_max_attempts))
+            pause = max(0.0, float(self.config.readiness_sleep_seconds))
+            ready = False
+
+            for attempt in range(1, attempts + 1):
+                ready = self.warm_up_gateway(force=attempt > 1)
+                if ready:
+                    if attempt > 1:
+                        logger.info(
+                            "Alpha Vantage gateway readiness recovered after %s attempts (url=%s).",
+                            attempt,
+                            f"{self.config.base_url}{_API_WARMUP_PROBE_PATH}",
+                        )
+                    break
+
+                if attempt >= attempts:
+                    logger.warning(
+                        "Alpha Vantage gateway readiness failed after %s attempts (url=%s).",
+                        attempts,
+                        f"{self.config.base_url}{_API_WARMUP_PROBE_PATH}",
+                    )
+                    break
+
+                logger.info(
+                    "Alpha Vantage gateway readiness retrying (attempt=%s/%s, sleep=%.1fs).",
+                    attempt,
+                    attempts,
+                    pause,
+                )
+                if pause > 0.0:
+                    time.sleep(pause)
+
+            self._readiness_attempted = True
+            self._readiness_succeeded = ready
+            return ready
 
     def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> httpx.Response:
-        self._warm_up_gateway()
+        if not self._ensure_gateway_ready():
+            raise AlphaVantageGatewayUnavailableError(
+                "API gateway readiness check failed.",
+                status_code=503,
+                detail="Gateway health probe did not become ready.",
+                payload={"path": path, "probe_path": _API_WARMUP_PROBE_PATH},
+            )
         url = f"{self.config.base_url}{path}"
         try:
             resp = self._http.get(url, params=params or {}, headers=self._build_headers())

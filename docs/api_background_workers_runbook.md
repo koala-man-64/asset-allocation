@@ -2,50 +2,22 @@
 
 ## Scope
 
-This runbook covers API lifespan background workers started from `api/service/app.py`:
+The API does not run periodic background refresh workers.
 
-- `runtime_config_refresh`
-- `periodic_purge_rules`
+## Current Behavior
 
-## Environment Contract
-
-- `BACKGROUND_WORKERS_ENABLED`
-  - Global gate for non-essential background workers.
-  - Default behavior:
-    - Test mode (`TEST_MODE=true` or pytest context): disabled
-    - Non-test mode: enabled
-  - Explicit values:
-    - truthy (`1,true,yes,on`): enabled
-    - falsey (`0,false,no,off`): disabled
-- `PURGE_RULES_ENABLED`
-  - Per-worker gate for `periodic_purge_rules`.
-  - Default: enabled.
-- `POSTGRES_DSN`
-  - Must be set for purge/runtime config workers to have a data source.
-
-## Lifecycle Behavior
-
-Shutdown uses a cancellation-safe helper:
-
-1. Set worker stop event.
-2. Wait for graceful exit (bounded timeout).
-3. Cancel task only if timeout is exceeded.
-4. Suppress `asyncio.CancelledError` so app teardown does not fail.
+- Runtime config and debug symbols are applied once at API startup.
+- Purge rules run only when explicitly triggered via API endpoints (manual operations).
+- UI-driven data updates are manual refresh actions; no automatic polling is required.
 
 ## Operational Signals
 
-The API emits worker lifecycle logs:
-
-- `Background worker gate resolved: enabled=... test_env=...`
-- `Background task started: ...`
-- `Background task '...' stopped gracefully.`
-- `Background task '...' cancelled after timeout.`
+- You should no longer see repeating lifecycle logs for:
+  - `runtime_config_refresh`
+  - `periodic_purge_rules`
+- If Postgres is unavailable at startup, a one-time startup warning may still appear.
 
 ## Test Guidance
 
-- Test harness defaults:
-  - `BACKGROUND_WORKERS_ENABLED=false`
-  - `PURGE_RULES_ENABLED=false`
-  - inherited `POSTGRES_DSN` removed
-- For explicit worker tests, override env vars inside the test via `monkeypatch`.
-
+- Existing lifespan tests should focus on startup/shutdown stability and manual endpoints.
+- Keep `POSTGRES_DSN` unset in tests unless the scenario explicitly requires DB integration.

@@ -100,7 +100,6 @@ These are intentionally mutable and many are allowlisted in `core/runtime_config
 - `LOG_LEVEL`
 - `MASSIVE_TIMEOUT_SECONDS`
 - `MASSIVE_TICKERS_PAGE_LIMIT`
-- `RUNTIME_CONFIG_REFRESH_SECONDS`
 - `SILVER_LATEST_ONLY`
 - `SILVER_MARKET_LATEST_ONLY`
 - `SILVER_FINANCE_LATEST_ONLY`

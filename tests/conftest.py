@@ -17,7 +17,6 @@ os.environ["TEST_MODE"] = "true"
 os.environ.pop("POSTGRES_DSN", None)
 os.environ.pop("MARKET_BACKFILL_START_DATE", None)
 os.environ.pop("MARKET_BACKFILL_END_DATE", None)
-os.environ["PURGE_RULES_ENABLED"] = "false"
 os.environ["BACKGROUND_WORKERS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "10")
 os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")

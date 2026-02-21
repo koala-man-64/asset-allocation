@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from core import delta_core
-from monitoring.domain_metadata import collect_delta_table_metadata
+from monitoring.domain_metadata import (
+    _count_finance_symbols_from_listing,
+    collect_delta_table_metadata,
+    collect_domain_metadata,
+)
 from deltalake.exceptions import TableNotFoundError
 
 
@@ -262,4 +266,85 @@ def test_collect_delta_table_metadata_handles_no_files_in_log_segment(monkeypatc
     assert warnings == [
         "Delta table not readable at market-data/AAPL; no commit files found in _delta_log yet."
     ]
+
+
+def test_count_finance_symbols_from_listing_dedupes_and_tracks_subfolders() -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int = 1) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "finance-data/"
+            return [
+                _Blob("finance-data/balance_sheet/AAPL_quarterly_balance-sheet/_delta_log/00000000000000000000.json"),
+                _Blob("finance-data/income_statement/AAPL_quarterly_financials/_delta_log/00000000000000000000.json"),
+                _Blob("finance-data/cash_flow/MSFT_quarterly_cash-flow/_delta_log/00000000000000000000.json"),
+                _Blob("finance-data/valuation/MSFT_quarterly_valuation_measures/_delta_log/00000000000000000000.json"),
+                _Blob("finance-data/Balance Sheet/NVDA_quarterly_balance-sheet.json"),
+                _Blob("finance-data/balance_sheet/not-a-table/_delta_log/00000000000000000000.json"),
+            ]
+
+    class _Client:
+        container_name = "test-container"
+        container_client = _ContainerClient()
+
+    symbol_count, subfolder_counts, truncated = _count_finance_symbols_from_listing(
+        _Client(),
+        prefix="finance-data/",
+        max_scanned_blobs=200_000,
+    )
+
+    assert symbol_count == 3
+    assert subfolder_counts == {
+        "balance_sheet": 2,
+        "income_statement": 1,
+        "cash_flow": 1,
+        "valuation": 1,
+    }
+    assert truncated is False
+
+
+def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "finance-data/"
+            return [
+                _Blob("finance-data/balance_sheet/AAPL_quarterly_balance-sheet/_delta_log/00000000000000000000.json", 10),
+                _Blob("finance-data/income_statement/AAPL_quarterly_financials/_delta_log/00000000000000000000.json", 11),
+                _Blob("finance-data/cash_flow/MSFT_quarterly_cash-flow/_delta_log/00000000000000000000.json", 12),
+                _Blob("finance-data/valuation/MSFT_quarterly_valuation_measures/_delta_log/00000000000000000000.json", 13),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            raise AssertionError("download_data should not be called for silver symbol counting.")
+
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = collect_domain_metadata(layer="silver", domain="finance")
+
+    assert payload["layer"] == "silver"
+    assert payload["domain"] == "finance"
+    assert payload["type"] == "blob"
+    assert payload["symbolCount"] == 2
+    assert payload["financeSubfolderSymbolCounts"] == {
+        "balance_sheet": 1,
+        "income_statement": 1,
+        "cash_flow": 1,
+        "valuation": 1,
+    }
 

@@ -209,7 +209,6 @@ $Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OID
 $Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Optional: UI redirect URI.")
 $Config += "UI_API_BASE_URL=" + (Prompt-Var "UI_API_BASE_URL" "" "Optional: base URL where the UI reaches this API.")
 $Config += "UI_DIST_DIR=" + (Prompt-Var "UI_DIST_DIR" "" "Optional: local path to UI dist for serving static UI.")
-$Config += "RUNTIME_CONFIG_REFRESH_SECONDS=" + (Prompt-Var "RUNTIME_CONFIG_REFRESH_SECONDS" "60" "API only: poll Postgres for runtime-config/debug-symbol changes (min 5s).")
 
 # -------------------------------------------------------------------------
 # System Health Monitoring (FastAPI: GET /api/system/health)

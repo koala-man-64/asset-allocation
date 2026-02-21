@@ -27,8 +27,8 @@ properties:
       imageType: ContainerImage
       name: asset-allocation-ui
       resources:
-        cpu: 2.0
-        memory: 4Gi
+        cpu: 1.0
+        memory: 2Gi
       probes:
       - type: Liveness
         httpGet:
@@ -45,7 +45,7 @@ properties:
         initialDelaySeconds: 10
         periodSeconds: 10
         failureThreshold: 3
-        timeoutSeconds: 5
+        timeoutSeconds: [ ]
       - type: Startup
         httpGet:
           path: /

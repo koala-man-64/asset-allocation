@@ -155,11 +155,6 @@ def create_app() -> FastAPI:
         app.state.alpha_vantage_gateway = AlphaVantageGateway()
         app.state.massive_gateway = MassiveGateway()
 
-        stop_refresh = asyncio.Event()
-        stop_purge_rules = asyncio.Event()
-        refresh_task: asyncio.Task[None] | None = None
-        purge_rules_task: asyncio.Task[None] | None = None
-
         workers_enabled = _background_workers_enabled()
         logger.info(
             "Background worker gate resolved: enabled=%s test_env=%s",
@@ -238,86 +233,8 @@ def create_app() -> FastAPI:
 
                     _apply_and_reconcile()
 
-                    def _get_refresh_seconds() -> float:
-                        raw = os.environ.get("RUNTIME_CONFIG_REFRESH_SECONDS", "60")
-                        try:
-                            seconds = float(str(raw).strip() or "60")
-                        except Exception:
-                            return 60.0
-                        return seconds if seconds >= 5 else 5.0
-
-                    async def _periodic_refresh() -> None:
-                        while not stop_refresh.is_set():
-                            try:
-                                await asyncio.wait_for(stop_refresh.wait(), timeout=_get_refresh_seconds())
-                                break
-                            except asyncio.TimeoutError:
-                                pass
-                            except asyncio.CancelledError:
-                                return
-
-                            try:
-                                _apply_and_reconcile()
-                                # Update TTL cache if config changed.
-                                ttl = _system_health_ttl_seconds()
-                                cache = getattr(app.state, "system_health_cache", None)
-                                if cache is not None and getattr(cache, "ttl_seconds", None) is not None:
-                                    if abs(float(cache.ttl_seconds) - ttl) > 1e-9:
-                                        cache.set_ttl_seconds(ttl)
-                            except Exception as exc:
-                                logger.warning("Periodic runtime config refresh failed: %s", exc)
-
-                    refresh_task = asyncio.create_task(_periodic_refresh())
-                    logger.info("Background task started: runtime_config_refresh")
             except Exception as exc:
                 logger.warning("Runtime config overrides not applied: %s", exc)
-
-            def _get_purge_rules_interval_seconds() -> float:
-                raw = os.environ.get("PURGE_RULES_INTERVAL_SECONDS", "300")
-                try:
-                    seconds = float(str(raw).strip() or "300")
-                except Exception:
-                    return 300.0
-                return seconds if seconds >= 5 else 5.0
-
-            def _purge_rules_enabled() -> bool:
-                raw = os.environ.get("PURGE_RULES_ENABLED", "true")
-                return str(raw).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
-            async def _periodic_purge_rules() -> None:
-                if not _purge_rules_enabled():
-                    return
-                while not stop_purge_rules.is_set():
-                    try:
-                        await asyncio.wait_for(stop_purge_rules.wait(), timeout=_get_purge_rules_interval_seconds())
-                        break
-                    except asyncio.TimeoutError:
-                        pass
-                    except asyncio.CancelledError:
-                        return
-
-                    try:
-                        if not settings.postgres_dsn:
-                            continue
-                        summary = await asyncio.to_thread(
-                            system.run_due_purge_rules,
-                            dsn=settings.postgres_dsn,
-                            actor="system",
-                        )
-                        if summary.get("executed"):
-                            logger.info(
-                                "Periodic purge rules executed: checked=%s executed=%s succeeded=%s failed=%s",
-                                summary.get("checked", 0),
-                                summary.get("executed", 0),
-                                summary.get("succeeded", 0),
-                                summary.get("failed", 0),
-                            )
-                    except Exception as exc:
-                        logger.warning("Periodic purge-rule execution failed: %s", exc)
-
-            if workers_enabled:
-                purge_rules_task = asyncio.create_task(_periodic_purge_rules())
-                logger.info("Background task started: periodic_purge_rules")
 
         def _system_health_ttl_seconds() -> float:
             raw = os.environ.get("SYSTEM_HEALTH_TTL_SECONDS", "300")
@@ -350,17 +267,6 @@ def create_app() -> FastAPI:
             logger.warning("Failed to resolve Delta storage auth diagnostics: %s", exc)
 
         yield
-
-        await _shutdown_background_task(
-            refresh_task,
-            stop_event=stop_refresh,
-            task_name="runtime_config_refresh",
-        )
-        await _shutdown_background_task(
-            purge_rules_task,
-            stop_event=stop_purge_rules,
-            task_name="periodic_purge_rules",
-        )
 
         try:
             app.state.alpha_vantage_gateway.close()
@@ -553,13 +459,13 @@ def create_app() -> FastAPI:
     async def get_ui_config(request: Request):
         settings: ServiceSettings = app.state.settings
         default_api_base = f"{api_root_prefix}/api" if api_root_prefix else "/api"
-        api_base_url = settings.ui_oidc_config.get("apiBaseUrl") or default_api_base
+        configured_api_base_url = settings.ui_oidc_config.get("apiBaseUrl") or default_api_base
 
         cfg = {
             "authMode": settings.ui_auth_mode,
-            "apiBaseUrl": api_base_url,
+            "apiBaseUrl": configured_api_base_url,
             # Backwards-compatible alias used by the UI runtime config loader.
-            "backtestApiBaseUrl": api_base_url,
+            "backtestApiBaseUrl": configured_api_base_url,
             "oidcAuthority": settings.ui_oidc_config.get("authority"),
             "oidcClientId": settings.ui_oidc_config.get("clientId"),
             "oidcScopes": settings.ui_oidc_config.get("scope") or settings.ui_oidc_config.get("scopes"),

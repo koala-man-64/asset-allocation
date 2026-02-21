@@ -36,6 +36,7 @@ export function useRealtime() {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const keepAliveRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     // `config.apiBaseUrl` is the API base (expected to include `/api`).
@@ -49,13 +50,10 @@ export function useRealtime() {
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
       const wsHref = wsUrl.toString();
-      console.log('[Realtime] Connecting to', wsHref);
       const ws = new WebSocket(wsHref);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('[Realtime] Connected');
-
         // Subscribe to server topics so publish events are delivered.
         ws.send(JSON.stringify({ action: 'subscribe', topics: [...SUBSCRIPTION_TOPICS] }));
 
@@ -81,13 +79,15 @@ export function useRealtime() {
       };
 
       ws.onclose = () => {
-        console.log('[Realtime] Disconnected. Reconnecting in 5s...');
         if (keepAliveRef.current) {
           window.clearInterval(keepAliveRef.current);
           keepAliveRef.current = null;
         }
         wsRef.current = null;
-        setTimeout(connect, 5000);
+        if (reconnectTimeoutRef.current) {
+          window.clearTimeout(reconnectTimeoutRef.current);
+        }
+        reconnectTimeoutRef.current = window.setTimeout(connect, 5000);
       };
 
       ws.onerror = (err) => {
@@ -129,8 +129,6 @@ export function useRealtime() {
       }
 
       if (eventType === 'RUN_UPDATE') {
-        console.log('[Realtime] Run update:', payload);
-
         if (isRecord(payload)) {
           const runId = payload.run_id;
           if (typeof runId === 'string' && runId) {
@@ -173,6 +171,10 @@ export function useRealtime() {
       if (keepAliveRef.current) {
         window.clearInterval(keepAliveRef.current);
         keepAliveRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       if (wsRef.current) {
         // Prevent reconnect on unmount

@@ -146,7 +146,6 @@ $ConfigPatterns = @(
     "^API_CSP$",
     "^API_CORS_ALLOW_ORIGINS$",
     "^API_OIDC_",
-    "^RUNTIME_CONFIG_REFRESH_SECONDS$",
     "^UI_"
 )
 

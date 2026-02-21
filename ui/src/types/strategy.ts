@@ -153,6 +153,10 @@ export interface DomainMetadata {
   cachedAt?: string | null;
   cacheSource?: 'snapshot' | 'live-refresh' | null;
   symbolCount?: number | null;
+  financeSubfolderSymbolCounts?: Record<
+    'balance_sheet' | 'income_statement' | 'cash_flow' | 'valuation',
+    number
+  > | null;
   blacklistedSymbolCount?: number | null;
   dateRange?: DomainDateRange | null;
   totalRows?: number | null;

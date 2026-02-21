@@ -9,63 +9,6 @@ export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type DataSource = 'auto' | 'local' | 'adls';
 export type DataDomain = 'market' | 'earnings' | 'price-target';
 
-// Define config interface locally to avoid circular dependencies if needed, or just extend Window
-interface WindowWithConfig extends Window {
-  __BACKTEST_UI_CONFIG__?: { backtestApiBaseUrl?: string; debugApi?: string };
-}
-const runtimeConfig = (window as WindowWithConfig).__BACKTEST_UI_CONFIG__ || {};
-const debugApi = (() => {
-  const isTruthy = (value: unknown): boolean => {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return value !== 0;
-    const text = String(value ?? '')
-      .trim()
-      .toLowerCase();
-    return ['1', 'true', 'yes', 'y', 'on'].includes(text);
-  };
-
-  let localStorageFlag: string | null = null;
-  try {
-    localStorageFlag = window.localStorage.getItem('debugApi');
-  } catch {
-    localStorageFlag = null;
-  }
-
-  const queryFlag = new URLSearchParams(window.location.search).get('debugApi');
-  const candidates = [
-    runtimeConfig.debugApi,
-    import.meta.env.VITE_DEBUG_API,
-    queryFlag,
-    localStorageFlag
-  ];
-  const explicitFlag = candidates.find((value) => {
-    if (value === undefined || value === null) return false;
-    return String(value).trim() !== '';
-  });
-  if (explicitFlag === undefined) return true;
-  return isTruthy(explicitFlag);
-})();
-
-const apiLogPrefix = '[Backtest API]';
-
-function logApi(message: string, meta: Record<string, unknown> = {}): void {
-  if (!debugApi) return;
-  if (Object.keys(meta).length) {
-    console.info(apiLogPrefix, message, meta);
-    return;
-  }
-  console.info(apiLogPrefix, message);
-}
-
-if (debugApi) {
-  logApi('Runtime config', {
-    apiBaseUrl: config.apiBaseUrl,
-    runtimeBaseUrl: runtimeConfig.backtestApiBaseUrl,
-    envBaseUrl: import.meta.env.VITE_BACKTEST_API_BASE_URL || import.meta.env.VITE_API_BASE_URL,
-    origin: window.location.origin
-  });
-}
-
 export class ApiError extends Error {
   readonly status: number;
 
@@ -289,13 +232,6 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   const url = baseUrl ? `${baseUrl}${path}` : path;
   const method = (init.method ?? 'GET').toUpperCase();
 
-  console.info('[backtestApi] request start', {
-    method,
-    baseUrl,
-    path,
-    url
-  });
-
   const headers = new Headers(init.headers);
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json');
@@ -303,11 +239,6 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   const authHeaders = await appendAuthHeaders(headers);
 
   const resp = await fetch(url, { ...init, headers: authHeaders });
-  console.info('[backtestApi] response', {
-    method,
-    url: resp.url,
-    status: resp.status
-  });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
     console.error('[backtestApi] response error', {
@@ -396,7 +327,6 @@ export const backtestApi = {
   },
 
   async getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
-    console.info('[backtestApi] getSystemHealth', { baseUrl: getBaseUrl() });
     return requestJson<SystemHealth>('/system/health', { signal });
   },
 

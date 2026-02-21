@@ -2,15 +2,9 @@
 
 import { FinanceData, MarketData } from '@/types/data';
 import { DomainMetadata, SystemHealth } from '@/types/strategy';
-import { normalizeApiBaseUrl } from '@/utils/apiBaseUrl';
 import { config as uiConfig } from '@/config';
 import { appendAuthHeaders } from '@/services/authTransport';
 
-interface WindowWithConfig extends Window {
-  __API_UI_CONFIG__?: { apiBaseUrl?: string };
-}
-const runtimeConfig = (window as WindowWithConfig).__API_UI_CONFIG__ || {};
-const API_BASE_URL = normalizeApiBaseUrl(runtimeConfig.apiBaseUrl || uiConfig.apiBaseUrl, '/api');
 const API_WARMUP_PATH = '/healthz';
 const API_COLD_START_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const API_WARMUP_MAX_ATTEMPTS = 3;
@@ -21,8 +15,8 @@ const API_REQUEST_MAX_ATTEMPTS = 3;
 const API_REQUEST_RETRY_BASE_DELAY_MS = 500;
 const API_REQUEST_RETRY_MAX_DELAY_MS = 4000;
 
-let apiWarmupAttempted = false;
-let apiWarmupInFlight: Promise<void> | null = null;
+const apiWarmupAttempted = new Set<string>();
+const apiWarmupInFlight = new Map<string, Promise<void>>();
 
 function isRetryableStatusCode(statusCode: number): boolean {
   return API_COLD_START_RETRYABLE_STATUS_CODES.has(statusCode);
@@ -54,8 +48,8 @@ function isRetryableFetchError(error: unknown, externalSignal?: AbortSignal | nu
   );
 }
 
-function resolveWarmupUrl(): string {
-  const base = API_BASE_URL.replace(/\/+$/, '').replace(/\/api$/i, '');
+function resolveWarmupUrl(apiBaseUrl: string): string {
+  const base = apiBaseUrl.replace(/\/+$/, '').replace(/\/api$/i, '');
   return `${base || ''}${API_WARMUP_PATH}`;
 }
 
@@ -120,15 +114,15 @@ async function fetchWithOptionalTimeout(
   }
 }
 
-async function warmUpApiOnce(): Promise<void> {
-  if (apiWarmupAttempted) {
+async function warmUpApiOnce(apiBaseUrl: string): Promise<void> {
+  if (apiWarmupAttempted.has(apiBaseUrl)) {
     return;
   }
 
-  if (!apiWarmupInFlight) {
-    apiWarmupInFlight = (async () => {
+  if (!apiWarmupInFlight.has(apiBaseUrl)) {
+    const warmupPromise = (async () => {
       let delayMs = API_WARMUP_BASE_DELAY_MS;
-      const warmupUrl = resolveWarmupUrl();
+      const warmupUrl = resolveWarmupUrl(apiBaseUrl);
 
       try {
         for (let attempt = 1; attempt <= API_WARMUP_MAX_ATTEMPTS; attempt += 1) {
@@ -161,13 +155,14 @@ async function warmUpApiOnce(): Promise<void> {
           delayMs = Math.min(API_WARMUP_MAX_DELAY_MS, Math.max(delayMs * 2, 100));
         }
       } finally {
-        apiWarmupAttempted = true;
-        apiWarmupInFlight = null;
+        apiWarmupAttempted.add(apiBaseUrl);
+        apiWarmupInFlight.delete(apiBaseUrl);
       }
     })();
+    apiWarmupInFlight.set(apiBaseUrl, warmupPromise);
   }
 
-  await apiWarmupInFlight;
+  await apiWarmupInFlight.get(apiBaseUrl);
 }
 
 export interface RequestConfig extends RequestInit {
@@ -203,8 +198,9 @@ async function performRequest<T>(
   config: RequestConfig = {}
 ): Promise<ResponseWithMeta<T>> {
   const { params, headers, timeoutMs, ...customConfig } = config;
+  const apiBaseUrl = uiConfig.apiBaseUrl;
 
-  let url = `${API_BASE_URL}${endpoint}`;
+  let url = `${apiBaseUrl}${endpoint}`;
   if (params) {
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
@@ -228,7 +224,7 @@ async function performRequest<T>(
   }
   const authHeaders = await appendAuthHeaders(requestHeaders);
   const requestId = authHeaders.get('X-Request-ID') || '';
-  await warmUpApiOnce();
+  await warmUpApiOnce(apiBaseUrl);
 
   let retryDelayMs = API_REQUEST_RETRY_BASE_DELAY_MS;
   let response: Response | null = null;

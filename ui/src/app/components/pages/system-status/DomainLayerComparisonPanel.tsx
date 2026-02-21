@@ -34,6 +34,12 @@ type LayerColumn = {
 };
 
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const FINANCE_SUBFOLDER_ITEMS = [
+  { key: 'balance_sheet', label: 'Balance Sheet' },
+  { key: 'income_statement', label: 'Income Statement' },
+  { key: 'cash_flow', label: 'Cash Flow' },
+  { key: 'valuation', label: 'Valuation' }
+] as const;
 
 function toLayerKey(value: string): LayerKey | null {
   const normalized = normalizeLayerKey(value);
@@ -449,6 +455,16 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                             ? compareDateRanges(metadata, previousMetadata)
                             : null;
                           const dateRangeReason = dateRangeUnavailableReason(metadata);
+                          const financeSubfolderCounts =
+                            row.key === 'finance'
+                              ? FINANCE_SUBFOLDER_ITEMS.map((item) => ({
+                                  ...item,
+                                  count: metadata.financeSubfolderSymbolCounts?.[item.key]
+                                }))
+                              : [];
+                          const showFinanceSubfolders =
+                            financeSubfolderCounts.length > 0 &&
+                            financeSubfolderCounts.some((item) => hasFiniteNumber(item.count));
 
                           return (
                             <TableCell
@@ -465,6 +481,26 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                   </div>
                                   {refreshButton}
                                 </div>
+                                {showFinanceSubfolders ? (
+                                  <div className="rounded-md border border-mcm-walnut/15 bg-mcm-cream/30 p-2">
+                                    <div className={`${StatusTypos.MONO} text-[9px] uppercase tracking-[0.16em] text-mcm-walnut/55`}>
+                                      finance subfolders
+                                    </div>
+                                    <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
+                                      {financeSubfolderCounts.map((item) => (
+                                        <div
+                                          key={`${row.key}-${layerColumn.key}-${item.key}`}
+                                          className="flex items-center justify-between gap-2 text-[10px]"
+                                        >
+                                          <span className="text-mcm-walnut/65">{item.label}</span>
+                                          <span className={`${StatusTypos.MONO} text-mcm-walnut/85`}>
+                                            {formatInt(item.count)}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                                 <div className={`${StatusTypos.MONO} text-[11px] font-semibold text-mcm-walnut/80`}>
                                   {dateRangeReason ? (
                                     <Tooltip>

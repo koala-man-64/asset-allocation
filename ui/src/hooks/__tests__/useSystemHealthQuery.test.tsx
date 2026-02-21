@@ -10,6 +10,11 @@ function Probe() {
   return null;
 }
 
+function ProbeAutoRefresh() {
+  useSystemHealthQuery({ autoRefresh: true });
+  return null;
+}
+
 function ProbeNoAutoRefresh() {
   useSystemHealthQuery({ autoRefresh: false });
   return null;
@@ -30,7 +35,7 @@ describe('useSystemHealthQuery', () => {
       .spyOn(DataService, 'getSystemHealthWithMeta')
       .mockRejectedValue(new Error('API Error: 404 Not Found - {"detail":"Not Found"}'));
 
-    renderWithProviders(<Probe />);
+    renderWithProviders(<ProbeAutoRefresh />);
 
     await Promise.all([
       waitFor(() => {
@@ -68,6 +73,43 @@ describe('useSystemHealthQuery', () => {
     });
 
     renderWithProviders(<ProbeNoAutoRefresh />);
+
+    await Promise.all([
+      waitFor(() => {
+        expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
+      }),
+      vi.advanceTimersByTimeAsync(1000)
+    ]);
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not poll by default', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const getSystemHealthSpy = vi.spyOn(DataService, 'getSystemHealthWithMeta').mockResolvedValue({
+      data: {
+        overall: 'healthy',
+        dataLayers: [],
+        recentJobs: [],
+        alerts: [],
+        resources: []
+      },
+      meta: {
+        status: 200,
+        durationMs: 10,
+        url: '/api/system/health',
+        cacheDegraded: false,
+        stale: false,
+        requestId: 'test-request-id'
+      }
+    });
+
+    renderWithProviders(<Probe />);
 
     await Promise.all([
       waitFor(() => {

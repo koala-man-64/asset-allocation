@@ -33,23 +33,6 @@ import { apiService } from '@/services/apiService';
 
 export type { FinanceData, MarketData };
 
-const ENABLE_DATA_SERVICE_LOGS =
-  import.meta.env.DEV ||
-  ['1', 'true', 'yes', 'y', 'on'].includes(
-    String(import.meta.env.VITE_DEBUG_API ?? '')
-      .trim()
-      .toLowerCase()
-  );
-
-function dataServiceInfo(message: string, meta: Record<string, unknown> = {}): void {
-  if (!ENABLE_DATA_SERVICE_LOGS) return;
-  if (Object.keys(meta).length > 0) {
-    console.info(message, meta);
-    return;
-  }
-  console.info(message);
-}
-
 export const DataService = {
   getMarketData(
     ticker: string,
@@ -69,14 +52,8 @@ export const DataService = {
   },
 
   async getSystemHealth(params: { refresh?: boolean } = {}): Promise<SystemHealth> {
-    dataServiceInfo('[DataService] getSystemHealth');
     try {
       const data = await apiService.getSystemHealth(params);
-      dataServiceInfo('[DataService] getSystemHealth success', {
-        overall: data?.overall,
-        layers: data?.dataLayers?.length ?? 0,
-        alerts: data?.alerts?.length ?? 0
-      });
       return data;
     } catch (error) {
       console.error('[DataService] getSystemHealth error', error);
@@ -87,20 +64,8 @@ export const DataService = {
   async getSystemHealthWithMeta(
     params: { refresh?: boolean } = {}
   ): Promise<ResponseWithMeta<SystemHealth>> {
-    dataServiceInfo('[DataService] getSystemHealthWithMeta');
     try {
       const response = await apiService.getSystemHealthWithMeta(params);
-      dataServiceInfo('[DataService] getSystemHealthWithMeta success', {
-        overall: response.data?.overall,
-        layers: response.data?.dataLayers?.length ?? 0,
-        alerts: response.data?.alerts?.length ?? 0,
-        status: response.meta.status,
-        durationMs: response.meta.durationMs,
-        cacheHint: response.meta.cacheHint,
-        cacheDegraded: response.meta.cacheDegraded,
-        stale: response.meta.stale,
-        requestId: response.meta.requestId
-      });
       return response;
     } catch (error) {
       console.error('[DataService] getSystemHealthWithMeta error', error);

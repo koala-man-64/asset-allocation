@@ -501,6 +501,7 @@ class DomainMetadataResponse(BaseModel):
     cachedAt: Optional[str] = None
     cacheSource: Optional[Literal["snapshot", "live-refresh"]] = None
     symbolCount: Optional[int] = None
+    financeSubfolderSymbolCounts: Optional[Dict[str, int]] = None
     dateRange: Optional[DomainDateRange] = None
     totalRows: Optional[int] = None
     fileCount: Optional[int] = None

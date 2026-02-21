@@ -82,12 +82,6 @@ export function useDataProbes({ ticker, rows }: UseDataProbesProps) {
                 const result = await fn(controller.signal);
                 const ms = performance.now() - started;
                 const status: ProbeStatus = result.ok ? 'pass' : 'fail';
-                console.info('[DataQualityProbe] completed', {
-                    probeId: id,
-                    title,
-                    status,
-                    durationMs: Math.round(ms)
-                });
                 setProbeResults((prev) => ({
                     ...prev,
                     [id]: {

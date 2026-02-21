@@ -8,23 +8,6 @@ function isApiNotFoundError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('API Error: 404');
 }
 
-const ENABLE_QUERY_LOGS =
-  import.meta.env.DEV ||
-  ['1', 'true', 'yes', 'y', 'on'].includes(
-    String(import.meta.env.VITE_DEBUG_API ?? '')
-      .trim()
-      .toLowerCase()
-  );
-
-function queryInfo(message: string, meta: Record<string, unknown> = {}): void {
-  if (!ENABLE_QUERY_LOGS) return;
-  if (Object.keys(meta).length > 0) {
-    console.info(message, meta);
-    return;
-  }
-  console.info(message);
-}
-
 let lastSystemHealthMeta: RequestMeta | null = null;
 
 export function getLastSystemHealthMeta(): RequestMeta | null {
@@ -49,7 +32,6 @@ function systemHealthRefetchInterval(query: {
 }
 
 // Key Factory for consistent query keys
-// Key Factory for consistent query keys
 export const queryKeys = {
   // System & Data Health
   systemHealth: () => ['systemHealth'] as const,
@@ -67,25 +49,13 @@ export const queryKeys = {
 export function useSystemHealthQuery(
   options: UseSystemHealthQueryOptions = {}
 ): UseQueryResult<SystemHealth> {
-  const autoRefresh = options.autoRefresh ?? true;
+  const autoRefresh = options.autoRefresh ?? false;
   const query = useQuery<SystemHealth>({
     queryKey: queryKeys.systemHealth(),
     queryFn: async () => {
-      queryInfo('[useSystemHealthQuery] fetch start');
       try {
         const response = await DataService.getSystemHealthWithMeta();
         lastSystemHealthMeta = response.meta;
-        queryInfo('[useSystemHealthQuery] fetch success', {
-          overall: response.data?.overall,
-          layers: response.data?.dataLayers?.length ?? 0,
-          recentJobs: response.data?.recentJobs?.length ?? 0,
-          alerts: response.data?.alerts?.length ?? 0,
-          durationMs: response.meta.durationMs,
-          cacheHint: response.meta.cacheHint,
-          cacheDegraded: response.meta.cacheDegraded,
-          stale: response.meta.stale,
-          requestId: response.meta.requestId
-        });
         return response.data;
       } catch (error) {
         lastSystemHealthMeta = null;
@@ -96,20 +66,6 @@ export function useSystemHealthQuery(
     retry: (failureCount, error) => (isApiNotFoundError(error) ? false : failureCount < 3),
     refetchInterval: autoRefresh ? systemHealthRefetchInterval : false
   });
-
-  useEffect(() => {
-    if (query.data) {
-      queryInfo('[Query] systemHealth success', {
-        overall: query.data.overall,
-        recentJobs: query.data.recentJobs?.length ?? 0,
-        alerts: query.data.alerts?.length ?? 0,
-        requestId: lastSystemHealthMeta?.requestId,
-        cacheHint: lastSystemHealthMeta?.cacheHint,
-        cacheDegraded: lastSystemHealthMeta?.cacheDegraded,
-        stale: lastSystemHealthMeta?.stale
-      });
-    }
-  }, [query.data]);
 
   useEffect(() => {
     if (query.error) {
@@ -126,21 +82,11 @@ export function useLineageQuery() {
   const query = useQuery({
     queryKey: queryKeys.lineage(),
     queryFn: async () => {
-      queryInfo('[Query] lineage fetch');
       return DataService.getLineage();
     },
     staleTime: 5 * 60 * 1000,
-    refetchInterval: 60 * 1000
+    refetchInterval: false
   });
-
-  useEffect(() => {
-    if (query.data) {
-      const impacts = (query.data as { impactsByDomain?: unknown })?.impactsByDomain;
-      queryInfo('[Query] lineage success', {
-        domains: impacts && typeof impacts === 'object' ? Object.keys(impacts as object).length : 0
-      });
-    }
-  }, [query.data]);
 
   useEffect(() => {
     if (query.error) {
@@ -160,7 +106,7 @@ export function useDebugSymbolsQuery() {
       return DataService.getDebugSymbols();
     },
     staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000
+    refetchInterval: false
   });
 }
 
@@ -182,7 +128,7 @@ export function useRuntimeConfigQuery(scope: string = 'global') {
       return DataService.getRuntimeConfig(scope);
     },
     staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000
+    refetchInterval: false
   });
 }
 

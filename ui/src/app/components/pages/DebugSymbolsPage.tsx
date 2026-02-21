@@ -120,14 +120,30 @@ export function DebugSymbolsPage() {
           <CardHeader className="space-y-2">
             <CardTitle className="flex items-center justify-between">
               <span>Configuration</span>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>Updated</span>
-                <Badge
+              <div className="flex items-center gap-2">
+                <Button
                   variant="outline"
-                  className="font-mono text-[10px] uppercase tracking-widest"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() =>
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.debugSymbols() })
+                  }
+                  disabled={debugSymbolsQuery.isFetching}
                 >
-                  {updatedAgo}
-                </Badge>
+                  <RefreshCw
+                    className={`h-4 w-4 ${debugSymbolsQuery.isFetching ? 'animate-spin' : ''}`}
+                  />
+                  Refresh
+                </Button>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>Updated</span>
+                  <Badge
+                    variant="outline"
+                    className="font-mono text-[10px] uppercase tracking-widest"
+                  >
+                    {updatedAgo}
+                  </Badge>
+                </div>
               </div>
             </CardTitle>
             <p className="text-xs text-muted-foreground">

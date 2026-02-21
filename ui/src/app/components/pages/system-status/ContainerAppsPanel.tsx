@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Activity, ChevronDown, ExternalLink, Loader2, ScrollText, Server } from 'lucide-react';
+import { Activity, ChevronDown, ExternalLink, Loader2, RefreshCw, ScrollText, Server } from 'lucide-react';
 import { DataService } from '@/services/DataService';
 import type { ContainerAppStatusItem } from '@/services/apiService';
 import { Badge } from '@/app/components/ui/badge';
@@ -77,7 +77,7 @@ export function ContainerAppsPanel() {
     queryKey: QUERY_KEY,
     queryFn: ({ signal }) => DataService.getContainerApps({ probe: true }, signal),
     staleTime: 1000 * 20,
-    refetchInterval: 1000 * 30
+    refetchInterval: false
   });
 
   const apps = useMemo(() => containerAppsQuery.data?.apps || [], [containerAppsQuery.data?.apps]);
@@ -115,6 +115,13 @@ export function ContainerAppsPanel() {
     } finally {
       setPending(name, false);
     }
+  };
+
+  const refreshApps = async () => {
+    await Promise.all([
+      containerAppsQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['systemHealth'] })
+    ]);
   };
 
   const getLogMarker = (app: ContainerAppStatusItem): string | null => {
@@ -240,9 +247,21 @@ export function ContainerAppsPanel() {
   return (
       <Card className="h-full flex flex-col">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Server className="h-5 w-5" />
-          Container Apps
+        <CardTitle className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Server className="h-5 w-5" />
+            Container Apps
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => void refreshApps()}
+            disabled={containerAppsQuery.isFetching}
+          >
+            <RefreshCw className={`h-4 w-4 ${containerAppsQuery.isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </CardTitle>
         <CardDescription>
           Toggle API/UI container apps and run live accessibility checks.

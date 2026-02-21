@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -62,7 +62,6 @@ import { useJobTrigger } from '@/hooks/useJobTrigger';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useLayerJobControl } from '@/hooks/useLayerJobControl';
 import { Button } from '@/app/components/ui/button';
-import { Switch } from '@/app/components/ui/switch';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { DomainMetadataSheet, DomainMetadataSheetTarget } from './DomainMetadataSheet';
 import { JobKillSwitchInline, type ManagedContainerJob } from './JobKillSwitchPanel';
@@ -76,14 +75,6 @@ const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const ENABLE_STATUS_DIAGNOSTICS =
-  import.meta.env.DEV ||
-  ['1', 'true', 'yes', 'y', 'on'].includes(
-    String(import.meta.env.VITE_DEBUG_API ?? '')
-      .trim()
-      .toLowerCase()
-  );
-
 interface StatusOverviewProps {
   overall: string;
   dataLayers: DataLayer[];
@@ -91,8 +82,6 @@ interface StatusOverviewProps {
   jobStates?: Record<string, string>;
   managedContainerJobs?: ManagedContainerJob[];
   onRefresh?: () => void;
-  isAutoRefreshEnabled?: boolean;
-  onAutoRefreshChange?: (enabled: boolean) => void;
   isRefreshing?: boolean;
   isFetching?: boolean;
 }
@@ -104,8 +93,6 @@ export function StatusOverview({
   jobStates,
   managedContainerJobs = [],
   onRefresh,
-  isAutoRefreshEnabled,
-  onAutoRefreshChange,
   isRefreshing,
   isFetching
 }: StatusOverviewProps) {
@@ -277,49 +264,6 @@ export function StatusOverview({
     }
     return index;
   }, [recentJobs]);
-
-  useEffect(() => {
-    if (!ENABLE_STATUS_DIAGNOSTICS) return;
-
-    const configuredJobs = new Set<string>();
-    const configuredRawNames = new Map<string, string>();
-    for (const layer of dataLayers) {
-      for (const domain of layer.domains || []) {
-        const rawJobName = String(domain?.jobName || '').trim();
-        if (!rawJobName) continue;
-        const key = normalizeAzureJobName(rawJobName);
-        if (!key) continue;
-        configuredJobs.add(key);
-        configuredRawNames.set(key, rawJobName);
-      }
-    }
-
-    if (configuredJobs.size === 0) {
-      console.info('[StatusOverview] no configured job names found in dataLayers payload');
-      return;
-    }
-
-    const missingConfiguredJobs = Array.from(configuredJobs).filter((key) => !jobIndex.has(key));
-    if (missingConfiguredJobs.length === 0) {
-      console.info('[StatusOverview] configured jobs matched recentJobs', {
-        configuredCount: configuredJobs.size,
-        recentJobsCount: recentJobs.length
-      });
-      return;
-    }
-
-    const configuredPreview = missingConfiguredJobs
-      .slice(0, 20)
-      .map((key) => configuredRawNames.get(key) || key);
-    const recentPreview = Array.from(jobIndex.keys()).slice(0, 20);
-    console.warn('[StatusOverview] configured jobs missing in recentJobs', {
-      configuredCount: configuredJobs.size,
-      missingCount: missingConfiguredJobs.length,
-      recentJobsCount: recentJobs.length,
-      missingConfiguredJobs: configuredPreview,
-      recentJobKeys: recentPreview
-    });
-  }, [dataLayers, jobIndex, recentJobs]);
 
   const domainsByLayer = useMemo(() => {
     const index = new Map<string, Map<string, DataDomain>>();
@@ -584,7 +528,7 @@ export function StatusOverview({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 flex-1 px-3 gap-2 text-xs"
+                className="h-8 w-full px-3 gap-2 text-xs"
                 onClick={onRefresh}
                 disabled={!onRefresh || isFetching || isRefreshing}
               >
@@ -593,19 +537,6 @@ export function StatusOverview({
                 />
                 Refresh
               </Button>
-              <label
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-2"
-                aria-label="Auto refresh toggle"
-              >
-                <Switch
-                  checked={Boolean(isAutoRefreshEnabled)}
-                  onCheckedChange={onAutoRefreshChange}
-                  aria-label="Toggle auto refresh"
-                />
-                <span className={`${StatusTypos.MONO} text-[9px] tracking-[0.16em] text-mcm-walnut/70`}>
-                  AUTO
-                </span>
-              </label>
             </div>
           </div>
         </div>

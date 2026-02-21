@@ -52,7 +52,6 @@ async def test_app_lifespan_with_postgres_dsn_defaults_workers_off_in_tests(
 ) -> None:
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
     monkeypatch.delenv("BACKGROUND_WORKERS_ENABLED", raising=False)
-    monkeypatch.delenv("PURGE_RULES_ENABLED", raising=False)
 
     app = create_app()
     async with get_test_client(app) as client:

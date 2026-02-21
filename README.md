@@ -73,7 +73,7 @@ This repo supports DB-backed runtime configuration so operational knobs can be c
 - `core/debug_symbols.py` refreshes debug symbols from Postgres and updates `core.config.DEBUG_SYMBOLS` for debug filtering.
  - `core/config.py` `reload_settings()` re-reads `AppSettings` after overrides so downstream code sees updated `core.config.*` values.
 
-**API service** applies runtime config on startup and periodically refreshes it when `RUNTIME_CONFIG_REFRESH_SECONDS` is set (default 60s).
+**API service** applies runtime config once on startup. Ongoing refreshes are manual-only.
 
 **UI pages** (served by the UI app) for updates:
 - `/debug-symbols` for the `core.debug_symbols` allowlist and enable/disable flag.

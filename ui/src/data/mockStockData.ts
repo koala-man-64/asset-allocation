@@ -75,9 +75,7 @@ const SYMBOLS = [
   { s: 'TXN', n: 'Texas Instruments', sec: 'Technology' }
 ];
 
-export async function getStocks(dataSource: string): Promise<Stock[]> {
-  console.log(`Getting stocks from data source: ${dataSource}`);
-
+export async function getStocks(_dataSource: string): Promise<Stock[]> {
   // Simulate delay
   await new Promise((resolve) => setTimeout(resolve, 800));
 

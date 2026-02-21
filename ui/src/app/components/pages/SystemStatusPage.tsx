@@ -27,9 +27,8 @@ import {
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
 export function SystemStatusPage() {
-  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
   const { data, isLoading, error, isFetching } = useSystemHealthQuery({
-    autoRefresh: isAutoRefreshEnabled
+    autoRefresh: false
   });
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -113,16 +112,6 @@ export function SystemStatusPage() {
     return items;
   }, [data]);
 
-  useEffect(() => {
-    const errorMessage = error instanceof Error ? error.message : error ? String(error) : null;
-    console.info('[SystemStatusPage] system health query state', {
-      isLoading,
-      isFetching,
-      hasData: Boolean(data),
-      error: errorMessage
-    });
-  }, [isLoading, isFetching, data, error]);
-
   // Force re-render for clock
   useEffect(() => {
     const h = setInterval(() => setTick((t) => t + 1), 1000);
@@ -168,8 +157,6 @@ export function SystemStatusPage() {
             jobStates={jobStates}
             managedContainerJobs={managedContainerJobs}
             onRefresh={handleRefresh}
-            isAutoRefreshEnabled={isAutoRefreshEnabled}
-            onAutoRefreshChange={setIsAutoRefreshEnabled}
             isRefreshing={isRefreshing}
             isFetching={isFetching}
           />

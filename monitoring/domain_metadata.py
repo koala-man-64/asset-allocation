@@ -19,6 +19,14 @@ _DOMAIN_METADATA_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
 
 LayerKey = str
 DomainKey = str
+FinanceSubfolderKey = str
+
+_FINANCE_SUBFOLDER_KEYS: Tuple[FinanceSubfolderKey, ...] = (
+    "balance_sheet",
+    "income_statement",
+    "cash_flow",
+    "valuation",
+)
 
 
 def _utc_now_iso() -> str:
@@ -226,6 +234,48 @@ def _extract_ticker_from_blob_name(layer: LayerKey, domain: DomainKey, blob_name
     return None
 
 
+def _normalize_finance_subfolder(value: str) -> Optional[FinanceSubfolderKey]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    compact = raw.replace("-", " ").replace("_", " ")
+    compact = " ".join(compact.split())
+    aliases: Dict[str, FinanceSubfolderKey] = {
+        "balance sheet": "balance_sheet",
+        "income statement": "income_statement",
+        "cash flow": "cash_flow",
+        "valuation": "valuation",
+    }
+    return aliases.get(compact)
+
+
+def _extract_finance_subfolder_and_ticker(blob_name: str) -> Tuple[Optional[FinanceSubfolderKey], Optional[str]]:
+    parts = str(blob_name).strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "finance-data":
+        return None, None
+
+    subfolder = _normalize_finance_subfolder(parts[1])
+    if not subfolder:
+        return None, None
+
+    # Silver Delta layout: finance-data/<folder>/<ticker>_<suffix>/_delta_log/<file>
+    if len(parts) >= 5 and parts[3] == "_delta_log":
+        table_name = parts[2].strip()
+        if "_" not in table_name:
+            return subfolder, None
+        ticker = table_name.split("_", 1)[0].strip()
+        return subfolder, ticker or None
+
+    # Bronze raw layout: finance-data/<folder>/<ticker>_<suffix>.json|csv
+    file_stem = parts[2].strip()
+    if "." in file_stem:
+        file_stem = file_stem.rsplit(".", 1)[0]
+    if "_" not in file_stem:
+        return subfolder, None
+    ticker = file_stem.split("_", 1)[0].strip()
+    return subfolder, ticker or None
+
+
 def _parse_symbol_list(blob_bytes: Optional[bytes]) -> Optional[set[str]]:
     if not blob_bytes:
         return None
@@ -280,6 +330,44 @@ def _count_symbols_from_listing(
         return None, False
 
     return len(tickers), truncated
+
+
+def _count_finance_symbols_from_listing(
+    client: BlobStorageClient,
+    *,
+    prefix: str,
+    max_scanned_blobs: int,
+) -> Tuple[Optional[int], Optional[Dict[FinanceSubfolderKey, int]], bool]:
+    tickers: set[str] = set()
+    by_subfolder: Dict[FinanceSubfolderKey, set[str]] = {
+        key: set() for key in _FINANCE_SUBFOLDER_KEYS
+    }
+    scanned = 0
+    truncated = False
+
+    try:
+        blobs = client.container_client.list_blobs(name_starts_with=prefix)
+        for blob in blobs:
+            scanned += 1
+            if scanned > max_scanned_blobs:
+                truncated = True
+                break
+            subfolder, ticker = _extract_finance_subfolder_and_ticker(getattr(blob, "name", ""))
+            if ticker:
+                tickers.add(ticker)
+            if subfolder and ticker:
+                by_subfolder[subfolder].add(ticker)
+    except Exception as exc:
+        logger.warning(
+            "Failed to list blobs for finance subfolder symbol count: container=%s prefix=%s err=%s",
+            client.container_name,
+            prefix,
+            exc,
+        )
+        return None, None, False
+
+    subfolder_counts = {key: len(by_subfolder[key]) for key in _FINANCE_SUBFOLDER_KEYS}
+    return len(tickers), subfolder_counts, truncated
 
 
 def _summarize_blob_prefix(
@@ -649,8 +737,30 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         if truncated:
             warnings.append(f"Blob listing truncated after {max_scanned_blobs} blobs.")
 
-        whitelist_path = _whitelist_path(domain_key) if layer_key == "bronze" else None
         symbol_count = None
+        symbol_truncated = False
+        finance_subfolder_symbol_counts: Optional[Dict[FinanceSubfolderKey, int]] = None
+        listing_prefix = _ticker_listing_prefix(layer_key, domain_key)
+        if domain_key == "finance" and prefix == "finance-data/":
+            symbol_count, finance_subfolder_symbol_counts, symbol_truncated = (
+                _count_finance_symbols_from_listing(
+                    client,
+                    prefix=prefix,
+                    max_scanned_blobs=max_scanned_blobs,
+                )
+            )
+        elif listing_prefix:
+            symbol_count, symbol_truncated = _count_symbols_from_listing(
+                client,
+                layer=layer_key,
+                domain=domain_key,
+                prefix=listing_prefix,
+                max_scanned_blobs=max_scanned_blobs,
+            )
+        if symbol_truncated:
+            warnings.append(f"Symbol discovery truncated after {max_scanned_blobs} blobs.")
+
+        whitelist_path = _whitelist_path(domain_key) if layer_key == "bronze" else None
         if whitelist_path:
             try:
                 symbol_count = _parse_list_size(client.download_data(whitelist_path))
@@ -673,6 +783,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "prefix": prefix,
             "computedAt": computed_at,
             "symbolCount": symbol_count,
+            "financeSubfolderSymbolCounts": finance_subfolder_symbol_counts,
             "blacklistedSymbolCount": blacklisted_symbol_count,
             "fileCount": files,
             "totalBytes": total_bytes,
