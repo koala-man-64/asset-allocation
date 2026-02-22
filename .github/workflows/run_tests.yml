@@ -22,7 +22,7 @@ jobs:
       if: github.event_name != 'pull_request'
       env:
         AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}
+        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || vars.AZURE_STORAGE_ACCOUNT_NAME }}
         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
         VITE_PORT: ${{ vars.VITE_PORT }}
       run: |
@@ -95,7 +95,7 @@ jobs:
     - name: Run tests
       env:
         AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING || 'DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net' }}
-        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || 'test_account' }}
+        AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || vars.AZURE_STORAGE_ACCOUNT_NAME || 'test_account' }}
         NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY || 'test' }}
         # Runtime settings for CI
         DISABLE_DOTENV: "true"

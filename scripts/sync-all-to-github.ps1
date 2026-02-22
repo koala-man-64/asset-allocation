@@ -127,6 +127,7 @@ $ExpectedVars = @()
 # These patterns identify CONFIGURATION variables (GitHub Variables).
 # Anything NOT matching these patterns is treated as a SECRET.
 $ConfigPatterns = @(
+    "^AZURE_STORAGE_ACCOUNT_NAME$",
     "^AZURE_CONTAINER_",
     "^AZURE_FOLDER_",
     "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
@@ -146,8 +147,11 @@ $ConfigPatterns = @(
     "^MASSIVE_FLATFILES_ENDPOINT_URL$",
     "^MASSIVE_MAX_WORKERS$",
     "^MASSIVE_PREFER_OFFICIAL_SDK$",
+    "^MASSIVE_TICKERS_PAGE_LIMIT$",
     "^MASSIVE_TIMEOUT_SECONDS$",
     "^MASSIVE_WS_SUBSCRIPTIONS$",
+    "^BACKFILL_START_DATE$",
+    "^BACKFILL_END_DATE$",
     "^SYSTEM_HEALTH_(?!LINK_TOKEN_SECRET$)",
     "^HEADLESS_MODE$",
     "^DISABLE_DOTENV$",
