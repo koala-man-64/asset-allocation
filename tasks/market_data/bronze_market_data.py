@@ -511,6 +511,13 @@ class _ThreadLocalMassiveClientManager:
             self._clients[thread_id] = (self._generation, fresh_client)
             return fresh_client
 
+    def reset_current(self) -> None:
+        thread_id = threading.get_ident()
+        with self._lock:
+            current = self._clients.pop(thread_id, None)
+        if current:
+            _safe_close_massive_client(current[1])
+
     def reset_all(self) -> None:
         with self._lock:
             for _, client in list(self._clients.values()):
@@ -577,10 +584,10 @@ def _download_and_save_raw_with_recovery(
 
             mdc.write_warning(
                 f"Transient Massive error for {symbol}; attempt {attempt}/{attempts} failed ({exc}). "
-                f"Sleeping {sleep_seconds:.1f}s, resetting clients, and retrying."
+                f"Sleeping {sleep_seconds:.1f}s, recycling thread-local client, and retrying."
             )
             time.sleep(sleep_seconds)
-            client_manager.reset_all()
+            client_manager.reset_current()
 
 
 def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> None:
@@ -833,11 +840,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    from tasks.common.job_trigger import trigger_next_job_from_env
+    from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-market-job"
     with mdc.JobLock(job_name):
+        ensure_api_awake_from_env()
         exit_code = main()
         if exit_code == 0:
             write_system_health_marker(layer="bronze", domain="market", job_name=job_name)

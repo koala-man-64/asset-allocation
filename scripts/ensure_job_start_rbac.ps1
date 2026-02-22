@@ -12,8 +12,8 @@ function Write-Usage {
   @"
 Usage: ensure_job_start_rbac.ps1 [-ResourceGroup <rg>] [-JobName <job>] [-SubscriptionId <sub>] [-EnvFile <path>]
 
-Ensures the Container App Job identity can start jobs by granting Contributor
-at the resource group scope.
+Ensures Container App Job identities can start downstream jobs and wake
+container apps by granting Contributor at the resource group scope.
 "@
 }
 

@@ -464,6 +464,20 @@ foreach ($appName in $normalizedApps) {
       Write-Host ("Env          : container={0} SYSTEM_HEALTH_ARM_CONTAINERAPPS={1}" -f $containerInfo.Name, $monitoredContainerApps)
       Add-Finding -Severity Medium -App $appName -Source "Env.SYSTEM_HEALTH_ARM_CONTAINERAPPS" -Evidence ("container={0} may probe listed apps and wake them when probe=true." -f $containerInfo.Name) -Recommendation "Use probe=false by default for container-app status checks or narrow monitored app list."
     }
+
+    $startupWakeEnabled = Get-ContainerEnvVar -EnvItems $containerInfo.EnvItems -Name "JOB_STARTUP_API_WAKE_ENABLED"
+    if (-not [string]::IsNullOrWhiteSpace($startupWakeEnabled)) {
+      Write-Host ("Env          : container={0} JOB_STARTUP_API_WAKE_ENABLED={1}" -f $containerInfo.Name, $startupWakeEnabled)
+      $startupWakeEnabledNormalized = $startupWakeEnabled.Trim().ToLowerInvariant()
+      if ($startupWakeEnabledNormalized -in @("1", "true", "t", "yes", "y", "on")) {
+        $startupTargets = Get-ContainerEnvVar -EnvItems $containerInfo.EnvItems -Name "JOB_STARTUP_API_CONTAINER_APPS"
+        if ([string]::IsNullOrWhiteSpace($startupTargets)) {
+          $startupTargets = Get-ContainerEnvVar -EnvItems $containerInfo.EnvItems -Name "API_CONTAINER_APP_NAME"
+        }
+        Write-Host ("Env          : container={0} startup-targets={1}" -f $containerInfo.Name, $startupTargets)
+        Add-Finding -Severity Medium -App $appName -Source "Env.JOB_STARTUP_API_WAKE_ENABLED" -Evidence ("container={0} can call ARM start for apps='{1}' when startup health checks fail." -f $containerInfo.Name, $startupTargets) -Recommendation "Confirm startup wake targets are limited to required apps and that RBAC is least privilege."
+      }
+    }
   }
 
   $replicas = Invoke-AzJson -AzArgs @("containerapp", "replica", "list", "--name", $appName, "--resource-group", $ResourceGroup, "-o", "json") -AllowFailure

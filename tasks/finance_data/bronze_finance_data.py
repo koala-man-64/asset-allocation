@@ -388,11 +388,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    from tasks.common.job_trigger import trigger_next_job_from_env
+    from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-finance-job"
     with mdc.JobLock(job_name):
+        ensure_api_awake_from_env()
         exit_code = main()
         if exit_code == 0:
             write_system_health_marker(layer="bronze", domain="finance", job_name=job_name)

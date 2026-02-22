@@ -259,13 +259,13 @@ def test_download_deletes_blob_when_cutoff_removes_all_rows(unique_ticker):
 
 class _FakeClientManager:
     def __init__(self) -> None:
-        self.reset_calls = 0
+        self.reset_current_calls = 0
 
     def get_client(self):
         return object()
 
-    def reset_all(self) -> None:
-        self.reset_calls += 1
+    def reset_current(self) -> None:
+        self.reset_current_calls += 1
 
 
 def test_download_with_recovery_retries_three_attempts(monkeypatch):
@@ -286,7 +286,7 @@ def test_download_with_recovery_retries_three_attempts(monkeypatch):
     bronze._download_and_save_raw_with_recovery(symbol, manager, max_attempts=3, sleep_seconds=0.25)
 
     assert call_count["count"] == 3
-    assert manager.reset_calls == 2
+    assert manager.reset_current_calls == 2
     assert sleep_calls == [0.25, 0.25]
 
 
@@ -304,5 +304,5 @@ def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
     with pytest.raises(bronze.MassiveGatewayNotFoundError):
         bronze._download_and_save_raw_with_recovery(symbol, manager, max_attempts=3, sleep_seconds=0.25)
 
-    assert manager.reset_calls == 0
+    assert manager.reset_current_calls == 0
     assert sleep_calls == []

@@ -136,6 +136,8 @@ $ConfigPatterns = @(
     "^DOMAIN_METADATA_MAX_SCANNED_BLOBS$",
     "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
     "^ASSET_ALLOCATION_API_(?!KEY$)",
+    "^API_CONTAINER_APP_NAME$",
+    "^JOB_STARTUP_API_",
     "^ALPHA_VANTAGE_(?!API_KEY$)",
     # Massive: keep runtime tuning/location values as Variables; keep credentials as Secrets.
     "^MASSIVE_BASE_URL$",

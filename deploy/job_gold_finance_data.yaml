@@ -48,6 +48,18 @@ properties:
         value: "${BACKFILL_START_DATE}"
       - name: BACKFILL_END_DATE
         value: "${BACKFILL_END_DATE}"
+      - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID
+        value: ${AZURE_SUBSCRIPTION_ID}
+      - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
+        value: ${RESOURCE_GROUP}
+      - name: ASSET_ALLOCATION_API_BASE_URL
+        value: ${ASSET_ALLOCATION_API_BASE_URL}
+      - name: JOB_STARTUP_API_REQUIRED
+        value: "true"
+      - name: JOB_STARTUP_API_WAKE_ENABLED
+        value: "true"
+      - name: JOB_STARTUP_API_CONTAINER_APPS
+        value: ${API_CONTAINER_APP_NAME}
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: AZURE_STORAGE_ACCOUNT_NAME

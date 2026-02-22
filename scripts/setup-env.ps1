@@ -164,10 +164,21 @@ $Config += "# =========================================="
 $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" "http://localhost:8000" "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
+$Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
 $Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
 $Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")
 $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
 $Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
+$Config += "JOB_STARTUP_API_REQUIRED=" + (Prompt-Var "JOB_STARTUP_API_REQUIRED" "false" "Optional: fail startup if API is still unavailable after wake attempts (true/false).")
+$Config += "JOB_STARTUP_API_WAKE_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_WAKE_ENABLED" "true" "Optional: attempt ARM start for API container app when startup health probe fails.")
+$Config += "JOB_STARTUP_API_ARM_START_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_ARM_START_ENABLED" "true" "Optional: enable/disable ARM start calls during startup preflight.")
+$Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" "" "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")
+$Config += "JOB_STARTUP_API_HEALTH_PATH=" + (Prompt-Var "JOB_STARTUP_API_HEALTH_PATH" "/healthz" "Optional: health endpoint path used by startup preflight.")
+$Config += "JOB_STARTUP_API_PROBE_ATTEMPTS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_ATTEMPTS" "6" "Optional: startup health probe attempts.")
+$Config += "JOB_STARTUP_API_PROBE_SLEEP_SECONDS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_SLEEP_SECONDS" "10" "Optional: delay between startup health probes.")
+$Config += "JOB_STARTUP_API_PROBE_TIMEOUT_SECONDS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_TIMEOUT_SECONDS" "5" "Optional: timeout per startup health probe request.")
+$Config += "JOB_STARTUP_API_START_ATTEMPTS=" + (Prompt-Var "JOB_STARTUP_API_START_ATTEMPTS" "3" "Optional: ARM container app start attempts during startup preflight.")
+$Config += "JOB_STARTUP_API_START_BASE_SECONDS=" + (Prompt-Var "JOB_STARTUP_API_START_BASE_SECONDS" "1.0" "Optional: exponential backoff base seconds for startup ARM start attempts.")
 
 # -------------------------------------------------------------------------
 # Postgres (optional locally; used by API and some tasks)

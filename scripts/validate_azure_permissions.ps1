@@ -266,7 +266,7 @@ if (-not [string]::IsNullOrWhiteSpace($acrPullPrincipalId) -and -not [string]::I
   Add-Result -Name "ACR pull identity has AcrPull" -Ok $hasAcrPull -Details "principalId=$acrPullPrincipalId" -Remediation "Grant AcrPull on $AcrName to $AcrPullIdentityName."
 
   $hasContributor = Has-RoleAtScope -Assignments $assignments -RoleNames @("Contributor", "Owner") -Scope $rgId
-  Add-Result -Name "ACR pull identity has RG Contributor" -Ok $hasContributor -Details "principalId=$acrPullPrincipalId" -Remediation "Grant Contributor on $ResourceGroup to $AcrPullIdentityName for job start/system health." -Severity "Warning"
+  Add-Result -Name "ACR pull identity has RG Contributor" -Ok $hasContributor -Details "principalId=$acrPullPrincipalId" -Remediation "Grant Contributor on $ResourceGroup to $AcrPullIdentityName for job start, API container-app wake, and system health actions." -Severity "Warning"
 
   if (-not [string]::IsNullOrWhiteSpace($storageId)) {
     $hasStorageData = Has-RoleAtScope -Assignments $assignments -RoleNames @("Storage Blob Data Contributor", "Storage Blob Data Owner") -Scope $storageId

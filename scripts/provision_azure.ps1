@@ -124,7 +124,7 @@ if (-not $PSBoundParameters.ContainsKey("GrantAcrPullToAcaResources") -and $Prom
 }
 
 if (-not $PSBoundParameters.ContainsKey("GrantJobStartToAcaResources") -and $PromptForResources -and (-not $NonInteractive)) {
-  $GrantJobStartToAcaResources = Get-YesNo "Grant job-start permissions to ACR pull identity?" $false
+  $GrantJobStartToAcaResources = Get-YesNo "Grant job/container-app start permissions to ACR pull identity?" $false
   $grantJobStartPrompted = $true
 }
 
@@ -1102,10 +1102,10 @@ if ($GrantJobStartToAcaResources) {
   }
   else {
     Write-Host ""
-    Write-Host "Granting Container App job start permissions to the ACR pull identity (best-effort)..."
+    Write-Host "Granting Container App job/container-app start permissions to the ACR pull identity (best-effort)..."
     Write-Host "  Assignee: $AcrPullIdentityName ($acrPullIdentityPrincipalId)"
     Write-Host "  Scope: Resource group $ResourceGroup"
-    Write-Host "  Role: Contributor (resource group scope)"
+    Write-Host "  Role: Contributor (resource group scope, covers jobs/start and containerApps/start)"
 
     $rgScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup"
     $existing = "0"
@@ -1144,7 +1144,7 @@ if ($GrantJobStartToAcaResources) {
 }
 else {
   Write-Host ""
-  Write-Host "NOTE: Bronze jobs now attempt to trigger Silver jobs via ARM when they complete."
+  Write-Host "NOTE: Jobs may trigger downstream jobs and wake API container apps via ARM."
   Write-Host "To grant the required permissions, re-run this script after deployment with -GrantJobStartToAcaResources."
 }
 

@@ -48,6 +48,14 @@ properties:
         value: ${AZURE_SUBSCRIPTION_ID}
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
         value: ${RESOURCE_GROUP}
+      - name: ASSET_ALLOCATION_API_BASE_URL
+        value: ${ASSET_ALLOCATION_API_BASE_URL}
+      - name: JOB_STARTUP_API_REQUIRED
+        value: "true"
+      - name: JOB_STARTUP_API_WAKE_ENABLED
+        value: "true"
+      - name: JOB_STARTUP_API_CONTAINER_APPS
+        value: ${API_CONTAINER_APP_NAME}
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: TRIGGER_NEXT_JOB_NAME
