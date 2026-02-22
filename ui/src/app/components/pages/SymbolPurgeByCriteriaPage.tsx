@@ -22,6 +22,7 @@ import { queryKeys } from '@/hooks/useDataQueries';
 
 import type {
   PurgeCandidateRow,
+  PurgeCandidatesRequest,
   PurgeCandidatesResponse,
   PurgeOperationResponse,
   PurgeSymbolResultItem
@@ -165,6 +166,14 @@ function extractBatchResult(
     skipped,
     totalDeleted: result.totalDeleted || 0
   };
+}
+
+function extractCandidatePreviewResult(operation: PurgeOperationResponse): PurgeCandidatesResponse | null {
+  const result = operation.result as Partial<PurgeCandidatesResponse> | undefined;
+  if (!result || typeof result !== 'object') return null;
+  if (!result.criteria || !result.summary || !Array.isArray(result.symbols)) return null;
+  if (typeof result.expression !== 'string') return null;
+  return result as PurgeCandidatesResponse;
 }
 
 export function SymbolPurgeByCriteriaPage() {
@@ -402,6 +411,42 @@ export function SymbolPurgeByCriteriaPage() {
     }
   }, [applyOperationProgress]);
 
+  const pollPreviewOperation = useCallback(async (targetOperationId: string): Promise<PurgeOperationResponse> => {
+    const startedAt = Date.now();
+    const timeoutMs = 2 * 60_000;
+    let attempt = 0;
+
+    while (true) {
+      let polledOperation: unknown;
+      try {
+        polledOperation = await DataService.getPurgeOperation(targetOperationId);
+      } catch (error) {
+        const message = formatSystemStatusText(error) || 'Unable to poll preview status.';
+        if (Date.now() - startedAt > timeoutMs) {
+          throw new Error(message || 'Preview did not complete before timeout.');
+        }
+        const delay = 700 + Math.min(attempt * 150, 900);
+        attempt += 1;
+        await sleep(delay);
+        continue;
+      }
+
+      const operation = polledOperation as PurgeOperationResponse;
+      if (operation.status === 'succeeded') {
+        return operation;
+      }
+      if (operation.status === 'failed') {
+        throw new Error(operation.error || 'Candidate preview failed.');
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(`Candidate preview is still running. operationId=${targetOperationId}`);
+      }
+      const delay = 700 + Math.min(attempt * 150, 900);
+      attempt += 1;
+      await sleep(delay);
+    }
+  }, []);
+
   const runPreview = async () => {
     if (!canPreview) {
       setValidationError('Please fix the rule validation errors before previewing.');
@@ -421,7 +466,7 @@ export function SymbolPurgeByCriteriaPage() {
     setOperationStatus(null);
 
     try {
-      const payload = {
+      const payload: PurgeCandidatesRequest = {
         layer,
         domain,
         column,
@@ -433,7 +478,13 @@ export function SymbolPurgeByCriteriaPage() {
         offset: 0
       };
 
-      const response = await DataService.getPurgeCandidates(payload);
+      const operation = await DataService.createPurgeCandidatesOperation(payload);
+      const finishedOperation =
+        operation.status === 'succeeded' ? operation : await pollPreviewOperation(operation.operationId);
+      const response = extractCandidatePreviewResult(finishedOperation);
+      if (!response) {
+        throw new Error('Candidate preview completed without a valid result payload.');
+      }
       setCandidateResponse(response);
       setCandidateRows(response.symbols || []);
       setSelectedSymbols(new Set((response.symbols || []).map((row) => row.symbol)));
@@ -840,10 +891,10 @@ export function SymbolPurgeByCriteriaPage() {
             </p>
           ) : null}
 
-          <div className="mt-4 flex items-center gap-3 overflow-x-auto pb-1">
-            <label className="inline-flex shrink-0 items-center gap-3 text-xs font-semibold uppercase tracking-wide">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <label className="inline-flex min-w-0 flex-1 items-start gap-3 text-xs font-semibold uppercase tracking-wide">
               <Checkbox checked={confirmChecked} onCheckedChange={(next) => setConfirmChecked(Boolean(next))} />
-              I understand this is destructive and cannot be undone.
+              <span className="min-w-0 break-words">I understand this is destructive and cannot be undone.</span>
             </label>
 
             <label className="inline-flex items-center gap-2 shrink-0">
@@ -857,7 +908,7 @@ export function SymbolPurgeByCriteriaPage() {
             </label>
             <Button
               onClick={() => void handleRunPurge()}
-              className="h-9 shrink-0 gap-2"
+              className="h-9 w-full shrink-0 gap-2 sm:w-auto"
               disabled={!canSubmit}
               variant="destructive"
             >

@@ -16,6 +16,7 @@ import type {
   DomainColumnsResponse,
   DebugSymbolsResponse,
   JobLogsResponse,
+  PurgeCandidatesRequest,
   PurgeRequest,
   PurgeOperationResponse,
   ResponseWithMeta,
@@ -216,9 +217,13 @@ export const DataService = {
   },
 
   getPurgeCandidates(
-    payload: Parameters<typeof apiService.getPurgeCandidates>[0]
+    payload: PurgeCandidatesRequest
   ): Promise<PurgeCandidatesResponse> {
     return apiService.getPurgeCandidates(payload);
+  },
+
+  createPurgeCandidatesOperation(payload: PurgeCandidatesRequest): Promise<PurgeOperationResponse> {
+    return apiService.createPurgeCandidatesOperation(payload);
   },
 
   purgeSymbolsBatch(payload: Parameters<typeof apiService.purgeSymbolsBatch>[0]): Promise<PurgeOperationResponse> {

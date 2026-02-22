@@ -28,7 +28,7 @@ vi.mock('@/services/DataService', () => ({
   DataService: {
     getDomainColumns: vi.fn(),
     refreshDomainColumns: vi.fn(),
-    getPurgeCandidates: vi.fn(),
+    createPurgeCandidatesOperation: vi.fn(),
     purgeSymbolsBatch: vi.fn(),
     getPurgeOperation: vi.fn()
   }
@@ -84,6 +84,37 @@ function makeBatchRunningOperation(operationId: string): PurgeOperationResponse 
     operationId,
     status: 'running',
     scope: 'symbols',
+    createdAt: TIMESTAMP,
+    updatedAt: TIMESTAMP,
+    startedAt: TIMESTAMP,
+    completedAt: null,
+    result: undefined,
+    error: null
+  };
+}
+
+function makePreviewSucceededOperation(
+  operationId: string,
+  response: PurgeCandidatesResponse = makeCandidateResponse()
+): PurgeOperationResponse {
+  return {
+    operationId,
+    status: 'succeeded',
+    scope: 'candidate-preview',
+    createdAt: TIMESTAMP,
+    updatedAt: TIMESTAMP,
+    startedAt: TIMESTAMP,
+    completedAt: TIMESTAMP,
+    result: response,
+    error: null
+  };
+}
+
+function makePreviewRunningOperation(operationId: string): PurgeOperationResponse {
+  return {
+    operationId,
+    status: 'running',
+    scope: 'candidate-preview',
     createdAt: TIMESTAMP,
     updatedAt: TIMESTAMP,
     startedAt: TIMESTAMP,
@@ -175,7 +206,7 @@ async function waitForColumns(): Promise<void> {
 async function previewCandidates(): Promise<void> {
   fireEvent.click(screen.getByRole('button', { name: /preview symbols/i }));
   await waitFor(() => {
-    expect(DataService.getPurgeCandidates).toHaveBeenCalled();
+    expect(DataService.createPurgeCandidatesOperation).toHaveBeenCalled();
   });
 }
 
@@ -202,7 +233,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
       cachePath: 'metadata/domain-columns.json',
       updatedAt: TIMESTAMP
     });
-    vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse());
+    vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
+      makePreviewSucceededOperation('preview-default')
+    );
     vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchSucceededOperation('op-default'));
     vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-default'));
 
@@ -223,7 +256,7 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
     await previewCandidates();
 
-    expect(DataService.getPurgeCandidates).toHaveBeenCalledWith({
+    expect(DataService.createPurgeCandidatesOperation).toHaveBeenCalledWith({
       layer: 'silver',
       domain: 'market',
       column: 'Close',
@@ -239,6 +272,26 @@ describe('SymbolPurgeByCriteriaPage', () => {
     expect(screen.getByText('0.9900')).toBeInTheDocument();
   });
 
+  it('polls preview operation when backend returns running status', async () => {
+    const previewRows = makeCandidateRows();
+    vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
+      makePreviewRunningOperation('preview-op-123')
+    );
+    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(
+      makePreviewSucceededOperation('preview-op-123', makeCandidateResponse({}, previewRows))
+    );
+
+    renderWithProviders(<SymbolPurgeByCriteriaPage />);
+    await waitForColumns();
+    await previewCandidates();
+
+    await waitFor(() => {
+      expect(DataService.getPurgeOperation).toHaveBeenCalledWith('preview-op-123');
+    });
+    expect(screen.getByText('AAA')).toBeInTheDocument();
+    expect(screen.getByText('BBB')).toBeInTheDocument();
+  });
+
   it('blocks preview in percent mode when value is outside 1-100', async () => {
     renderWithProviders(<SymbolPurgeByCriteriaPage />);
     await waitForColumns();
@@ -250,11 +303,13 @@ describe('SymbolPurgeByCriteriaPage', () => {
     fireEvent.click(previewButton);
 
     expect(screen.getByText('Percentile must be between 1 and 100.')).toBeInTheDocument();
-    expect(DataService.getPurgeCandidates).not.toHaveBeenCalled();
+    expect(DataService.createPurgeCandidatesOperation).not.toHaveBeenCalled();
   });
 
   it('shows bronze warning + bronze preview note from backend', async () => {
-    vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse({ note: BRONZE_NOTE }));
+    vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
+      makePreviewSucceededOperation('preview-bronze', makeCandidateResponse({ note: BRONZE_NOTE }))
+    );
 
     renderWithProviders(<SymbolPurgeByCriteriaPage />);
     await waitForColumns();
@@ -278,7 +333,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
       { symbol: 'BBB', matchedValue: 0.98, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' },
       { symbol: 'AAA', matchedValue: 0.99, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' }
     ];
-    vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse({}, rows));
+    vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
+      makePreviewSucceededOperation('preview-controls', makeCandidateResponse({}, rows))
+    );
 
     renderWithProviders(<SymbolPurgeByCriteriaPage />);
     await waitForColumns();
@@ -314,7 +371,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
   it('runs purge, polls operation status, and renders completion details', async () => {
     const rows = makeCandidateRows();
-    vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse({}, rows));
+    vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
+      makePreviewSucceededOperation('preview-run', makeCandidateResponse({}, rows))
+    );
     vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-123'));
     vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-123', rows));
 
@@ -359,7 +418,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
   it('renders live progress while symbols are being purged', async () => {
     const rows = makeCandidateRows();
-    vi.mocked(DataService.getPurgeCandidates).mockResolvedValue(makeCandidateResponse({}, rows));
+    vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
+      makePreviewSucceededOperation('preview-live', makeCandidateResponse({}, rows))
+    );
     vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-live'));
     vi.mocked(DataService.getPurgeOperation)
       .mockResolvedValueOnce(makeBatchRunningOperationWithProgress('op-live', rows))

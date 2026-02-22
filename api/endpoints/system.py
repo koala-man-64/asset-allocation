@@ -79,6 +79,10 @@ _PURGE_BLACKLIST_UPDATE_LOCK = threading.Lock()
 _PURGE_RULE_AUDIT_INTERVAL_MINUTES = 60 * 24 * 365
 _DEFAULT_PURGE_SYMBOL_MAX_WORKERS = 8
 _MAX_PURGE_SYMBOL_MAX_WORKERS = 32
+_DEFAULT_PURGE_PREVIEW_LOAD_MAX_WORKERS = 8
+_MAX_PURGE_PREVIEW_LOAD_MAX_WORKERS = 32
+_DEFAULT_PURGE_SCOPE_MAX_WORKERS = 8
+_MAX_PURGE_SCOPE_MAX_WORKERS = 32
 _T = TypeVar("_T")
 
 
@@ -1267,6 +1271,21 @@ class PurgeRequest(BaseModel):
     confirm: bool = False
 
 
+class PurgeCandidatesRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    column: str = Field(..., min_length=1, max_length=128)
+    operator: str = Field(..., min_length=1, max_length=24)
+    value: Optional[float] = None
+    percentile: Optional[float] = None
+    as_of: Optional[str] = None
+    recent_rows: int = Field(default=1, ge=1, le=5000)
+    aggregation: str = Field(default="avg", min_length=1, max_length=24)
+    limit: Optional[int] = Field(default=None, ge=1, le=5000)
+    offset: int = Field(default=0, ge=0)
+    min_rows: int = Field(default=1, ge=1)
+
+
 class PurgeSymbolRequest(BaseModel):
     symbol: str
     confirm: bool = False
@@ -1386,11 +1405,35 @@ def _load_rule_frame(layer: str, domain: str) -> pd.DataFrame:
     if not table_paths:
         return pd.DataFrame()
     frames: List[pd.DataFrame] = []
+    worker_count = _resolve_purge_preview_load_workers(len(table_paths))
+    loaded_by_path: Dict[str, pd.DataFrame] = {}
+    if worker_count <= 1:
+        for table_path in table_paths:
+            try:
+                df = load_delta(container=container, path=table_path)
+            except Exception:
+                continue
+            if df is None or df.empty:
+                continue
+            loaded_by_path[table_path] = df
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="purge-preview-load") as executor:
+            future_to_path = {
+                executor.submit(load_delta, container=container, path=table_path): table_path for table_path in table_paths
+            }
+            for future in as_completed(future_to_path):
+                table_path = future_to_path[future]
+                try:
+                    df = future.result()
+                except Exception:
+                    continue
+                if df is None or df.empty:
+                    continue
+                loaded_by_path[table_path] = df
+
+    # Preserve deterministic ordering regardless of parallel completion order.
     for table_path in table_paths:
-        try:
-            df = load_delta(container=container, path=table_path)
-        except Exception:
-            continue
+        df = loaded_by_path.get(table_path)
         if df is None or df.empty:
             continue
         frames.append(df)
@@ -1686,6 +1729,100 @@ def _collect_purge_candidates(
     return matches, len(df), total, matched_value_total
 
 
+def _build_purge_candidates_response(
+    *,
+    layer: str,
+    domain: str,
+    column: str,
+    operator: str,
+    value: Optional[float],
+    percentile: Optional[float],
+    as_of: Optional[str],
+    recent_rows: int,
+    aggregation: str,
+    limit: Optional[int],
+    offset: int,
+    min_rows: int,
+) -> Dict[str, Any]:
+    normalized_layer = _normalize_layer(layer)
+    normalized_domain = _normalize_domain(domain)
+    resolved_column = str(column or "").strip()
+    if not normalized_layer:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not normalized_domain:
+        raise HTTPException(status_code=400, detail="domain is required.")
+    if not resolved_column:
+        raise HTTPException(status_code=400, detail="column is required.")
+
+    normalized_operator = normalize_purge_rule_operator(operator)
+    normalized_aggregation = _normalize_candidate_aggregation(aggregation)
+    raw_value = percentile if is_percent_operator(normalized_operator) else value
+    if raw_value is None:
+        raise HTTPException(
+            status_code=400,
+            detail="value is required for numeric operators; percentile is required for top/bottom percent operators.",
+        )
+    if is_percent_operator(normalized_operator) and percentile is None:
+        raw_value = value
+        if raw_value is None:
+            raise HTTPException(status_code=400, detail="percentile is required for percent operators.")
+
+    candidate_layer = "silver" if normalized_layer == "bronze" else normalized_layer
+    matches, total_rows, matched, contrib = _collect_purge_candidates(
+        layer=candidate_layer,
+        domain=normalized_domain,
+        column=resolved_column,
+        operator=normalized_operator,
+        raw_value=float(raw_value),
+        as_of=as_of,
+        min_rows=min_rows,
+        recent_rows=recent_rows,
+        aggregation=normalized_aggregation,
+        limit=limit,
+        offset=offset,
+    )
+
+    criteria = {
+        "requestedLayer": normalized_layer,
+        "resolvedLayer": candidate_layer,
+        "domain": normalized_domain,
+        "column": resolved_column,
+        "operator": normalized_operator,
+        "value": float(raw_value),
+        "asOf": as_of,
+        "minRows": min_rows,
+        "recentRows": recent_rows,
+        "aggregation": normalized_aggregation,
+    }
+    expression = _build_purge_expression(
+        resolved_column,
+        normalized_operator,
+        float(raw_value),
+        recent_rows=recent_rows,
+        aggregation=normalized_aggregation,
+    )
+    return {
+        "criteria": criteria,
+        "expression": expression,
+        "summary": {
+            "totalRowsScanned": total_rows,
+            "symbolsMatched": matched,
+            "rowsContributing": contrib,
+            "estimatedDeletionTargets": matched,
+        },
+        "symbols": matches,
+        "offset": offset,
+        "limit": limit if limit is not None else len(matches),
+        "total": matched,
+        "hasMore": bool(limit is not None and (offset + len(matches) < matched)),
+        "note": (
+            "Bronze preview uses silver dataset for ranking; bronze-wide criteria are supported for runtime purge targets only."
+            if normalized_layer == "bronze"
+            else None
+        ),
+    }
+
+
 def _build_purge_expression(
     column: str,
     operator: str,
@@ -1821,6 +1958,36 @@ def _resolve_purge_symbol_workers(symbol_count: int) -> int:
         return default_workers
     bounded = max(1, min(requested, _MAX_PURGE_SYMBOL_MAX_WORKERS))
     return min(symbol_count, bounded)
+
+
+def _resolve_purge_preview_load_workers(table_count: int) -> int:
+    if table_count <= 0:
+        return 1
+    default_workers = min(_DEFAULT_PURGE_PREVIEW_LOAD_MAX_WORKERS, table_count)
+    raw = str(os.environ.get("PURGE_PREVIEW_LOAD_MAX_WORKERS") or "").strip()
+    if not raw:
+        return default_workers
+    try:
+        requested = int(raw)
+    except Exception:
+        return default_workers
+    bounded = max(1, min(requested, _MAX_PURGE_PREVIEW_LOAD_MAX_WORKERS))
+    return min(table_count, bounded)
+
+
+def _resolve_purge_scope_workers(target_count: int) -> int:
+    if target_count <= 0:
+        return 1
+    default_workers = min(_DEFAULT_PURGE_SCOPE_MAX_WORKERS, target_count)
+    raw = str(os.environ.get("PURGE_SCOPE_MAX_WORKERS") or "").strip()
+    if not raw:
+        return default_workers
+    try:
+        requested = int(raw)
+    except Exception:
+        return default_workers
+    bounded = max(1, min(requested, _MAX_PURGE_SCOPE_MAX_WORKERS))
+    return min(target_count, bounded)
 
 
 def _build_purge_symbols_summary(
@@ -2175,6 +2342,98 @@ def _create_purge_operation(
     return operation_id
 
 
+def _create_purge_candidates_operation(payload: PurgeCandidatesRequest, actor: Optional[str]) -> str:
+    operation_id = str(uuid.uuid4())
+    now = _utc_timestamp()
+    with _PURGE_OPERATIONS_LOCK:
+        _PURGE_OPERATIONS[operation_id] = {
+            "operationId": operation_id,
+            "status": "running",
+            "scope": "candidate-preview",
+            "layer": payload.layer,
+            "domain": payload.domain,
+            "requestedBy": actor,
+            "createdAt": now,
+            "updatedAt": now,
+            "startedAt": now,
+            "completedAt": None,
+            "result": None,
+            "error": None,
+        }
+    return operation_id
+
+
+def _execute_purge_candidates_operation(operation_id: str, payload: PurgeCandidatesRequest) -> None:
+    started = datetime.now(timezone.utc)
+    try:
+        result = _build_purge_candidates_response(
+            layer=payload.layer,
+            domain=payload.domain,
+            column=payload.column,
+            operator=payload.operator,
+            value=payload.value,
+            percentile=payload.percentile,
+            as_of=payload.as_of,
+            recent_rows=payload.recent_rows,
+            aggregation=payload.aggregation,
+            limit=payload.limit,
+            offset=payload.offset,
+            min_rows=payload.min_rows,
+        )
+        duration_ms = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
+        summary = result.get("summary") if isinstance(result, dict) else {}
+        logger.info(
+            "Purge-candidates operation succeeded: operation=%s layer=%s domain=%s durationMs=%s totalRowsScanned=%s symbolsMatched=%s",
+            operation_id,
+            payload.layer,
+            payload.domain,
+            duration_ms,
+            (summary or {}).get("totalRowsScanned"),
+            (summary or {}).get("symbolsMatched"),
+        )
+        _update_purge_operation(
+            operation_id,
+            {
+                "status": "succeeded",
+                "completedAt": _utc_timestamp(),
+                "result": result,
+                "error": None,
+            },
+        )
+    except HTTPException as exc:
+        detail = str(exc.detail) if exc.detail is not None else "Purge candidates failed."
+        logger.warning(
+            "Purge-candidates operation failed: operation=%s layer=%s domain=%s detail=%s",
+            operation_id,
+            payload.layer,
+            payload.domain,
+            detail,
+        )
+        _update_purge_operation(
+            operation_id,
+            {
+                "status": "failed",
+                "completedAt": _utc_timestamp(),
+                "error": detail,
+            },
+        )
+    except Exception as exc:
+        logger.exception(
+            "Purge-candidates operation failed: operation=%s layer=%s domain=%s",
+            operation_id,
+            payload.layer,
+            payload.domain,
+        )
+        _update_purge_operation(
+            operation_id,
+            {
+                "status": "failed",
+                "completedAt": _utc_timestamp(),
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+
+
 def _get_purge_operation(operation_id: str) -> Optional[Dict[str, Any]]:
     with _PURGE_OPERATIONS_LOCK:
         operation = _PURGE_OPERATIONS.get(operation_id)
@@ -2481,30 +2740,66 @@ def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[st
 def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     targets = _resolve_purge_targets(payload.scope, payload.layer, payload.domain)
 
-    planned: List[Tuple[BlobStorageClient, Dict[str, Optional[str]]]] = []
+    worker_count = _resolve_purge_scope_workers(len(targets))
+    planned_by_index: Dict[int, Tuple[BlobStorageClient, Dict[str, Optional[str]]]] = {}
     any_data = False
-    for target in targets:
-        container = str(target["container"] or "")
-        prefix = target.get("prefix")
-        try:
+    if worker_count <= 1:
+        for idx, target in enumerate(targets):
+            container = str(target["container"] or "")
+            prefix = target.get("prefix")
+            try:
+                client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+                has_data = client.has_blobs(prefix)
+            except Exception as exc:
+                logger.exception(
+                    "Purge preflight failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
+                    container,
+                    prefix,
+                    payload.scope,
+                    target.get("layer"),
+                    target.get("domain"),
+                )
+                raise HTTPException(
+                    status_code=502, detail=f"Purge preflight failed for {container}:{prefix}: {exc}"
+                ) from exc
+            target["hasData"] = bool(has_data)
+            planned_by_index[idx] = (client, target)
+            any_data = any_data or bool(has_data)
+    else:
+        def _preflight_target(idx: int, target: Dict[str, Optional[str]]) -> Tuple[int, BlobStorageClient, bool]:
+            container = str(target["container"] or "")
+            prefix = target.get("prefix")
             client = BlobStorageClient(container_name=container, ensure_container_exists=False)
-            has_data = client.has_blobs(prefix)
-        except Exception as exc:
-            logger.exception(
-                "Purge preflight failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
-                container,
-                prefix,
-                payload.scope,
-                target.get("layer"),
-                target.get("domain"),
-            )
-            raise HTTPException(
-                status_code=502, detail=f"Purge preflight failed for {container}:{prefix}: {exc}"
-            ) from exc
+            has_data = bool(client.has_blobs(prefix))
+            return idx, client, has_data
 
-        planned.append((client, target))
-        any_data = any_data or has_data
-        target["hasData"] = bool(has_data)
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="purge-preflight") as executor:
+            future_to_target: Dict[Any, Tuple[int, Dict[str, Optional[str]]]] = {
+                executor.submit(_preflight_target, idx, target): (idx, target) for idx, target in enumerate(targets)
+            }
+            for future in as_completed(future_to_target):
+                idx, target = future_to_target[future]
+                container = str(target.get("container") or "")
+                prefix = target.get("prefix")
+                try:
+                    _, client, has_data = future.result()
+                except Exception as exc:
+                    logger.exception(
+                        "Purge preflight failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
+                        container,
+                        prefix,
+                        payload.scope,
+                        target.get("layer"),
+                        target.get("domain"),
+                    )
+                    raise HTTPException(
+                        status_code=502, detail=f"Purge preflight failed for {container}:{prefix}: {exc}"
+                    ) from exc
+                target["hasData"] = bool(has_data)
+                planned_by_index[idx] = (client, target)
+                any_data = any_data or bool(has_data)
+
+    planned = [planned_by_index[idx] for idx in sorted(planned_by_index.keys())]
 
     if not any_data:
         raise HTTPException(status_code=409, detail="Nothing to purge for the selected scope.")
@@ -2512,34 +2807,82 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
     total_deleted = 0
 
-    for client, target in planned:
-        if not target.get("hasData"):
-            continue
-        container = str(target["container"] or "")
-        prefix = target.get("prefix")
-        try:
-            deleted = client.delete_prefix(prefix)
-        except Exception as exc:
-            logger.exception(
-                "Purge failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
-                container,
-                prefix,
-                payload.scope,
-                target.get("layer"),
-                target.get("domain"),
-            )
-            raise HTTPException(status_code=502, detail=f"Purge failed for {container}:{prefix}: {exc}") from exc
+    if worker_count <= 1:
+        for client, target in planned:
+            if not target.get("hasData"):
+                continue
+            container = str(target["container"] or "")
+            prefix = target.get("prefix")
+            try:
+                deleted = client.delete_prefix(prefix)
+            except Exception as exc:
+                logger.exception(
+                    "Purge failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
+                    container,
+                    prefix,
+                    payload.scope,
+                    target.get("layer"),
+                    target.get("domain"),
+                )
+                raise HTTPException(status_code=502, detail=f"Purge failed for {container}:{prefix}: {exc}") from exc
 
-        results.append(
-            {
+            results.append(
+                {
+                    "container": container,
+                    "prefix": prefix,
+                    "layer": target.get("layer"),
+                    "domain": target.get("domain"),
+                    "deleted": deleted,
+                }
+            )
+            total_deleted += int(deleted or 0)
+    else:
+        delete_results_by_index: Dict[int, Dict[str, Any]] = {}
+
+        def _delete_target(
+            idx: int, client: BlobStorageClient, target: Dict[str, Optional[str]]
+        ) -> Tuple[int, Dict[str, Any]]:
+            container = str(target.get("container") or "")
+            prefix = target.get("prefix")
+            deleted = client.delete_prefix(prefix)
+            return idx, {
                 "container": container,
                 "prefix": prefix,
                 "layer": target.get("layer"),
                 "domain": target.get("domain"),
                 "deleted": deleted,
             }
-        )
-        total_deleted += int(deleted or 0)
+
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="purge-delete") as executor:
+            future_to_target: Dict[Any, Tuple[int, Dict[str, Optional[str]]]] = {}
+            for idx, (client, target) in enumerate(planned):
+                if not target.get("hasData"):
+                    continue
+                future = executor.submit(_delete_target, idx, client, target)
+                future_to_target[future] = (idx, target)
+
+            for future in as_completed(future_to_target):
+                _, target = future_to_target[future]
+                container = str(target.get("container") or "")
+                prefix = target.get("prefix")
+                try:
+                    idx, result = future.result()
+                except Exception as exc:
+                    logger.exception(
+                        "Purge failed: container=%s prefix=%s scope=%s layer=%s domain=%s",
+                        container,
+                        prefix,
+                        payload.scope,
+                        target.get("layer"),
+                        target.get("domain"),
+                    )
+                    raise HTTPException(status_code=502, detail=f"Purge failed for {container}:{prefix}: {exc}") from exc
+                delete_results_by_index[idx] = result
+
+        for idx in sorted(delete_results_by_index.keys()):
+            result = delete_results_by_index[idx]
+            results.append(result)
+            total_deleted += int(result.get("deleted") or 0)
 
     logger.warning(
         "Purge completed: scope=%s layer=%s domain=%s targets=%s deleted=%s",
@@ -3083,44 +3426,20 @@ def get_purge_candidates(
     min_rows: int = Query(default=1, ge=1, description="Minimum rows contributing per symbol"),
 ) -> JSONResponse:
     validate_auth(request)
-    normalized_layer = _normalize_layer(layer)
-    normalized_domain = _normalize_domain(domain)
-    resolved_column = str(column or "").strip()
-    if not normalized_layer:
-        raise HTTPException(status_code=400, detail="layer is required.")
-    if not normalized_domain:
-        raise HTTPException(status_code=400, detail="domain is required.")
-    if not resolved_column:
-        raise HTTPException(status_code=400, detail="column is required.")
-
-    normalized_operator = normalize_purge_rule_operator(operator)
-    normalized_aggregation = _normalize_candidate_aggregation(aggregation)
-    raw_value = percentile if is_percent_operator(normalized_operator) else value
-    if raw_value is None:
-        raise HTTPException(
-            status_code=400,
-            detail="value is required for numeric operators; percentile is required for top/bottom percent operators.",
-        )
-
-    if is_percent_operator(normalized_operator):
-        if percentile is None:
-            raw_value = value
-        if raw_value is None:
-            raise HTTPException(status_code=400, detail="percentile is required for percent operators.")
     try:
-        candidate_layer = "silver" if normalized_layer == "bronze" else normalized_layer
-        matches, total_rows, matched, contrib = _collect_purge_candidates(
-            layer=candidate_layer,
-            domain=normalized_domain,
-            column=resolved_column,
-            operator=normalized_operator,
-            raw_value=float(raw_value),
+        response_payload = _build_purge_candidates_response(
+            layer=layer,
+            domain=domain,
+            column=column,
+            operator=operator,
+            value=value,
+            percentile=percentile,
             as_of=as_of,
-            min_rows=min_rows,
             recent_rows=recent_rows,
-            aggregation=normalized_aggregation,
+            aggregation=aggregation,
             limit=limit,
             offset=offset,
+            min_rows=min_rows,
         )
     except HTTPException:
         raise
@@ -3129,51 +3448,28 @@ def get_purge_candidates(
     except Exception as exc:
         logger.exception(
             "Failed to collect purge candidates: layer=%s domain=%s column=%s",
-            normalized_layer,
-            normalized_domain,
-            resolved_column,
+            layer,
+            domain,
+            column,
         )
         raise HTTPException(status_code=500, detail=f"Failed to collect purge candidates: {exc}") from exc
 
-    criteria = {
-        "requestedLayer": normalized_layer,
-        "resolvedLayer": candidate_layer,
-        "domain": normalized_domain,
-        "column": resolved_column,
-        "operator": normalized_operator,
-        "value": float(raw_value),
-        "asOf": as_of,
-        "minRows": min_rows,
-        "recentRows": recent_rows,
-        "aggregation": normalized_aggregation,
-    }
-    expression = _build_purge_expression(
-        resolved_column,
-        normalized_operator,
-        float(raw_value),
-        recent_rows=recent_rows,
-        aggregation=normalized_aggregation,
-    )
+    return JSONResponse(response_payload, headers={"Cache-Control": "no-store"})
 
-    return JSONResponse(
-        {
-            "criteria": criteria,
-            "expression": expression,
-            "summary": {
-                "totalRowsScanned": total_rows,
-                "symbolsMatched": matched,
-                "rowsContributing": contrib,
-                "estimatedDeletionTargets": matched,
-            },
-            "symbols": matches,
-            "offset": offset,
-            "limit": limit if limit is not None else len(matches),
-            "total": matched,
-            "hasMore": bool(limit is not None and (offset + len(matches) < matched)),
-            "note": "Bronze preview uses silver dataset for ranking; bronze-wide criteria are supported for runtime purge targets only." if normalized_layer == "bronze" else None,
-        },
-        headers={"Cache-Control": "no-store"},
-    )
+
+@router.post("/purge-candidates")
+def create_purge_candidates_operation(payload: PurgeCandidatesRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    actor = _get_actor(request)
+    operation_id = _create_purge_candidates_operation(payload, actor)
+    thread = threading.Thread(target=_execute_purge_candidates_operation, args=(operation_id, payload), daemon=True)
+    thread.start()
+
+    operation = _get_purge_operation(operation_id)
+    if not operation:
+        raise HTTPException(status_code=500, detail="Failed to initialize purge-candidates operation.")
+
+    return JSONResponse(operation, status_code=202)
 
 
 @router.post("/purge-symbols")

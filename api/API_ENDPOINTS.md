@@ -23,6 +23,11 @@ API Root
     │   ├── /runtime-config [GET] (system.get_runtime_config) - Lists runtime-config overrides for a scope :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config [POST] (system.set_runtime_config) - Upserts a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config/{key} [DELETE] (system.remove_runtime_config) - Deletes a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /purge-candidates [GET] (system.get_purge_candidates) - Synchronous purge-candidate preview (legacy/manual) :: api/endpoints/system.py
+    │   ├── /purge-candidates [POST] (system.create_purge_candidates_operation) - Queues async purge-candidate preview operation (202 + operationId) :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /purge [POST] (system.purge_data) - Queues layer/domain purge operation :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /purge/{operation_id} [GET] (system.get_purge_operation) - Polls purge/preview operation status/result :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /purge-symbols [POST] (system.purge_symbols) - Queues selected-symbol purge batch :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /alerts
     │   │   └── /{alert_id}
     │   │       ├── /ack [POST] (system.acknowledge_alert) - Acknowledges a system alert :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx

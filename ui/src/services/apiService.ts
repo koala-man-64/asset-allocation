@@ -168,6 +168,8 @@ async function warmUpApiOnce(apiBaseUrl: string): Promise<void> {
 export interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
   timeoutMs?: number;
+  retryOnStatusCodes?: number[] | false;
+  retryAttempts?: number;
 }
 
 export interface RequestMeta {
@@ -197,8 +199,17 @@ async function performRequest<T>(
   endpoint: string,
   config: RequestConfig = {}
 ): Promise<ResponseWithMeta<T>> {
-  const { params, headers, timeoutMs, ...customConfig } = config;
+  const { params, headers, timeoutMs, retryOnStatusCodes, retryAttempts, ...customConfig } = config;
   const apiBaseUrl = uiConfig.apiBaseUrl;
+  const maxAttempts = Number.isFinite(retryAttempts)
+    ? Math.max(1, Math.floor(Number(retryAttempts)))
+    : API_REQUEST_MAX_ATTEMPTS;
+  const retryableStatusCodes =
+    retryOnStatusCodes === false
+      ? new Set<number>()
+      : Array.isArray(retryOnStatusCodes)
+        ? new Set<number>(retryOnStatusCodes)
+        : API_COLD_START_RETRYABLE_STATUS_CODES;
 
   let url = `${apiBaseUrl}${endpoint}`;
   if (params) {
@@ -229,8 +240,8 @@ async function performRequest<T>(
   let retryDelayMs = API_REQUEST_RETRY_BASE_DELAY_MS;
   let response: Response | null = null;
   const startedAt = performance.now();
-  for (let attempt = 1; attempt <= API_REQUEST_MAX_ATTEMPTS; attempt += 1) {
-    const shouldRetry = attempt < API_REQUEST_MAX_ATTEMPTS;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const shouldRetry = attempt < maxAttempts;
     try {
       response = await fetchWithOptionalTimeout(
         url,
@@ -255,7 +266,7 @@ async function performRequest<T>(
       break;
     }
 
-    if (!shouldRetry || !isRetryableStatusCode(response.status)) {
+    if (!shouldRetry || !retryableStatusCodes.has(response.status)) {
       break;
     }
 
@@ -382,6 +393,20 @@ export interface PurgeCandidateRow {
   latestAsOf: string | null;
 }
 
+export interface PurgeCandidatesRequest {
+  layer: 'bronze' | 'silver' | 'gold';
+  domain: 'market' | 'finance' | 'earnings' | 'price-target';
+  column: string;
+  operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne' | 'top_percent' | 'bottom_percent';
+  aggregation?: 'min' | 'max' | 'avg' | 'stddev';
+  value?: number;
+  percentile?: number;
+  as_of?: string;
+  recent_rows?: number;
+  offset?: number;
+  min_rows?: number;
+}
+
 export interface PurgeCandidatesCriteria {
   requestedLayer: string;
   resolvedLayer: string;
@@ -449,7 +474,7 @@ export interface PurgeOperationResponse {
   updatedAt: string;
   startedAt: string;
   completedAt?: string | null;
-  result?: PurgeResponse | PurgeBatchOperationResult;
+  result?: PurgeResponse | PurgeBatchOperationResult | PurgeCandidatesResponse;
   error?: string | null;
 }
 
@@ -829,20 +854,21 @@ export const apiService = {
     });
   },
 
-  getPurgeCandidates(payload: {
-    layer: 'bronze' | 'silver' | 'gold';
-    domain: 'market' | 'finance' | 'earnings' | 'price-target';
-    column: string;
-    operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'ne' | 'top_percent' | 'bottom_percent';
-    aggregation?: 'min' | 'max' | 'avg' | 'stddev';
-    value?: number;
-    percentile?: number;
-    as_of?: string;
-    recent_rows?: number;
-    offset?: number;
-    min_rows?: number;
-  }): Promise<PurgeCandidatesResponse> {
-    return request<PurgeCandidatesResponse>('/system/purge-candidates', { params: payload });
+  getPurgeCandidates(payload: PurgeCandidatesRequest): Promise<PurgeCandidatesResponse> {
+    return request<PurgeCandidatesResponse>('/system/purge-candidates', {
+      params: payload,
+      timeoutMs: 30000,
+      retryOnStatusCodes: [408, 425, 429, 500, 502, 503]
+    });
+  },
+
+  createPurgeCandidatesOperation(payload: PurgeCandidatesRequest): Promise<PurgeOperationResponse> {
+    return request<PurgeOperationResponse>('/system/purge-candidates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 30000,
+      retryOnStatusCodes: [408, 425, 429, 500, 502, 503]
+    });
   },
 
   getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
