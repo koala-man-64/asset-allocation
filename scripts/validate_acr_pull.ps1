@@ -22,6 +22,8 @@ Validates Azure Container Registry (ACR) pull configuration for Container Apps/J
 - Identity has AcrPull on the ACR
 - Apps/Jobs are assigned the identity
 - Apps/Jobs are configured to use the registry with that identity
+
+If -AppNames is omitted, defaults to API app only (asset-allocation-api).
 "@
 }
 
@@ -240,11 +242,9 @@ if (-not $AppNames -or $AppNames.Count -eq 0) {
   if (-not $apiApp) { $apiApp = $env:API_APP_NAME }
   if (-not $apiApp) { $apiApp = "asset-allocation-api" }
 
-  $uiApp = Get-EnvValueFirst -Keys @("UI_APP_NAME") -Lines $envLines
-  if (-not $uiApp) { $uiApp = $env:UI_APP_NAME }
-  if (-not $uiApp) { $uiApp = "asset-allocation-ui" }
-
-  $AppNames = @($apiApp, $uiApp)
+  # Default to the unified app only. If you still run a separate UI app,
+  # pass it explicitly with -AppNames.
+  $AppNames = @($apiApp)
 }
 
 $AppNames = Normalize-Names -Names $AppNames

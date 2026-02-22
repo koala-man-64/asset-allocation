@@ -443,7 +443,6 @@ jobs:
               - ".github/workflows/deploy.yml"
             ui_app:
               - "ui/**"
-              - "deploy/app_ui.yaml"
               - ".github/workflows/deploy.yml"
 
       - name: Log change detection outputs
@@ -610,8 +609,8 @@ jobs:
             echo "app_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy API App
-        if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.api_app_check.outputs.app_exists == 'false'
+      - name: Deploy Unified App (API + UI Sidecar)
+        if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.app_changes.outputs.ui_app == 'true' || steps.api_app_check.outputs.app_exists == 'false'
         env:
           API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
@@ -704,7 +703,7 @@ jobs:
             fi
           }
 
-          echo "Deploying API app from YAML..."
+          echo "Deploying unified app from YAML..."
           tmp="deploy/app_api.tmp.yaml"
           envsubst < deploy/app_api.yaml > "$tmp"
 
@@ -832,152 +831,16 @@ jobs:
             fi
           fi
 
-      - name: Deploy UI App
-        if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.ui_app == 'true' || steps.ui_app_check.outputs.app_exists == 'false'
+      - name: Decommission Legacy UI App
+        if: steps.ui_app_check.outputs.app_exists == 'true' && (env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.app_changes.outputs.ui_app == 'true' || steps.api_app_check.outputs.app_exists == 'false')
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"
-          : "${CONTAINER_APPS_ENVIRONMENT_ID:?CONTAINER_APPS_ENVIRONMENT_ID is required}"
-          : "${IMAGE_TAG:?IMAGE_TAG is required}"
-
-          ensure_registry_identity() {
-            local app_name="$1"
-            echo "Ensuring ACR registry uses managed identity for $app_name..."
-            az containerapp registry set \
-              --name "$app_name" \
-              --resource-group "${{ env.RESOURCE_GROUP }}" \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-          }
-
-          BOOTSTRAP_IMAGE="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-
-          is_acr_auth_error() {
-            echo "$1" | grep -qiE "(UNAUTHORIZED: authentication required|UNAUTHORIZED|authentication required|aka\\.ms/acr/authorization)"
-          }
-
-          bootstrap_app_image() {
-            local app_name="$1"
-            echo "Switching $app_name to bootstrap image ($BOOTSTRAP_IMAGE) to unblock identity/registry updates..."
-            az containerapp update \
-              --name "$app_name" \
-              --resource-group "${{ env.RESOURCE_GROUP }}" \
-              --image "$BOOTSTRAP_IMAGE" \
-              --only-show-errors
-          }
-
-          ensure_app_identity_assigned() {
-            local app_name="$1"
-            if ! az containerapp identity show \
-              --name "$app_name" \
-              --resource-group "${{ env.RESOURCE_GROUP }}" \
-              --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              echo "Assigning user-assigned managed identity (for ACR pull) to $app_name..."
-              az containerapp identity assign \
-                --name "$app_name" \
-                --resource-group "${{ env.RESOURCE_GROUP }}" \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-          }
-
-          echo "Deploying UI app from YAML..."
-          tmp="deploy/app_ui.tmp.yaml"
-          envsubst < deploy/app_ui.yaml > "$tmp"
-
-          if ! az containerapp show --name ${{ env.UI_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "App ${{ env.UI_APP_NAME }} not found. Creating..."
-            if ! create_out="$(az containerapp create \
-              --name ${{ env.UI_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp" 2>&1)"; then
-              echo "$create_out"
-              if is_acr_auth_error "$create_out"; then
-                echo "Create failed due to ACR auth. Bootstrapping app with a public image, then applying YAML..."
-                az containerapp create \
-                  --name ${{ env.UI_APP_NAME }} \
-                  --resource-group ${{ env.RESOURCE_GROUP }} \
-                  --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-                  --image "$BOOTSTRAP_IMAGE" \
-                  --ingress internal \
-                  --target-port 80 \
-                  --only-show-errors
-
-                ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
-                ensure_registry_identity "${{ env.UI_APP_NAME }}"
-
-                az containerapp update \
-                  --name ${{ env.UI_APP_NAME }} \
-                  --resource-group ${{ env.RESOURCE_GROUP }} \
-                  --yaml "$tmp" \
-                  --only-show-errors
-              else
-                echo "::error::Failed to create Container App '${{ env.UI_APP_NAME }}'. See output above."
-                exit 1
-              fi
-            fi
-
-            # Idempotent safety: ensure identity + registry use MI (and clears username/password).
-            ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
-            ensure_registry_identity "${{ env.UI_APP_NAME }}"
-          else
-            echo "Ensuring app can pull from ACR using managed identity..."
-
-            current_registry_identity="$(az containerapp show \
-              --name ${{ env.UI_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
-
-            if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
-              bootstrap_app_image "${{ env.UI_APP_NAME }}" || true
-            fi
-
-            if ! assign_out="$(ensure_app_identity_assigned "${{ env.UI_APP_NAME }}" 2>&1)"; then
-              echo "$assign_out"
-              if is_acr_auth_error "$assign_out"; then
-                bootstrap_app_image "${{ env.UI_APP_NAME }}"
-                ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
-              else
-                echo "::error::Failed to assign managed identity to '${{ env.UI_APP_NAME }}'."
-                exit 1
-              fi
-            fi
-
-            if ! reg_out="$(ensure_registry_identity "${{ env.UI_APP_NAME }}" 2>&1)"; then
-              echo "$reg_out"
-              if is_acr_auth_error "$reg_out"; then
-                bootstrap_app_image "${{ env.UI_APP_NAME }}"
-                ensure_registry_identity "${{ env.UI_APP_NAME }}"
-              else
-                echo "::error::Failed to set ACR registry identity for '${{ env.UI_APP_NAME }}'."
-                exit 1
-              fi
-            fi
-
-            if ! update_out="$(az containerapp update \
-              --name ${{ env.UI_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp" 2>&1)"; then
-              echo "$update_out"
-              if is_acr_auth_error "$update_out"; then
-                echo "Update failed due to ACR auth. Bootstrapping and retrying..."
-                bootstrap_app_image "${{ env.UI_APP_NAME }}"
-                ensure_app_identity_assigned "${{ env.UI_APP_NAME }}"
-                ensure_registry_identity "${{ env.UI_APP_NAME }}"
-                az containerapp update \
-                  --name ${{ env.UI_APP_NAME }} \
-                  --resource-group ${{ env.RESOURCE_GROUP }} \
-                  --yaml "$tmp" \
-                  --only-show-errors
-              else
-                echo "::error::Failed to update Container App '${{ env.UI_APP_NAME }}'. See output above."
-                exit 1
-              fi
-            fi
-          fi
+          echo "Deleting legacy UI app '${{ env.UI_APP_NAME }}' after unified app deployment..."
+          az containerapp delete \
+            --name "${{ env.UI_APP_NAME }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --yes \
+            --only-show-errors
 
       - name: Check Market Bronze Job Exists
         id: market_data_job_check
@@ -1940,16 +1803,21 @@ jobs:
           expected_api_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
           expected_ui_image="${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}"
 
-          check_app() {
+          check_app_container() {
             local app_name="$1"
-            local expected_image="$2"
+            local container_name="$2"
+            local expected_image="$3"
             local actual_image
-            actual_image=$(az containerapp show --name "$app_name" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[0].image" -o tsv)
-            if [ "$actual_image" != "$expected_image" ]; then
-              echo "Image mismatch for app $app_name: expected $expected_image, got $actual_image"
+            actual_image=$(az containerapp show --name "$app_name" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.template.containers[?name=='$container_name'].image | [0]" -o tsv)
+            if [ -z "$actual_image" ] || [ "$actual_image" = "null" ]; then
+              echo "Container missing for app $app_name: $container_name"
               exit 1
             fi
-            echo "Verified $app_name image $actual_image"
+            if [ "$actual_image" != "$expected_image" ]; then
+              echo "Image mismatch for app $app_name container $container_name: expected $expected_image, got $actual_image"
+              exit 1
+            fi
+            echo "Verified $app_name/$container_name image $actual_image"
           }
 
           check_job() {
@@ -1963,11 +1831,9 @@ jobs:
             echo "Verified $job_name image $actual_image"
           }
 
-          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.api_app }}" = "true" ] || [ "${{ steps.api_app_check.outputs.app_exists }}" = "false" ]; then
-            check_app "${{ env.API_APP_NAME }}" "$expected_api_image"
-          fi
-          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.ui_app }}" = "true" ] || [ "${{ steps.ui_app_check.outputs.app_exists }}" = "false" ]; then
-            check_app "${{ env.UI_APP_NAME }}" "$expected_ui_image"
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.api_app }}" = "true" ] || [ "${{ steps.app_changes.outputs.ui_app }}" = "true" ] || [ "${{ steps.api_app_check.outputs.app_exists }}" = "false" ]; then
+            check_app_container "${{ env.API_APP_NAME }}" "asset-allocation-api" "$expected_api_image"
+            check_app_container "${{ env.API_APP_NAME }}" "asset-allocation-ui" "$expected_ui_image"
           fi
 
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.market_changes.outputs.bronze_market }}" = "true" ] || [ "${{ steps.market_data_job_check.outputs.job_exists }}" = "false" ]; then

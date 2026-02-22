@@ -1,3 +1,5 @@
+# Legacy standalone UI manifest.
+# Production deploys now use deploy/app_api.yaml (unified API+UI sidecar app).
 location: East US
 name: asset-allocation-ui
 type: Microsoft.App/containerApps

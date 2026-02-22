@@ -11,8 +11,10 @@ import requests
 
 LOCAL_API_BASE_URL = "http://localhost:8000"
 LOCAL_UI_BASE_URL = "http://localhost:5174"
-CLOUD_API_BASE_URL = "https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io"
-CLOUD_UI_BASE_URL = "https://asset-allocation-ui.bluesea-887e7a19.eastus.azurecontainerapps.io"
+# Unified Container App deployment: UI and API share one external FQDN.
+CLOUD_BASE_URL = "https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io"
+CLOUD_API_BASE_URL = CLOUD_BASE_URL
+CLOUD_UI_BASE_URL = CLOUD_BASE_URL
 
 
 def _join_url(base_url: str, path: str) -> str:
@@ -49,7 +51,9 @@ def _probe_json_status(
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         response.raise_for_status()
     except requests.RequestException as exc:
-        return ProbeResult(name=name, url=url, ok=False, elapsed_ms=(time.perf_counter() - started) * 1000.0, error=str(exc))
+        return ProbeResult(
+            name=name, url=url, ok=False, elapsed_ms=(time.perf_counter() - started) * 1000.0, error=str(exc)
+        )
 
     try:
         payload = response.json()
@@ -102,7 +106,9 @@ def _probe_ui_root(*, url: str, timeout_seconds: float) -> ProbeResult:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         response.raise_for_status()
     except requests.RequestException as exc:
-        return ProbeResult(name="UI root", url=url, ok=False, elapsed_ms=(time.perf_counter() - started) * 1000.0, error=str(exc))
+        return ProbeResult(
+            name="UI root", url=url, ok=False, elapsed_ms=(time.perf_counter() - started) * 1000.0, error=str(exc)
+        )
 
     body = response.text or ""
     content_type = response.headers.get("Content-Type", "")
@@ -135,7 +141,9 @@ def _probe_ui_config(*, url: str, timeout_seconds: float) -> ProbeResult:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         response.raise_for_status()
     except requests.RequestException as exc:
-        return ProbeResult(name="UI config.js", url=url, ok=False, elapsed_ms=(time.perf_counter() - started) * 1000.0, error=str(exc))
+        return ProbeResult(
+            name="UI config.js", url=url, ok=False, elapsed_ms=(time.perf_counter() - started) * 1000.0, error=str(exc)
+        )
 
     body = response.text or ""
     if "__BACKTEST_UI_CONFIG__" not in body and "__API_UI_CONFIG__" not in body:

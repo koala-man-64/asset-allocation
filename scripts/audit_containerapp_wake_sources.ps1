@@ -2,7 +2,7 @@
 param(
   [string]$SubscriptionId = "",
   [string]$ResourceGroup = "",
-  [string[]]$AppNames = @("asset-allocation-api", "asset-allocation-ui"),
+  [string[]]$AppNames = @("asset-allocation-api"),
   [int]$LookbackHours = 24,
   [string]$EnvFile = "",
   [switch]$SkipRepoScan,
@@ -26,9 +26,8 @@ Audits potential wake-up sources for Azure Container Apps, including:
 - Activity log events that may trigger revisions/restarts
 - Repo/workflow sources that may probe app endpoints
 
-Defaults target both apps:
+Default target app:
 - asset-allocation-api
-- asset-allocation-ui
 "@
 }
 
@@ -352,14 +351,25 @@ foreach ($appName in $normalizedApps) {
   $containers = @()
   $containersValue = Get-PropertyValue -Object $template -PropertyName "containers"
   if ($null -ne $containersValue) { $containers = @($containersValue) }
-  $primaryContainer = if ($containers.Count -gt 0) { $containers[0] } else { $null }
-  $probes = @()
-  $probesValue = Get-PropertyValue -Object $primaryContainer -PropertyName "probes"
-  if ($null -ne $probesValue) { $probes = @($probesValue) }
+  $containerSummaries = @()
+  foreach ($container in $containers) {
+    $containerName = [string](Get-PropertyValue -Object $container -PropertyName "name")
+    if ([string]::IsNullOrWhiteSpace($containerName)) { $containerName = "(unnamed)" }
 
-  $envItems = @()
-  $envItemsValue = Get-PropertyValue -Object $primaryContainer -PropertyName "env"
-  if ($null -ne $envItemsValue) { $envItems = @($envItemsValue) }
+    $containerProbes = @()
+    $containerProbesValue = Get-PropertyValue -Object $container -PropertyName "probes"
+    if ($null -ne $containerProbesValue) { $containerProbes = @($containerProbesValue) }
+
+    $containerEnvItems = @()
+    $containerEnvItemsValue = Get-PropertyValue -Object $container -PropertyName "env"
+    if ($null -ne $containerEnvItemsValue) { $containerEnvItems = @($containerEnvItemsValue) }
+
+    $containerSummaries += [PSCustomObject]@{
+      Name = $containerName
+      Probes = $containerProbes
+      EnvItems = $containerEnvItems
+    }
+  }
 
   $ingress = Get-PropertyValue -Object $configuration -PropertyName "ingress"
   $ingressExternal = $false
@@ -386,6 +396,10 @@ foreach ($appName in $normalizedApps) {
   Write-Host ("Scale        : minReplicas={0} maxReplicas={1} ruleCount={2}" -f $minReplicas, $maxReplicas, $rules.Count)
   Write-Host ("Revisions    : mode={0} latestReadyRevision={1}" -f $revisionMode, [string](Get-PropertyValue -Object $props -PropertyName "latestReadyRevisionName"))
   Write-Host ("Provisioning : state={0} runningState={1}" -f [string](Get-PropertyValue -Object $props -PropertyName "provisioningState"), $(if ($runningState) { $runningState } else { "-" }))
+  if ($containerSummaries.Count -gt 0) {
+    $containerNames = @($containerSummaries | ForEach-Object { $_.Name })
+    Write-Host ("Containers   : {0}" -f ($containerNames -join ", "))
+  }
 
   if ($minReplicas -gt 0) {
     Add-Finding -Severity High -App $appName -Source "Scale.MinReplicas" -Evidence ("minReplicas={0}" -f $minReplicas) -Recommendation "Set minReplicas=0 to permit scale-to-zero."
@@ -414,19 +428,29 @@ foreach ($appName in $normalizedApps) {
     }
   }
 
-  if ($probes.Count -gt 0) {
+  $hasProbes = $false
+  foreach ($containerInfo in $containerSummaries) {
+    if (@($containerInfo.Probes).Count -gt 0) {
+      $hasProbes = $true
+      break
+    }
+  }
+
+  if ($hasProbes) {
     Write-Host "Probes       :"
-    foreach ($probe in $probes) {
-      $probeType = [string](Get-PropertyValue -Object $probe -PropertyName "type")
-      $httpGet = Get-PropertyValue -Object $probe -PropertyName "httpGet"
-      $path = [string](Get-PropertyValue -Object $httpGet -PropertyName "path")
-      $periodValue = Get-PropertyValue -Object $probe -PropertyName "periodSeconds"
-      $delayValue = Get-PropertyValue -Object $probe -PropertyName "initialDelaySeconds"
-      $period = if ($null -ne $periodValue) { [int]$periodValue } else { 0 }
-      $delay = if ($null -ne $delayValue) { [int]$delayValue } else { 0 }
-      Write-Host ("  - type={0} path={1} initialDelay={2}s period={3}s" -f $probeType, $path, $delay, $period)
-      if ($path -eq "/") {
-        Add-Finding -Severity Info -App $appName -Source "Probe.Path" -Evidence ("{0} probe uses '/' path." -f $probeType) -Recommendation "Consider a lightweight /healthz endpoint to reduce probe overhead."
+    foreach ($containerInfo in $containerSummaries) {
+      foreach ($probe in @($containerInfo.Probes)) {
+        $probeType = [string](Get-PropertyValue -Object $probe -PropertyName "type")
+        $httpGet = Get-PropertyValue -Object $probe -PropertyName "httpGet"
+        $path = [string](Get-PropertyValue -Object $httpGet -PropertyName "path")
+        $periodValue = Get-PropertyValue -Object $probe -PropertyName "periodSeconds"
+        $delayValue = Get-PropertyValue -Object $probe -PropertyName "initialDelaySeconds"
+        $period = if ($null -ne $periodValue) { [int]$periodValue } else { 0 }
+        $delay = if ($null -ne $delayValue) { [int]$delayValue } else { 0 }
+        Write-Host ("  - container={0} type={1} path={2} initialDelay={3}s period={4}s" -f $containerInfo.Name, $probeType, $path, $delay, $period)
+        if ($path -eq "/" -and $containerInfo.Name -match "api") {
+          Add-Finding -Severity Info -App $appName -Source "Probe.Path" -Evidence ("container={0} {1} probe uses '/' path." -f $containerInfo.Name, $probeType) -Recommendation "Consider a lightweight /healthz endpoint to reduce probe overhead."
+        }
       }
     }
   }
@@ -434,10 +458,12 @@ foreach ($appName in $normalizedApps) {
     Write-Host "Probes       : none"
   }
 
-  $monitoredContainerApps = Get-ContainerEnvVar -EnvItems $envItems -Name "SYSTEM_HEALTH_ARM_CONTAINERAPPS"
-  if (-not [string]::IsNullOrWhiteSpace($monitoredContainerApps)) {
-    Write-Host ("Env          : SYSTEM_HEALTH_ARM_CONTAINERAPPS={0}" -f $monitoredContainerApps)
-    Add-Finding -Severity Medium -App $appName -Source "Env.SYSTEM_HEALTH_ARM_CONTAINERAPPS" -Evidence "API system-health endpoint may probe listed apps and wake them when probe=true." -Recommendation "Use probe=false by default for container-app status checks or narrow monitored app list."
+  foreach ($containerInfo in $containerSummaries) {
+    $monitoredContainerApps = Get-ContainerEnvVar -EnvItems $containerInfo.EnvItems -Name "SYSTEM_HEALTH_ARM_CONTAINERAPPS"
+    if (-not [string]::IsNullOrWhiteSpace($monitoredContainerApps)) {
+      Write-Host ("Env          : container={0} SYSTEM_HEALTH_ARM_CONTAINERAPPS={1}" -f $containerInfo.Name, $monitoredContainerApps)
+      Add-Finding -Severity Medium -App $appName -Source "Env.SYSTEM_HEALTH_ARM_CONTAINERAPPS" -Evidence ("container={0} may probe listed apps and wake them when probe=true." -f $containerInfo.Name) -Recommendation "Use probe=false by default for container-app status checks or narrow monitored app list."
+    }
   }
 
   $replicas = Invoke-AzJson -AzArgs @("containerapp", "replica", "list", "--name", $appName, "--resource-group", $ResourceGroup, "-o", "json") -AllowFailure
@@ -598,6 +624,8 @@ if (-not $SkipRepoScan) {
       Where-Object {
         $_.FullName -notmatch "[\\/]\.git[\\/]" -and
         $_.FullName -notmatch "[\\/]node_modules[\\/]" -and
+        $_.FullName -notmatch "[\\/]\\.pnpm-store[\\/]" -and
+        $_.FullName -notmatch "[\\/]coverage[\\/]" -and
         $_.FullName -notmatch "[\\/]dist[\\/]"
       }
   }

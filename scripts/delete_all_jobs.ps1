@@ -31,11 +31,12 @@ $resolvedUiAppName = $UiAppName
 if (-not $resolvedUiAppName) {
   $resolvedUiAppName = $env:UI_APP_NAME
 }
-if (-not $resolvedUiAppName) {
-  $resolvedUiAppName = "asset-allocation-ui"
-}
 
-$containerApps = @($resolvedApiAppName, $resolvedUiAppName)
+$containerApps = @($resolvedApiAppName)
+if (-not [string]::IsNullOrWhiteSpace($resolvedUiAppName) -and $resolvedUiAppName -ne $resolvedApiAppName) {
+  $containerApps += $resolvedUiAppName
+}
+$containerApps = @($containerApps | Sort-Object -Unique)
 
 Write-Host "Deleting jobs in Resource Group: $ResourceGroup"
 
