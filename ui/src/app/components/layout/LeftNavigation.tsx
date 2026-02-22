@@ -127,6 +127,16 @@ export function LeftNavigation() {
                       },
                       staleTime: 30000
                     });
+                    if (item.path === '/system-status') {
+                      queryClient.prefetchQuery({
+                        queryKey: queryKeys.domainMetadataSnapshot('all', 'all'),
+                        queryFn: async () =>
+                          DataService.getDomainMetadataSnapshot({
+                            cacheOnly: true
+                          }),
+                        staleTime: 5 * 60 * 1000
+                      });
+                    }
                   }
                 }}
                 className={({ isActive }) =>

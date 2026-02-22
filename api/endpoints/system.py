@@ -3,7 +3,10 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
+import hashlib
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from datetime import datetime, timedelta, timezone
@@ -12,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Literal, Tuple, TypeVar
 import httpx
 from anyio import from_thread
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from api.service.dependencies import (
@@ -521,12 +524,68 @@ class DomainMetadataResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
+class DomainMetadataSnapshotResponse(BaseModel):
+    version: int = 1
+    updatedAt: Optional[str] = None
+    entries: Dict[str, DomainMetadataResponse] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+
+
 _DOMAIN_METADATA_CACHE_FILE_DEFAULT = "metadata/domain-metadata.json"
+_DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS = 30.0
+_DOMAIN_METADATA_DOCUMENT_CACHE_LOCK = threading.Lock()
+_DOMAIN_METADATA_DOCUMENT_CACHE: Optional[Dict[str, Any]] = None
+_DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = 0.0
+_DOMAIN_METADATA_UI_CACHE_FILE_DEFAULT = "metadata/ui-cache/domain-metadata-snapshot.json"
 
 
 def _domain_metadata_cache_path() -> str:
     configured = (os.environ.get("DOMAIN_METADATA_CACHE_PATH") or "").strip()
     return configured or _DOMAIN_METADATA_CACHE_FILE_DEFAULT
+
+
+def _domain_metadata_ui_cache_path() -> str:
+    configured = (os.environ.get("DOMAIN_METADATA_UI_CACHE_PATH") or "").strip()
+    return configured or _DOMAIN_METADATA_UI_CACHE_FILE_DEFAULT
+
+
+def _domain_metadata_snapshot_cache_ttl_seconds() -> float:
+    raw = (os.environ.get("DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS") or "").strip()
+    if not raw:
+        return _DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS
+    try:
+        ttl = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS=%r. Using default=%s.",
+            raw,
+            _DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS,
+        )
+        return _DEFAULT_DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS
+    if ttl < 0:
+        return 0.0
+    return ttl
+
+
+def _cache_domain_metadata_document(payload: Dict[str, Any]) -> None:
+    ttl = _domain_metadata_snapshot_cache_ttl_seconds()
+    with _DOMAIN_METADATA_DOCUMENT_CACHE_LOCK:
+        global _DOMAIN_METADATA_DOCUMENT_CACHE
+        global _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT
+        if ttl <= 0:
+            _DOMAIN_METADATA_DOCUMENT_CACHE = None
+            _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = 0.0
+            return
+        _DOMAIN_METADATA_DOCUMENT_CACHE = deepcopy(payload)
+        _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = time.monotonic() + ttl
+
+
+def _invalidate_domain_metadata_document_cache() -> None:
+    with _DOMAIN_METADATA_DOCUMENT_CACHE_LOCK:
+        global _DOMAIN_METADATA_DOCUMENT_CACHE
+        global _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT
+        _DOMAIN_METADATA_DOCUMENT_CACHE = None
+        _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT = 0.0
 
 
 def _domain_metadata_cache_key(layer: str, domain: str) -> str:
@@ -539,15 +598,24 @@ def _default_domain_metadata_document() -> Dict[str, Any]:
     return {"version": 1, "updatedAt": None, "entries": {}}
 
 
-def _load_domain_metadata_document() -> Dict[str, Any]:
+def _load_domain_metadata_document(force_refresh: bool = False) -> Dict[str, Any]:
+    if not force_refresh:
+        now = time.monotonic()
+        with _DOMAIN_METADATA_DOCUMENT_CACHE_LOCK:
+            cached = _DOMAIN_METADATA_DOCUMENT_CACHE
+            expires_at = _DOMAIN_METADATA_DOCUMENT_CACHE_EXPIRES_AT
+            if isinstance(cached, dict) and now < expires_at:
+                return deepcopy(cached)
+
     path = _domain_metadata_cache_path()
     payload = mdc.get_common_json_content(path)
     if not isinstance(payload, dict):
-        return _default_domain_metadata_document()
+        payload = _default_domain_metadata_document()
 
     entries = payload.get("entries")
     if not isinstance(entries, dict):
         payload["entries"] = {}
+    _cache_domain_metadata_document(payload)
     return payload
 
 
@@ -639,7 +707,83 @@ def _write_cached_domain_metadata_snapshot(layer: str, domain: str, metadata: Di
     payload["version"] = 1
     payload["updatedAt"] = now
     mdc.save_common_json_content(payload, _domain_metadata_cache_path())
+    _cache_domain_metadata_document(payload)
     return now
+
+
+def _extract_cached_domain_metadata_snapshots(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        return {}
+
+    extracted: Dict[str, Dict[str, Any]] = {}
+    for raw_key, raw_entry in entries.items():
+        if not isinstance(raw_entry, dict):
+            continue
+
+        raw_metadata = raw_entry.get("metadata")
+        if isinstance(raw_metadata, dict):
+            metadata = dict(raw_metadata)
+        else:
+            legacy_payload = raw_entry.get("payload")
+            metadata = dict(legacy_payload) if isinstance(legacy_payload, dict) else {}
+        if not metadata:
+            continue
+
+        layer = _normalize_layer(str(metadata.get("layer") or raw_entry.get("layer") or ""))
+        domain = _normalize_domain(str(metadata.get("domain") or raw_entry.get("domain") or ""))
+        if not layer or not domain:
+            if isinstance(raw_key, str) and "/" in raw_key:
+                prefix, suffix = raw_key.split("/", 1)
+                layer = layer or _normalize_layer(prefix)
+                domain = domain or _normalize_domain(suffix)
+        if not layer or not domain:
+            continue
+
+        key = _domain_metadata_cache_key(layer, domain)
+        metadata["layer"] = layer
+        metadata["domain"] = domain
+
+        cached_at = raw_entry.get("cachedAt")
+        if not isinstance(cached_at, str) or not cached_at.strip():
+            legacy_cached = metadata.get("cachedAt") or raw_entry.get("updatedAt") or payload.get("updatedAt")
+            cached_at = str(legacy_cached).strip() if isinstance(legacy_cached, str) else ""
+        if cached_at:
+            metadata["cachedAt"] = cached_at
+        metadata["cacheSource"] = "snapshot"
+        extracted[key] = metadata
+
+    return extracted
+
+
+def _parse_domain_metadata_filter(
+    raw: Optional[str],
+    *,
+    param_name: str,
+    normalizer: Callable[[str], Optional[str]],
+    allowed_values: Optional[set[str]] = None,
+) -> Optional[set[str]]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    items = _split_csv(text)
+    if not items:
+        return set()
+    normalized: set[str] = set()
+    for item in items:
+        value = normalizer(item)
+        if not value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{param_name} contains unsupported value: {item!r}.",
+            )
+        if allowed_values is not None and value not in allowed_values:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{param_name} contains unsupported value: {item!r}.",
+            )
+        normalized.add(value)
+    return normalized
 
 
 @router.get("/domain-metadata", response_model=DomainMetadataResponse)
@@ -748,6 +892,180 @@ def domain_metadata(
             warnings.append(f"Snapshot cache write failed: {exc}")
 
     return JSONResponse(payload_out, headers=headers)
+
+
+@router.get("/domain-metadata/snapshot", response_model=DomainMetadataSnapshotResponse)
+def domain_metadata_snapshot(
+    request: Request,
+    layers: Optional[str] = Query(
+        default=None,
+        description="Optional comma-separated layer filter (e.g. bronze,silver,gold).",
+    ),
+    domains: Optional[str] = Query(
+        default=None,
+        description="Optional comma-separated domain filter (e.g. market,finance,earnings,price-target).",
+    ),
+    cache_only: bool = Query(
+        default=True,
+        alias="cacheOnly",
+        description="When true, return only cached snapshot entries and do not compute missing metadata.",
+    ),
+    refresh: bool = Query(
+        default=False,
+        description="When true, bypass the in-process snapshot document cache before reading persisted metadata.",
+    ),
+) -> JSONResponse:
+    validate_auth(request)
+    layer_filter = _parse_domain_metadata_filter(
+        layers,
+        param_name="layers",
+        normalizer=lambda value: _normalize_layer(value),
+        allowed_values=set(_LAYER_CONTAINER_ENV.keys()),
+    )
+    domain_filter = _parse_domain_metadata_filter(
+        domains,
+        param_name="domains",
+        normalizer=lambda value: _normalize_domain(value),
+    )
+
+    try:
+        snapshot_doc = _load_domain_metadata_document(force_refresh=bool(refresh))
+    except Exception as exc:
+        logger.warning("Domain metadata snapshot load failed: %s", exc)
+        snapshot_doc = _default_domain_metadata_document()
+        _invalidate_domain_metadata_document_cache()
+
+    all_entries = _extract_cached_domain_metadata_snapshots(snapshot_doc)
+    filtered_entries: Dict[str, Dict[str, Any]] = {}
+    warnings: List[str] = []
+
+    for key, metadata in all_entries.items():
+        layer = _normalize_layer(str(metadata.get("layer") or ""))
+        domain = _normalize_domain(str(metadata.get("domain") or ""))
+        if not layer or not domain:
+            continue
+        if layer_filter is not None and layer not in layer_filter:
+            continue
+        if domain_filter is not None and domain not in domain_filter:
+            continue
+        filtered_entries[key] = metadata
+
+    # Optional warm-fill for known layer/domain combinations only.
+    if not cache_only and layer_filter and domain_filter:
+        for layer in sorted(layer_filter):
+            for domain in sorted(domain_filter):
+                key = _domain_metadata_cache_key(layer, domain)
+                if key in filtered_entries:
+                    continue
+                try:
+                    payload = collect_domain_metadata(layer=layer, domain=domain)
+                    payload_out = dict(payload)
+                    payload_out["cacheSource"] = "live-refresh"
+                    cached_at = _write_cached_domain_metadata_snapshot(layer, domain, payload_out)
+                    payload_out["cachedAt"] = cached_at
+                    payload_out["cacheSource"] = "snapshot"
+                    filtered_entries[key] = payload_out
+                except Exception as exc:
+                    warnings.append(f"Unable to compute metadata for {key}: {exc}")
+
+        # Refresh snapshot metadata after optional warm-fill writes.
+        try:
+            snapshot_doc = _load_domain_metadata_document(force_refresh=True)
+        except Exception:
+            pass
+
+    response_payload: Dict[str, Any] = {
+        "version": int(snapshot_doc.get("version") or 1),
+        "updatedAt": snapshot_doc.get("updatedAt"),
+        "entries": filtered_entries,
+        "warnings": warnings,
+    }
+    headers: Dict[str, str] = {
+        "Cache-Control": "no-store",
+        "X-Domain-Metadata-Source": "snapshot-batch",
+        "X-Domain-Metadata-Entry-Count": str(len(filtered_entries)),
+    }
+    updated_at = response_payload.get("updatedAt")
+    if isinstance(updated_at, str) and updated_at.strip():
+        headers["X-Domain-Metadata-Updated-At"] = updated_at
+        headers["Last-Modified"] = updated_at
+    etag_basis = {
+        "updatedAt": response_payload.get("updatedAt"),
+        "keys": sorted(filtered_entries.keys()),
+    }
+    etag = f'W/"{hashlib.sha256(json.dumps(etag_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:24]}"'
+    headers["ETag"] = etag
+    if (request.headers.get("if-none-match") or "").strip() == etag:
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(response_payload, headers=headers)
+
+
+@router.get("/domain-metadata/snapshot/cache", response_model=DomainMetadataSnapshotResponse)
+def get_domain_metadata_snapshot_cache(request: Request) -> JSONResponse:
+    validate_auth(request)
+    warnings: List[str] = []
+    cache_hit = False
+    payload: Dict[str, Any] = {}
+
+    try:
+        raw = mdc.get_common_json_content(_domain_metadata_ui_cache_path())
+    except Exception as exc:
+        logger.warning("Failed to read persisted UI domain metadata cache: %s", exc)
+        raw = None
+        warnings.append(f"Read failed: {exc}")
+
+    if isinstance(raw, dict):
+        try:
+            parsed = DomainMetadataSnapshotResponse(**raw)
+            cache_hit = True
+            payload = parsed.model_dump() if hasattr(parsed, "model_dump") else parsed.dict()
+        except Exception as exc:
+            logger.warning("Persisted UI cache payload was invalid. Returning empty snapshot. err=%s", exc)
+            warnings.append(f"Invalid cache payload ignored: {exc}")
+
+    if not payload:
+        payload = {
+            "version": 1,
+            "updatedAt": None,
+            "entries": {},
+            "warnings": warnings or ["No persisted UI domain metadata snapshot found."],
+        }
+    elif warnings:
+        payload["warnings"] = [*list(payload.get("warnings") or []), *warnings]
+
+    return JSONResponse(
+        payload,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Domain-Metadata-UI-Cache": "hit" if cache_hit else "miss",
+            "X-Domain-Metadata-Entry-Count": str(len(payload.get("entries") or {})),
+        },
+    )
+
+
+@router.put("/domain-metadata/snapshot/cache", response_model=DomainMetadataSnapshotResponse)
+def put_domain_metadata_snapshot_cache(
+    request: Request,
+    payload: DomainMetadataSnapshotResponse,
+) -> JSONResponse:
+    validate_auth(request)
+    payload_out = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    if not str(payload_out.get("updatedAt") or "").strip():
+        payload_out["updatedAt"] = _utc_timestamp()
+    try:
+        mdc.save_common_json_content(payload_out, _domain_metadata_ui_cache_path())
+    except Exception as exc:
+        logger.warning("Failed to persist UI domain metadata cache: %s", exc)
+        raise HTTPException(status_code=503, detail=f"Failed to persist UI domain metadata cache: {exc}") from exc
+
+    return JSONResponse(
+        payload_out,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Domain-Metadata-UI-Cache": "written",
+            "X-Domain-Metadata-Entry-Count": str(len(payload_out.get("entries") or {})),
+        },
+    )
 
 
 class DomainColumnsResponse(BaseModel):
@@ -3908,6 +4226,14 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "DOMAIN_METADATA_CACHE_PATH": {
         "description": "Common-container JSON file path used to persist per-layer/domain metadata snapshots.",
         "example": "metadata/domain-metadata.json",
+    },
+    "DOMAIN_METADATA_UI_CACHE_PATH": {
+        "description": "Common-container JSON file path used to persist UI-hydrated domain metadata snapshots.",
+        "example": "metadata/ui-cache/domain-metadata-snapshot.json",
+    },
+    "DOMAIN_METADATA_SNAPSHOT_CACHE_TTL_SECONDS": {
+        "description": "In-process TTL (seconds) for the parsed domain metadata snapshot document.",
+        "example": "30",
     },
 }
 

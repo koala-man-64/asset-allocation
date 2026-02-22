@@ -701,6 +701,13 @@ export interface ContainerAppLogsResponse {
   logs: string[];
 }
 
+export interface DomainMetadataSnapshotResponse {
+  version: number;
+  updatedAt?: string | null;
+  entries: Record<string, DomainMetadata>;
+  warnings?: string[];
+}
+
 export const apiService = {
   // --- Data Endpoints ---
 
@@ -741,6 +748,27 @@ export const apiService = {
   ): Promise<DomainMetadata> {
     return request<DomainMetadata>('/system/domain-metadata', {
       params: { layer, domain, ...params }
+    });
+  },
+
+  getDomainMetadataSnapshot(
+    params: { layers?: string; domains?: string; cacheOnly?: boolean; refresh?: boolean } = {}
+  ): Promise<DomainMetadataSnapshotResponse> {
+    return request<DomainMetadataSnapshotResponse>('/system/domain-metadata/snapshot', {
+      params
+    });
+  },
+
+  getPersistedDomainMetadataSnapshotCache(): Promise<DomainMetadataSnapshotResponse> {
+    return request<DomainMetadataSnapshotResponse>('/system/domain-metadata/snapshot/cache');
+  },
+
+  savePersistedDomainMetadataSnapshotCache(
+    payload: DomainMetadataSnapshotResponse
+  ): Promise<DomainMetadataSnapshotResponse> {
+    return request<DomainMetadataSnapshotResponse>('/system/domain-metadata/snapshot/cache', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
     });
   },
 

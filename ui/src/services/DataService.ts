@@ -13,6 +13,7 @@ import type {
   ContainerAppLogsResponse,
   ContainerAppControlResponse,
   ContainerAppsStatusResponse,
+  DomainMetadataSnapshotResponse,
   DomainColumnsResponse,
   DebugSymbolsResponse,
   JobLogsResponse,
@@ -80,6 +81,22 @@ export const DataService = {
     params: { refresh?: boolean; cacheOnly?: boolean } = {}
   ): Promise<DomainMetadata> {
     return apiService.getDomainMetadata(layer, domain, params);
+  },
+
+  getDomainMetadataSnapshot(
+    params: { layers?: string; domains?: string; cacheOnly?: boolean; refresh?: boolean } = {}
+  ): Promise<DomainMetadataSnapshotResponse> {
+    return apiService.getDomainMetadataSnapshot(params);
+  },
+
+  getPersistedDomainMetadataSnapshotCache(): Promise<DomainMetadataSnapshotResponse> {
+    return apiService.getPersistedDomainMetadataSnapshotCache();
+  },
+
+  savePersistedDomainMetadataSnapshotCache(
+    payload: DomainMetadataSnapshotResponse
+  ): Promise<DomainMetadataSnapshotResponse> {
+    return apiService.savePersistedDomainMetadataSnapshotCache(payload);
   },
 
   getDomainColumns(

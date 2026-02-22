@@ -156,3 +156,193 @@ async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: 
     assert "No cached domain metadata snapshot found" in payload["warnings"][0]
     assert response.headers.get("X-Domain-Metadata-Source") == "snapshot-miss"
     assert response.headers.get("X-Domain-Metadata-Cache-Miss") == "1"
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setattr(
+        system,
+        "_load_domain_metadata_document",
+        lambda force_refresh=False: {
+            "version": 1,
+            "updatedAt": "2026-02-20T12:00:00+00:00",
+            "entries": {
+                "bronze/market": {
+                    "layer": "bronze",
+                    "domain": "market",
+                    "cachedAt": "2026-02-20T11:59:00+00:00",
+                    "metadata": _metadata_payload(layer="bronze", domain="market"),
+                },
+                "silver/finance": {
+                    "layer": "silver",
+                    "domain": "finance",
+                    "cachedAt": "2026-02-20T11:58:00+00:00",
+                    "metadata": _metadata_payload(layer="silver", domain="finance"),
+                },
+            },
+        },
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get(
+            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market,finance&cacheOnly=true"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == 1
+    assert payload["updatedAt"] == "2026-02-20T12:00:00+00:00"
+    assert sorted(payload["entries"].keys()) == ["bronze/market"]
+    entry = payload["entries"]["bronze/market"]
+    assert entry["layer"] == "bronze"
+    assert entry["domain"] == "market"
+    assert entry["cacheSource"] == "snapshot"
+    assert response.headers.get("X-Domain-Metadata-Source") == "snapshot-batch"
+    assert response.headers.get("X-Domain-Metadata-Entry-Count") == "1"
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_can_warm_fill_missing_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setattr(
+        system,
+        "_load_domain_metadata_document",
+        lambda force_refresh=False: {"version": 1, "updatedAt": None, "entries": {}},
+    )
+
+    monkeypatch.setattr(
+        system,
+        "collect_domain_metadata",
+        lambda **kwargs: _metadata_payload(layer=str(kwargs.get("layer")), domain=str(kwargs.get("domain"))),
+    )
+
+    writes: list[tuple[str, str]] = []
+
+    def _write(layer: str, domain: str, metadata: dict[str, object]) -> str:
+        writes.append((layer, domain))
+        return "2026-02-20T13:00:00+00:00"
+
+    monkeypatch.setattr(system, "_write_cached_domain_metadata_snapshot", _write)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get(
+            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market&cacheOnly=false"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert writes == [("bronze", "market")]
+    assert sorted(payload["entries"].keys()) == ["bronze/market"]
+    entry = payload["entries"]["bronze/market"]
+    assert entry["layer"] == "bronze"
+    assert entry["domain"] == "market"
+    assert entry["cacheSource"] == "snapshot"
+    assert entry["cachedAt"] == "2026-02-20T13:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_rejects_invalid_layer_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-metadata/snapshot?layers=invalid-layer")
+
+    assert response.status_code == 400
+    assert "layers contains unsupported value" in response.json().get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_snapshot_returns_304_when_etag_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setattr(
+        system,
+        "_load_domain_metadata_document",
+        lambda force_refresh=False: {
+            "version": 1,
+            "updatedAt": "2026-02-20T12:00:00+00:00",
+            "entries": {
+                "bronze/market": {
+                    "layer": "bronze",
+                    "domain": "market",
+                    "cachedAt": "2026-02-20T11:59:00+00:00",
+                    "metadata": _metadata_payload(layer="bronze", domain="market"),
+                }
+            },
+        },
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        first = await client.get("/api/system/domain-metadata/snapshot?layers=bronze&domains=market")
+        etag = first.headers.get("ETag")
+        assert etag
+        second = await client.get(
+            "/api/system/domain-metadata/snapshot?layers=bronze&domains=market",
+            headers={"If-None-Match": etag},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 304
+    assert second.text == ""
+
+
+@pytest.mark.asyncio
+async def test_persisted_ui_domain_metadata_cache_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-02-20T14:00:00+00:00")
+    monkeypatch.setattr(
+        system.mdc,
+        "save_common_json_content",
+        lambda data, path: captured.update({"payload": data, "path": path}),
+    )
+    monkeypatch.setattr(system.mdc, "get_common_json_content", lambda path: captured.get("payload"))
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        write_response = await client.put(
+            "/api/system/domain-metadata/snapshot/cache",
+            json={
+                "version": 1,
+                "updatedAt": None,
+                "entries": {
+                    "bronze/market": {
+                        **_metadata_payload(layer="bronze", domain="market"),
+                        "cacheSource": "snapshot",
+                    }
+                },
+                "warnings": [],
+            },
+        )
+        read_response = await client.get("/api/system/domain-metadata/snapshot/cache")
+
+    assert write_response.status_code == 200
+    assert captured["path"] == "metadata/ui-cache/domain.json"
+    written = write_response.json()
+    assert written["updatedAt"] == "2026-02-20T14:00:00+00:00"
+    assert read_response.status_code == 200
+    assert sorted(read_response.json()["entries"].keys()) == ["bronze/market"]
+    assert read_response.headers.get("X-Domain-Metadata-UI-Cache") == "hit"
+
+
+@pytest.mark.asyncio
+async def test_persisted_ui_domain_metadata_cache_miss_returns_empty_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setattr(system.mdc, "get_common_json_content", lambda path: None)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-metadata/snapshot/cache")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entries"] == {}
+    assert response.headers.get("X-Domain-Metadata-UI-Cache") == "miss"

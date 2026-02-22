@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitCompareArrows, Info, Loader2, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
@@ -13,6 +13,7 @@ import {
 } from '@/app/components/ui/table';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
+import type { DomainMetadataSnapshotResponse } from '@/services/apiService';
 import type { DataLayer, DomainMetadata } from '@/types/strategy';
 import { StatusTypos } from './StatusTokens';
 import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
@@ -22,11 +23,11 @@ import { formatSystemStatusText } from './systemStatusText';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
-const NO_CACHED_SNAPSHOT_TEXT = 'no cached domain metadata snapshot found';
 const MATRIX_HEAD_CLASS =
   'min-w-[190px] border-b border-mcm-walnut/25 bg-mcm-cream/55';
 const MATRIX_BODY_CELL_CLASS =
   'align-top border-0 border-b border-mcm-walnut/20 first:rounded-none last:rounded-none first:border-l-0 last:border-r-0';
+const DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY = 'asset-allocation.domain-metadata-snapshot.v1';
 
 type LayerColumn = {
   key: LayerKey;
@@ -53,6 +54,53 @@ function hasFiniteNumber(value: number | null | undefined): value is number {
 
 function makeCellKey(layerKey: LayerKey, domainKey: string): string {
   return `${layerKey}:${domainKey}`;
+}
+
+function makeSnapshotKey(layerKey: LayerKey, domainKey: string): string {
+  return `${layerKey}/${domainKey}`;
+}
+
+function loadPersistedSnapshot(): DomainMetadataSnapshotResponse | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const raw = window.localStorage.getItem(DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as DomainMetadataSnapshotResponse;
+    if (!parsed || typeof parsed !== 'object' || !parsed.entries) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistSnapshot(payload: DomainMetadataSnapshotResponse): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // best-effort browser persistence only
+  }
+}
+
+function mergeSnapshots(
+  remote: DomainMetadataSnapshotResponse | null,
+  live: DomainMetadataSnapshotResponse | null
+): DomainMetadataSnapshotResponse {
+  const remoteEntries = remote?.entries || {};
+  const liveEntries = live?.entries || {};
+  const warnings = [
+    ...((remote?.warnings || []).filter(Boolean) as string[]),
+    ...((live?.warnings || []).filter(Boolean) as string[])
+  ];
+  return {
+    version: live?.version || remote?.version || 1,
+    updatedAt: live?.updatedAt || remote?.updatedAt || null,
+    entries: {
+      ...remoteEntries,
+      ...liveEntries
+    },
+    warnings: Array.from(new Set(warnings))
+  };
 }
 
 function formatInt(value: number | null | undefined): string {
@@ -99,11 +147,6 @@ function dateRangeUnavailableReason(metadata: DomainMetadata | undefined): strin
   }
 
   return 'Date range is not available for this metadata source.';
-}
-
-function isMissingCachedMetadataError(error: unknown): boolean {
-  const message = formatSystemStatusText(error).toLowerCase();
-  return message.includes(NO_CACHED_SNAPSHOT_TEXT);
 }
 
 function compareSymbols(current: DomainMetadata, previous: DomainMetadata): {
@@ -209,40 +252,76 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     return pairs;
   }, [domainRows, domainsByLayer, layerColumns]);
 
-  const metadataQueries = useQueries({
-    queries: queryPairs.map((pair) => ({
-      queryKey: queryKeys.domainMetadata(pair.layerKey, pair.domainKey),
-      queryFn: () => DataService.getDomainMetadata(pair.layerKey, pair.domainKey, { cacheOnly: true }),
-      enabled: true,
-      staleTime: Number.POSITIVE_INFINITY,
-      refetchInterval: false,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-      refetchOnMount: false
-    }))
+  const snapshotQueryKey = queryKeys.domainMetadataSnapshot('all', 'all');
+
+  const metadataSnapshotQuery = useQuery({
+    queryKey: snapshotQueryKey,
+    queryFn: async () => {
+      const [persistedResult, liveResult] = await Promise.allSettled([
+        DataService.getPersistedDomainMetadataSnapshotCache(),
+        DataService.getDomainMetadataSnapshot({ cacheOnly: true })
+      ]);
+
+      const persistedSnapshot =
+        persistedResult.status === 'fulfilled' ? persistedResult.value : null;
+      const liveSnapshot = liveResult.status === 'fulfilled' ? liveResult.value : null;
+
+      if (!persistedSnapshot && !liveSnapshot) {
+        const reason =
+          liveResult.status === 'rejected'
+            ? liveResult.reason
+            : persistedResult.status === 'rejected'
+              ? persistedResult.reason
+              : new Error('No domain metadata snapshot sources were available.');
+        throw reason instanceof Error ? reason : new Error(String(reason));
+      }
+
+      const merged = mergeSnapshots(persistedSnapshot, liveSnapshot);
+      persistSnapshot(merged);
+      void DataService.savePersistedDomainMetadataSnapshotCache(merged).catch(() => {
+        // best-effort persistence to common container
+      });
+      return merged;
+    },
+    initialData: loadPersistedSnapshot,
+    enabled: true,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false
   });
 
   const { metadataByCell, errorByCell, pendingByCell } = useMemo(() => {
     const metadata = new Map<string, DomainMetadata>();
     const errors = new Map<string, string>();
     const pending = new Set<string>();
+    const snapshotEntries = metadataSnapshotQuery.data?.entries || {};
+    const snapshotErrorMessage = metadataSnapshotQuery.error
+      ? formatSystemStatusText(metadataSnapshotQuery.error)
+      : null;
+    const snapshotPending = metadataSnapshotQuery.isLoading || metadataSnapshotQuery.isFetching;
 
-    queryPairs.forEach((pair, index) => {
-      const query = metadataQueries[index];
-      if (!query) return;
+    queryPairs.forEach((pair) => {
       const key = makeCellKey(pair.layerKey, pair.domainKey);
-      if (query.data) metadata.set(key, query.data);
-      if (query.error) {
-        if (!isMissingCachedMetadataError(query.error)) {
-          const message = formatSystemStatusText(query.error);
-          errors.set(key, message);
-        }
+      const cachedSingle = queryClient.getQueryData<DomainMetadata>(
+        queryKeys.domainMetadata(pair.layerKey, pair.domainKey)
+      );
+      const cachedBatch = snapshotEntries[makeSnapshotKey(pair.layerKey, pair.domainKey)];
+      const resolved = cachedSingle || cachedBatch;
+      if (resolved) {
+        metadata.set(key, resolved);
       }
-      if (query.isLoading || query.isFetching) pending.add(key);
+      if (snapshotErrorMessage) {
+        errors.set(key, snapshotErrorMessage);
+      }
+      if (snapshotPending || refreshingCells.has(key)) {
+        pending.add(key);
+      }
     });
 
     return { metadataByCell: metadata, errorByCell: errors, pendingByCell: pending };
-  }, [metadataQueries, queryPairs]);
+  }, [metadataSnapshotQuery, queryClient, queryPairs, refreshingCells]);
 
   const handleCellRefresh = useCallback(
     async (layerKey: LayerKey, domainKey: string) => {
@@ -257,7 +336,31 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
 
       try {
         const metadata = await DataService.getDomainMetadata(layerKey, domainKey, { refresh: true });
+        let snapshotToPersist: DomainMetadataSnapshotResponse | null = null;
         queryClient.setQueryData(queryKeys.domainMetadata(layerKey, domainKey), metadata);
+        queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
+          snapshotQueryKey,
+          (previous) => {
+            const nextEntries = {
+              ...(previous?.entries || {}),
+              [makeSnapshotKey(layerKey, domainKey)]: metadata
+            };
+            const nextPayload: DomainMetadataSnapshotResponse = {
+              version: previous?.version || 1,
+              updatedAt: metadata.cachedAt || metadata.computedAt || previous?.updatedAt || null,
+              entries: nextEntries,
+              warnings: (previous?.warnings || []).filter(Boolean)
+            };
+            persistSnapshot(nextPayload);
+            snapshotToPersist = nextPayload;
+            return nextPayload;
+          }
+        );
+        if (snapshotToPersist) {
+          void DataService.savePersistedDomainMetadataSnapshotCache(snapshotToPersist).catch(() => {
+            // best-effort persistence to common container
+          });
+        }
       } catch (error) {
         console.error('[DomainLayerComparisonPanel] cell refresh failed', {
           layerKey,
@@ -273,7 +376,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
         });
       }
     },
-    [queryClient, refreshingCells]
+    [queryClient, refreshingCells, snapshotQueryKey]
   );
 
   return (

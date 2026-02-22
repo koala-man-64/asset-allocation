@@ -39,7 +39,9 @@ export const queryKeys = {
   debugSymbols: () => ['debugSymbols'] as const,
   runtimeConfigCatalog: () => ['runtimeConfigCatalog'] as const,
   runtimeConfig: (scope: string) => ['runtimeConfig', scope] as const,
-  domainMetadata: (layer: string, domain: string) => ['domainMetadata', layer, domain] as const
+  domainMetadata: (layer: string, domain: string) => ['domainMetadata', layer, domain] as const,
+  domainMetadataSnapshot: (layers: string = 'all', domains: string = 'all') =>
+    ['domainMetadataSnapshot', layers, domains] as const
 };
 
 /**
