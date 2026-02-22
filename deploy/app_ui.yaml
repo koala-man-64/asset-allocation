@@ -45,7 +45,7 @@ properties:
         initialDelaySeconds: 10
         periodSeconds: 10
         failureThreshold: 3
-        timeoutSeconds: [ ]
+        timeoutSeconds: 5
       - type: Startup
         httpGet:
           path: /
