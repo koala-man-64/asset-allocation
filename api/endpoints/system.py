@@ -83,6 +83,10 @@ _DEFAULT_PURGE_PREVIEW_LOAD_MAX_WORKERS = 8
 _MAX_PURGE_PREVIEW_LOAD_MAX_WORKERS = 32
 _DEFAULT_PURGE_SCOPE_MAX_WORKERS = 8
 _MAX_PURGE_SCOPE_MAX_WORKERS = 32
+_DEFAULT_PURGE_SYMBOL_TARGET_MAX_WORKERS = 8
+_MAX_PURGE_SYMBOL_TARGET_MAX_WORKERS = 32
+_DEFAULT_PURGE_SYMBOL_LAYER_MAX_WORKERS = 3
+_MAX_PURGE_SYMBOL_LAYER_MAX_WORKERS = 3
 _T = TypeVar("_T")
 
 
@@ -1990,6 +1994,64 @@ def _resolve_purge_scope_workers(target_count: int) -> int:
     return min(target_count, bounded)
 
 
+def _resolve_purge_symbol_target_workers(target_count: int) -> int:
+    if target_count <= 0:
+        return 1
+    default_workers = min(_DEFAULT_PURGE_SYMBOL_TARGET_MAX_WORKERS, target_count)
+    raw = str(os.environ.get("PURGE_SYMBOL_TARGET_MAX_WORKERS") or "").strip()
+    if not raw:
+        return default_workers
+    try:
+        requested = int(raw)
+    except Exception:
+        return default_workers
+    bounded = max(1, min(requested, _MAX_PURGE_SYMBOL_TARGET_MAX_WORKERS))
+    return min(target_count, bounded)
+
+
+def _resolve_purge_symbol_layer_workers(layer_count: int) -> int:
+    if layer_count <= 0:
+        return 1
+    default_workers = min(_DEFAULT_PURGE_SYMBOL_LAYER_MAX_WORKERS, layer_count)
+    raw = str(os.environ.get("PURGE_SYMBOL_LAYER_MAX_WORKERS") or "").strip()
+    if not raw:
+        return default_workers
+    try:
+        requested = int(raw)
+    except Exception:
+        return default_workers
+    bounded = max(1, min(requested, _MAX_PURGE_SYMBOL_LAYER_MAX_WORKERS))
+    return min(layer_count, bounded)
+
+
+def _run_symbol_cleanup_tasks(
+    tasks: List[Tuple[Dict[str, Any], Callable[[], int]]], *, worker_count: int, thread_name_prefix: str
+) -> List[Dict[str, Any]]:
+    if not tasks:
+        return []
+
+    results_by_index: Dict[int, Dict[str, Any]] = {}
+    if worker_count <= 1:
+        for idx, (base, work) in enumerate(tasks):
+            deleted = int(work())
+            item = dict(base)
+            item["deleted"] = deleted
+            results_by_index[idx] = item
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix=thread_name_prefix) as executor:
+            future_to_index: Dict[Any, Tuple[int, Dict[str, Any]]] = {
+                executor.submit(work): (idx, base) for idx, (base, work) in enumerate(tasks)
+            }
+            for future in as_completed(future_to_index):
+                idx, base = future_to_index[future]
+                deleted = int(future.result())
+                item = dict(base)
+                item["deleted"] = deleted
+                results_by_index[idx] = item
+
+    return [results_by_index[idx] for idx in range(len(tasks))]
+
+
 def _build_purge_symbols_summary(
     *,
     symbols: List[str],
@@ -2547,56 +2609,64 @@ def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -
     market_symbol = _market_symbol(normalized_symbol)
     earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
 
-    removed: List[Dict[str, Any]] = []
+    tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
 
     market_path = f"market-data/{market_symbol}.csv"
-    removed.append(
-        {
-            "layer": "bronze",
-            "domain": "market",
-            "container": client.container_name,
-            "path": market_path,
-            "deleted": _delete_blob_if_exists(client, path=market_path),
-        }
+    tasks.append(
+        (
+            {
+                "layer": "bronze",
+                "domain": "market",
+                "container": client.container_name,
+                "path": market_path,
+            },
+            lambda path=market_path: _delete_blob_if_exists(client, path=path),
+        )
     )
 
     for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
         folder_candidates = _FINANCE_BRONZE_FOLDER_ALIASES.get(folder, (folder,))
         for folder_candidate in folder_candidates:
             finance_path = f"finance-data/{folder_candidate}/{normalized_symbol}_{suffix}.json"
-            removed.append(
-                {
-                    "layer": "bronze",
-                    "domain": "finance",
-                    "container": client.container_name,
-                    "path": finance_path,
-                    "deleted": _delete_blob_if_exists(client, path=finance_path),
-                }
+            tasks.append(
+                (
+                    {
+                        "layer": "bronze",
+                        "domain": "finance",
+                        "container": client.container_name,
+                        "path": finance_path,
+                    },
+                    lambda path=finance_path: _delete_blob_if_exists(client, path=path),
+                )
             )
 
     earnings_path = f"{earnings_prefix}/{normalized_symbol}.json"
-    removed.append(
-        {
-            "layer": "bronze",
-            "domain": "earnings",
-            "container": client.container_name,
-            "path": earnings_path,
-            "deleted": _delete_blob_if_exists(client, path=earnings_path),
-        }
+    tasks.append(
+        (
+            {
+                "layer": "bronze",
+                "domain": "earnings",
+                "container": client.container_name,
+                "path": earnings_path,
+            },
+            lambda path=earnings_path: _delete_blob_if_exists(client, path=path),
+        )
     )
 
     price_target_path = f"price-target-data/{normalized_symbol}.parquet"
-    removed.append(
-        {
-            "layer": "bronze",
-            "domain": "price-target",
-            "container": client.container_name,
-            "path": price_target_path,
-            "deleted": _delete_blob_if_exists(client, path=price_target_path),
-        }
+    tasks.append(
+        (
+            {
+                "layer": "bronze",
+                "domain": "price-target",
+                "container": client.container_name,
+                "path": price_target_path,
+            },
+            lambda path=price_target_path: _delete_blob_if_exists(client, path=path),
+        )
     )
-
-    return removed
+    worker_count = _resolve_purge_symbol_target_workers(len(tasks))
+    return _run_symbol_cleanup_tasks(tasks, worker_count=worker_count, thread_name_prefix="purge-symbol-bronze")
 
 
 def _remove_symbol_from_layer_storage(
@@ -2607,101 +2677,113 @@ def _remove_symbol_from_layer_storage(
 ) -> List[Dict[str, Any]]:
     normalized_symbol = _normalize_purge_symbol(symbol)
     market_symbol = _market_symbol(normalized_symbol)
-    removed: List[Dict[str, Any]] = []
+    tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
 
     if layer == "silver":
         market_path = DataPaths.get_market_data_path(market_symbol)
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "market",
-                "container": container,
-                "path": market_path,
-                "deleted": _delete_prefix_if_exists(client=client, path=market_path),
-            }
+        tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "market",
+                    "container": container,
+                    "path": market_path,
+                },
+                lambda path=market_path: _delete_prefix_if_exists(client=client, path=path),
+            )
         )
 
         for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
             finance_path = DataPaths.get_finance_path(folder, normalized_symbol, suffix)
-            removed.append(
+            tasks.append(
+                (
+                    {
+                        "layer": layer,
+                        "domain": "finance",
+                        "container": container,
+                        "path": finance_path,
+                    },
+                    lambda path=finance_path: _delete_prefix_if_exists(client=client, path=path),
+                )
+            )
+
+        earnings_path = DataPaths.get_earnings_path(normalized_symbol)
+        tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "earnings",
+                    "container": container,
+                    "path": earnings_path,
+                },
+                lambda path=earnings_path: _delete_prefix_if_exists(client=client, path=path),
+            )
+        )
+        price_target_path = DataPaths.get_price_target_path(normalized_symbol)
+        tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "price-target",
+                    "container": container,
+                    "path": price_target_path,
+                },
+                lambda path=price_target_path: _delete_prefix_if_exists(client=client, path=path),
+            )
+        )
+    else:
+        market_path = DataPaths.get_gold_features_path(market_symbol)
+        tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "market",
+                    "container": container,
+                    "path": market_path,
+                },
+                lambda path=market_path: _delete_prefix_if_exists(client=client, path=path),
+            )
+        )
+        finance_path = DataPaths.get_gold_finance_path(normalized_symbol)
+        tasks.append(
+            (
                 {
                     "layer": layer,
                     "domain": "finance",
                     "container": container,
                     "path": finance_path,
-                    "deleted": _delete_prefix_if_exists(client=client, path=finance_path),
-                }
+                },
+                lambda path=finance_path: _delete_prefix_if_exists(client=client, path=path),
             )
-
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "earnings",
-                "container": container,
-                "path": DataPaths.get_earnings_path(normalized_symbol),
-                "deleted": _delete_prefix_if_exists(
-                    client=client, path=DataPaths.get_earnings_path(normalized_symbol)
-                ),
-            }
         )
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "price-target",
-                "container": container,
-                "path": DataPaths.get_price_target_path(normalized_symbol),
-                "deleted": _delete_prefix_if_exists(
-                    client=client, path=DataPaths.get_price_target_path(normalized_symbol)
-                ),
-            }
+        earnings_path = DataPaths.get_gold_earnings_path(normalized_symbol)
+        tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "earnings",
+                    "container": container,
+                    "path": earnings_path,
+                },
+                lambda path=earnings_path: _delete_prefix_if_exists(client=client, path=path),
+            )
         )
-    else:
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "market",
-                "container": container,
-                "path": DataPaths.get_gold_features_path(market_symbol),
-                "deleted": _delete_prefix_if_exists(
-                    client=client, path=DataPaths.get_gold_features_path(market_symbol)
-                ),
-            }
-        )
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "finance",
-                "container": container,
-                "path": DataPaths.get_gold_finance_path(normalized_symbol),
-                "deleted": _delete_prefix_if_exists(
-                    client=client, path=DataPaths.get_gold_finance_path(normalized_symbol)
-                ),
-            }
-        )
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "earnings",
-                "container": container,
-                "path": DataPaths.get_gold_earnings_path(normalized_symbol),
-                "deleted": _delete_prefix_if_exists(
-                    client=client, path=DataPaths.get_gold_earnings_path(normalized_symbol)
-                ),
-            }
-        )
-        removed.append(
-            {
-                "layer": layer,
-                "domain": "price-target",
-                "container": container,
-                "path": DataPaths.get_gold_price_targets_path(normalized_symbol),
-                "deleted": _delete_prefix_if_exists(
-                    client=client, path=DataPaths.get_gold_price_targets_path(normalized_symbol)
-                ),
-            }
+        price_target_path = DataPaths.get_gold_price_targets_path(normalized_symbol)
+        tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "price-target",
+                    "container": container,
+                    "path": price_target_path,
+                },
+                lambda path=price_target_path: _delete_prefix_if_exists(client=client, path=path),
+            )
         )
 
-    return removed
+    worker_count = _resolve_purge_symbol_target_workers(len(tasks))
+    thread_name = f"purge-symbol-{layer}"
+    return _run_symbol_cleanup_tasks(tasks, worker_count=worker_count, thread_name_prefix=thread_name)
 
 
 def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[str]) -> List[Dict[str, Optional[str]]]:
@@ -2935,30 +3017,38 @@ def _run_purge_symbol_operation(
             }
         )
 
-    bronze_results = _remove_symbol_from_bronze_storage(bronze_client, normalized_symbol)
-    for outcome in bronze_results:
-        total_deleted += int(outcome.get("deleted") or 0)
-        results.append(outcome)
+    layer_work: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
+        "bronze": lambda: _remove_symbol_from_bronze_storage(bronze_client, normalized_symbol),
+        "silver": lambda: _remove_symbol_from_layer_storage(
+            client=silver_client,
+            container=container_silver,
+            symbol=normalized_symbol,
+            layer="silver",
+        ),
+        "gold": lambda: _remove_symbol_from_layer_storage(
+            client=gold_client,
+            container=container_gold,
+            symbol=normalized_symbol,
+            layer="gold",
+        ),
+    }
+    layer_order = ["bronze", "silver", "gold"]
+    layer_results: Dict[str, List[Dict[str, Any]]] = {}
+    layer_worker_count = _resolve_purge_symbol_layer_workers(len(layer_order))
+    if layer_worker_count <= 1:
+        for layer_name in layer_order:
+            layer_results[layer_name] = layer_work[layer_name]()
+    else:
+        with ThreadPoolExecutor(max_workers=layer_worker_count, thread_name_prefix="purge-symbol-layers") as executor:
+            future_to_layer = {executor.submit(layer_work[layer_name]): layer_name for layer_name in layer_order}
+            for future in as_completed(future_to_layer):
+                layer_name = future_to_layer[future]
+                layer_results[layer_name] = future.result()
 
-    silver_results = _remove_symbol_from_layer_storage(
-        client=silver_client,
-        container=container_silver,
-        symbol=normalized_symbol,
-        layer="silver",
-    )
-    for outcome in silver_results:
-        total_deleted += int(outcome.get("deleted") or 0)
-        results.append(outcome)
-
-    gold_results = _remove_symbol_from_layer_storage(
-        client=gold_client,
-        container=container_gold,
-        symbol=normalized_symbol,
-        layer="gold",
-    )
-    for outcome in gold_results:
-        total_deleted += int(outcome.get("deleted") or 0)
-        results.append(outcome)
+    for layer_name in layer_order:
+        for outcome in layer_results.get(layer_name, []):
+            total_deleted += int(outcome.get("deleted") or 0)
+            results.append(outcome)
 
     logger.warning(
         "Purge-symbol completed: symbol=%s bronze=%s silver=%s gold=%s",

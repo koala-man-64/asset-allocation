@@ -36,6 +36,36 @@ def test_resolve_purge_scope_workers(monkeypatch: pytest.MonkeyPatch) -> None:
     assert system._resolve_purge_scope_workers(5) == 5
 
 
+def test_resolve_purge_symbol_target_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", raising=False)
+    assert system._resolve_purge_symbol_target_workers(0) == 1
+    assert system._resolve_purge_symbol_target_workers(3) == 3
+
+    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "2")
+    assert system._resolve_purge_symbol_target_workers(10) == 2
+
+    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "999")
+    assert system._resolve_purge_symbol_target_workers(100) == system._MAX_PURGE_SYMBOL_TARGET_MAX_WORKERS
+
+    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "bad")
+    assert system._resolve_purge_symbol_target_workers(4) == 4
+
+
+def test_resolve_purge_symbol_layer_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", raising=False)
+    assert system._resolve_purge_symbol_layer_workers(0) == 1
+    assert system._resolve_purge_symbol_layer_workers(3) == 3
+
+    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "2")
+    assert system._resolve_purge_symbol_layer_workers(3) == 2
+
+    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "999")
+    assert system._resolve_purge_symbol_layer_workers(10) == system._MAX_PURGE_SYMBOL_LAYER_MAX_WORKERS
+
+    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "oops")
+    assert system._resolve_purge_symbol_layer_workers(3) == 3
+
+
 def test_load_rule_frame_parallel_preserves_table_order(monkeypatch: pytest.MonkeyPatch) -> None:
     table_paths = ["market-data/a", "market-data/b", "market-data/c"]
     delay_by_path = {
@@ -92,3 +122,35 @@ def test_run_purge_operation_parallel_preserves_target_order(monkeypatch: pytest
     assert [entry.get("prefix") for entry in result["targets"]] == ["p1", "p2", "p3"]
     assert [entry.get("deleted") for entry in result["targets"]] == [1, 2, 3]
     assert result["totalDeleted"] == 6
+
+
+def test_run_purge_symbol_operation_parallel_preserves_layer_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "3")
+    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "1")
+    monkeypatch.setattr(system, "_resolve_container", lambda layer: f"{layer}-container")
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False):
+            self.container_name = container_name
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr(system, "_append_symbol_to_bronze_blacklists", lambda client, symbol: {"updated": 0, "paths": []})
+
+    delays = {"bronze": 0.04, "silver": 0.02, "gold": 0.0}
+
+    def _fake_bronze(client, symbol):
+        time.sleep(delays["bronze"])
+        return [{"layer": "bronze", "domain": "market", "container": client.container_name, "path": "b", "deleted": 1}]
+
+    def _fake_layer(client, container, symbol, layer):
+        time.sleep(delays[layer])
+        return [{"layer": layer, "domain": "market", "container": container, "path": layer, "deleted": 1}]
+
+    monkeypatch.setattr(system, "_remove_symbol_from_bronze_storage", _fake_bronze)
+    monkeypatch.setattr(system, "_remove_symbol_from_layer_storage", _fake_layer)
+
+    payload = system.PurgeSymbolRequest(symbol="AAPL", confirm=True)
+    result = system._run_purge_symbol_operation(payload)
+
+    target_layers = [entry.get("layer") for entry in result["targets"] if entry.get("operation") != "blacklist"]
+    assert target_layers == ["bronze", "silver", "gold"]
