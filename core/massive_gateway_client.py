@@ -462,6 +462,30 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/time-series/daily", params=params)
         return str(resp.text or "")
 
+    def get_unified_snapshot(
+        self,
+        *,
+        symbols: list[str],
+        asset_type: str = "stocks",
+    ) -> dict[str, Any]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in symbols:
+            symbol = str(raw or "").strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            normalized.append(symbol)
+        if not normalized:
+            raise ValueError("symbols is required.")
+
+        params: dict[str, Any] = {"symbols": ",".join(normalized)}
+        type_filter = str(asset_type or "").strip()
+        if type_filter:
+            params["type"] = type_filter
+        resp = self._request("/api/providers/massive/snapshot", params=params)
+        return resp.json()
+
     def get_short_interest(
         self,
         *,

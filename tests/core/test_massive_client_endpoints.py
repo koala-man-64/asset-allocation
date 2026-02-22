@@ -50,6 +50,7 @@ def test_massive_client_paths_align_with_docs() -> None:
         client.get_cash_flow_statement(ticker="AAPL")
         client.get_balance_sheet(ticker="AAPL")
         client.get_ratios(ticker="AAPL")
+        client.get_unified_snapshot(tickers=["AAPL", "MSFT"])
     finally:
         client.close()
 
@@ -68,6 +69,10 @@ def test_massive_client_paths_align_with_docs() -> None:
     assert seen[6][0] == "/stocks/financials/v1/cash-flow-statements"
     assert seen[7][0] == "/stocks/financials/v1/balance-sheets"
     assert seen[8][0] == "/stocks/financials/v1/ratios"
+    assert seen[9][0] == "/v3/snapshot"
+    assert seen[9][1].get("type") == "stocks"
+    assert seen[9][1].get("ticker.any_of") == "AAPL,MSFT"
+    assert seen[9][1].get("limit") == "2"
 
 
 def test_massive_client_float_endpoint_can_be_overridden() -> None:
@@ -206,3 +211,26 @@ def test_fundamentals_pagination_aggregates_all_pages() -> None:
     assert payload["next_url"] is None
     assert seen[0][0] == "/stocks/v1/short-interest"
     assert seen[1][0] == "/stocks/v1/short-interest"
+
+
+def test_unified_snapshot_chunks_over_250_tickers() -> None:
+    seen_chunks: list[list[str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        tickers_raw = str(request.url.params.get("ticker.any_of") or "")
+        chunk = [ticker for ticker in tickers_raw.split(",") if ticker]
+        seen_chunks.append(chunk)
+        return httpx.Response(200, json={"results": [{"ticker": ticker} for ticker in chunk]})
+
+    tickers = [f"T{i:03d}" for i in range(300)]
+    client = _build_client(handler)
+    try:
+        payload = client.get_unified_snapshot(tickers=tickers)
+    finally:
+        client.close()
+
+    assert len(seen_chunks) == 2
+    assert len(seen_chunks[0]) == 250
+    assert len(seen_chunks[1]) == 50
+    assert isinstance(payload, dict)
+    assert len(payload.get("results", [])) == 300

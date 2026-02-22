@@ -29,6 +29,9 @@ _ENDPOINT_FINANCIALS_INCOME = "/stocks/financials/v1/income-statements"
 _ENDPOINT_FINANCIALS_CASH_FLOW = "/stocks/financials/v1/cash-flow-statements"
 _ENDPOINT_FINANCIALS_BALANCE_SHEET = "/stocks/financials/v1/balance-sheets"
 _ENDPOINT_FINANCIALS_RATIOS = "/stocks/financials/v1/ratios"
+_ENDPOINT_UNIFIED_SNAPSHOT = "/v3/snapshot"
+_MAX_SNAPSHOT_TICKERS_PER_REQUEST = 250
+_DEFAULT_SNAPSHOT_LIMIT = 250
 
 
 try:  # Optional dependency
@@ -437,3 +440,85 @@ class MassiveClient:
         if params:
             q.update(params)
         return self._request_json(_ENDPOINT_FINANCIALS_RATIOS, params=filter_none(q)).payload
+
+    def _normalize_tickers(self, tickers: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in tickers:
+            ticker = str(raw or "").strip().upper()
+            if not ticker:
+                continue
+            if ticker in seen:
+                continue
+            seen.add(ticker)
+            normalized.append(ticker)
+        return normalized
+
+    def _iter_ticker_chunks(self, tickers: list[str], chunk_size: int) -> list[list[str]]:
+        out: list[list[str]] = []
+        size = max(1, int(chunk_size))
+        for start in range(0, len(tickers), size):
+            out.append(tickers[start : start + size])
+        return out
+
+    def get_unified_snapshot(
+        self,
+        *,
+        tickers: list[str],
+        asset_type: str = "stocks",
+        limit: int = _DEFAULT_SNAPSHOT_LIMIT,
+        params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Unified multi-ticker snapshot via ``GET /v3/snapshot``.
+
+        Massive supports up to 250 tickers per request (`ticker.any_of`). This
+        method transparently chunks larger requests and merges all rows.
+        """
+
+        normalized_tickers = self._normalize_tickers(tickers)
+        if not normalized_tickers:
+            raise ValueError("tickers is required")
+
+        requested_limit = max(1, min(int(limit), _MAX_SNAPSHOT_TICKERS_PER_REQUEST))
+        type_filter = str(asset_type or "").strip() or "stocks"
+
+        merged_results: list[Any] = []
+        merged_payload: Optional[dict[str, Any]] = None
+        request_count = 0
+
+        for chunk in self._iter_ticker_chunks(normalized_tickers, _MAX_SNAPSHOT_TICKERS_PER_REQUEST):
+            q: dict[str, Any] = dict(params or {})
+            q.update(
+                {
+                    "type": type_filter,
+                    "ticker.any_of": ",".join(chunk),
+                    "limit": min(requested_limit, max(1, len(chunk))),
+                }
+            )
+            payload = self._request_paginated_results(
+                _ENDPOINT_UNIFIED_SNAPSHOT,
+                params=filter_none(q),
+                pagination=True,
+            )
+            request_count += 1
+
+            if not isinstance(payload, dict):
+                raise MassiveError(
+                    "Unexpected Massive snapshot response.",
+                    payload={"endpoint": _ENDPOINT_UNIFIED_SNAPSHOT, "response_type": type(payload).__name__},
+                )
+
+            if merged_payload is None:
+                merged_payload = dict(payload)
+
+            rows = payload.get("results")
+            if isinstance(rows, list):
+                merged_results.extend([to_jsonable(row) for row in rows])
+
+        out = dict(merged_payload or {})
+        out["results"] = merged_results
+        out["next_url"] = None
+        out["request_count"] = request_count
+        out["symbols_requested"] = normalized_tickers
+        return out

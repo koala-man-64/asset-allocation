@@ -31,6 +31,8 @@ _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
 _FULL_HISTORY_START_DATE = "1900-01-01"
+_SNAPSHOT_BATCH_SIZE = 250
+_SNAPSHOT_ASSET_TYPE = "stocks"
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -252,6 +254,134 @@ def _normalize_provider_daily_df(csv_text: str) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
+
+
+def _extract_snapshot_symbol(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("ticker", "symbol"):
+        symbol = str(payload.get(key) or "").strip().upper()
+        if symbol:
+            return symbol
+
+    details = payload.get("details")
+    if isinstance(details, dict):
+        for key in ("ticker", "symbol"):
+            symbol = str(details.get(key) or "").strip().upper()
+            if symbol:
+                return symbol
+    return None
+
+
+def _extract_snapshot_daily_row(payload: dict[str, Any]) -> dict[str, float | str] | None:
+    candidate_blocks: list[dict[str, Any]] = []
+    for key in ("session", "day", "daily_bar", "bar"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            candidate_blocks.append(nested)
+    candidate_blocks.append(payload)
+
+    for block in candidate_blocks:
+        open_ = _extract_first_numeric(block, ("open", "o", "Open"))
+        high = _extract_first_numeric(block, ("high", "h", "High"))
+        low = _extract_first_numeric(block, ("low", "l", "Low"))
+        close = _extract_first_numeric(block, ("close", "c", "Close"))
+        if open_ is None or high is None or low is None or close is None:
+            continue
+
+        date_raw = _extract_row_date(block) or _extract_row_date(payload) or _utc_today().isoformat()
+        as_of = _extract_iso_date(date_raw)
+        if not as_of:
+            continue
+
+        volume = _extract_first_numeric(block, ("volume", "v", "Volume"))
+        return {
+            "Date": as_of,
+            "Open": float(open_),
+            "High": float(high),
+            "Low": float(low),
+            "Close": float(close),
+            "Volume": float(volume or 0.0),
+        }
+    return None
+
+
+def _snapshot_row_to_daily_df(snapshot_row: dict[str, float | str] | None) -> pd.DataFrame | None:
+    if not isinstance(snapshot_row, dict):
+        return None
+
+    required = ("Date", "Open", "High", "Low", "Close")
+    if any(snapshot_row.get(key) is None for key in required):
+        return None
+
+    frame = pd.DataFrame([snapshot_row], columns=["Date", "Open", "High", "Low", "Close", "Volume"])
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date"]).copy()
+    if frame.empty:
+        return None
+
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    if frame[["Open", "High", "Low", "Close"]].isna().any().any():
+        return None
+    frame["Volume"] = frame["Volume"].fillna(0.0)
+    return frame
+
+
+def _chunk_symbols(symbols: list[str], chunk_size: int) -> list[list[str]]:
+    out: list[list[str]] = []
+    size = max(1, int(chunk_size))
+    for idx in range(0, len(symbols), size):
+        out.append(symbols[idx : idx + size])
+    return out
+
+
+def _fetch_snapshot_daily_rows(symbols: list[str]) -> dict[str, dict[str, float | str]]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in symbols:
+        symbol = str(raw or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    if not normalized:
+        return {}
+
+    rows_by_symbol: dict[str, dict[str, float | str]] = {}
+    client = MassiveGatewayClient.from_env()
+    try:
+        for chunk in _chunk_symbols(normalized, _SNAPSHOT_BATCH_SIZE):
+            payload = client.get_unified_snapshot(symbols=chunk, asset_type=_SNAPSHOT_ASSET_TYPE)
+            for row in _extract_payload_rows(payload):
+                symbol = _extract_snapshot_symbol(row)
+                if not symbol:
+                    continue
+                snapshot_row = _extract_snapshot_daily_row(row)
+                if snapshot_row is None:
+                    continue
+                current = rows_by_symbol.get(symbol)
+                if current is None or str(snapshot_row["Date"]) >= str(current["Date"]):
+                    rows_by_symbol[symbol] = snapshot_row
+    finally:
+        _safe_close_massive_client(client)
+
+    return rows_by_symbol
+
+
+def _can_use_snapshot_for_incremental(
+    *,
+    existing_latest_date: date | None,
+    backfill_start: date | None,
+) -> bool:
+    if backfill_start is not None:
+        return False
+    if existing_latest_date is None:
+        return False
+
+    today = _utc_today()
+    previous_business_day = (pd.Timestamp(today) - pd.tseries.offsets.BDay(1)).date()
+    return existing_latest_date >= previous_business_day
 
 
 def _merge_market_fundamentals(
@@ -564,6 +694,7 @@ def _download_and_save_raw_with_recovery(
     symbol: str,
     client_manager: _ThreadLocalMassiveClientManager,
     *,
+    snapshot_row: dict[str, float | str] | None = None,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
 ) -> None:
@@ -573,7 +704,7 @@ def _download_and_save_raw_with_recovery(
     for attempt in range(1, attempts + 1):
         client = client_manager.get_client()
         try:
-            download_and_save_raw(symbol, client)
+            download_and_save_raw(symbol, client, snapshot_row=snapshot_row)
             return
         except MassiveGatewayNotFoundError:
             raise
@@ -590,7 +721,12 @@ def _download_and_save_raw_with_recovery(
             client_manager.reset_current()
 
 
-def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> None:
+def download_and_save_raw(
+    symbol: str,
+    massive_client: MassiveGatewayClient,
+    *,
+    snapshot_row: dict[str, float | str] | None = None,
+) -> None:
     """
     Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
     from the API-hosted Massive gateway and stores it in Bronze.
@@ -602,28 +738,44 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
     existing_latest_date = _extract_latest_market_date(existing_df)
     from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
     backfill_start, _ = _resolve_backfill_range_dates()
-    raw_text = massive_client.get_daily_time_series_csv(
-        symbol=symbol,
-        from_date=from_date,
-        to_date=to_date,
-        adjusted=True,
-    )
+    raw_text = ""
+    df_daily = None
+    if _can_use_snapshot_for_incremental(
+        existing_latest_date=existing_latest_date,
+        backfill_start=backfill_start,
+    ):
+        df_daily = _snapshot_row_to_daily_df(snapshot_row)
+        if df_daily is not None and existing_latest_date is not None:
+            snapshot_dates = pd.to_datetime(df_daily["Date"], errors="coerce").dropna()
+            if snapshot_dates.empty or snapshot_dates.max().date() < existing_latest_date:
+                # Snapshot can lag around weekends/market close windows.
+                # Fall back to the existing historical endpoint when stale.
+                df_daily = None
 
-    if _is_header_only_provider_daily_csv(raw_text):
-        if not existing_df.empty:
-            mdc.write_warning(
-                f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
-                "keeping existing bronze data."
-            )
-            list_manager.add_to_whitelist(symbol)
-            return
-        list_manager.add_to_blacklist(symbol)
-        raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
+    if df_daily is None:
+        raw_text = massive_client.get_daily_time_series_csv(
+            symbol=symbol,
+            from_date=from_date,
+            to_date=to_date,
+            adjusted=True,
+        )
+
+        if _is_header_only_provider_daily_csv(raw_text):
+            if not existing_df.empty:
+                mdc.write_warning(
+                    f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
+                    "keeping existing bronze data."
+                )
+                list_manager.add_to_whitelist(symbol)
+                return
+            list_manager.add_to_blacklist(symbol)
+            raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
 
     blob_path = f"market-data/{symbol}.csv"
 
     try:
-        df_daily = _normalize_provider_daily_df(raw_text)
+        if df_daily is None:
+            df_daily = _normalize_provider_daily_df(raw_text)
 
         try:
             short_interest_payload = massive_client.get_short_interest(
@@ -731,6 +883,22 @@ async def main_async() -> int:
 
     mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
 
+    snapshot_rows_by_symbol: dict[str, dict[str, float | str]] = {}
+    if backfill_start is None and symbols:
+        try:
+            mdc.write_line(
+                f"Prefetching Massive unified snapshots in batches (chunk_size={_SNAPSHOT_BATCH_SIZE})..."
+            )
+            snapshot_rows_by_symbol = _fetch_snapshot_daily_rows(symbols)
+            mdc.write_line(
+                f"Massive unified snapshot prefetch complete: rows={len(snapshot_rows_by_symbol)} symbols."
+            )
+        except Exception as exc:
+            mdc.write_warning(
+                f"Massive unified snapshot prefetch failed; falling back to per-symbol daily fetches. ({exc})"
+            )
+            snapshot_rows_by_symbol = {}
+
     client_manager = _ThreadLocalMassiveClientManager()
 
     progress = {"processed": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
@@ -741,7 +909,11 @@ async def main_async() -> int:
         if list_manager.is_blacklisted(symbol):
             raise MassiveGatewayNotFoundError("Symbol is blacklisted.")
 
-        _download_and_save_raw_with_recovery(symbol, client_manager)
+        _download_and_save_raw_with_recovery(
+            symbol,
+            client_manager,
+            snapshot_row=snapshot_rows_by_symbol.get(symbol),
+        )
 
     max_workers = _get_max_workers()
     semaphore = asyncio.Semaphore(max_workers)

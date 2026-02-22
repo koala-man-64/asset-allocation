@@ -128,3 +128,21 @@ def test_daily_time_series_defaults_to_full_history_window() -> None:
     assert csv_text.splitlines()[0] == "Date,Open,High,Low,Close,Volume"
     assert captured["from_"] == "1900-01-01"
     assert captured["ticker"] == "AAPL"
+
+
+def test_gateway_unified_snapshot_batches_symbols() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def get_unified_snapshot(self, **kwargs):
+            captured.update(kwargs)
+            return {"results": [{"ticker": "AAPL"}]}
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    payload = gateway.get_unified_snapshot(symbols=["aapl", "MSFT", "AAPL"], asset_type="stocks")
+    assert payload["results"][0]["ticker"] == "AAPL"
+    assert captured["tickers"] == ["AAPL", "MSFT", "AAPL"]
+    assert captured["asset_type"] == "stocks"
+    assert captured["limit"] == 250

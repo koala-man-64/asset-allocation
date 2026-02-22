@@ -57,6 +57,23 @@ async def test_massive_short_interest_returns_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_massive_unified_snapshot_returns_json(monkeypatch):
+    def fake_snapshot(self, *, symbols, asset_type="stocks"):
+        assert symbols == ["AAPL", "MSFT", "TSLA"]
+        assert asset_type == "stocks"
+        return {"results": [{"ticker": "AAPL"}, {"ticker": "MSFT"}, {"ticker": "TSLA"}]}
+
+    monkeypatch.setattr(MassiveGateway, "get_unified_snapshot", fake_snapshot)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/massive/snapshot?symbols=AAPL,msft,TSLA&type=stocks")
+
+    assert resp.status_code == 200
+    assert [row["ticker"] for row in resp.json()["results"]] == ["AAPL", "MSFT", "TSLA"]
+
+
+@pytest.mark.asyncio
 async def test_massive_financials_returns_json(monkeypatch):
     def fake_financials(self, *, symbol, report):
         assert symbol == "AAPL"

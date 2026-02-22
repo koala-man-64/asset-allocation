@@ -38,6 +38,18 @@ def _parse_iso_date(value: Optional[str], *, field_name: str) -> Optional[str]:
     return parsed.isoformat()
 
 
+def _parse_symbol_list(value: Optional[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in str(value or "").split(","):
+        symbol = str(raw or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        out.append(symbol)
+    return out
+
+
 def _get_gateway(request: Request) -> MassiveGateway:
     gateway = getattr(request.app.state, "massive_gateway", None)
     if isinstance(gateway, MassiveGateway):
@@ -96,6 +108,27 @@ def get_daily_time_series(
         raise
 
     return Response(content=csv_text, media_type="text/csv", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/snapshot")
+def get_unified_snapshot(
+    request: Request,
+    symbols: str = Query(..., description="Comma-separated ticker list (e.g. AAPL,MSFT,TSLA)."),
+    asset_type: str = Query(default="stocks", alias="type", description="Massive snapshot type filter (default=stocks)."),
+    gateway: MassiveGateway = Depends(_get_gateway),
+) -> JSONResponse:
+    validate_auth(request)
+    parsed_symbols = _parse_symbol_list(symbols)
+    if not parsed_symbols:
+        raise HTTPException(status_code=400, detail="symbols is required.")
+
+    try:
+        with _caller_context(request):
+            payload = gateway.get_unified_snapshot(symbols=parsed_symbols, asset_type=asset_type)
+    except Exception as exc:
+        _handle_massive_error(exc)
+        raise
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/fundamentals/short-interest")

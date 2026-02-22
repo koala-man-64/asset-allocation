@@ -59,7 +59,7 @@ properties:
       - name: JOB_STARTUP_API_WAKE_ENABLED
         value: "true"
       - name: JOB_STARTUP_API_CONTAINER_APPS
-        value: ${API_CONTAINER_APP_NAME}
+        value: ${JOB_STARTUP_API_CONTAINER_APPS}
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: AZURE_STORAGE_ACCOUNT_NAME

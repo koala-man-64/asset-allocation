@@ -189,3 +189,35 @@ def test_request_fails_fast_when_readiness_never_recovers(monkeypatch):
 
     assert counters["warmup"] == 2
     assert counters["data"] == 0
+
+
+def test_unified_snapshot_uses_batch_api_route() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/providers/massive/snapshot":
+            return httpx.Response(200, json={"results": [{"ticker": "AAPL"}]})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        payload = client.get_unified_snapshot(symbols=["aapl", "MSFT", "AAPL"], asset_type="stocks")
+    finally:
+        http_client.close()
+
+    assert payload["results"][0]["ticker"] == "AAPL"
+    assert seen[0][0] == "/api/providers/massive/snapshot"
+    assert seen[0][1].get("symbols") == "AAPL,MSFT"
+    assert seen[0][1].get("type") == "stocks"

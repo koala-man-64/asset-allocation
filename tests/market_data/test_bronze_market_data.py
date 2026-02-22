@@ -274,7 +274,7 @@ def test_download_with_recovery_retries_three_attempts(monkeypatch):
     call_count = {"count": 0}
     sleep_calls: list[float] = []
 
-    def _fake_download(sym, _client):
+    def _fake_download(sym, _client, *, snapshot_row=None):
         assert sym == symbol
         call_count["count"] += 1
         if call_count["count"] < 3:
@@ -295,7 +295,7 @@ def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
     manager = _FakeClientManager()
     sleep_calls: list[float] = []
 
-    def _fake_download(_sym, _client):
+    def _fake_download(_sym, _client, *, snapshot_row=None):
         raise bronze.MassiveGatewayNotFoundError("No data")
 
     monkeypatch.setattr(bronze, "download_and_save_raw", _fake_download)
@@ -306,3 +306,129 @@ def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
 
     assert manager.reset_current_calls == 0
     assert sleep_calls == []
+
+
+def test_fetch_snapshot_daily_rows_chunks_requests(monkeypatch):
+    symbols = [f"SYM{i:03d}" for i in range(300)]
+    requested_chunks: list[list[str]] = []
+
+    class _FakeClient:
+        def get_unified_snapshot(self, *, symbols, asset_type="stocks"):
+            requested_chunks.append(list(symbols))
+            return {
+                "results": [
+                    {
+                        "ticker": symbol,
+                        "session": {
+                            "date": "2024-01-03",
+                            "open": 10.0,
+                            "high": 11.0,
+                            "low": 9.0,
+                            "close": 10.5,
+                            "volume": 1000,
+                        },
+                    }
+                    for symbol in symbols
+                ]
+            }
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(bronze.MassiveGatewayClient, "from_env", staticmethod(lambda: _FakeClient()))
+    rows = bronze._fetch_snapshot_daily_rows(symbols)
+
+    assert len(requested_chunks) == 2
+    assert len(requested_chunks[0]) == 250
+    assert len(requested_chunks[1]) == 50
+    assert rows["SYM000"]["Date"] == "2024-01-03"
+    assert rows["SYM299"]["Close"] == pytest.approx(10.5)
+
+
+def test_download_uses_snapshot_row_when_incremental_window_allows(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+    mock_massive.get_float.return_value = {}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2024-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+    ).encode("utf-8")
+    snapshot_row = {
+        "Date": "2024-01-03",
+        "Open": 11.0,
+        "High": 12.0,
+        "Low": 10.0,
+        "Close": 11.5,
+        "Volume": 150.0,
+    }
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_csv,
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.get_backfill_range",
+        return_value=(None, None),
+    ), patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2024, 1, 3),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        bronze.download_and_save_raw(symbol, mock_massive, snapshot_row=snapshot_row)
+
+        mock_massive.get_daily_time_series_csv.assert_not_called()
+        args, _ = mock_store.call_args
+        df = pd.read_csv(BytesIO(args[0]))
+        assert df["Date"].tolist() == ["2024-01-02", "2024-01-03"]
+        assert float(df.loc[df["Date"] == "2024-01-03", "Close"].iloc[0]) == pytest.approx(11.5)
+
+
+def test_download_falls_back_when_snapshot_is_stale(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-03,11,12,10,11.5,150\n"
+    )
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+    mock_massive.get_float.return_value = {}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2024-01-03,10,11,9,10.5,100,1000,500,1000000\n"
+    ).encode("utf-8")
+    snapshot_row = {
+        "Date": "2024-01-02",
+        "Open": 9.5,
+        "High": 10.5,
+        "Low": 9.0,
+        "Close": 10.0,
+        "Volume": 95.0,
+    }
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_csv,
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.get_backfill_range",
+        return_value=(None, None),
+    ), patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2024, 1, 3),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        bronze.download_and_save_raw(symbol, mock_massive, snapshot_row=snapshot_row)
+
+        mock_massive.get_daily_time_series_csv.assert_called_once()
+        args, _ = mock_store.call_args
+        df = pd.read_csv(BytesIO(args[0]))
+        assert df["Date"].tolist() == ["2024-01-03"]

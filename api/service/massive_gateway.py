@@ -373,6 +373,22 @@ class MassiveGateway:
             raise ValueError(f"Unknown finance report={report!r}")
         return handler(ticker=str(symbol).strip().upper())
 
+    def get_unified_snapshot(
+        self,
+        *,
+        symbols: list[str],
+        asset_type: str = "stocks",
+    ) -> Any:
+        normalized = [str(symbol or "").strip().upper() for symbol in symbols]
+        normalized = [symbol for symbol in normalized if symbol]
+        if not normalized:
+            raise ValueError("symbols is required.")
+        return self.get_client().get_unified_snapshot(
+            tickers=normalized,
+            asset_type=asset_type,
+            limit=250,
+        )
+
 
 __all__ = [
     "FinanceReport",
