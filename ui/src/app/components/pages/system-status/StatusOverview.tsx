@@ -523,21 +523,6 @@ export function StatusOverview({
                 {centralClock.time} {centralClock.tz}
               </span>
             </div>
-
-            <div className="flex w-[220px] items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 w-full px-3 gap-2 text-xs"
-                onClick={onRefresh}
-                disabled={!onRefresh || isFetching || isRefreshing}
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`}
-                />
-                Refresh
-              </Button>
-            </div>
           </div>
         </div>
       </div>
@@ -560,6 +545,18 @@ export function StatusOverview({
               </div>
             </div>
             <div className="flex w-full flex-wrap items-center gap-3 self-start xl:w-auto xl:justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 gap-2 text-xs"
+                onClick={onRefresh}
+                disabled={!onRefresh || isFetching || isRefreshing}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${isFetching || isRefreshing ? 'animate-spin' : ''}`}
+                />
+                Refresh
+              </Button>
               <JobKillSwitchInline jobs={managedContainerJobs} />
             </div>
           </div>

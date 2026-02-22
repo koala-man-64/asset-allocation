@@ -6,9 +6,9 @@
 // This file must not contain secrets.
 /* global window */
 
-// Local-dev default: route API under a project-specific prefix so multiple apps can share the same host/port.
-// The backend also mounts unprefixed `/api/*` for compatibility.
-const defaultApiBaseUrl = '/asset-allocation/api';
+// Local-dev default: keep API calls on `/api`.
+// The backend mounts `/api/*` in all deployment modes.
+const defaultApiBaseUrl = '/api';
 
 window.__BACKTEST_UI_CONFIG__ = window.__BACKTEST_UI_CONFIG__ || {};
 window.__BACKTEST_UI_CONFIG__.backtestApiBaseUrl =

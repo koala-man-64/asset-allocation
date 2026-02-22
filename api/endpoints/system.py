@@ -683,12 +683,39 @@ def domain_metadata(
                 headers["X-Domain-Metadata-Cached-At"] = cached_at
             return JSONResponse(cached_payload, headers=headers)
         if cache_only:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "No cached domain metadata snapshot found for "
-                    f"layer={normalized_layer} domain={normalized_domain}."
-                ),
+            missing_message = (
+                "No cached domain metadata snapshot found for "
+                f"layer={normalized_layer} domain={normalized_domain}."
+            )
+            now = _utc_timestamp()
+            # Cache-only mode must not trigger a live compute. Return a typed placeholder payload
+            # so UI consumers avoid noisy 404 spam while still receiving an explicit miss signal.
+            placeholder_payload: Dict[str, Any] = {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "container": "",
+                "type": "blob",
+                "computedAt": now,
+                "cachedAt": None,
+                "cacheSource": "snapshot",
+                "symbolCount": None,
+                "dateRange": None,
+                "totalRows": None,
+                "fileCount": None,
+                "totalBytes": None,
+                "deltaVersion": None,
+                "tablePath": None,
+                "prefix": None,
+                "blacklistedSymbolCount": None,
+                "warnings": [missing_message],
+            }
+            return JSONResponse(
+                placeholder_payload,
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Domain-Metadata-Source": "snapshot-miss",
+                    "X-Domain-Metadata-Cache-Miss": "1",
+                },
             )
 
     try:

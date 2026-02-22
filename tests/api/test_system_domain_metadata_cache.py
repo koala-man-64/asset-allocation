@@ -133,7 +133,7 @@ async def test_domain_metadata_refresh_writes_snapshot(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_cache_only_miss_returns_404(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", lambda layer, domain: None)
     monkeypatch.setattr(
@@ -146,5 +146,13 @@ async def test_domain_metadata_cache_only_miss_returns_404(monkeypatch: pytest.M
     async with get_test_client(app) as client:
         response = await client.get("/api/system/domain-metadata?layer=bronze&domain=market&cacheOnly=true")
 
-    assert response.status_code == 404
-    assert "No cached domain metadata snapshot found" in response.json().get("detail", "")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["layer"] == "bronze"
+    assert payload["domain"] == "market"
+    assert payload["cacheSource"] == "snapshot"
+    assert payload["symbolCount"] is None
+    assert payload["warnings"]
+    assert "No cached domain metadata snapshot found" in payload["warnings"][0]
+    assert response.headers.get("X-Domain-Metadata-Source") == "snapshot-miss"
+    assert response.headers.get("X-Domain-Metadata-Cache-Miss") == "1"
