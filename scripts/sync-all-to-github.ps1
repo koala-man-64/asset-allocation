@@ -57,6 +57,23 @@ function Test-LocalAddressValue {
     return $Value -match "(?i)\blocalhost\b|127\.0\.0\.1|::1"
 }
 
+function Should-SkipParityKey {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    # Keys in this list are local-only, deprecated, or intentionally excluded from
+    # .env -> .env.web parity enforcement.
+    $ignoredKeys = @(
+        "RUNTIME_CONFIG_REFRESH_SECONDS",
+        "MARKET_BACKFILL_START_DATE",
+        "MARKET_BACKFILL_END_DATE"
+    )
+
+    return $ignoredKeys -contains $Key
+}
+
 # Check if gh CLI is installed
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     Write-Error "Error: GitHub CLI (gh) is not installed or not in PATH."
@@ -73,6 +90,8 @@ if (Test-Path $localEnvPath) {
     $localMap = Parse-EnvFile -Path $localEnvPath
     $missingInWeb = @()
     foreach ($key in $localMap.Keys) {
+        if (Should-SkipParityKey -Key $key) { continue }
+
         $localValue = $localMap[$key]
         if ([string]::IsNullOrWhiteSpace($localValue)) { continue }
         if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($envMap[$key])) {

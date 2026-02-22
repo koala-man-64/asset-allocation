@@ -17,6 +17,7 @@ from core.alpha_vantage_gateway_client import (
 from core import config as cfg
 from core import core as mdc
 from core.pipeline import ListManager
+from tasks.common.backfill import filter_by_date, get_backfill_range
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -82,7 +83,12 @@ def _coerce_surprise_fraction(payload: dict[str, Any]) -> Optional[float]:
     return _coerce_float(payload.get("surprise"))
 
 
-def _parse_earnings_records(symbol: str, payload: dict[str, Any]) -> pd.DataFrame:
+def _parse_earnings_records(
+    symbol: str,
+    payload: dict[str, Any],
+    *,
+    backfill_start: Optional[pd.Timestamp] = None,
+) -> pd.DataFrame:
     rows = []
     for item in payload.get("quarterlyEarnings") or []:
         if not isinstance(item, dict):
@@ -106,11 +112,17 @@ def _parse_earnings_records(symbol: str, payload: dict[str, Any]) -> pd.DataFram
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
     df = df.dropna(subset=["Date"]).copy()
+    df = filter_by_date(df, "Date", backfill_start, None)
     df = df.sort_values(["Date"]).drop_duplicates(subset=["Date", "Symbol"], keep="last").reset_index(drop=True)
     return df
 
 
-def fetch_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> bool:
+def fetch_and_save_raw(
+    symbol: str,
+    av: AlphaVantageGatewayClient,
+    *,
+    backfill_start: Optional[pd.Timestamp] = None,
+) -> bool:
     """
     Fetch earnings for a single symbol via the API-hosted Alpha Vantage gateway and store as Bronze JSON records.
 
@@ -120,11 +132,13 @@ def fetch_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> bool:
         return False
 
     blob_path = f"{cfg.EARNINGS_DATA_PREFIX}/{symbol}.json"
+    blob_exists: Optional[bool] = None
 
     # Freshness gate (quarterly data); avoid re-fetching too frequently.
     try:
         blob = bronze_client.get_blob_client(blob_path)
-        if blob.exists():
+        blob_exists = bool(blob.exists())
+        if blob_exists:
             props = blob.get_blob_properties()
             if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS):
                 list_manager.add_to_whitelist(symbol)
@@ -136,11 +150,31 @@ def fetch_and_save_raw(symbol: str, av: AlphaVantageGatewayClient) -> bool:
     if not isinstance(payload, dict):
         raise AlphaVantageGatewayError("Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol})
 
-    df = _parse_earnings_records(symbol, payload)
+    source_records = payload.get("quarterlyEarnings") or []
+    has_source_records = any(
+        isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
+        for item in source_records
+    )
+    df = _parse_earnings_records(symbol, payload, backfill_start=backfill_start)
     if df is None or df.empty:
-        raise AlphaVantageGatewayInvalidSymbolError("No quarterly earnings records found.")
+        if not has_source_records:
+            raise AlphaVantageGatewayInvalidSymbolError("No quarterly earnings records found.")
+        if backfill_start is not None:
+            if blob_exists is not False:
+                cutoff_iso = pd.Timestamp(backfill_start).date().isoformat()
+                bronze_client.delete_file(blob_path)
+                mdc.write_line(
+                    f"No earnings rows on/after {cutoff_iso} for {symbol}; "
+                    f"deleted bronze {blob_path}."
+                )
+                list_manager.add_to_whitelist(symbol)
+                return True
+            list_manager.add_to_whitelist(symbol)
+            return False
+        raw_json = b"[]"
+    else:
+        raw_json = df.to_json(orient="records").encode("utf-8")
 
-    raw_json = df.to_json(orient="records").encode("utf-8")
     mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
     list_manager.add_to_whitelist(symbol)
     return True
@@ -189,6 +223,9 @@ async def main_async() -> int:
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
     av = AlphaVantageGatewayClient.from_env()
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is not None:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze earnings data: {backfill_start.date().isoformat()}")
 
     max_workers = max(1, int(cfg.ALPHA_VANTAGE_MAX_WORKERS))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-earnings")
@@ -201,7 +238,7 @@ async def main_async() -> int:
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> bool:
-        return fetch_and_save_raw(symbol, av)
+        return fetch_and_save_raw(symbol, av, backfill_start=backfill_start)
 
     async def record_failure(symbol: str, exc: BaseException) -> None:
         failure_type = type(exc).__name__

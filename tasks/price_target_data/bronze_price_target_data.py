@@ -4,11 +4,12 @@ import asyncio
 import pandas as pd
 import nasdaqdatalink
 from datetime import datetime, date, timezone
-from typing import List
+from typing import List, Optional
 
 from core import core as mdc
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
+from tasks.common.backfill import get_backfill_range
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -32,14 +33,52 @@ def _validate_environment() -> None:
     
     nasdaqdatalink.ApiConfig.api_key = os.environ.get('NASDAQ_API_KEY')
 
-async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore) -> dict:
+def _resolve_price_target_backfill_start() -> Optional[date]:
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is None:
+        return None
+    try:
+        return backfill_start.to_pydatetime().date()
+    except Exception:
+        return None
+
+
+def _delete_price_target_blob_for_cutoff(
+    symbol: str,
+    *,
+    min_date: date,
+    summary: dict,
+) -> None:
+    blob_path = f"price-target-data/{symbol}.parquet"
+    try:
+        bronze_client.delete_file(blob_path)
+        list_manager.add_to_whitelist(symbol)
+        summary["deleted"] += 1
+    except Exception as exc:
+        mdc.write_error(f"Failed to delete cutoff Bronze {symbol}: {exc}")
+        summary["save_failed"] += 1
+    finally:
+        summary["filtered_missing"] += 1
+        mdc.write_line(
+            f"No data for {symbol} on/after {min_date.strftime('%Y-%m-%d')}; deleted bronze {blob_path}."
+        )
+
+
+async def process_batch_bronze(
+    symbols: List[str],
+    semaphore: asyncio.Semaphore,
+    *,
+    backfill_start: Optional[date] = None,
+) -> dict:
     batch_summary = {
         "requested": len(symbols),
         "stale": 0,
         "api_rows": 0,
         "saved": 0,
+        "deleted": 0,
         "save_failed": 0,
         "blacklisted": 0,
+        "filtered_missing": 0,
         "api_error": False,
     }
     async with semaphore:
@@ -69,7 +108,7 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
         if not stale_symbols:
             return batch_summary
 
-        min_date = date(2020, 1, 1)        
+        min_date = backfill_start or date(2020, 1, 1)
         
         loop = asyncio.get_event_loop()
         api_error_message = ""
@@ -93,7 +132,14 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
             batch_df = fetch_api()
         else:
             batch_df = await loop.run_in_executor(None, fetch_api)
-        
+
+        if not batch_df.empty and "obs_date" in batch_df.columns:
+            min_ts = pd.Timestamp(min_date)
+            parsed_obs_date = pd.to_datetime(batch_df["obs_date"], errors="coerce", utc=True)
+            batch_df = batch_df.copy()
+            batch_df["obs_date"] = parsed_obs_date.dt.tz_localize(None)
+            batch_df = batch_df.loc[batch_df["obs_date"].notna() & (batch_df["obs_date"] >= min_ts)].copy()
+
         if api_error_message:
             batch_summary["api_error"] = True
 
@@ -115,19 +161,27 @@ async def process_batch_bronze(symbols: List[str], semaphore: asyncio.Semaphore)
             found_tickers = set(str(t) for t in batch_df['ticker'].unique())
             for sym in stale_symbols:
                 if sym not in found_tickers:
-                     # Likely no data exists or invalid
-                     mdc.write_line(f"No data for {sym}, blacklisting.")
-                     list_manager.add_to_blacklist(sym)
-                     batch_summary["blacklisted"] += 1
+                    if backfill_start is not None:
+                        _delete_price_target_blob_for_cutoff(sym, min_date=min_date, summary=batch_summary)
+                        continue
+                    # Likely no data exists or invalid
+                    mdc.write_line(f"No data for {sym}, blacklisting.")
+                    list_manager.add_to_blacklist(sym)
+                    batch_summary["blacklisted"] += 1
         else:
             if stale_symbols and not api_error_message:
-                mdc.write_warning(
-                    f"Nasdaq batch returned no rows for stale symbols (count={len(stale_symbols)})."
-                )
+                if backfill_start is not None:
+                    for sym in stale_symbols:
+                        _delete_price_target_blob_for_cutoff(sym, min_date=min_date, summary=batch_summary)
+                else:
+                    mdc.write_warning(
+                        f"Nasdaq batch returned no rows for stale symbols (count={len(stale_symbols)})."
+                    )
 
         mdc.write_line(
             "Bronze price target batch summary: requested={requested} stale={stale} api_rows={api_rows} "
-            "saved={saved} save_failed={save_failed} blacklisted={blacklisted} api_error={api_error}".format(
+            "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} filtered_missing={filtered_missing} "
+            "api_error={api_error}".format(
                 **batch_summary
             )
         )
@@ -138,6 +192,9 @@ async def main_async() -> int:
     _validate_environment()
     
     list_manager.load()
+    backfill_start = _resolve_price_target_backfill_start()
+    if backfill_start is not None:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze price-target data: {backfill_start.isoformat()}")
     
     df_symbols = mdc.get_symbols()
     # Filter NaNs and ensure string
@@ -162,15 +219,17 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(3)
     
     mdc.write_line(f"Starting Bronze Price Target Ingestion for {len(symbols)} symbols...")
-    tasks = [process_batch_bronze(chunk, semaphore) for chunk in chunked_symbols]
+    tasks = [process_batch_bronze(chunk, semaphore, backfill_start=backfill_start) for chunk in chunked_symbols]
     batch_exception_count = 0
     aggregate = {
         "requested": 0,
         "stale": 0,
         "api_rows": 0,
         "saved": 0,
+        "deleted": 0,
         "save_failed": 0,
         "blacklisted": 0,
+        "filtered_missing": 0,
         "api_error_batches": 0,
     }
     try:
@@ -188,8 +247,10 @@ async def main_async() -> int:
             aggregate["stale"] += int(result.get("stale", 0) or 0)
             aggregate["api_rows"] += int(result.get("api_rows", 0) or 0)
             aggregate["saved"] += int(result.get("saved", 0) or 0)
+            aggregate["deleted"] += int(result.get("deleted", 0) or 0)
             aggregate["save_failed"] += int(result.get("save_failed", 0) or 0)
             aggregate["blacklisted"] += int(result.get("blacklisted", 0) or 0)
+            aggregate["filtered_missing"] += int(result.get("filtered_missing", 0) or 0)
             if bool(result.get("api_error", False)):
                 aggregate["api_error_batches"] += 1
     finally:
@@ -199,7 +260,9 @@ async def main_async() -> int:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
         mdc.write_line(
             "Bronze price target overall summary: requested={requested} stale={stale} api_rows={api_rows} "
-            "saved={saved} save_failed={save_failed} blacklisted={blacklisted} api_error_batches={api_error_batches} "
+            "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} "
+            "filtered_missing={filtered_missing} "
+            "api_error_batches={api_error_batches} "
             "batch_exceptions={batch_exception_count}".format(
                 batch_exception_count=batch_exception_count,
                 **aggregate,

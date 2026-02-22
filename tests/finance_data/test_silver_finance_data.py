@@ -36,6 +36,33 @@ def test_silver_finance_processes_alpha_vantage_json_quarterly_reports():
         assert df.iloc[-1]["symbol"] == "TEST"
 
 
+def test_silver_finance_applies_backfill_start_cutoff():
+    blob_name = "finance-data/Balance Sheet/TEST_quarterly_balance-sheet.json"
+    payload = {
+        "symbol": "TEST",
+        "quarterlyReports": [
+            {"fiscalDateEnding": "2023-12-31", "totalAssets": "900"},
+            {"fiscalDateEnding": "2024-01-01", "totalAssets": "1000"},
+        ],
+    }
+    raw_bytes = json.dumps(payload).encode("utf-8")
+
+    with patch("core.core.read_raw_bytes", return_value=raw_bytes), patch(
+        "core.delta_core.store_delta"
+    ) as mock_store, patch("core.delta_core.get_delta_schema_columns", return_value=None), patch(
+        "core.delta_core.vacuum_delta_table", return_value=0
+    ):
+        result = silver.process_blob(
+            {"name": blob_name},
+            desired_end=pd.Timestamp("2024-01-02"),
+            backfill_start=pd.Timestamp("2024-01-01"),
+        )
+        assert result.status == "ok"
+
+        df = mock_store.call_args.args[0]
+        assert df["date"].min().date().isoformat() >= "2024-01-01"
+
+
 def test_silver_finance_builds_valuation_timeseries_from_overview_and_prices():
     blob_name = "finance-data/Valuation/TEST_quarterly_valuation_measures.json"
     payload = {
@@ -128,7 +155,7 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
 
     monkeypatch.setattr(silver, "save_watermarks", fake_save_watermarks)
 
-    def fake_process_blob(blob, *, desired_end, watermarks=None):
+    def fake_process_blob(blob, *, desired_end, backfill_start=None, watermarks=None):
         name = blob["name"]
         if name.endswith("OK_quarterly_balance-sheet.json"):
             return silver.BlobProcessResult(

@@ -493,3 +493,43 @@ def get_delta_last_commit(container: str, path: str) -> Optional[float]:
     except Exception as e:
         logger.warning(f"Failed to get Delta history for {path}: {e}")
         return None
+
+
+def vacuum_delta_table(
+    container: str,
+    path: str,
+    *,
+    retention_hours: int = 0,
+    dry_run: bool = False,
+    enforce_retention_duration: bool = False,
+    full: bool = False,
+) -> int:
+    """
+    Best-effort Delta VACUUM to physically remove unreferenced files from storage.
+
+    Returns number of deleted file paths reported by delta-rs.
+    """
+    try:
+        uri = get_delta_table_uri(container, path)
+        opts = get_delta_storage_options(container)
+        dt = DeltaTable(uri, storage_options=opts)
+        removed = dt.vacuum(
+            retention_hours=retention_hours,
+            dry_run=dry_run,
+            enforce_retention_duration=enforce_retention_duration,
+            full=full,
+        )
+        removed_count = len(removed or [])
+        logger.info(
+            "Vacuumed Delta table %s (container=%s): removed_files=%d dry_run=%s retention_hours=%s full=%s",
+            path,
+            container,
+            removed_count,
+            dry_run,
+            retention_hours,
+            full,
+        )
+        return removed_count
+    except Exception as exc:
+        logger.warning(f"Failed to vacuum Delta table {path}: {exc}")
+        return 0

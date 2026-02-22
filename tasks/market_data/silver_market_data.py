@@ -6,7 +6,12 @@ from tasks.market_data import config as cfg
 from core import core as mdc
 from core import delta_core
 from core.pipeline import DataPaths
-from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest_only_flag
+from tasks.common.backfill import (
+    apply_backfill_start_cutoff,
+    filter_by_date,
+    get_backfill_range,
+    get_latest_only_flag,
+)
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
@@ -185,6 +190,14 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     df_merged = df_merged.sort_values(by=['Date', 'Symbol', 'Volume'], ascending=[True, True, False])
     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
     df_merged = df_merged.reset_index(drop=True)
+
+    # Enforce backfill cutoff on the final Silver payload so historical rows are purged from ADLS.
+    df_merged, _ = apply_backfill_start_cutoff(
+        df_merged,
+        date_col="Date",
+        backfill_start=backfill_start,
+        context=f"silver market {ticker}",
+    )
     
     # 6. Type Casting & Formatting
     df_merged = _ensure_numeric_market_columns(df_merged)
@@ -197,10 +210,35 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     cols_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
     df_merged = df_merged.drop(columns=[c for c in cols_to_drop if c in df_merged.columns])
 
+    if backfill_start is not None and df_merged.empty:
+        if silver_client is not None:
+            deleted = silver_client.delete_prefix(silver_path)
+            mdc.write_line(
+                f"Silver market backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                f"deleted {deleted} blob(s) under {silver_path}."
+            )
+            if watermarks is not None and signature:
+                signature["updated_at"] = datetime.utcnow().isoformat()
+                watermarks[blob_name] = signature
+            return "ok"
+        mdc.write_warning(
+            f"Silver market backfill purge for {ticker} could not delete {silver_path}: storage client unavailable."
+        )
+        return "failed"
+
     # 7. Write to Silver
     try:
         df_merged = normalize_columns_to_snake_case(df_merged)
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
+        if backfill_start is not None:
+            delta_core.vacuum_delta_table(
+                cfg.AZURE_CONTAINER_SILVER,
+                silver_path,
+                retention_hours=0,
+                dry_run=False,
+                enforce_retention_duration=False,
+                full=True,
+            )
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
         return "failed"
@@ -213,6 +251,9 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
 
 def main():
     mdc.log_environment_diagnostics()
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is not None:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to silver market data: {backfill_start.date().isoformat()}")
     
     # List all files in Bronze market-data folder
     # Assuming mdc has a list_blobs or similar, otherwise use client directly

@@ -1,5 +1,6 @@
 import pytest
 import uuid
+import pandas as pd
 from unittest.mock import patch
 
 from tasks.market_data import silver_market_data as silver
@@ -92,3 +93,32 @@ def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
         assert float(df_saved.iloc[0]["short_interest"]) == pytest.approx(1200.0)
         assert float(df_saved.iloc[0]["short_volume"]) == pytest.approx(500.0)
         assert float(df_saved.iloc[0]["float_shares"]) == pytest.approx(1_000_000.0)
+
+
+def test_silver_processing_applies_backfill_start_cutoff(unique_ticker):
+    symbol = unique_ticker
+    blob_name = f"market-data/{symbol}.csv"
+    csv_content = (
+        b"Date,Open,High,Low,Close,Volume\n"
+        b"2023-12-31,100,105,95,102,1000\n"
+        b"2024-01-03,101,106,96,103,1100\n"
+    )
+    history = pd.DataFrame(
+        [
+            {"Date": pd.Timestamp("2023-12-30"), "Open": 99, "High": 104, "Low": 94, "Close": 101, "Volume": 900, "Symbol": symbol}
+        ]
+    )
+
+    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+        "core.delta_core.store_delta"
+    ) as mock_store, patch(
+        "core.delta_core.load_delta", return_value=history
+    ), patch(
+        "tasks.market_data.silver_market_data.get_backfill_range",
+        return_value=(pd.Timestamp("2024-01-01"), None),
+    ), patch(
+        "core.delta_core.vacuum_delta_table", return_value=0
+    ):
+        assert silver.process_file(blob_name) is True
+        df_saved = mock_store.call_args[0][0]
+        assert pd.to_datetime(df_saved["date"]).min().date().isoformat() >= "2024-01-01"

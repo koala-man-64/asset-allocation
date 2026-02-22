@@ -64,3 +64,80 @@ def test_process_batch_bronze(mock_list_manager, mock_client, mock_nasdaq, uniqu
             mock_list_manager.add_to_whitelist.assert_called_with(symbol)
 
     asyncio.run(run_test())
+
+
+@patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
+@patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
+@patch('tasks.price_target_data.bronze_price_target_data.list_manager')
+def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol_with_data = "AAA"
+    symbol_missing = "BBB"
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_client.get_blob_client.return_value = mock_blob_client
+
+    mock_api_df = pd.DataFrame({
+        'ticker': [symbol_with_data],
+        'obs_date': [pd.Timestamp('2024-03-01')],
+        'tp_mean_est': [55.0]
+    })
+    mock_nasdaq.get_table.return_value = mock_api_df
+
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch('core.core.store_raw_bytes') as mock_store:
+            summary = await bronze.process_batch_bronze(
+                [symbol_with_data, symbol_missing],
+                semaphore,
+                backfill_start=pd.Timestamp('2024-01-01').date(),
+            )
+            assert summary["blacklisted"] == 0
+            assert summary["filtered_missing"] == 1
+            assert summary["deleted"] == 1
+            mock_list_manager.add_to_blacklist.assert_not_called()
+            assert mock_store.call_count == 1
+            mock_client.delete_file.assert_called_once_with(f"price-target-data/{symbol_missing}.parquet")
+
+    asyncio.run(run_test())
+
+
+@patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
+@patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
+@patch('tasks.price_target_data.bronze_price_target_data.list_manager')
+def test_process_batch_bronze_deletes_stale_when_cutoff_and_empty_response(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbols = ["AAA", "BBB"]
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_client.get_blob_client.return_value = mock_blob_client
+    mock_nasdaq.get_table.return_value = pd.DataFrame()
+
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch('core.core.store_raw_bytes') as mock_store:
+            summary = await bronze.process_batch_bronze(
+                symbols,
+                semaphore,
+                backfill_start=pd.Timestamp('2024-01-01').date(),
+            )
+            assert summary["blacklisted"] == 0
+            assert summary["filtered_missing"] == 2
+            assert summary["deleted"] == 2
+            assert summary["save_failed"] == 0
+            mock_store.assert_not_called()
+            assert mock_client.delete_file.call_count == 2
+            mock_client.delete_file.assert_any_call("price-target-data/AAA.parquet")
+            mock_client.delete_file.assert_any_call("price-target-data/BBB.parquet")
+
+    asyncio.run(run_test())

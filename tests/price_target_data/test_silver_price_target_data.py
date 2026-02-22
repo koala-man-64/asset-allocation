@@ -83,3 +83,44 @@ def test_process_blob_skips_unchanged_when_schema_is_already_obs_date(monkeypatc
 
     assert status == "skipped_unchanged"
     assert calls["read_raw_bytes"] == 0
+
+
+def test_process_blob_applies_backfill_start_cutoff(monkeypatch):
+    blob_name = "price-target-data/AAPL.parquet"
+    blob = {"name": blob_name}
+
+    source = pd.DataFrame(
+        {
+            "obs_date": [pd.Timestamp("2023-12-31"), pd.Timestamp("2024-01-02")],
+            "tp_mean_est": [140.0, 150.0],
+            "tp_std_dev_est": [7.0, 7.5],
+            "tp_high_est": [155.0, 165.0],
+            "tp_low_est": [125.0, 135.0],
+            "tp_cnt_est": [9.0, 10.0],
+            "tp_cnt_est_rev_up": [2.0, 3.0],
+            "tp_cnt_est_rev_down": [1.0, 1.0],
+        }
+    )
+    history = source.copy()
+    history["obs_date"] = [pd.Timestamp("2023-12-30"), pd.Timestamp("2024-01-01")]
+    history["symbol"] = "AAPL"
+
+    captured: dict = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: source.copy())
+    monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: history.copy())
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver, "get_backfill_range", lambda: (pd.Timestamp("2024-01-01"), None))
+    monkeypatch.setattr(silver.delta_core, "vacuum_delta_table", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        silver.delta_core,
+        "store_delta",
+        lambda df, *_args, **_kwargs: captured.setdefault("df", df.copy()),
+    )
+
+    status = silver.process_blob(blob, watermarks={})
+
+    assert status == "ok"
+    assert "df" in captured
+    assert pd.to_datetime(captured["df"]["obs_date"]).min().date().isoformat() >= "2024-01-01"

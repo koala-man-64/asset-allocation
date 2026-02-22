@@ -14,6 +14,7 @@ from core import core as mdc
 from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
+from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 from tasks.common.silver_contracts import (
     ContractViolation,
@@ -27,6 +28,7 @@ from tasks.common.silver_contracts import (
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
 
 @dataclass(frozen=True)
@@ -479,7 +481,13 @@ def _extract_ticker_from_filename(filename: str) -> Optional[str]:
     return None
 
 
-def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = None) -> BlobProcessResult:
+def process_blob(
+    blob,
+    *,
+    desired_end: pd.Timestamp,
+    backfill_start: Optional[pd.Timestamp] = None,
+    watermarks: dict | None = None,
+) -> BlobProcessResult:
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
     # e.g. finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.csv
@@ -620,6 +628,39 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
                 status="failed",
                 error=str(exc),
             )
+
+        df_clean, _ = apply_backfill_start_cutoff(
+            df_clean,
+            date_col="Date",
+            backfill_start=backfill_start,
+            context=f"silver finance {ticker}",
+        )
+        if backfill_start is not None and (df_clean is None or df_clean.empty):
+            if silver_client is not None:
+                deleted = silver_client.delete_prefix(silver_path)
+                mdc.write_line(
+                    f"Silver finance backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                    f"deleted {deleted} blob(s) under {silver_path}."
+                )
+                watermark_signature = None
+                if signature:
+                    watermark_signature = dict(signature)
+                    watermark_signature["updated_at"] = datetime.now(timezone.utc).isoformat()
+                return BlobProcessResult(
+                    blob_name=blob_name,
+                    silver_path=silver_path,
+                    ticker=ticker,
+                    status="ok",
+                    rows_written=0,
+                    watermark_signature=watermark_signature,
+                )
+            return BlobProcessResult(
+                blob_name=blob_name,
+                silver_path=silver_path,
+                ticker=ticker,
+                status="failed",
+                error=f"Storage client unavailable for cutoff purge {silver_path}.",
+            )
         
         # Resample to daily frequency (forward fill)
         df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
@@ -652,6 +693,15 @@ def process_blob(blob, *, desired_end: pd.Timestamp, watermarks: dict | None = N
             mode="overwrite",
             schema_mode="merge",
         )
+        if backfill_start is not None:
+            delta_core.vacuum_delta_table(
+                cfg.AZURE_CONTAINER_SILVER,
+                silver_path,
+                retention_hours=0,
+                dry_run=False,
+                enforce_retention_duration=False,
+                full=True,
+            )
         mdc.write_line(f"Updated Silver {silver_path}")
         watermark_signature = None
         if signature:
@@ -695,6 +745,11 @@ def main() -> int:
     watermarks_dirty = False
 
     desired_end = _utc_today()
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is not None:
+        mdc.write_line(
+            f"Applying BACKFILL_START_DATE cutoff to silver finance data: {backfill_start.date().isoformat()}"
+        )
     max_workers = _get_ingest_max_workers()
     mdc.write_line(f"Silver finance ingest workers={max_workers} candidates={len(blobs)}.")
 
@@ -702,11 +757,24 @@ def main() -> int:
     results: list[BlobProcessResult] = []
     if max_workers <= 1:
         for blob in blobs:
-            results.append(process_blob(blob, desired_end=desired_end, watermarks=watermarks))
+            results.append(
+                process_blob(
+                    blob,
+                    desired_end=desired_end,
+                    backfill_start=backfill_start,
+                    watermarks=watermarks,
+                )
+            )
     else:
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="silver-finance") as executor:
             futures = {
-                executor.submit(process_blob, blob, desired_end=desired_end, watermarks=watermarks): blob
+                executor.submit(
+                    process_blob,
+                    blob,
+                    desired_end=desired_end,
+                    backfill_start=backfill_start,
+                    watermarks=watermarks,
+                ): blob
                 for blob in blobs
             }
             for future in as_completed(futures):

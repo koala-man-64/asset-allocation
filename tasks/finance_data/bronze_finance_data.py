@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from core.alpha_vantage_gateway_client import (
@@ -15,6 +15,7 @@ from core.alpha_vantage_gateway_client import (
 )
 from core import core as mdc
 from core.pipeline import ListManager
+from tasks.common.backfill import get_backfill_range
 from tasks.finance_data import config as cfg
 
 
@@ -82,6 +83,42 @@ def _serialize_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+def _parse_iso_date(raw: Any) -> Optional[date]:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text[:10]).date()
+    except Exception:
+        return None
+
+
+def _apply_backfill_start_to_finance_payload(payload: dict[str, Any], *, backfill_start: Optional[date]) -> dict[str, Any]:
+    if backfill_start is None:
+        return payload
+
+    filtered_payload = dict(payload)
+    for reports_key in ("quarterlyReports", "annualReports"):
+        reports = filtered_payload.get(reports_key)
+        if not isinstance(reports, list):
+            continue
+
+        filtered_rows = []
+        for row in reports:
+            if not isinstance(row, dict):
+                filtered_rows.append(row)
+                continue
+            row_date = _parse_iso_date(row.get("fiscalDateEnding") or row.get("reportedDate") or row.get("date"))
+            if row_date is not None and row_date < backfill_start:
+                continue
+            filtered_rows.append(row)
+        filtered_payload[reports_key] = filtered_rows
+
+    return filtered_payload
+
+
 def _has_non_empty_value(value: Any) -> bool:
     if value is None:
         return False
@@ -122,7 +159,13 @@ def _is_empty_finance_payload(payload: dict[str, Any], *, report_name: str) -> b
     return False
 
 
-def fetch_and_save_raw(symbol: str, report: dict[str, str], av_client: AlphaVantageGatewayClient) -> bool:
+def fetch_and_save_raw(
+    symbol: str,
+    report: dict[str, str],
+    av_client: AlphaVantageGatewayClient,
+    *,
+    backfill_start: Optional[date] = None,
+) -> bool:
     """
     Fetch a finance report via the API-hosted Alpha Vantage gateway and store raw JSON bytes in Bronze.
 
@@ -136,10 +179,12 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av_client: AlphaVant
     report_name = report["report"]
 
     blob_path = f"finance-data/{folder}/{symbol}_{suffix}.json"
+    blob_exists: Optional[bool] = None
 
     try:
         blob = bronze_client.get_blob_client(blob_path)
-        if blob.exists():
+        blob_exists = bool(blob.exists())
+        if blob_exists:
             props = blob.get_blob_properties()
             if _is_fresh(
                 props.last_modified,
@@ -161,6 +206,18 @@ def fetch_and_save_raw(symbol: str, report: dict[str, str], av_client: AlphaVant
         raise AlphaVantageGatewayInvalidSymbolError(
             f"Alpha Vantage returned empty finance payload for {symbol} report={report_name}; blacklisting."
         )
+    payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=backfill_start)
+    if backfill_start is not None and _is_empty_finance_payload(payload, report_name=report_name):
+        if blob_exists is not False:
+            bronze_client.delete_file(blob_path)
+            mdc.write_line(
+                f"No finance rows on/after {backfill_start.isoformat()} for {symbol} report={report_name}; "
+                f"deleted bronze {blob_path}."
+            )
+            list_manager.add_to_whitelist(symbol)
+            return True
+        list_manager.add_to_whitelist(symbol)
+        return False
 
     raw = _serialize_json_bytes(payload)
     mdc.store_raw_bytes(raw, blob_path, client=bronze_client)
@@ -213,6 +270,10 @@ async def main_async() -> int:
     mdc.write_line(f"Starting Alpha Vantage Bronze Finance Ingestion for {len(symbols)} symbols...")
 
     av_client = AlphaVantageGatewayClient.from_env()
+    backfill_start_ts, _ = get_backfill_range()
+    backfill_start = backfill_start_ts.to_pydatetime().date() if backfill_start_ts is not None else None
+    if backfill_start is not None:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze finance data: {backfill_start.isoformat()}")
 
     max_workers = max(
         1,
@@ -236,7 +297,7 @@ async def main_async() -> int:
     def worker(symbol: str) -> int:
         wrote = 0
         for report in REPORTS:
-            if fetch_and_save_raw(symbol, report, av_client):
+            if fetch_and_save_raw(symbol, report, av_client, backfill_start=backfill_start):
                 wrote += 1
         return wrote
 

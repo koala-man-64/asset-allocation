@@ -4,13 +4,14 @@ import multiprocessing as mp
 from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Sequence, Tuple, Dict, Any, List
+from typing import Sequence, Tuple, Dict, Any, List, Optional
 
 import numpy as np
 import pandas as pd
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
+from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 
 
 @dataclass(frozen=True)
@@ -150,10 +151,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _process_ticker(task: Tuple[str, str, str, str, str]) -> Dict[str, Any]:
+def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict[str, Any]:
+    from core import core as mdc
     from core import delta_core
 
-    ticker, raw_path, gold_path, silver_container, gold_container = task
+    ticker, raw_path, gold_path, silver_container, gold_container, backfill_start_iso = task
 
     df_raw = delta_core.load_delta(silver_container, raw_path)
     if df_raw is None or df_raw.empty:
@@ -164,10 +166,45 @@ def _process_ticker(task: Tuple[str, str, str, str, str]) -> Dict[str, Any]:
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_compute", "raw_path": raw_path, "error": str(exc)}
 
+    backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
+    df_features, _ = apply_backfill_start_cutoff(
+        df_features,
+        date_col="date",
+        backfill_start=backfill_start,
+        context=f"gold earnings {ticker}",
+    )
+
+    if backfill_start is not None and df_features.empty:
+        gold_client = mdc.get_storage_client(gold_container)
+        if gold_client is None:
+            return {
+                "ticker": ticker,
+                "status": "failed_write",
+                "gold_path": gold_path,
+                "error": f"Storage client unavailable for cutoff purge {gold_path}.",
+            }
+        deleted = gold_client.delete_prefix(gold_path)
+        return {
+            "ticker": ticker,
+            "status": "ok",
+            "rows": 0,
+            "gold_path": gold_path,
+            "purged_blobs": deleted,
+        }
+
     df_features = normalize_columns_to_snake_case(df_features)
 
     try:
         delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
+        if backfill_start is not None:
+            delta_core.vacuum_delta_table(
+                gold_container,
+                gold_path,
+                retention_hours=0,
+                dry_run=False,
+                enforce_retention_duration=False,
+                full=True,
+            )
     except Exception as exc:
         return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
 
@@ -235,6 +272,10 @@ def main() -> int:
 
     mdc.log_environment_diagnostics()
     job_cfg = _build_job_config()
+    backfill_start, _ = get_backfill_range()
+    backfill_start_iso = backfill_start.date().isoformat() if backfill_start is not None else None
+    if backfill_start_iso:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to gold earnings features: {backfill_start_iso}")
 
     watermarks = load_watermarks("gold_earnings_features")
     watermarks_dirty = False
@@ -254,7 +295,7 @@ def main() -> int:
                 skipped_unchanged += 1
                 continue
 
-        tasks.append((ticker, raw_path, gold_path, job_cfg.silver_container, job_cfg.gold_container))
+        tasks.append((ticker, raw_path, gold_path, job_cfg.silver_container, job_cfg.gold_container, backfill_start_iso))
 
     mp_context = mp.get_context("spawn")
     results: List[Dict[str, Any]] = []

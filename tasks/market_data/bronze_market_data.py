@@ -425,27 +425,9 @@ def _extract_latest_market_date(existing_df: pd.DataFrame) -> date | None:
         return None
 
 
-def _resolve_market_backfill_range() -> tuple[Optional[date], Optional[date]]:
-    """Resolve market backfill date window with market-specific overrides."""
+def _resolve_backfill_range_dates() -> tuple[Optional[date], Optional[date]]:
+    """Resolve shared backfill date window from BACKFILL_START_DATE / BACKFILL_END_DATE."""
     backfill_start, backfill_end = get_backfill_range()
-
-    override_start = os.getenv("MARKET_BACKFILL_START_DATE", "").strip()
-    override_end = os.getenv("MARKET_BACKFILL_END_DATE", "").strip()
-
-    if override_start:
-        parsed_start = pd.to_datetime(override_start, errors="coerce")
-        if pd.isna(parsed_start):
-            mdc.write_warning(f"Invalid MARKET_BACKFILL_START_DATE={override_start!r}; ignoring.")
-        else:
-            backfill_start = parsed_start
-
-    if override_end:
-        parsed_end = pd.to_datetime(override_end, errors="coerce")
-        if pd.isna(parsed_end):
-            mdc.write_warning(f"Invalid MARKET_BACKFILL_END_DATE={override_end!r}; ignoring.")
-        else:
-            backfill_end = parsed_end
-
     return (
         backfill_start.to_pydatetime().date() if backfill_start is not None else None,
         backfill_end.to_pydatetime().date() if backfill_end is not None else None,
@@ -454,7 +436,7 @@ def _resolve_market_backfill_range() -> tuple[Optional[date], Optional[date]]:
 
 def _resolve_fetch_window(*, existing_latest_date: date | None) -> tuple[str, str]:
     today = _utc_today()
-    backfill_start, backfill_end = _resolve_market_backfill_range()
+    backfill_start, backfill_end = _resolve_backfill_range_dates()
     if backfill_start or backfill_end:
         from_date = backfill_start.isoformat() if isinstance(backfill_start, date) else _FULL_HISTORY_START_DATE
         to_date = backfill_end.isoformat() if isinstance(backfill_end, date) else today.isoformat()
@@ -486,6 +468,19 @@ def _merge_existing_and_new_market_data(existing_df: pd.DataFrame, incoming_df: 
     merged = merged.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
     merged["Date"] = merged["Date"].dt.strftime("%Y-%m-%d")
     return merged
+
+
+def _drop_rows_before_backfill_start(df: pd.DataFrame, *, backfill_start: date | None) -> pd.DataFrame:
+    if backfill_start is None or df.empty or "Date" not in df.columns:
+        return df
+
+    out = df.copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.loc[out["Date"].notna() & (out["Date"] >= pd.Timestamp(backfill_start))].copy()
+    if out.empty:
+        return pd.DataFrame(columns=df.columns)
+    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
+    return out.reset_index(drop=True)
 
 
 def _safe_close_massive_client(client: MassiveGatewayClient | None) -> None:
@@ -599,6 +594,7 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
     existing_df = _load_existing_market_df(symbol)
     existing_latest_date = _extract_latest_market_date(existing_df)
     from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
+    backfill_start, _ = _resolve_backfill_range_dates()
     raw_text = massive_client.get_daily_time_series_csv(
         symbol=symbol,
         from_date=from_date,
@@ -616,6 +612,8 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
             return
         list_manager.add_to_blacklist(symbol)
         raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
+
+    blob_path = f"market-data/{symbol}.csv"
 
     try:
         df_daily = _normalize_provider_daily_df(raw_text)
@@ -650,6 +648,14 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
             float_payload=float_payload,
         )
         df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
+        df_daily = _drop_rows_before_backfill_start(df_daily, backfill_start=backfill_start)
+        if backfill_start is not None and df_daily.empty:
+            bronze_client.delete_file(blob_path)
+            mdc.write_line(
+                f"No market rows on/after {backfill_start.isoformat()} for {symbol}; deleted bronze {blob_path}."
+            )
+            list_manager.add_to_whitelist(symbol)
+            return
         raw_bytes = _serialize_market_csv(df_daily)
     except (MassiveGatewayRateLimitError, MassiveGatewayError):
         raise
@@ -663,7 +669,7 @@ def download_and_save_raw(symbol: str, massive_client: MassiveGatewayClient) -> 
         ) from exc
 
     try:
-        mdc.store_raw_bytes(raw_bytes, f"market-data/{symbol}.csv", client=bronze_client)
+        mdc.store_raw_bytes(raw_bytes, blob_path, client=bronze_client)
     except Exception as exc:
         raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
     list_manager.add_to_whitelist(symbol)
@@ -689,6 +695,9 @@ _normalize_alpha_vantage_daily_csv = _normalize_provider_daily_csv
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
+    backfill_start, _ = _resolve_backfill_range_dates()
+    if backfill_start is not None:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze market data: {backfill_start.isoformat()}")
 
     list_manager.load()
     mdc.write_line(

@@ -6,7 +6,12 @@ from core import core as mdc
 from core import config as cfg
 from core import delta_core
 from core.pipeline import DataPaths
-from tasks.common.backfill import filter_by_date, get_backfill_range, get_latest_only_flag
+from tasks.common.backfill import (
+    apply_backfill_start_cutoff,
+    filter_by_date,
+    get_backfill_range,
+    get_latest_only_flag,
+)
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 from tasks.common.silver_contracts import (
     ContractViolation,
@@ -122,11 +127,45 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
     # Dedup: Keep LAST (Newest information for that Earnings Date)
     df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
     df_merged = df_merged.reset_index(drop=True)
+
+    # Enforce shared backfill cutoff on final merged Silver payload.
+    df_merged, _ = apply_backfill_start_cutoff(
+        df_merged,
+        date_col="Date",
+        backfill_start=backfill_start,
+        context=f"silver earnings {ticker}",
+    )
+
+    if backfill_start is not None and df_merged.empty:
+        if silver_client is not None:
+            deleted = silver_client.delete_prefix(cloud_path)
+            mdc.write_line(
+                f"Silver earnings backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                f"deleted {deleted} blob(s) under {cloud_path}."
+            )
+            if watermarks is not None and signature:
+                signature["updated_at"] = datetime.utcnow().isoformat()
+                watermarks[blob_name] = signature
+            return "ok"
+        mdc.write_warning(
+            f"Silver earnings backfill purge for {ticker} could not delete {cloud_path}: storage client unavailable."
+        )
+        return "failed"
+
     df_merged = normalize_columns_to_snake_case(df_merged)
     
     # 5. Write to Silver
     try:
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+        if backfill_start is not None:
+            delta_core.vacuum_delta_table(
+                cfg.AZURE_CONTAINER_SILVER,
+                cloud_path,
+                retention_hours=0,
+                dry_run=False,
+                enforce_retention_duration=False,
+                full=True,
+            )
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
         return "failed"
@@ -139,6 +178,9 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
 
 def main():
     mdc.log_environment_diagnostics()
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is not None:
+        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to silver earnings data: {backfill_start.date().isoformat()}")
     
     mdc.write_line("Listing Bronze files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="earnings-data/")

@@ -7,6 +7,7 @@ from core import core as mdc
 from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
+from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
 from tasks.common.silver_contracts import (
     ContractViolation,
@@ -48,6 +49,7 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
 
     # Silver Path
     silver_path = DataPaths.get_price_target_path(ticker)
+    backfill_start, _ = get_backfill_range()
 
     if watermarks is not None:
         unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
@@ -108,6 +110,28 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
             )
             return "failed"
 
+        df_new, _ = apply_backfill_start_cutoff(
+            df_new,
+            date_col="obs_date",
+            backfill_start=backfill_start,
+            context=f"silver price-target {ticker}",
+        )
+        if backfill_start is not None and df_new.empty:
+            if silver_client is not None:
+                deleted = silver_client.delete_prefix(silver_path)
+                mdc.write_line(
+                    f"Silver price-target backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                    f"deleted {deleted} blob(s) under {silver_path}."
+                )
+                if watermarks is not None and signature:
+                    signature["updated_at"] = datetime.utcnow().isoformat()
+                    watermarks[blob_name] = signature
+                return "ok"
+            mdc.write_warning(
+                f"Silver price-target backfill purge for {ticker} could not delete {silver_path}: storage client unavailable."
+            )
+            return "failed"
+
         df_new = df_new.sort_values(by="obs_date")
 
         # Carry Forward / Upsample
@@ -161,10 +185,42 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
         df_merged = df_merged.drop_duplicates(subset=["obs_date", "symbol"], keep="last")
         df_merged = df_merged.sort_values(by=["obs_date", "symbol"])
         df_merged = df_merged.reset_index(drop=True)
+
+        df_merged, _ = apply_backfill_start_cutoff(
+            df_merged,
+            date_col="obs_date",
+            backfill_start=backfill_start,
+            context=f"silver price-target merged {ticker}",
+        )
+        if backfill_start is not None and df_merged.empty:
+            if silver_client is not None:
+                deleted = silver_client.delete_prefix(silver_path)
+                mdc.write_line(
+                    f"Silver price-target merged purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                    f"deleted {deleted} blob(s) under {silver_path}."
+                )
+                if watermarks is not None and signature:
+                    signature["updated_at"] = datetime.utcnow().isoformat()
+                    watermarks[blob_name] = signature
+                return "ok"
+            mdc.write_warning(
+                f"Silver price-target merged purge for {ticker} could not delete {silver_path}: storage client unavailable."
+            )
+            return "failed"
+
         df_merged = normalize_columns_to_snake_case(df_merged)
 
         # Write
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
+        if backfill_start is not None:
+            delta_core.vacuum_delta_table(
+                cfg.AZURE_CONTAINER_SILVER,
+                silver_path,
+                retention_hours=0,
+                dry_run=False,
+                enforce_retention_duration=False,
+                full=True,
+            )
         mdc.write_line(f"Updated Silver {ticker}")
         if watermarks is not None and signature:
             signature["updated_at"] = datetime.utcnow().isoformat()
@@ -177,6 +233,11 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
 
 def main():
     mdc.log_environment_diagnostics()
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is not None:
+        mdc.write_line(
+            f"Applying BACKFILL_START_DATE cutoff to silver price-target data: {backfill_start.date().isoformat()}"
+        )
     mdc.write_line("Listing Bronze Price Target files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     watermarks = load_watermarks("bronze_price_target_data")

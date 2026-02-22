@@ -44,6 +44,10 @@ properties:
         value: INFO
       - name: DISABLE_DOTENV
         value: "true"
+      - name: BACKFILL_START_DATE
+        value: "${BACKFILL_START_DATE}"
+      - name: BACKFILL_END_DATE
+        value: "${BACKFILL_END_DATE}"
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: AZURE_STORAGE_ACCOUNT_NAME
