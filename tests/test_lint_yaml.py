@@ -200,6 +200,8 @@ def test_deploy_workflow_exports_acr_login_server_for_yaml_templates() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow_file = repo_root / ".github" / "workflows" / "deploy.yml"
     text = workflow_file.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    assert isinstance(doc, dict), "deploy.yml must parse to a workflow document object."
 
     assert 'acr_login_server="$(az acr show --name' in text, (
         "deploy.yml must resolve ACR login server from Azure before rendering app YAML templates."
@@ -207,6 +209,16 @@ def test_deploy_workflow_exports_acr_login_server_for_yaml_templates() -> None:
     assert 'echo "ACR_LOGIN_SERVER=$acr_login_server" >> "$GITHUB_ENV"' in text, (
         "deploy.yml must export ACR_LOGIN_SERVER to GITHUB_ENV for envsubst templates."
     )
-    assert text.count(': "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"') >= 2, (
-        "API/UI deploy steps must fail fast when ACR_LOGIN_SERVER is missing."
+
+    deploy_script = None
+    for job_name, step_name, script in _iter_workflow_run_steps(doc):
+        if job_name == "build-and-deploy" and step_name == "Deploy Unified App (API + UI Sidecar)":
+            deploy_script = script
+            break
+
+    assert deploy_script, (
+        "deploy.yml must define build-and-deploy step 'Deploy Unified App (API + UI Sidecar)'."
+    )
+    assert ': "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"' in deploy_script, (
+        "Unified app deploy step must fail fast when ACR_LOGIN_SERVER is missing."
     )
