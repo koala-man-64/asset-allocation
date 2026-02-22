@@ -8,7 +8,7 @@ import re
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any, Union, Optional
@@ -1009,8 +1009,30 @@ def _ensure_symbols_tables(cur) -> None:
 
 
 def _symbols_refresh_due(cur, interval_hours: float) -> bool:
-    # Always return True to allow refreshes whenever get_symbols() is called or job is triggered.
-    return True
+    try:
+        interval = float(interval_hours)
+    except Exception:
+        interval = 24.0
+    if interval <= 0:
+        return False
+
+    try:
+        _ensure_symbols_tables(cur)
+        cur.execute("SELECT last_refreshed_at FROM public.symbol_sync_state WHERE id = 1;")
+        row = cur.fetchone()
+        last_refreshed_at = row[0] if row else None
+        if last_refreshed_at is None:
+            return True
+
+        parsed_last = pd.to_datetime(last_refreshed_at, utc=True, errors="coerce")
+        if pd.isna(parsed_last):
+            return True
+
+        age = datetime.now(timezone.utc) - parsed_last.to_pydatetime()
+        return age >= timedelta(hours=interval)
+    except Exception:
+        # Best effort: if state cannot be read reliably, refresh.
+        return True
 
 
 def _try_advisory_lock_symbols_refresh(cur) -> bool:

@@ -118,3 +118,67 @@ def test_fetch_and_save_raw_deletes_blob_when_cutoff_removes_all_rows(unique_tic
         mock_store.assert_not_called()
         mock_bronze_client.delete_file.assert_called_once_with(f"earnings-data/{symbol}.json")
         mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+
+
+def test_fetch_and_save_raw_skips_write_when_no_new_earnings_dates(unique_ticker):
+    symbol = unique_ticker
+    payload = {
+        "symbol": symbol,
+        "quarterlyEarnings": [
+            {
+                "fiscalDateEnding": "2024-03-31",
+                "reportedEPS": "1.8",
+                "estimatedEPS": "1.7",
+                "surprisePercentage": "3.0",
+            },
+            {
+                "fiscalDateEnding": "2023-12-31",
+                "reportedEPS": "1.4",
+                "estimatedEPS": "1.2",
+                "surprisePercentage": "5.0",
+            },
+        ],
+    }
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = payload
+
+    existing_df = pd.DataFrame(
+        [
+            {
+                "Date": pd.Timestamp("2023-12-31"),
+                "Symbol": symbol,
+                "Reported EPS": 1.4,
+                "EPS Estimate": 1.2,
+                "Surprise": 0.05,
+            },
+            {
+                "Date": pd.Timestamp("2024-03-31"),
+                "Symbol": symbol,
+                "Reported EPS": 1.8,
+                "EPS Estimate": 1.7,
+                "Surprise": 0.03,
+            },
+        ]
+    )
+    existing_raw = existing_df.to_json(orient="records").encode("utf-8")
+
+    mock_blob = MagicMock()
+    mock_blob.exists.return_value = True
+    mock_blob.get_blob_properties.return_value = MagicMock(
+        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    )
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob
+
+    with patch("tasks.earnings_data.bronze_earnings_data.bronze_client", mock_bronze_client), patch(
+        "tasks.earnings_data.bronze_earnings_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_raw,
+    ), patch("core.core.store_raw_bytes") as mock_store:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(symbol, mock_av)
+        assert wrote is False
+        mock_store.assert_not_called()
+        mock_list_manager.add_to_whitelist.assert_called_with(symbol)

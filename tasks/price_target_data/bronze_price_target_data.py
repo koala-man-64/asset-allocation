@@ -3,8 +3,9 @@ import os
 import asyncio
 import pandas as pd
 import nasdaqdatalink
-from datetime import datetime, date, timezone
-from typing import List, Optional
+from datetime import datetime, date, timedelta, timezone
+from io import BytesIO
+from typing import Dict, List, Optional
 
 from core import core as mdc
 from tasks.price_target_data import config as cfg
@@ -16,6 +17,7 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 list_manager = ListManager(bronze_client, "price-target-data", auto_flush=False)
 
 BATCH_SIZE = 50
+PRICE_TARGET_FULL_HISTORY_START_DATE = date(2020, 1, 1)
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -39,6 +41,32 @@ def _resolve_price_target_backfill_start() -> Optional[date]:
         return None
     try:
         return backfill_start.to_pydatetime().date()
+    except Exception:
+        return None
+
+
+def _load_existing_price_target_df(symbol: str) -> pd.DataFrame:
+    blob_path = f"price-target-data/{symbol}.parquet"
+    try:
+        raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
+    except Exception:
+        return pd.DataFrame()
+    if not raw:
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(BytesIO(raw))
+    except Exception:
+        return pd.DataFrame()
+
+
+def _extract_max_obs_date(df: pd.DataFrame) -> Optional[date]:
+    if df.empty or "obs_date" not in df.columns:
+        return None
+    parsed = pd.to_datetime(df["obs_date"], errors="coerce", utc=True).dropna()
+    if parsed.empty:
+        return None
+    try:
+        return parsed.max().date()
     except Exception:
         return None
 
@@ -82,44 +110,54 @@ async def process_batch_bronze(
         "api_error": False,
     }
     async with semaphore:
-        # Check freshness of Bronze Blobs?
-        # For simplicity, we can fetch all or strictly stale.
-        # Let's check which symbols *need* update based on Bronze Blob age.
-        
-        stale_symbols = []
+        # Determine stale symbols and per-symbol incremental start windows.
+        stale_symbols: List[str] = []
+        symbol_start_dates: Dict[str, date] = {}
+        symbol_has_existing_blob: Dict[str, bool] = {}
+        existing_frames: Dict[str, pd.DataFrame] = {}
+        default_start_date = backfill_start or PRICE_TARGET_FULL_HISTORY_START_DATE
+
         for sym in symbols:
             blob_path = f"price-target-data/{sym}.parquet"
-            # simple check: if blob exists and < 7 days old, skip?
-            # Price targets update daily/weekly. 
-            # API call is cheap (Nasdaq Data Link is specific).
-            # Let's enforce 24h freshness for Bronze.
             try:
                 blob = bronze_client.get_blob_client(blob_path)
-                if blob.exists():
-                     props = blob.get_blob_properties()
-                     age = datetime.now(timezone.utc) - props.last_modified
-                     if age.total_seconds() < 24 * 3600:
-                         continue
+                exists = bool(blob.exists())
+                symbol_has_existing_blob[sym] = exists
+                if exists:
+                    props = blob.get_blob_properties()
+                    age = datetime.now(timezone.utc) - props.last_modified
+                    if age.total_seconds() < 24 * 3600:
+                        continue
+                    if backfill_start is None:
+                        existing_df = _load_existing_price_target_df(sym)
+                        existing_frames[sym] = existing_df
+                        existing_max = _extract_max_obs_date(existing_df)
+                        if existing_max is not None:
+                            symbol_start_dates[sym] = existing_max + timedelta(days=1)
             except Exception:
                 pass
+
+            if sym not in symbol_start_dates:
+                symbol_start_dates[sym] = default_start_date
             stale_symbols.append(sym)
-            
+
         batch_summary["stale"] = len(stale_symbols)
         if not stale_symbols:
             return batch_summary
 
-        min_date = backfill_start or date(2020, 1, 1)
-        
+        min_date = min(symbol_start_dates.get(sym, default_start_date) for sym in stale_symbols)
+
         loop = asyncio.get_event_loop()
         api_error_message = ""
+
         def fetch_api():
             nonlocal api_error_message
             try:
                 tickers_str = ",".join(stale_symbols)
                 return nasdaqdatalink.get_table(
-                    'ZACKS/TP',
+                    "ZACKS/TP",
                     ticker=tickers_str,
-                    obs_date={'gte': min_date.strftime('%Y-%m-%d')}
+                    obs_date={"gte": min_date.strftime("%Y-%m-%d")},
                 )
             except Exception as e:
                 api_error_message = str(e)
@@ -143,47 +181,61 @@ async def process_batch_bronze(
         if api_error_message:
             batch_summary["api_error"] = True
 
+        grouped: Dict[str, pd.DataFrame] = {}
         if not batch_df.empty:
             batch_summary["api_rows"] = int(len(batch_df))
-            for symbol, group_df in batch_df.groupby('ticker'):
-                symbol = str(symbol)
-                try:
-                    raw_parquet = group_df.to_parquet(index=False)
-                    mdc.store_raw_bytes(raw_parquet, f"price-target-data/{symbol}.parquet", client=bronze_client)
-                    mdc.write_line(f"Saved Bronze {symbol}")
-                    list_manager.add_to_whitelist(symbol)
-                    batch_summary["saved"] += 1
-                except Exception as e:
-                    mdc.write_error(f"Failed to save {symbol}: {e}")
-                    batch_summary["save_failed"] += 1
-                    
-            # Check for missing
-            found_tickers = set(str(t) for t in batch_df['ticker'].unique())
-            for sym in stale_symbols:
-                if sym not in found_tickers:
-                    if backfill_start is not None:
-                        _delete_price_target_blob_for_cutoff(sym, min_date=min_date, summary=batch_summary)
-                        continue
-                    # Likely no data exists or invalid
-                    mdc.write_line(f"No data for {sym}, blacklisting.")
-                    list_manager.add_to_blacklist(sym)
-                    batch_summary["blacklisted"] += 1
-        else:
-            if stale_symbols and not api_error_message:
+            for symbol, group_df in batch_df.groupby("ticker"):
+                grouped[str(symbol)] = group_df.copy()
+        elif stale_symbols and not api_error_message:
+            if backfill_start is None:
+                mdc.write_warning(
+                    f"Nasdaq batch returned no rows for stale symbols (count={len(stale_symbols)})."
+                )
+
+        for sym in stale_symbols:
+            symbol_min = symbol_start_dates.get(sym, default_start_date)
+            symbol_df = grouped.get(sym, pd.DataFrame()).copy()
+            if not symbol_df.empty and "obs_date" in symbol_df.columns:
+                symbol_df = symbol_df.loc[symbol_df["obs_date"] >= pd.Timestamp(symbol_min)].copy()
+
+            if symbol_df.empty:
                 if backfill_start is not None:
-                    for sym in stale_symbols:
-                        _delete_price_target_blob_for_cutoff(sym, min_date=min_date, summary=batch_summary)
-                else:
-                    mdc.write_warning(
-                        f"Nasdaq batch returned no rows for stale symbols (count={len(stale_symbols)})."
-                    )
+                    _delete_price_target_blob_for_cutoff(sym, min_date=symbol_min, summary=batch_summary)
+                    continue
+                batch_summary["filtered_missing"] += 1
+                # Incremental no-op: no rows newer than per-symbol watermark.
+                if bool(symbol_has_existing_blob.get(sym)) or symbol_min > PRICE_TARGET_FULL_HISTORY_START_DATE:
+                    list_manager.add_to_whitelist(sym)
+                    continue
+                mdc.write_line(f"No data for {sym}, blacklisting.")
+                list_manager.add_to_blacklist(sym)
+                batch_summary["blacklisted"] += 1
+                continue
+
+            try:
+                if backfill_start is None:
+                    existing_df = existing_frames.get(sym)
+                    if existing_df is None:
+                        existing_df = _load_existing_price_target_df(sym)
+                    if existing_df is not None and not existing_df.empty:
+                        symbol_df = pd.concat([existing_df, symbol_df], ignore_index=True, sort=False)
+                        symbol_df = symbol_df.drop_duplicates().reset_index(drop=True)
+                if "obs_date" in symbol_df.columns:
+                    symbol_df = symbol_df.sort_values("obs_date").reset_index(drop=True)
+
+                raw_parquet = symbol_df.to_parquet(index=False)
+                mdc.store_raw_bytes(raw_parquet, f"price-target-data/{sym}.parquet", client=bronze_client)
+                mdc.write_line(f"Saved Bronze {sym}")
+                list_manager.add_to_whitelist(sym)
+                batch_summary["saved"] += 1
+            except Exception as e:
+                mdc.write_error(f"Failed to save {sym}: {e}")
+                batch_summary["save_failed"] += 1
 
         mdc.write_line(
             "Bronze price target batch summary: requested={requested} stale={stale} api_rows={api_rows} "
             "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} filtered_missing={filtered_missing} "
-            "api_error={api_error}".format(
-                **batch_summary
-            )
+            "api_error={api_error}".format(**batch_summary)
         )
         return batch_summary
 

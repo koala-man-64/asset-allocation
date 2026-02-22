@@ -182,3 +182,44 @@ def test_fetch_and_save_raw_deletes_blob_when_cutoff_removes_all_rows(unique_tic
             f"finance-data/Balance Sheet/{symbol}_quarterly_balance-sheet.json"
         )
         mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+
+
+def test_fetch_and_save_raw_skips_write_when_no_new_finance_dates(unique_ticker):
+    symbol = unique_ticker
+    payload = {
+        "symbol": symbol,
+        "quarterlyReports": [
+            {"fiscalDateEnding": "2024-03-31", "reportedCurrency": "USD"},
+            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
+        ],
+    }
+    mock_av = MagicMock()
+    mock_av.get_finance_report.return_value = payload
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = True
+    mock_blob_client.get_blob_properties.return_value = MagicMock(
+        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    )
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+    existing_raw = json.dumps(payload).encode("utf-8")
+
+    report = {
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "report": "balance_sheet",
+    }
+
+    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
+        "tasks.finance_data.bronze_finance_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_raw,
+    ), patch("core.core.store_raw_bytes") as mock_store:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(symbol, report, mock_av)
+        assert wrote is False
+        mock_store.assert_not_called()
+        mock_list_manager.add_to_whitelist.assert_called_with(symbol)

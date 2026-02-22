@@ -384,6 +384,79 @@ def _can_use_snapshot_for_incremental(
     return existing_latest_date >= previous_business_day
 
 
+def _extract_snapshot_date(snapshot_row: dict[str, float | str] | None) -> date | None:
+    if not isinstance(snapshot_row, dict):
+        return None
+    iso_date = _extract_iso_date(snapshot_row.get("Date"))
+    if not iso_date:
+        return None
+    try:
+        return date.fromisoformat(iso_date)
+    except Exception:
+        return None
+
+
+def _incoming_has_new_market_dates(
+    *,
+    existing_latest_date: date | None,
+    incoming_df: pd.DataFrame | None,
+) -> bool:
+    if incoming_df is None or incoming_df.empty or "Date" not in incoming_df.columns:
+        return False
+    if existing_latest_date is None:
+        return True
+    parsed = pd.to_datetime(incoming_df["Date"], errors="coerce").dropna()
+    if parsed.empty:
+        return False
+    return parsed.max().date() > existing_latest_date
+
+
+def _existing_has_complete_supplementals(existing_df: pd.DataFrame, *, as_of_date: date | None) -> bool:
+    if as_of_date is None or existing_df.empty or "Date" not in existing_df.columns:
+        return False
+
+    out = existing_df.copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.dropna(subset=["Date"]).copy()
+    if out.empty:
+        return False
+    target = out.loc[out["Date"].dt.date == as_of_date]
+    if target.empty:
+        return False
+    row = target.sort_values("Date").iloc[-1]
+    for col in _SUPPLEMENTAL_MARKET_COLUMNS:
+        if col not in target.columns:
+            return False
+        value = pd.to_numeric(pd.Series([row.get(col)]), errors="coerce").iloc[0]
+        if pd.isna(value):
+            return False
+    return True
+
+
+def _canonical_market_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    ordered = ["Date", "Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS]
+    if "Date" not in out.columns:
+        out["Date"] = pd.NaT
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.dropna(subset=["Date"]).copy()
+    for col in ordered:
+        if col not in out.columns:
+            out[col] = pd.NA
+    out = out[ordered].sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
+    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
+    numeric_columns = ("Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS)
+    for col in numeric_columns:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
+def _market_frames_equal(existing_df: pd.DataFrame, merged_df: pd.DataFrame) -> bool:
+    left = _canonical_market_df(existing_df)
+    right = _canonical_market_df(merged_df)
+    return left.equals(right)
+
+
 def _merge_market_fundamentals(
     df_daily: pd.DataFrame,
     *,
@@ -740,17 +813,23 @@ def download_and_save_raw(
     backfill_start, _ = _resolve_backfill_range_dates()
     raw_text = ""
     df_daily = None
+    snapshot_date = _extract_snapshot_date(snapshot_row)
     if _can_use_snapshot_for_incremental(
         existing_latest_date=existing_latest_date,
         backfill_start=backfill_start,
     ):
+        if snapshot_date is not None and existing_latest_date is not None and snapshot_date <= existing_latest_date:
+            # Snapshot confirms we are already at the latest obtainable daily bar.
+            list_manager.add_to_whitelist(symbol)
+            return
         df_daily = _snapshot_row_to_daily_df(snapshot_row)
         if df_daily is not None and existing_latest_date is not None:
             snapshot_dates = pd.to_datetime(df_daily["Date"], errors="coerce").dropna()
             if snapshot_dates.empty or snapshot_dates.max().date() < existing_latest_date:
                 # Snapshot can lag around weekends/market close windows.
-                # Fall back to the existing historical endpoint when stale.
-                df_daily = None
+                # If the local bronze blob is newer, keep local data and skip work.
+                list_manager.add_to_whitelist(symbol)
+                return
 
     if df_daily is None:
         raw_text = massive_client.get_daily_time_series_csv(
@@ -776,6 +855,20 @@ def download_and_save_raw(
     try:
         if df_daily is None:
             df_daily = _normalize_provider_daily_df(raw_text)
+
+        has_new_daily_rows = _incoming_has_new_market_dates(
+            existing_latest_date=existing_latest_date,
+            incoming_df=df_daily,
+        )
+        if (
+            backfill_start is None
+            and existing_latest_date is not None
+            and not has_new_daily_rows
+            and _existing_has_complete_supplementals(existing_df, as_of_date=existing_latest_date)
+        ):
+            # No new market rows and supplemental metrics already populated.
+            list_manager.add_to_whitelist(symbol)
+            return
 
         try:
             short_interest_payload = massive_client.get_short_interest(
@@ -813,6 +906,9 @@ def download_and_save_raw(
             mdc.write_line(
                 f"No market rows on/after {backfill_start.isoformat()} for {symbol}; deleted bronze {blob_path}."
             )
+            list_manager.add_to_whitelist(symbol)
+            return
+        if backfill_start is None and not existing_df.empty and _market_frames_equal(existing_df, df_daily):
             list_manager.add_to_whitelist(symbol)
             return
         raw_bytes = _serialize_market_csv(df_daily)

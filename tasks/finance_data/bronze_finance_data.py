@@ -119,6 +119,39 @@ def _apply_backfill_start_to_finance_payload(payload: dict[str, Any], *, backfil
     return filtered_payload
 
 
+def _extract_latest_finance_report_date(payload: dict[str, Any]) -> Optional[date]:
+    latest: Optional[date] = None
+    for reports_key in ("quarterlyReports", "annualReports"):
+        reports = payload.get(reports_key)
+        if not isinstance(reports, list):
+            continue
+        for row in reports:
+            if not isinstance(row, dict):
+                continue
+            row_date = _parse_iso_date(row.get("fiscalDateEnding") or row.get("reportedDate") or row.get("date"))
+            if row_date is None:
+                continue
+            if latest is None or row_date > latest:
+                latest = row_date
+    return latest
+
+
+def _load_existing_finance_payload(blob_path: str) -> Optional[dict[str, Any]]:
+    try:
+        raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
+
 def _has_non_empty_value(value: Any) -> bool:
     if value is None:
         return False
@@ -218,6 +251,22 @@ def fetch_and_save_raw(
             return True
         list_manager.add_to_whitelist(symbol)
         return False
+
+    existing_payload = _load_existing_finance_payload(blob_path) if blob_exists else None
+    if existing_payload is not None:
+        if existing_payload == payload:
+            list_manager.add_to_whitelist(symbol)
+            return False
+        if backfill_start is None:
+            incoming_latest = _extract_latest_finance_report_date(payload)
+            existing_latest = _extract_latest_finance_report_date(existing_payload)
+            if (
+                incoming_latest is not None
+                and existing_latest is not None
+                and incoming_latest <= existing_latest
+            ):
+                list_manager.add_to_whitelist(symbol)
+                return False
 
     raw = _serialize_json_bytes(payload)
     mdc.store_raw_bytes(raw, blob_path, client=bronze_client)

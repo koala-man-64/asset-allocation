@@ -4,6 +4,7 @@ import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from typing import Any, Optional
 
 import pandas as pd
@@ -117,6 +118,33 @@ def _parse_earnings_records(
     return df
 
 
+def _load_existing_earnings_df(blob_path: str) -> pd.DataFrame:
+    try:
+        raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
+    except Exception:
+        return pd.DataFrame()
+    if not raw:
+        return pd.DataFrame()
+    try:
+        df = pd.read_json(BytesIO(raw), orient="records")
+    except Exception:
+        return pd.DataFrame()
+    if df.empty or "Date" not in df.columns:
+        return pd.DataFrame()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_localize(None)
+    df = df.dropna(subset=["Date"]).copy()
+    return df
+
+
+def _extract_latest_earnings_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
+    if df.empty or "Date" not in df.columns:
+        return None
+    parsed = pd.to_datetime(df["Date"], errors="coerce", utc=True).dropna()
+    if parsed.empty:
+        return None
+    return parsed.max()
+
+
 def fetch_and_save_raw(
     symbol: str,
     av: AlphaVantageGatewayClient,
@@ -173,7 +201,27 @@ def fetch_and_save_raw(
             return False
         raw_json = b"[]"
     else:
+        if blob_exists and backfill_start is None:
+            existing_df = _load_existing_earnings_df(blob_path)
+            incoming_latest = _extract_latest_earnings_date(df)
+            existing_latest = _extract_latest_earnings_date(existing_df)
+            if (
+                incoming_latest is not None
+                and existing_latest is not None
+                and incoming_latest <= existing_latest
+            ):
+                list_manager.add_to_whitelist(symbol)
+                return False
         raw_json = df.to_json(orient="records").encode("utf-8")
+
+    if blob_exists:
+        try:
+            existing_raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
+        except Exception:
+            existing_raw = None
+        if existing_raw == raw_json:
+            list_manager.add_to_whitelist(symbol)
+            return False
 
     mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
     list_manager.add_to_whitelist(symbol)

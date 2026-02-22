@@ -1,6 +1,12 @@
 import pandas as pd
+from datetime import datetime, timedelta, timezone
 
-from core.core import _parse_alpha_vantage_listing_status_csv, merge_symbol_sources, upsert_symbols_to_db
+from core.core import (
+    _parse_alpha_vantage_listing_status_csv,
+    _symbols_refresh_due,
+    merge_symbol_sources,
+    upsert_symbols_to_db,
+)
 
 
 def test_parse_alpha_vantage_listing_status_filters_active_stock():
@@ -56,12 +62,16 @@ class _FakeCursor:
     def __init__(self) -> None:
         self.executemany_calls: list[tuple[str, list[tuple[object, ...]]]] = []
         self.execute_calls: list[tuple[str, tuple[object, ...] | None]] = []
+        self.fetchone_result: tuple[object, ...] | None = None
 
     def executemany(self, sql: str, rows) -> None:
         self.executemany_calls.append((sql, list(rows)))
 
     def execute(self, sql: str, params=None) -> None:
         self.execute_calls.append((sql, params))
+
+    def fetchone(self):
+        return self.fetchone_result
 
 
 def test_upsert_symbols_coerces_source_flags_to_bool():
@@ -114,3 +124,21 @@ def test_upsert_symbols_coerces_source_flags_to_bool():
     assert rows[2][2] is True
     assert rows[2][3] is False
     assert rows[2][4] is True
+
+
+def test_symbols_refresh_due_when_never_refreshed():
+    cur = _FakeCursor()
+    cur.fetchone_result = (None,)
+    assert _symbols_refresh_due(cur, interval_hours=24.0) is True
+
+
+def test_symbols_refresh_due_false_when_recent():
+    cur = _FakeCursor()
+    cur.fetchone_result = (datetime.now(timezone.utc) - timedelta(hours=1),)
+    assert _symbols_refresh_due(cur, interval_hours=24.0) is False
+
+
+def test_symbols_refresh_due_true_when_stale():
+    cur = _FakeCursor()
+    cur.fetchone_result = (datetime.now(timezone.utc) - timedelta(hours=36),)
+    assert _symbols_refresh_due(cur, interval_hours=24.0) is True

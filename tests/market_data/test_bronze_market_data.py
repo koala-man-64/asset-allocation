@@ -388,7 +388,7 @@ def test_download_uses_snapshot_row_when_incremental_window_allows(unique_ticker
         assert float(df.loc[df["Date"] == "2024-01-03", "Close"].iloc[0]) == pytest.approx(11.5)
 
 
-def test_download_falls_back_when_snapshot_is_stale(unique_ticker):
+def test_download_skips_when_snapshot_is_not_newer(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
     mock_massive.get_daily_time_series_csv.return_value = (
@@ -428,7 +428,49 @@ def test_download_falls_back_when_snapshot_is_stale(unique_ticker):
 
         bronze.download_and_save_raw(symbol, mock_massive, snapshot_row=snapshot_row)
 
+        mock_massive.get_daily_time_series_csv.assert_not_called()
+        mock_massive.get_short_interest.assert_not_called()
+        mock_massive.get_short_volume.assert_not_called()
+        mock_massive.get_float.assert_not_called()
+        mock_store.assert_not_called()
+        mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
+
+
+def test_download_skips_when_no_new_daily_rows_and_supplementals_complete(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-03,10,11,9,10.5,100\n"
+    )
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+    mock_massive.get_float.return_value = {}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2024-01-03,10,11,9,10.5,100,1000,500,1000000\n"
+    ).encode("utf-8")
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_csv,
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.get_backfill_range",
+        return_value=(None, None),
+    ), patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2024, 1, 3),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        bronze.download_and_save_raw(symbol, mock_massive, snapshot_row=None)
+
         mock_massive.get_daily_time_series_csv.assert_called_once()
-        args, _ = mock_store.call_args
-        df = pd.read_csv(BytesIO(args[0]))
-        assert df["Date"].tolist() == ["2024-01-03"]
+        mock_massive.get_short_interest.assert_not_called()
+        mock_massive.get_short_volume.assert_not_called()
+        mock_massive.get_float.assert_not_called()
+        mock_store.assert_not_called()
+        mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
