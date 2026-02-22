@@ -38,6 +38,7 @@ env:
   # Shell vars used by envsubst in job YAML templates.
   API_CONTAINER_APP_NAME: ${{ vars.API_CONTAINER_APP_NAME || 'asset-allocation-api' }}
   JOB_STARTUP_API_CONTAINER_APPS: ${{ vars.JOB_STARTUP_API_CONTAINER_APPS || vars.API_CONTAINER_APP_NAME || 'asset-allocation-api' }}
+  ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
   API_IMAGE_NAME: asset-allocation-api
   UI_APP_NAME: asset-allocation-ui
   UI_IMAGE_NAME: asset-allocation-ui
