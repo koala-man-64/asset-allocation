@@ -54,6 +54,9 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 ### Silver ingestion
 - Silver jobs skip unchanged Bronze blobs using watermarks stored in the `common` container:
   - Path: `system/watermarks/bronze_*` (JSON map keyed by blob name).
+- Silver jobs also persist a per-job last-success checkpoint and pre-filter candidate blobs
+  to items changed since that checkpoint:
+  - Path: `system/watermarks/runs/silver_*_data.json`.
 - If the common container is unavailable (e.g., local tests), Silver falls back to legacy freshness checks.
 - Market/Earnings default to **latest-only** ingestion:
   - `SILVER_LATEST_ONLY` (global)

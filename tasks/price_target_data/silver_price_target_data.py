@@ -8,7 +8,14 @@ from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
-from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.watermarks import (
+    check_blob_unchanged,
+    load_last_success,
+    load_watermarks,
+    save_last_success,
+    save_watermarks,
+    should_process_blob_since_last_success,
+)
 from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
@@ -36,6 +43,10 @@ def _needs_obs_date_migration(silver_path: str) -> bool:
 
     lowered = {str(col).strip().lower() for col in schema}
     return "obs_date" not in lowered and "date" in lowered
+
+
+def _extract_ticker(blob_name: str) -> str:
+    return blob_name.replace("price-target-data/", "").replace(".parquet", "")
 
 
 def process_blob(blob, *, watermarks: dict | None = None) -> str:
@@ -241,16 +252,50 @@ def main():
     mdc.write_line("Listing Bronze Price Target files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     watermarks = load_watermarks("bronze_price_target_data")
+    last_success = load_last_success("silver_price_target_data")
     watermarks_dirty = False
 
     blob_list = list(blobs)
-    mdc.write_line(f"Found {len(blob_list)} blobs. Processing...")
+    checkpoint_skipped = 0
+    forced_schema_migration = 0
+    candidate_blobs: list[dict] = []
+    if watermarks is None:
+        candidate_blobs = blob_list
+    else:
+        for blob in blob_list:
+            blob_name = str(blob.get("name", ""))
+            force_reprocess = False
+            if blob_name.endswith(".parquet"):
+                ticker = _extract_ticker(blob_name)
+                silver_path = DataPaths.get_price_target_path(ticker)
+                force_reprocess = _needs_obs_date_migration(silver_path)
+                if force_reprocess:
+                    forced_schema_migration += 1
+            prior = watermarks.get(blob_name)
+            should_process = should_process_blob_since_last_success(
+                blob,
+                prior_signature=prior,
+                last_success_at=last_success,
+                force_reprocess=force_reprocess,
+            )
+            if should_process:
+                candidate_blobs.append(blob)
+            else:
+                checkpoint_skipped += 1
+
+    if last_success is not None:
+        mdc.write_line(
+            "Silver price target checkpoint filter: "
+            f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} "
+            f"skipped_checkpoint={checkpoint_skipped} forced_schema_migration={forced_schema_migration}"
+        )
+    mdc.write_line(f"Found {len(blob_list)} blobs total; {len(candidate_blobs)} candidate blobs. Processing...")
 
     ok_or_skipped = 0
     failed = 0
     skipped_unchanged = 0
     skipped_other = 0
-    for blob in blob_list:
+    for blob in candidate_blobs:
         status = process_blob(blob, watermarks=watermarks)
         if status == "ok":
             ok_or_skipped += 1
@@ -267,11 +312,24 @@ def main():
 
     mdc.write_line(
         "Silver price target job complete: "
-        f"ok_or_skipped={ok_or_skipped} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} failed={failed}"
+        f"ok_or_skipped={ok_or_skipped} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} "
+        f"skipped_checkpoint={checkpoint_skipped} failed={failed}"
     )
     if watermarks is not None and watermarks_dirty:
         save_watermarks("bronze_price_target_data", watermarks)
-    return 0 if failed == 0 else 1
+    if failed == 0:
+        save_last_success(
+            "silver_price_target_data",
+            metadata={
+                "total_blobs": len(blob_list),
+                "candidates": len(candidate_blobs),
+                "ok_or_skipped": ok_or_skipped,
+                "skipped_checkpoint": checkpoint_skipped,
+                "forced_schema_migration": forced_schema_migration,
+            },
+        )
+        return 0
+    return 1
 
 
 if __name__ == "__main__":

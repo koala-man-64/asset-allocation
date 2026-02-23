@@ -12,7 +12,14 @@ from tasks.common.backfill import (
     get_backfill_range,
     get_latest_only_flag,
 )
-from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.watermarks import (
+    check_blob_unchanged,
+    load_last_success,
+    load_watermarks,
+    save_last_success,
+    save_watermarks,
+    should_process_blob_since_last_success,
+)
 from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
@@ -185,6 +192,7 @@ def main():
     mdc.write_line("Listing Bronze files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="earnings-data/")
     watermarks = load_watermarks("bronze_earnings_data")
+    last_success = load_last_success("silver_earnings_data")
     watermarks_dirty = False
     blob_list = [b for b in blobs if b["name"].endswith(".json")]
     
@@ -192,13 +200,35 @@ def main():
         mdc.write_line(f"DEBUG: Filtering for {cfg.DEBUG_SYMBOLS}")
         blob_list = [b for b in blob_list if any(s in b["name"] for s in cfg.DEBUG_SYMBOLS)]
 
-    mdc.write_line(f"Found {len(blob_list)} files to process.")
+    checkpoint_skipped = 0
+    candidate_blobs: list[dict] = []
+    if watermarks is None:
+        candidate_blobs = blob_list
+    else:
+        for blob in blob_list:
+            prior = watermarks.get(blob["name"])
+            should_process = should_process_blob_since_last_success(
+                blob,
+                prior_signature=prior,
+                last_success_at=last_success,
+            )
+            if should_process:
+                candidate_blobs.append(blob)
+            else:
+                checkpoint_skipped += 1
+
+    if last_success is not None:
+        mdc.write_line(
+            "Silver earnings checkpoint filter: "
+            f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} skipped_checkpoint={checkpoint_skipped}"
+        )
+    mdc.write_line(f"Found {len(blob_list)} files total; {len(candidate_blobs)} candidate files to process.")
     
     processed = 0
     failed = 0
     skipped_unchanged = 0
     skipped_other = 0
-    for blob in blob_list:
+    for blob in candidate_blobs:
         status = process_blob(blob, watermarks=watermarks)
         if status == "ok":
             processed += 1
@@ -213,11 +243,25 @@ def main():
 
     mdc.write_line(
         "Silver earnings job complete: "
-        f"processed={processed} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} failed={failed}"
+        f"processed={processed} skipped_unchanged={skipped_unchanged} "
+        f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} failed={failed}"
     )
     if watermarks is not None and watermarks_dirty:
         save_watermarks("bronze_earnings_data", watermarks)
-    return 0 if failed == 0 else 1
+    if failed == 0:
+        save_last_success(
+            "silver_earnings_data",
+            metadata={
+                "total_blobs": len(blob_list),
+                "candidates": len(candidate_blobs),
+                "processed": processed,
+                "skipped_checkpoint": checkpoint_skipped,
+                "skipped_unchanged": skipped_unchanged,
+                "skipped_other": skipped_other,
+            },
+        )
+        return 0
+    return 1
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env

@@ -15,7 +15,14 @@ from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
-from tasks.common.watermarks import check_blob_unchanged, load_watermarks, save_watermarks
+from tasks.common.watermarks import (
+    check_blob_unchanged,
+    load_last_success,
+    load_watermarks,
+    save_last_success,
+    save_watermarks,
+    should_process_blob_since_last_success,
+)
 from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
@@ -742,6 +749,7 @@ def main() -> int:
         )
 
     watermarks = load_watermarks("bronze_finance_data")
+    last_success = load_last_success("silver_finance_data")
     watermarks_dirty = False
 
     desired_end = _utc_today()
@@ -750,13 +758,38 @@ def main() -> int:
         mdc.write_line(
             f"Applying BACKFILL_START_DATE cutoff to silver finance data: {backfill_start.date().isoformat()}"
         )
+    checkpoint_skipped = 0
+    candidate_blobs: list[dict] = []
+    if watermarks is None:
+        candidate_blobs = blobs
+    else:
+        for blob in blobs:
+            blob_name = str(blob.get("name", "")).strip()
+            prior = watermarks.get(blob_name)
+            should_process = should_process_blob_since_last_success(
+                blob,
+                prior_signature=prior,
+                last_success_at=last_success,
+            )
+            if should_process:
+                candidate_blobs.append(blob)
+            else:
+                checkpoint_skipped += 1
+    if last_success is not None:
+        mdc.write_line(
+            "Silver finance checkpoint filter: "
+            f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} skipped_checkpoint={checkpoint_skipped}"
+        )
+
     max_workers = _get_ingest_max_workers()
-    mdc.write_line(f"Silver finance ingest workers={max_workers} candidates={len(blobs)}.")
+    mdc.write_line(
+        f"Silver finance ingest workers={max_workers} total={len(blobs)} candidates={len(candidate_blobs)}."
+    )
 
     ingest_started = time.perf_counter()
     results: list[BlobProcessResult] = []
     if max_workers <= 1:
-        for blob in blobs:
+        for blob in candidate_blobs:
             results.append(
                 process_blob(
                     blob,
@@ -775,7 +808,7 @@ def main() -> int:
                     backfill_start=backfill_start,
                     watermarks=watermarks,
                 ): blob
-                for blob in blobs
+                for blob in candidate_blobs
             }
             for future in as_completed(futures):
                 blob = futures[future]
@@ -811,11 +844,27 @@ def main() -> int:
     mdc.write_line(
         "Silver finance ingest complete: "
         f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={failed}, "
+        f"skippedCheckpoint={checkpoint_skipped}, "
         f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={ingest_elapsed:.2f}"
     )
     if watermarks is not None and watermarks_dirty:
         save_watermarks("bronze_finance_data", watermarks)
-    return 0 if failed == 0 else 1
+    if failed == 0:
+        save_last_success(
+            "silver_finance_data",
+            metadata={
+                "total_blobs": len(blobs),
+                "candidates": len(candidate_blobs),
+                "attempts": attempts,
+                "processed": processed,
+                "skipped": skipped,
+                "skipped_checkpoint": checkpoint_skipped,
+                "rows_written": rows_written,
+                "elapsed_seconds": round(ingest_elapsed, 3),
+            },
+        )
+        return 0
+    return 1
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env
