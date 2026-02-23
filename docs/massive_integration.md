@@ -46,8 +46,9 @@ Backwards-compatible alias:
 - `MASSIVE_BASE_URL` (default: `https://api.massive.com`)
 - `MASSIVE_TIMEOUT_SECONDS` (default: `30`)
 - `MASSIVE_PREFER_OFFICIAL_SDK` (default: `true`)
-- `MASSIVE_MAX_WORKERS` (default: `32`)
+- `MASSIVE_MAX_WORKERS` (default: `10`)
 - `MASSIVE_FINANCE_FRESH_DAYS` (default: `28`)
+- `ASSET_ALLOCATION_API_FALLBACK_BASE_URL` (optional fallback gateway URL; e.g. `https://<api-fqdn>`)
 
 ### Optional flat files
 

@@ -12,7 +12,7 @@ As of 2026-02-22, this repository's production deployment target includes:
 - Deploy the unified app from `deploy/app_api.yaml`:
   - ingress routed to UI container on port `80`
   - UI proxies API paths to sidecar on `127.0.0.1:8000`
-  - scale: `minReplicas=0`, `maxReplicas=1` (total app budget `2 CPU / 4Gi`)
+  - scale: `minReplicas=1`, `maxReplicas=3` (improves API availability during ingestion bursts)
 - Deploy Container Apps Jobs from `deploy/job_*.yaml`:
   - Bronze jobs are schedule-triggered.
   - Silver and Gold jobs are manual and typically triggered downstream.

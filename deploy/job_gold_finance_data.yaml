@@ -54,6 +54,8 @@ properties:
         value: ${RESOURCE_GROUP}
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
+      - name: ASSET_ALLOCATION_API_FALLBACK_BASE_URL
+        value: ${ASSET_ALLOCATION_API_FALLBACK_BASE_URL}
       - name: JOB_STARTUP_API_REQUIRED
         value: "true"
       - name: JOB_STARTUP_API_WAKE_ENABLED

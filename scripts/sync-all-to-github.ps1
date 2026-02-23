@@ -108,7 +108,7 @@ if (Test-Path $localEnvPath) {
     Write-Warning "No local .env found; skipping key parity check against .env."
 }
 
-$webUrlKeys = @("ASSET_ALLOCATION_API_BASE_URL", "VITE_API_PROXY_TARGET")
+$webUrlKeys = @("ASSET_ALLOCATION_API_BASE_URL", "ASSET_ALLOCATION_API_FALLBACK_BASE_URL", "VITE_API_PROXY_TARGET")
 $localEndpointViolations = @()
 foreach ($key in $webUrlKeys) {
     if (-not $envMap.ContainsKey($key)) { continue }

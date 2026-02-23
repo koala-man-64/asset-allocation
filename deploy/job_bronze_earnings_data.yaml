@@ -81,6 +81,8 @@ properties:
         value: ${AZURE_FOLDER_EARNINGS}
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
+      - name: ASSET_ALLOCATION_API_FALLBACK_BASE_URL
+        value: ${ASSET_ALLOCATION_API_FALLBACK_BASE_URL}
       - name: ASSET_ALLOCATION_API_KEY
         secretRef: api-key
       - name: ASSET_ALLOCATION_API_KEY_HEADER

@@ -6,9 +6,9 @@ This phase **does not** enable Postgres writers/readers in application code yet;
 
 ## Decisions (Phase 1 defaults)
 
-- **DEC-001 Backtest scaling model:** *Single replica* while runs execute in-process.
-  - Rationale: the backtest API currently executes jobs in-process; scaling replicas can corrupt run state and create duplicate execution.
-  - Enforcement: `deploy/app_api.yaml` sets `maxReplicas: 1`.
+- **DEC-001 Backtest scaling model (historical):** *Single replica* while runs execute in-process.
+  - Rationale: when backtest execution lived in-process, scaling replicas could corrupt run state and create duplicate execution.
+  - Current status: backtest in-process routing was removed; `deploy/app_api.yaml` now scales for ingestion reliability (`minReplicas: 1`, `maxReplicas: 3`).
 - **DEC-002 Postgres networking model:** *Public endpoint + firewall rules + TLS-required DSNs* (cost-min baseline).
   - Rationale: fastest path to an operational DB; private endpoint/VNet integration can be added later.
 

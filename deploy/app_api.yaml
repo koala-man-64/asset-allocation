@@ -242,5 +242,5 @@ properties:
         failureThreshold: 30
         timeoutSeconds: 5
     scale:
-      minReplicas: 0
-      maxReplicas: 1
+      minReplicas: 1
+      maxReplicas: 3

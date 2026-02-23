@@ -164,6 +164,7 @@ $Config += "# =========================================="
 $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" "http://localhost:8000" "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
+$Config += "ASSET_ALLOCATION_API_FALLBACK_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_FALLBACK_BASE_URL" "" "Optional fallback API URL used when the primary API base URL is unavailable (recommended in Azure: https://<api-fqdn>).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
 $Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
 $Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")

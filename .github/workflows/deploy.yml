@@ -39,6 +39,7 @@ env:
   API_CONTAINER_APP_NAME: ${{ vars.API_CONTAINER_APP_NAME || 'asset-allocation-api' }}
   JOB_STARTUP_API_CONTAINER_APPS: ${{ vars.JOB_STARTUP_API_CONTAINER_APPS || vars.API_CONTAINER_APP_NAME || 'asset-allocation-api' }}
   ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+  ASSET_ALLOCATION_API_FALLBACK_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_FALLBACK_BASE_URL || ' ' }}
   AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || vars.AZURE_STORAGE_ACCOUNT_NAME || 'assetallocstorage001' }}
   BACKFILL_START_DATE: ${{ vars.BACKFILL_START_DATE || secrets.BACKFILL_START_DATE || ' ' }}
   BACKFILL_END_DATE: ${{ vars.BACKFILL_END_DATE || secrets.BACKFILL_END_DATE || ' ' }}
@@ -93,7 +94,7 @@ env:
   MASSIVE_BASE_URL: ${{ vars.MASSIVE_BASE_URL || 'https://api.massive.com' }}
   MASSIVE_TIMEOUT_SECONDS: ${{ vars.MASSIVE_TIMEOUT_SECONDS || '30' }}
   MASSIVE_PREFER_OFFICIAL_SDK: ${{ vars.MASSIVE_PREFER_OFFICIAL_SDK || 'true' }}
-  MASSIVE_MAX_WORKERS: ${{ vars.MASSIVE_MAX_WORKERS || '32' }}
+  MASSIVE_MAX_WORKERS: ${{ vars.MASSIVE_MAX_WORKERS || '10' }}
   MASSIVE_FINANCE_FRESH_DAYS: ${{ vars.MASSIVE_FINANCE_FRESH_DAYS || '28' }}
 
 jobs:
@@ -129,6 +130,7 @@ jobs:
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
           ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          ASSET_ALLOCATION_API_FALLBACK_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_FALLBACK_BASE_URL }}
           API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
           API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
           API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
@@ -216,6 +218,17 @@ jobs:
                   "Container Apps ingress listens on 80/443; use http://asset-allocation-api (no port) or the API app FQDN."
               )
               sys.exit(1)
+
+          fallback_base_url = os.environ.get("ASSET_ALLOCATION_API_FALLBACK_BASE_URL", "").strip()
+          if fallback_base_url:
+              fallback_parsed = urlparse(fallback_base_url)
+              fallback_host = (fallback_parsed.hostname or "").strip().lower()
+              if fallback_parsed.scheme not in {"http", "https"} or not fallback_host:
+                  print("::error::ASSET_ALLOCATION_API_FALLBACK_BASE_URL must be an http(s) URL when set.")
+                  sys.exit(1)
+              if fallback_host in {"localhost", "127.0.0.1", "::1"}:
+                  print("::error::ASSET_ALLOCATION_API_FALLBACK_BASE_URL must not point to localhost in production.")
+                  sys.exit(1)
 
           auth_mode_raw = (os.environ.get("API_AUTH_MODE") or "").strip().lower()
           if not auth_mode_raw:

@@ -53,6 +53,7 @@
 
 ## Environment-Specific Config (Non-Secret, Per-Environment)
 - `ASSET_ALLOCATION_API_BASE_URL`
+- `ASSET_ALLOCATION_API_FALLBACK_BASE_URL` — optional fallback URL used when the primary API base URL is unreachable.
 - `ASSET_ALLOCATION_API_URL` — legacy alias for `ASSET_ALLOCATION_API_BASE_URL`.
 - `API_AUTH_MODE`
 - `API_CORS_ALLOW_ORIGINS`

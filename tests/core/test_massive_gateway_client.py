@@ -38,6 +38,20 @@ def test_from_env_enforces_timeout_floor(monkeypatch):
         client.close()
 
 
+def test_from_env_reads_optional_fallback_base_url(monkeypatch):
+    monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
+    monkeypatch.setenv(
+        "ASSET_ALLOCATION_API_FALLBACK_BASE_URL",
+        "https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io",
+    )
+
+    client = MassiveGatewayClient.from_env()
+    try:
+        assert client.config.fallback_base_url == "https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io"
+    finally:
+        client.close()
+
+
 def test_warmup_probe_retries_before_first_request(monkeypatch):
     counters = {"warmup": 0, "data": 0}
 
@@ -78,6 +92,83 @@ def test_warmup_probe_retries_before_first_request(monkeypatch):
     assert "Date,Open,High,Low,Close,Volume" in second
     assert counters["warmup"] == 3
     assert counters["data"] == 2
+
+
+def test_warmup_switches_to_fallback_base_url_on_connect_error(monkeypatch):
+    seen_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_hosts.append(str(request.url.host))
+        if request.url.host == "asset-allocation-api":
+            raise httpx.ConnectError("Connection refused", request=request)
+        if request.url.host == "asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io":
+            if request.url.path == "/healthz":
+                return httpx.Response(200, text="ok")
+            if request.url.path == "/api/providers/massive/time-series/daily":
+                return httpx.Response(200, text="Date,Open,High,Low,Close,Volume\n2026-01-01,1,1,1,1,1\n")
+        raise AssertionError(f"Unexpected request: host={request.url.host} path={request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    monkeypatch.setattr(massive_gateway_client_module.time, "sleep", lambda _seconds: None)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            fallback_base_url="https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=True,
+            warmup_max_attempts=2,
+            warmup_base_delay_seconds=0.0,
+            warmup_max_delay_seconds=0.0,
+            warmup_probe_timeout_seconds=1.0,
+        ),
+        http_client=http_client,
+    )
+    try:
+        payload = client.get_daily_time_series_csv(symbol="AAPL")
+    finally:
+        http_client.close()
+
+    assert "Date,Open,High,Low,Close,Volume" in payload
+    assert "asset-allocation-api" in seen_hosts
+    assert "asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io" in seen_hosts
+
+
+def test_request_retries_on_fallback_after_primary_connect_error(monkeypatch):
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((str(request.url.host), str(request.url.path)))
+        if request.url.path == "/api/providers/massive/time-series/daily":
+            if request.url.host == "asset-allocation-api":
+                raise httpx.ConnectError("Connection refused", request=request)
+            if request.url.host == "asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io":
+                return httpx.Response(200, text="Date,Open,High,Low,Close,Volume\n2026-01-01,1,1,1,1,1\n")
+        raise AssertionError(f"Unexpected request: host={request.url.host} path={request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    monkeypatch.setattr(massive_gateway_client_module.time, "sleep", lambda _seconds: None)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            fallback_base_url="https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        payload = client.get_daily_time_series_csv(symbol="AAPL")
+    finally:
+        http_client.close()
+
+    assert "Date,Open,High,Low,Close,Volume" in payload
+    assert requests[0][0] == "asset-allocation-api"
+    assert requests[1][0] == "asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io"
 
 
 def test_warmup_can_be_disabled(monkeypatch):
