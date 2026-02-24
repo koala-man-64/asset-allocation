@@ -55,8 +55,6 @@ properties:
         value: ${AZURE_SUBSCRIPTION_ID}
       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP
         value: ${RESOURCE_GROUP}
-      - name: JOB_STARTUP_API_REQUIRED
-        value: "true"
       - name: JOB_STARTUP_API_WAKE_ENABLED
         value: "true"
       - name: JOB_STARTUP_API_CONTAINER_APPS
@@ -83,8 +81,6 @@ properties:
         secretRef: nasdaq-api-key
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
-      - name: ASSET_ALLOCATION_API_FALLBACK_BASE_URL
-        value: ${ASSET_ALLOCATION_API_FALLBACK_BASE_URL}
       - name: ASSET_ALLOCATION_API_KEY
         secretRef: api-key
       - name: ASSET_ALLOCATION_API_KEY_HEADER

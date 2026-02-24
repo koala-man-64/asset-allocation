@@ -47,7 +47,7 @@ def _parse_csv(raw: Optional[str]) -> list[str]:
 
 
 def _resolve_api_base_url() -> str:
-    return (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL") or "").strip()
+    return (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip()
 
 
 def _normalize_url(raw: str) -> str:
@@ -221,30 +221,30 @@ def _is_retryable(exc: Exception) -> bool:
     return False
 
 
-def ensure_api_awake_from_env(*, required: Optional[bool] = None) -> None:
+def ensure_api_awake_from_env(*, required: bool = True) -> None:
     enabled = _parse_bool(os.environ.get("JOB_STARTUP_API_WAKE_ENABLED"), default=True)
     if not enabled:
-        mdc.write_line("Skipping startup API wake check (JOB_STARTUP_API_WAKE_ENABLED=false).")
+        message = "Startup API wake check is disabled (JOB_STARTUP_API_WAKE_ENABLED=false)."
+        if required:
+            mdc.write_error(message)
+            raise RuntimeError(message)
+        mdc.write_line(f"Skipping startup API wake check ({message})")
         return
-
-    required_resolved = (
-        required
-        if required is not None
-        else _parse_bool(os.environ.get("JOB_STARTUP_API_REQUIRED"), default=False)
-    )
 
     base_url = _resolve_api_base_url()
     if not base_url:
-        message = "Skipping startup API wake check (ASSET_ALLOCATION_API_BASE_URL is not configured)."
-        if required_resolved:
+        message = "Startup API wake check failed: ASSET_ALLOCATION_API_BASE_URL is not configured."
+        if required:
+            mdc.write_error(message)
             raise RuntimeError(message)
         mdc.write_line(message)
         return
 
     health_url = _resolve_api_health_url(base_url)
     if not health_url:
-        message = f"Skipping startup API wake check (invalid ASSET_ALLOCATION_API_BASE_URL={base_url!r})."
-        if required_resolved:
+        message = f"Startup API wake check failed: invalid ASSET_ALLOCATION_API_BASE_URL={base_url!r}."
+        if required:
+            mdc.write_error(message)
             raise RuntimeError(message)
         mdc.write_warning(message)
         return
@@ -277,7 +277,7 @@ def ensure_api_awake_from_env(*, required: Optional[bool] = None) -> None:
                     mdc.write_warning("Skipping startup container app start (ARM config not provided).")
                 else:
                     for app_name in app_names:
-                        _start_container_app(app_name=app_name, cfg=cfg, required=required_resolved)
+                        _start_container_app(app_name=app_name, cfg=cfg, required=required)
 
         if probe_attempt < probe_attempts:
             mdc.write_line(f"Retrying startup API health probe in {probe_sleep_seconds:.1f}s...")
@@ -287,7 +287,8 @@ def ensure_api_awake_from_env(*, required: Optional[bool] = None) -> None:
         "Startup API did not become healthy after "
         f"{probe_attempts} attempts (health_url={health_url})."
     )
-    if required_resolved:
+    if required:
+        mdc.write_error(message)
         raise RuntimeError(message)
     mdc.write_warning(message)
 

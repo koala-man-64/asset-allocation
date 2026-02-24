@@ -636,7 +636,7 @@ def main() -> int:
         silver_commit = max([c for c in commits if c is not None], default=None)
         commit_map[ticker] = silver_commit
 
-        if watermarks is not None and silver_commit is not None:
+        if silver_commit is not None:
             prior = watermarks.get(ticker, {})
             if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
                 skipped_unchanged += 1
@@ -685,23 +685,22 @@ def main() -> int:
         f"Finance feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
         f"skipped_unchanged={skipped_unchanged}, failed={failed}"
     )
-    if watermarks is not None:
-        for result in results:
-            if result.get("status") != "ok":
-                continue
-            ticker = result.get("ticker")
-            if not ticker:
-                continue
-            silver_commit = commit_map.get(ticker)
-            if silver_commit is None:
-                continue
-            watermarks[ticker] = {
-                "silver_last_commit": silver_commit,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            watermarks_dirty = True
-        if watermarks_dirty:
-            save_watermarks("gold_finance_features", watermarks)
+    for result in results:
+        if result.get("status") != "ok":
+            continue
+        ticker = result.get("ticker")
+        if not ticker:
+            continue
+        silver_commit = commit_map.get(ticker)
+        if silver_commit is None:
+            continue
+        watermarks[ticker] = {
+            "silver_last_commit": silver_commit,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        watermarks_dirty = True
+    if watermarks_dirty:
+        save_watermarks("gold_finance_features", watermarks)
     return 0 if failed == 0 else 1
 
 
@@ -710,7 +709,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "gold-finance-job"
-    ensure_api_awake_from_env()
+    ensure_api_awake_from_env(required=True)
     exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="gold", domain="finance", job_name=job_name)

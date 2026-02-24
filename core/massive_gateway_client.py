@@ -100,7 +100,6 @@ class MassiveGatewayClientConfig:
     api_key: Optional[str]
     api_key_header: str
     timeout_seconds: float
-    fallback_base_url: Optional[str] = None
     warmup_enabled: bool = _DEFAULT_API_WARMUP_ENABLED
     warmup_max_attempts: int = _DEFAULT_API_WARMUP_MAX_ATTEMPTS
     warmup_base_delay_seconds: float = _DEFAULT_API_WARMUP_BASE_DELAY_SECONDS
@@ -127,12 +126,6 @@ class MassiveGatewayClient:
         self.config = config
         self._owns_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(config.timeout_seconds), trust_env=False)
-        self._active_base_url = str(config.base_url).rstrip("/")
-        self._fallback_base_url = _strip_or_none(config.fallback_base_url)
-        if self._fallback_base_url:
-            self._fallback_base_url = str(self._fallback_base_url).rstrip("/")
-        if self._fallback_base_url == self._active_base_url:
-            self._fallback_base_url = None
         self._warmup_lock = threading.Lock()
         self._warmup_attempted = False
         self._warmup_succeeded = not config.warmup_enabled
@@ -142,18 +135,10 @@ class MassiveGatewayClient:
 
     @staticmethod
     def from_env() -> "MassiveGatewayClient":
-        base_url = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_BASE_URL")) or _strip_or_none(
-            os.environ.get("ASSET_ALLOCATION_API_URL")
-        )
+        base_url = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_BASE_URL"))
         if not base_url:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Massive ETL via API gateway.")
         base_url = str(base_url).rstrip("/")
-
-        fallback_base_url = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_FALLBACK_BASE_URL"))
-        if fallback_base_url:
-            fallback_base_url = str(fallback_base_url).rstrip("/")
-            if fallback_base_url == base_url:
-                fallback_base_url = None
 
         api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(os.environ.get("API_KEY"))
         api_key_header = (
@@ -201,7 +186,6 @@ class MassiveGatewayClient:
         return MassiveGatewayClient(
             MassiveGatewayClientConfig(
                 base_url=base_url,
-                fallback_base_url=fallback_base_url,
                 api_key=api_key,
                 api_key_header=str(api_key_header),
                 timeout_seconds=float(timeout_seconds),
@@ -254,44 +238,8 @@ class MassiveGatewayClient:
             return payload.strip()
         return response.reason_phrase
 
-    def _current_base_url(self) -> str:
-        current = _strip_or_none(self._active_base_url)
-        return str(current or self.config.base_url).rstrip("/")
-
     def _warmup_probe_url(self) -> str:
-        return f"{self._current_base_url()}{_API_WARMUP_PROBE_PATH}"
-
-    @staticmethod
-    def _is_connectivity_exception(exc: Exception) -> bool:
-        if isinstance(exc, httpx.ConnectError):
-            return True
-        if isinstance(exc, httpx.RequestError):
-            lowered = str(exc).strip().lower()
-            markers = (
-                "connection refused",
-                "name or service not known",
-                "temporary failure in name resolution",
-                "nodename nor servname provided",
-                "failed to establish a new connection",
-            )
-            return any(marker in lowered for marker in markers)
-        return False
-
-    def _activate_fallback_base_url(self, *, reason: str) -> bool:
-        fallback = _strip_or_none(self._fallback_base_url)
-        if not fallback:
-            return False
-        current = self._current_base_url()
-        if fallback == current:
-            return False
-        self._active_base_url = str(fallback).rstrip("/")
-        logger.warning(
-            "Massive gateway switched to fallback base URL (from=%s, to=%s, reason=%s).",
-            current,
-            self._active_base_url,
-            reason,
-        )
-        return True
+        return f"{self.config.base_url}{_API_WARMUP_PROBE_PATH}"
 
     def _warm_up_gateway(self) -> bool:
         if not self.config.warmup_enabled:
@@ -345,8 +293,6 @@ class MassiveGatewayClient:
                             delay_seconds,
                         )
                     except httpx.TimeoutException as exc:
-                        if should_retry:
-                            self._activate_fallback_base_url(reason=f"timeout: {exc}")
                         if not should_retry:
                             logger.warning(
                                 "Massive gateway warm-up probe timed out after %s attempts (url=%s): %s",
@@ -363,8 +309,6 @@ class MassiveGatewayClient:
                             exc,
                         )
                     except Exception as exc:
-                        if should_retry and self._is_connectivity_exception(exc):
-                            self._activate_fallback_base_url(reason=f"{type(exc).__name__}: {exc}")
                         if not should_retry:
                             logger.warning(
                                 "Massive gateway warm-up probe failed after %s attempts (url=%s): %s: %s",
@@ -452,40 +396,16 @@ class MassiveGatewayClient:
                 detail="Gateway health probe did not become ready.",
                 payload={"path": path, "probe_path": _API_WARMUP_PROBE_PATH},
             )
-        request_max_attempts = 2
-        resp: Optional[httpx.Response] = None
-        for request_attempt in range(1, request_max_attempts + 1):
-            url = f"{self._current_base_url()}{path}"
-            try:
-                resp = self._http.get(url, params=params or {}, headers=self._build_headers())
-                break
-            except httpx.TimeoutException as exc:
-                switched = request_attempt < request_max_attempts and self._activate_fallback_base_url(
-                    reason=f"request timeout: {exc}"
-                )
-                if switched:
-                    logger.warning("Massive gateway retrying request via fallback base URL (path=%s).", path)
-                    continue
-                raise MassiveGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
-            except Exception as exc:
-                switched = (
-                    request_attempt < request_max_attempts
-                    and self._is_connectivity_exception(exc)
-                    and self._activate_fallback_base_url(reason=f"request {type(exc).__name__}: {exc}")
-                )
-                if switched:
-                    logger.warning(
-                        "Massive gateway retrying request via fallback base URL after connectivity failure (path=%s).",
-                        path,
-                    )
-                    continue
-                raise MassiveGatewayError(
-                    f"API gateway call failed: {type(exc).__name__}: {exc}",
-                    payload={"path": path},
-                ) from exc
-
-        if resp is None:
-            raise MassiveGatewayError("API gateway call failed before receiving a response.", payload={"path": path})
+        url = f"{self.config.base_url}{path}"
+        try:
+            resp = self._http.get(url, params=params or {}, headers=self._build_headers())
+        except httpx.TimeoutException as exc:
+            raise MassiveGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
+        except Exception as exc:
+            raise MassiveGatewayError(
+                f"API gateway call failed: {type(exc).__name__}: {exc}",
+                payload={"path": path},
+            ) from exc
 
         if resp.status_code < 400:
             return resp

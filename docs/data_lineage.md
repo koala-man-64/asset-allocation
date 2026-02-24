@@ -67,10 +67,10 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 ### Gold feature engineering
 - Gold jobs skip unchanged tickers using Silver commit watermarks:
   - Path: `system/watermarks/gold_*` (JSON map keyed by ticker).
-- If watermarks are unavailable, Gold falls back to full recompute per ticker.
+- If watermarks are unavailable, Gold fails fast and logs an error.
 
 ### System health markers
 - Successful Bronze/Silver/Gold jobs emit system-health markers under
   `system/health_markers/<layer>/<domain>.json` in `AZURE_CONTAINER_COMMON`;
-  system-health probes use markers first (configurable fallback to legacy scans).
+  system-health probes require marker freshness and fail on marker miss/error.
 

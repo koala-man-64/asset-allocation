@@ -25,7 +25,7 @@ def test_silver_finance_processes_alpha_vantage_json_quarterly_reports():
     ):
         mock_read.return_value = raw_bytes
 
-        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-01"))
+        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-01"), watermarks={})
         assert result.status == "ok"
 
         mock_store.assert_called_once()
@@ -56,6 +56,7 @@ def test_silver_finance_applies_backfill_start_cutoff():
             {"name": blob_name},
             desired_end=pd.Timestamp("2024-01-02"),
             backfill_start=pd.Timestamp("2024-01-01"),
+            watermarks={},
         )
         assert result.status == "ok"
 
@@ -87,7 +88,7 @@ def test_silver_finance_builds_valuation_timeseries_from_overview_and_prices():
     ), patch("core.delta_core.store_delta") as mock_store, patch(
         "core.delta_core.get_delta_schema_columns", return_value=None
     ):
-        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-02"))
+        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-02"), watermarks={})
         assert result.status == "ok"
 
         mock_store.assert_called_once()
@@ -146,6 +147,7 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
 
     initial_watermarks = {"preexisting": {"etag": "keep"}}
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: dict(initial_watermarks))
+    monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
 
     saved = {}
 

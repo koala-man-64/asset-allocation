@@ -4123,10 +4123,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Prefix path for marker blobs inside marker container.",
         "example": "system/health_markers",
     },
-    "SYSTEM_HEALTH_MARKERS_FALLBACK_TO_LEGACY": {
-        "description": "When true, marker misses/errors fall back to legacy probes.",
-        "example": "true",
-    },
     "SYSTEM_HEALTH_MARKERS_DUAL_READ": {
         "description": "When true, run marker and legacy probes for parity checks.",
         "example": "false",

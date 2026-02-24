@@ -17,7 +17,6 @@ const API_REQUEST_RETRY_MAX_DELAY_MS = 4000;
 
 const apiWarmupAttempted = new Set<string>();
 const apiWarmupInFlight = new Map<string, Promise<void>>();
-let activeApiBaseUrl = uiConfig.apiBaseUrl;
 
 function isRetryableStatusCode(statusCode: number): boolean {
   return API_COLD_START_RETRYABLE_STATUS_CODES.has(statusCode);
@@ -73,30 +72,6 @@ function buildRequestUrl(
     }
   }
   return url;
-}
-
-function deriveApiBaseFallback(apiBaseUrl: string): string | null {
-  const trimmed = String(apiBaseUrl || '').trim().replace(/\/+$/, '');
-  if (!trimmed) return null;
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    try {
-      const parsed = new URL(trimmed);
-      const segments = parsed.pathname.split('/').filter(Boolean);
-      if (segments.length > 1 && String(segments[segments.length - 1] || '').toLowerCase() === 'api') {
-        return `${parsed.origin}/api`;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  const segments = trimmed.split('/').filter(Boolean);
-  if (segments.length > 1 && String(segments[segments.length - 1] || '').toLowerCase() === 'api') {
-    return '/api';
-  }
-  return null;
 }
 
 async function wait(delayMs: number): Promise<void> {
@@ -246,7 +221,7 @@ async function performRequest<T>(
   config: RequestConfig = {}
 ): Promise<ResponseWithMeta<T>> {
   const { params, headers, timeoutMs, retryOnStatusCodes, retryAttempts, ...customConfig } = config;
-  const apiBaseUrl = activeApiBaseUrl;
+  const apiBaseUrl = uiConfig.apiBaseUrl;
   const maxAttempts = Number.isFinite(retryAttempts)
     ? Math.max(1, Math.floor(Number(retryAttempts)))
     : API_REQUEST_MAX_ATTEMPTS;
@@ -310,36 +285,6 @@ async function performRequest<T>(
 
   if (!response) {
     throw new Error(`API request failed with no response [requestId=${requestId}] - ${endpoint}`);
-  }
-
-  const fallbackApiBase = deriveApiBaseFallback(apiBaseUrl);
-  if (
-    !response.ok &&
-    response.status === 404 &&
-    fallbackApiBase &&
-    fallbackApiBase !== apiBaseUrl
-  ) {
-    try {
-      await warmUpApiOnce(fallbackApiBase);
-      const fallbackUrl = buildRequestUrl(fallbackApiBase, endpoint, params);
-      const fallbackResponse = await fetchWithOptionalTimeout(
-        fallbackUrl,
-        {
-          headers: authHeaders,
-          ...customConfig
-        },
-        timeoutMs,
-        endpoint,
-        requestId
-      );
-      if (fallbackResponse.ok) {
-        activeApiBaseUrl = fallbackApiBase;
-        url = fallbackUrl;
-        response = fallbackResponse;
-      }
-    } catch {
-      // Preserve original 404 error details when fallback probing also fails.
-    }
   }
 
   const durationMs = Math.max(0, Math.round(performance.now() - startedAt));

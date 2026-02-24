@@ -186,7 +186,6 @@ class MarkerProbeConfig:
     enabled: bool
     container: str
     prefix: str
-    fallback_to_legacy: bool
     dual_read: bool
     dual_read_tolerance_seconds: int
 
@@ -290,7 +289,6 @@ def _resolve_freshness_policy(
 
 def _marker_probe_config() -> MarkerProbeConfig:
     enabled_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_ENABLED", "true")
-    fallback_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_FALLBACK_TO_LEGACY", "true")
     dual_read_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_DUAL_READ", "false")
 
     container = (
@@ -314,7 +312,6 @@ def _marker_probe_config() -> MarkerProbeConfig:
         enabled=_is_truthy(enabled_raw),
         container=container,
         prefix=prefix or DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX,
-        fallback_to_legacy=_is_truthy(fallback_raw),
         dual_read=_is_truthy(dual_read_raw),
         dual_read_tolerance_seconds=tolerance,
     )
@@ -412,7 +409,7 @@ class DomainTimestampResolution:
     error: Optional[str] = None
 
 
-def _resolve_last_updated_with_marker_fallback(
+def _resolve_last_updated_with_marker_probes(
     *,
     layer_name: str,
     domain_name: str,
@@ -426,7 +423,15 @@ def _resolve_last_updated_with_marker_fallback(
 
     if marker_cfg.enabled:
         if not marker_cfg.container:
-            warnings.append("Marker probes enabled but marker container is not configured.")
+            message = "Marker probes enabled but marker container is not configured."
+            logger.error(message)
+            return DomainTimestampResolution(
+                status="error",
+                last_updated=None,
+                source="marker",
+                warnings=[message],
+                error=message,
+            )
         else:
             marker_blob = _marker_blob_name(
                 layer_name=layer_name,
@@ -445,24 +450,26 @@ def _resolve_last_updated_with_marker_fallback(
                     f"Marker probe failed for {marker_blob}: "
                     f"{marker_probe.error or 'unknown error'}"
                 )
-                if not marker_cfg.fallback_to_legacy:
-                    return DomainTimestampResolution(
-                        status="error",
-                        last_updated=None,
-                        source="marker",
-                        warnings=[message],
-                        error=message,
-                    )
-                warnings.append(message)
-            elif not marker_cfg.fallback_to_legacy:
+                logger.error(message)
                 return DomainTimestampResolution(
-                    status="ok",
+                    status="error",
                     last_updated=None,
                     source="marker",
-                    warnings=warnings,
+                    warnings=[message],
+                    error=message,
                 )
             else:
-                warnings.append(f"Marker missing for {marker_blob}; falling back to legacy probe.")
+                message = f"Marker missing for {marker_blob}."
+                logger.error(message)
+                return DomainTimestampResolution(
+                    status="error",
+                    last_updated=None,
+                    source="marker",
+                    warnings=[message],
+                    error=message,
+                )
+    else:
+        warnings.append("Marker probes disabled; using legacy freshness probe mode.")
 
     if marker_last_updated is not None and not marker_cfg.dual_read:
         return DomainTimestampResolution(
@@ -1083,7 +1090,7 @@ def collect_system_health_snapshot(
             # If search_prefix is empty (file at root), we scan the whole container (prefix=None or "").
             # Ideally we might want to restrict this, but for "latest update" in a container used for data, scanning root is correct.
 
-            probe_resolution = _resolve_last_updated_with_marker_fallback(
+            probe_resolution = _resolve_last_updated_with_marker_probes(
                 layer_name=spec.name,
                 domain_name=name_clean,
                 store=store,
@@ -1178,7 +1185,7 @@ def collect_system_health_snapshot(
                 except Exception as exc:
                     return LastModifiedProbeResult(state="error", error=str(exc))
 
-            probe_resolution = _resolve_last_updated_with_marker_fallback(
+            probe_resolution = _resolve_last_updated_with_marker_probes(
                 layer_name=spec.name,
                 domain_name=name_clean,
                 store=store,

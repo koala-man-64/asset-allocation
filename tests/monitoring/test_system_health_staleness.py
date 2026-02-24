@@ -22,14 +22,12 @@ class _DummyStore:
 def _marker_cfg(
     *,
     enabled: bool = True,
-    fallback_to_legacy: bool = True,
     dual_read: bool = False,
 ) -> system_health.MarkerProbeConfig:
     return system_health.MarkerProbeConfig(
         enabled=enabled,
         container="common",
         prefix="system/health_markers",
-        fallback_to_legacy=fallback_to_legacy,
         dual_read=dual_read,
         dual_read_tolerance_seconds=21600,
     )
@@ -99,11 +97,11 @@ def test_marker_probe_uses_marker_without_legacy_when_dual_read_disabled() -> No
         calls["legacy"] += 1
         return LastModifiedProbeResult(state="ok", last_modified=marker_time - timedelta(hours=1))
 
-    resolved = system_health._resolve_last_updated_with_marker_fallback(
+    resolved = system_health._resolve_last_updated_with_marker_probes(
         layer_name="Silver",
         domain_name="market",
         store=store,  # type: ignore[arg-type]
-        marker_cfg=_marker_cfg(enabled=True, fallback_to_legacy=True, dual_read=False),
+        marker_cfg=_marker_cfg(enabled=True, dual_read=False),
         legacy_source="legacy-prefix",
         legacy_probe_fn=legacy_probe,
     )
@@ -114,25 +112,29 @@ def test_marker_probe_uses_marker_without_legacy_when_dual_read_disabled() -> No
     assert calls["legacy"] == 0
 
 
-def test_marker_missing_falls_back_to_legacy_probe() -> None:
-    legacy_time = datetime(2026, 2, 16, 9, 0, tzinfo=timezone.utc)
+def test_marker_missing_is_error_and_does_not_call_legacy_probe() -> None:
     store = _DummyStore(marker_last_modified=None)
+    calls = {"legacy": 0}
 
-    resolved = system_health._resolve_last_updated_with_marker_fallback(
+    def legacy_probe() -> LastModifiedProbeResult:
+        calls["legacy"] += 1
+        return LastModifiedProbeResult(state="ok", last_modified=None)
+
+    resolved = system_health._resolve_last_updated_with_marker_probes(
         layer_name="Silver",
         domain_name="finance",
         store=store,  # type: ignore[arg-type]
-        marker_cfg=_marker_cfg(enabled=True, fallback_to_legacy=True, dual_read=False),
+        marker_cfg=_marker_cfg(enabled=True, dual_read=False),
         legacy_source="legacy-prefix",
-        legacy_probe_fn=lambda: LastModifiedProbeResult(state="ok", last_modified=legacy_time),
+        legacy_probe_fn=legacy_probe,
     )
 
-    assert resolved.status == "ok"
-    assert resolved.source == "legacy-prefix"
-    assert resolved.last_updated == legacy_time
+    assert resolved.status == "error"
+    assert "Marker missing" in str(resolved.error)
+    assert calls["legacy"] == 0
 
 
-def test_probe_error_is_error_when_marker_fallback_disabled() -> None:
+def test_probe_error_is_error_and_does_not_call_legacy_probe() -> None:
     store = _DummyStore(marker_error=RuntimeError("403 Forbidden"))
     calls = {"legacy": 0}
 
@@ -140,11 +142,11 @@ def test_probe_error_is_error_when_marker_fallback_disabled() -> None:
         calls["legacy"] += 1
         return LastModifiedProbeResult(state="ok", last_modified=None)
 
-    resolved = system_health._resolve_last_updated_with_marker_fallback(
+    resolved = system_health._resolve_last_updated_with_marker_probes(
         layer_name="Bronze",
         domain_name="earnings",
         store=store,  # type: ignore[arg-type]
-        marker_cfg=_marker_cfg(enabled=True, fallback_to_legacy=False, dual_read=False),
+        marker_cfg=_marker_cfg(enabled=True, dual_read=False),
         legacy_source="legacy-prefix",
         legacy_probe_fn=legacy_probe,
     )
@@ -157,11 +159,11 @@ def test_probe_error_is_error_when_marker_fallback_disabled() -> None:
 def test_legacy_probe_error_surfaces_as_error_when_marker_disabled() -> None:
     store = _DummyStore(marker_last_modified=None)
 
-    resolved = system_health._resolve_last_updated_with_marker_fallback(
+    resolved = system_health._resolve_last_updated_with_marker_probes(
         layer_name="Bronze",
         domain_name="price-target",
         store=store,  # type: ignore[arg-type]
-        marker_cfg=_marker_cfg(enabled=False, fallback_to_legacy=True, dual_read=False),
+        marker_cfg=_marker_cfg(enabled=False, dual_read=False),
         legacy_source="legacy-prefix",
         legacy_probe_fn=lambda: LastModifiedProbeResult(state="error", error="AuthenticationFailed"),
     )

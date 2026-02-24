@@ -135,9 +135,7 @@ class AlphaVantageGatewayClient:
 
     @staticmethod
     def from_env() -> "AlphaVantageGatewayClient":
-        base_url = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_BASE_URL")) or _strip_or_none(
-            os.environ.get("ASSET_ALLOCATION_API_URL")
-        )
+        base_url = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_BASE_URL"))
         if not base_url:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Alpha Vantage ETL via API gateway.")
 

@@ -335,7 +335,7 @@ if __name__ == "__main__":
     job_name = 'bronze-price-target-job'
     with mdc.JobLock("nasdaq", wait_timeout_seconds=None):
         with mdc.JobLock(job_name):
-            ensure_api_awake_from_env()
+            ensure_api_awake_from_env(required=True)
             exit_code = asyncio.run(main_async())
             if exit_code == 0:
                 write_system_health_marker(layer="bronze", domain="price-target", job_name=job_name)

@@ -10,6 +10,14 @@ def _is_enabled() -> bool:
     return getattr(mdc, "common_storage_client", None) is not None
 
 
+def _require_enabled(action: str) -> None:
+    if _is_enabled():
+        return
+    message = f"{action} failed: common storage client is not initialized."
+    mdc.write_error(message)
+    raise RuntimeError(message)
+
+
 def _watermark_path(key: str) -> str:
     cleaned = (key or "").strip().replace(" ", "_")
     return f"system/watermarks/{cleaned}.json"
@@ -78,10 +86,8 @@ def signature_matches(prior: Dict[str, Any], current: Dict[str, Optional[str]]) 
     return False
 
 
-def load_watermarks(key: str) -> Optional[Dict[str, Any]]:
-    if not _is_enabled():
-        mdc.write_warning("Watermarks disabled (common storage not initialized).")
-        return None
+def load_watermarks(key: str) -> Dict[str, Any]:
+    _require_enabled("Watermark load")
 
     payload = mdc.get_common_json_content(_watermark_path(key)) or {}
     if isinstance(payload, dict) and isinstance(payload.get("items"), dict):
@@ -92,9 +98,7 @@ def load_watermarks(key: str) -> Optional[Dict[str, Any]]:
 
 
 def save_watermarks(key: str, items: Dict[str, Any]) -> None:
-    if not _is_enabled():
-        mdc.write_warning("Skipping watermark save (common storage not initialized).")
-        return
+    _require_enabled("Watermark save")
 
     payload = {
         "version": 1,
@@ -104,13 +108,13 @@ def save_watermarks(key: str, items: Dict[str, Any]) -> None:
     try:
         mdc.save_common_json_content(payload, _watermark_path(key))
     except Exception as exc:
-        mdc.write_warning(f"Failed to save watermarks: {exc}")
+        message = f"Failed to save watermarks: {exc}"
+        mdc.write_error(message)
+        raise RuntimeError(message) from exc
 
 
 def load_last_success(key: str) -> Optional[datetime]:
-    if not _is_enabled():
-        mdc.write_warning("Run checkpoint load skipped (common storage not initialized).")
-        return None
+    _require_enabled("Run checkpoint load")
 
     payload = mdc.get_common_json_content(_run_checkpoint_path(key))
     if not isinstance(payload, dict):
@@ -124,9 +128,7 @@ def load_last_success(key: str) -> Optional[datetime]:
 
 
 def save_last_success(key: str, *, when: Optional[datetime] = None, metadata: Optional[Dict[str, Any]] = None) -> None:
-    if not _is_enabled():
-        mdc.write_warning("Run checkpoint save skipped (common storage not initialized).")
-        return
+    _require_enabled("Run checkpoint save")
 
     last_success = when or datetime.now(timezone.utc)
     payload: Dict[str, Any] = {
@@ -139,7 +141,9 @@ def save_last_success(key: str, *, when: Optional[datetime] = None, metadata: Op
     try:
         mdc.save_common_json_content(payload, _run_checkpoint_path(key))
     except Exception as exc:
-        mdc.write_warning(f"Failed to save run checkpoint: {exc}")
+        message = f"Failed to save run checkpoint: {exc}"
+        mdc.write_error(message)
+        raise RuntimeError(message) from exc
 
 
 def should_process_blob_since_last_success(

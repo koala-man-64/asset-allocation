@@ -323,7 +323,7 @@ def main() -> int:
         silver_commit = delta_core.get_delta_last_commit(job_cfg.silver_container, raw_path)
         commit_map[ticker] = silver_commit
 
-        if watermarks is not None and silver_commit is not None:
+        if silver_commit is not None:
             prior = watermarks.get(ticker, {})
             if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
                 skipped_unchanged += 1
@@ -360,23 +360,22 @@ def main() -> int:
         f"Price target feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
         f"skipped_unchanged={skipped_unchanged}, failed={failed}"
     )
-    if watermarks is not None:
-        for result in results:
-            if result.get("status") != "ok":
-                continue
-            ticker = result.get("ticker")
-            if not ticker:
-                continue
-            silver_commit = commit_map.get(ticker)
-            if silver_commit is None:
-                continue
-            watermarks[ticker] = {
-                "silver_last_commit": silver_commit,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            watermarks_dirty = True
-        if watermarks_dirty:
-            save_watermarks("gold_price_target_features", watermarks)
+    for result in results:
+        if result.get("status") != "ok":
+            continue
+        ticker = result.get("ticker")
+        if not ticker:
+            continue
+        silver_commit = commit_map.get(ticker)
+        if silver_commit is None:
+            continue
+        watermarks[ticker] = {
+            "silver_last_commit": silver_commit,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        watermarks_dirty = True
+    if watermarks_dirty:
+        save_watermarks("gold_price_target_features", watermarks)
     return 0 if failed == 0 else 1
 
 
@@ -385,7 +384,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "gold-price-target-job"
-    ensure_api_awake_from_env()
+    ensure_api_awake_from_env(required=True)
     exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="gold", domain="price-target", job_name=job_name)

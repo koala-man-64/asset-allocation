@@ -103,9 +103,9 @@ def process_file(blob_name: str) -> bool:
 
     Production uses `process_blob()` with `last_modified` metadata for freshness checks.
     """
-    return process_blob({"name": blob_name}) != "failed"
+    return process_blob({"name": blob_name}, watermarks={}) != "failed"
 
-def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
+def process_blob(blob: dict, *, watermarks: dict) -> str:
     blob_name = blob["name"]  # market-data/{ticker}.csv
     if not blob_name.endswith(".csv"):
         return "skipped_non_csv"
@@ -118,22 +118,9 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
 
     silver_path = DataPaths.get_market_data_path(ticker.replace(".", "-"))
 
-    if watermarks is not None:
-        unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-        if unchanged:
-            return "skipped_unchanged"
-    else:
-        signature = {}
-        bronze_lm = blob.get("last_modified")
-        if bronze_lm is not None:
-            try:
-                bronze_ts = bronze_lm.timestamp()
-            except Exception:
-                bronze_ts = None
-            else:
-                silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
-                if silver_lm and (silver_lm > bronze_ts):
-                    return "skipped_fresh"
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return "skipped_unchanged"
     
     # 1. Read Raw from Bronze
     try:
@@ -224,7 +211,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
                 f"Silver market backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
                 f"deleted {deleted} blob(s) under {silver_path}."
             )
-            if watermarks is not None and signature:
+            if signature:
                 signature["updated_at"] = datetime.utcnow().isoformat()
                 watermarks[blob_name] = signature
             return "ok"
@@ -251,7 +238,7 @@ def process_blob(blob: dict, *, watermarks: dict | None = None) -> str:
         return "failed"
 
     mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
-    if watermarks is not None and signature:
+    if signature:
         signature["updated_at"] = datetime.utcnow().isoformat()
         watermarks[blob_name] = signature
     return "ok"
@@ -283,20 +270,17 @@ def main():
 
     checkpoint_skipped = 0
     candidate_blobs: list[dict] = []
-    if watermarks is None:
-        candidate_blobs = blob_list
-    else:
-        for blob in blob_list:
-            prior = watermarks.get(blob["name"])
-            should_process = should_process_blob_since_last_success(
-                blob,
-                prior_signature=prior,
-                last_success_at=last_success,
-            )
-            if should_process:
-                candidate_blobs.append(blob)
-            else:
-                checkpoint_skipped += 1
+    for blob in blob_list:
+        prior = watermarks.get(blob["name"])
+        should_process = should_process_blob_since_last_success(
+            blob,
+            prior_signature=prior,
+            last_success_at=last_success,
+        )
+        if should_process:
+            candidate_blobs.append(blob)
+        else:
+            checkpoint_skipped += 1
 
     if last_success is not None:
         mdc.write_line(
@@ -313,8 +297,7 @@ def main():
         status = process_blob(blob, watermarks=watermarks)
         if status == "ok":
             processed += 1
-            if watermarks is not None:
-                watermarks_dirty = True
+            watermarks_dirty = True
         elif status == "skipped_unchanged":
             skipped_unchanged += 1
         elif status.startswith("skipped"):
@@ -327,7 +310,7 @@ def main():
         f"processed={processed} skipped_unchanged={skipped_unchanged} "
         f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} failed={failed}"
     )
-    if watermarks is not None and watermarks_dirty:
+    if watermarks_dirty:
         save_watermarks("bronze_market_data", watermarks)
     if failed == 0:
         save_last_success(
@@ -349,7 +332,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-market-job"
-    ensure_api_awake_from_env()
+    ensure_api_awake_from_env(required=True)
     exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="silver", domain="market", job_name=job_name)

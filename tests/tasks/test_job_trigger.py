@@ -5,7 +5,7 @@ import pytest
 from tasks.common import job_trigger
 
 
-def test_ensure_api_awake_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_api_awake_raises_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
     monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "false")
 
@@ -14,12 +14,12 @@ def test_ensure_api_awake_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(job_trigger, "_probe_health", _unexpected_probe)
 
-    job_trigger.ensure_api_awake_from_env(required=True)
+    with pytest.raises(RuntimeError, match="JOB_STARTUP_API_WAKE_ENABLED=false"):
+        job_trigger.ensure_api_awake_from_env(required=True)
 
 
 def test_ensure_api_awake_raises_when_required_and_base_url_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ASSET_ALLOCATION_API_BASE_URL", raising=False)
-    monkeypatch.delenv("ASSET_ALLOCATION_API_URL", raising=False)
 
     with pytest.raises(RuntimeError, match="ASSET_ALLOCATION_API_BASE_URL"):
         job_trigger.ensure_api_awake_from_env(required=True)

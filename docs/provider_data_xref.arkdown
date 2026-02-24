@@ -19,7 +19,7 @@ Cross-reference external data providers to:
 |---|---|---|
 | Nasdaq Data Link | `core/core.py:get_active_tickers` | Uses `ZACKS/MT` metadata table. |
 | Massive | `core/core.py:get_active_tickers_massive` | Uses `core/massive_provider.py:get_complete_ticker_list`. |
-| Alpha Vantage | `core/core.py:get_active_tickers_alpha_vantage` | Uses gateway first, then direct API fallback when configured. |
+| Alpha Vantage | `core/core.py:get_active_tickers_alpha_vantage` | Requires API gateway; logs and fails if gateway access is unavailable. |
 | Merge + persist | `core/core.py:merge_symbol_sources`, `core/core.py:upsert_symbols_to_db` | Persists provider flags to `public.symbols`. |
 
 ## Provider Gateway Endpoints (API)

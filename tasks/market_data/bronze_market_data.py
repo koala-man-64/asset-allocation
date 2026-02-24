@@ -42,7 +42,7 @@ def _is_truthy(raw: str | None) -> bool:
 def _validate_environment() -> None:
     if not cfg.AZURE_CONTAINER_BRONZE:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
-    if not (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL")):
+    if not os.environ.get("ASSET_ALLOCATION_API_BASE_URL"):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
     if not (
         os.environ.get("ASSET_ALLOCATION_API_KEY")
@@ -1113,7 +1113,7 @@ if __name__ == "__main__":
 
     job_name = "bronze-market-job"
     with mdc.JobLock(job_name):
-        ensure_api_awake_from_env()
+        ensure_api_awake_from_env(required=True)
         exit_code = main()
         if exit_code == 0:
             write_system_health_marker(layer="bronze", domain="market", job_name=job_name)

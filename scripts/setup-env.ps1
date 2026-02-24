@@ -164,13 +164,11 @@ $Config += "# =========================================="
 $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" "http://localhost:8000" "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
-$Config += "ASSET_ALLOCATION_API_FALLBACK_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_FALLBACK_BASE_URL" "" "Optional fallback API URL used when the primary API base URL is unavailable (recommended in Azure: https://<api-fqdn>).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
 $Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
 $Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")
 $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
 $Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
-$Config += "JOB_STARTUP_API_REQUIRED=" + (Prompt-Var "JOB_STARTUP_API_REQUIRED" "false" "Optional: fail startup if API is still unavailable after wake attempts (true/false).")
 $Config += "JOB_STARTUP_API_WAKE_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_WAKE_ENABLED" "true" "Optional: attempt ARM start for API container app when startup health probe fails.")
 $Config += "JOB_STARTUP_API_ARM_START_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_ARM_START_ENABLED" "true" "Optional: enable/disable ARM start calls during startup preflight.")
 $Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" "" "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")

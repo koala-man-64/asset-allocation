@@ -74,27 +74,20 @@ describe('apiService cold start handling', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/system/health');
   });
 
-  it('falls back from prefixed api base to /api on 404 and reuses fallback', async () => {
+  it('fails on 404 without probing a fallback api base', async () => {
     windowWithConfig.__API_UI_CONFIG__ = { apiBaseUrl: '/asset-allocation/api' };
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: 'ok' }))
-      .mockResolvedValueOnce(new Response('not found', { status: 404, statusText: 'Not Found' }))
-      .mockResolvedValueOnce(jsonResponse({ status: 'ok' }))
-      .mockResolvedValueOnce(jsonResponse({ data: 11 }))
-      .mockResolvedValueOnce(jsonResponse({ data: 12 }));
+      .mockResolvedValueOnce(new Response('not found', { status: 404, statusText: 'Not Found' }));
 
     const { request } = await importApiService();
 
-    const first = await request<{ data: number }>('/system/health');
-    const second = await request<{ data: number }>('/system/health');
+    await expect(request<{ data: number }>('/system/health')).rejects.toThrow(
+      /API Error: 404 Not Found/
+    );
 
-    expect(first.data).toBe(11);
-    expect(second.data).toBe(12);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/asset-allocation/healthz');
     expect(fetchMock.mock.calls[1]?.[0]).toContain('/asset-allocation/api/system/health');
-    expect(fetchMock.mock.calls[2]?.[0]).toBe('/healthz');
-    expect(fetchMock.mock.calls[3]?.[0]).toContain('/api/system/health');
-    expect(fetchMock.mock.calls[4]?.[0]).toContain('/api/system/health');
   });
 });

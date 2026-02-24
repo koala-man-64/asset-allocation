@@ -49,7 +49,7 @@ def _extract_ticker(blob_name: str) -> str:
     return blob_name.replace("price-target-data/", "").replace(".parquet", "")
 
 
-def process_blob(blob, *, watermarks: dict | None = None) -> str:
+def process_blob(blob, *, watermarks: dict) -> str:
     blob_name = blob["name"]  # price-target-data/{symbol}.parquet
     if not blob_name.endswith(".parquet"):
         return "skipped_non_parquet"
@@ -62,22 +62,11 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
     silver_path = DataPaths.get_price_target_path(ticker)
     backfill_start, _ = get_backfill_range()
 
-    if watermarks is not None:
-        unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-        if unchanged:
-            if not _needs_obs_date_migration(silver_path):
-                return "skipped_unchanged"
-            mdc.write_line(f"Schema migration required for {ticker}; processing despite unchanged source blob.")
-    else:
-        signature = {}
-        bronze_lm = blob.get("last_modified")
-        if bronze_lm:
-            bronze_ts = bronze_lm.timestamp()
-            silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
-            if silver_lm and (silver_lm > bronze_ts):
-                if not _needs_obs_date_migration(silver_path):
-                    return "skipped_fresh"
-                mdc.write_line(f"Schema migration required for {ticker}; processing despite fresh Silver commit.")
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        if not _needs_obs_date_migration(silver_path):
+            return "skipped_unchanged"
+        mdc.write_line(f"Schema migration required for {ticker}; processing despite unchanged source blob.")
 
     mdc.write_line(f"Processing {ticker}...")
 
@@ -134,7 +123,7 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
                     f"Silver price-target backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
                     f"deleted {deleted} blob(s) under {silver_path}."
                 )
-                if watermarks is not None and signature:
+                if signature:
                     signature["updated_at"] = datetime.utcnow().isoformat()
                     watermarks[blob_name] = signature
                 return "ok"
@@ -210,7 +199,7 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
                     f"Silver price-target merged purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
                     f"deleted {deleted} blob(s) under {silver_path}."
                 )
-                if watermarks is not None and signature:
+                if signature:
                     signature["updated_at"] = datetime.utcnow().isoformat()
                     watermarks[blob_name] = signature
                 return "ok"
@@ -233,7 +222,7 @@ def process_blob(blob, *, watermarks: dict | None = None) -> str:
                 full=True,
             )
         mdc.write_line(f"Updated Silver {ticker}")
-        if watermarks is not None and signature:
+        if signature:
             signature["updated_at"] = datetime.utcnow().isoformat()
             watermarks[blob_name] = signature
         return "ok"
@@ -259,29 +248,26 @@ def main():
     checkpoint_skipped = 0
     forced_schema_migration = 0
     candidate_blobs: list[dict] = []
-    if watermarks is None:
-        candidate_blobs = blob_list
-    else:
-        for blob in blob_list:
-            blob_name = str(blob.get("name", ""))
-            force_reprocess = False
-            if blob_name.endswith(".parquet"):
-                ticker = _extract_ticker(blob_name)
-                silver_path = DataPaths.get_price_target_path(ticker)
-                force_reprocess = _needs_obs_date_migration(silver_path)
-                if force_reprocess:
-                    forced_schema_migration += 1
-            prior = watermarks.get(blob_name)
-            should_process = should_process_blob_since_last_success(
-                blob,
-                prior_signature=prior,
-                last_success_at=last_success,
-                force_reprocess=force_reprocess,
-            )
-            if should_process:
-                candidate_blobs.append(blob)
-            else:
-                checkpoint_skipped += 1
+    for blob in blob_list:
+        blob_name = str(blob.get("name", ""))
+        force_reprocess = False
+        if blob_name.endswith(".parquet"):
+            ticker = _extract_ticker(blob_name)
+            silver_path = DataPaths.get_price_target_path(ticker)
+            force_reprocess = _needs_obs_date_migration(silver_path)
+            if force_reprocess:
+                forced_schema_migration += 1
+        prior = watermarks.get(blob_name)
+        should_process = should_process_blob_since_last_success(
+            blob,
+            prior_signature=prior,
+            last_success_at=last_success,
+            force_reprocess=force_reprocess,
+        )
+        if should_process:
+            candidate_blobs.append(blob)
+        else:
+            checkpoint_skipped += 1
 
     if last_success is not None:
         mdc.write_line(
@@ -299,8 +285,7 @@ def main():
         status = process_blob(blob, watermarks=watermarks)
         if status == "ok":
             ok_or_skipped += 1
-            if watermarks is not None:
-                watermarks_dirty = True
+            watermarks_dirty = True
         elif status == "skipped_unchanged":
             skipped_unchanged += 1
             ok_or_skipped += 1
@@ -315,7 +300,7 @@ def main():
         f"ok_or_skipped={ok_or_skipped} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} "
         f"skipped_checkpoint={checkpoint_skipped} failed={failed}"
     )
-    if watermarks is not None and watermarks_dirty:
+    if watermarks_dirty:
         save_watermarks("bronze_price_target_data", watermarks)
     if failed == 0:
         save_last_success(
@@ -337,7 +322,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-price-target-job"
-    ensure_api_awake_from_env()
+    ensure_api_awake_from_env(required=True)
     exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="silver", domain="price-target", job_name=job_name)

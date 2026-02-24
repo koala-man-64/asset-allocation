@@ -454,23 +454,6 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
     
     return df_daily.reset_index()
 
-def _try_get_delta_max_date(container: str, path: str) -> Optional[pd.Timestamp]:
-    date_col = None
-    for candidate in ("Date", "date"):
-        df = delta_core.load_delta(container, path, columns=[candidate])
-        if df is not None and not df.empty and candidate in df.columns:
-            date_col = candidate
-            break
-    if date_col is None:
-        return None
-
-    dates = pd.to_datetime(df[date_col], errors="coerce")
-    dates = dates.dropna()
-    if dates.empty:
-        return None
-    return pd.Timestamp(dates.max()).normalize()
-
-
 def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
     return align_to_existing_schema(df, container=container, path=path)
 
@@ -493,7 +476,7 @@ def process_blob(
     *,
     desired_end: pd.Timestamp,
     backfill_start: Optional[pd.Timestamp] = None,
-    watermarks: dict | None = None,
+    watermarks: dict,
 ) -> BlobProcessResult:
     blob_name = blob['name'] 
     # expected: finance-data/Folder Name/ticker_suffix.csv
@@ -562,31 +545,14 @@ def process_blob(
             status="skipped",
         )
     
-    signature: Optional[dict[str, Optional[str]]] = None
-    if watermarks is not None:
-        unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-        if unchanged:
-            return BlobProcessResult(
-                blob_name=blob_name,
-                silver_path=silver_path,
-                ticker=ticker,
-                status="skipped",
-            )
-    else:
-        signature = {}
-        bronze_lm = blob.get("last_modified")
-        if bronze_lm is not None:
-            bronze_ts = bronze_lm.timestamp()
-            silver_lm = delta_core.get_delta_last_commit(cfg.AZURE_CONTAINER_SILVER, silver_path)
-            if silver_lm and (silver_lm > bronze_ts):
-                max_date = _try_get_delta_max_date(cfg.AZURE_CONTAINER_SILVER, silver_path)
-                if max_date is not None and max_date >= desired_end:
-                    return BlobProcessResult(
-                        blob_name=blob_name,
-                        silver_path=silver_path,
-                        ticker=ticker,
-                        status="skipped",
-                    )
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="skipped",
+        )
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
     
@@ -760,21 +726,18 @@ def main() -> int:
         )
     checkpoint_skipped = 0
     candidate_blobs: list[dict] = []
-    if watermarks is None:
-        candidate_blobs = blobs
-    else:
-        for blob in blobs:
-            blob_name = str(blob.get("name", "")).strip()
-            prior = watermarks.get(blob_name)
-            should_process = should_process_blob_since_last_success(
-                blob,
-                prior_signature=prior,
-                last_success_at=last_success,
-            )
-            if should_process:
-                candidate_blobs.append(blob)
-            else:
-                checkpoint_skipped += 1
+    for blob in blobs:
+        blob_name = str(blob.get("name", "")).strip()
+        prior = watermarks.get(blob_name)
+        should_process = should_process_blob_since_last_success(
+            blob,
+            prior_signature=prior,
+            last_success_at=last_success,
+        )
+        if should_process:
+            candidate_blobs.append(blob)
+        else:
+            checkpoint_skipped += 1
     if last_success is not None:
         mdc.write_line(
             "Silver finance checkpoint filter: "
@@ -828,12 +791,11 @@ def main() -> int:
                     )
     ingest_elapsed = time.perf_counter() - ingest_started
 
-    if watermarks is not None:
-        for result in results:
-            if result.status != "ok" or not result.watermark_signature:
-                continue
-            watermarks[result.blob_name] = result.watermark_signature
-            watermarks_dirty = True
+    for result in results:
+        if result.status != "ok" or not result.watermark_signature:
+            continue
+        watermarks[result.blob_name] = result.watermark_signature
+        watermarks_dirty = True
 
     processed = sum(1 for r in results if r.status == "ok")
     skipped = sum(1 for r in results if r.status == "skipped")
@@ -847,7 +809,7 @@ def main() -> int:
         f"skippedCheckpoint={checkpoint_skipped}, "
         f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={ingest_elapsed:.2f}"
     )
-    if watermarks is not None and watermarks_dirty:
+    if watermarks_dirty:
         save_watermarks("bronze_finance_data", watermarks)
     if failed == 0:
         save_last_success(
@@ -871,7 +833,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-finance-job"
-    ensure_api_awake_from_env()
+    ensure_api_awake_from_env(required=True)
     exit_code = main()
     if exit_code == 0:
         write_system_health_marker(layer="silver", domain="finance", job_name=job_name)

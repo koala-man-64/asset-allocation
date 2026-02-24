@@ -675,51 +675,23 @@ def get_active_tickers_alpha_vantage() -> pd.DataFrame:
     """
     Fetch active tickers from Alpha Vantage via LISTING_STATUS.
 
-    Preferred path for ETL jobs is to call the API-hosted Alpha Vantage gateway.
-
-    Fallback (local/dev only): call Alpha Vantage directly when ALPHA_VANTAGE_API_KEY is present.
+    ETL jobs must call the API-hosted Alpha Vantage gateway.
     """
-    # Prefer the API gateway if configured.
-    if os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or os.environ.get("ASSET_ALLOCATION_API_URL"):
-        try:
-            from core.alpha_vantage_gateway_client import AlphaVantageGatewayClient
+    if not os.environ.get("ASSET_ALLOCATION_API_BASE_URL"):
+        message = "ASSET_ALLOCATION_API_BASE_URL is required for Alpha Vantage symbol sync."
+        write_error(message)
+        raise RuntimeError(message)
 
-            with AlphaVantageGatewayClient.from_env() as av_gateway:
-                csv_text = av_gateway.get_listing_status_csv(state="active")
-            return _parse_alpha_vantage_listing_status_csv(str(csv_text))
-        except Exception as exc:
-            write_error(f"Failed to get active tickers via API gateway: {exc}")
-            return pd.DataFrame(columns=["Symbol"])
-
-    api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
-    if not api_key or not api_key.strip():
-        write_warning(
-            "Alpha Vantage symbol fetch disabled (no ASSET_ALLOCATION_API_BASE_URL and no ALPHA_VANTAGE_API_KEY)."
-        )
-        return pd.DataFrame(columns=["Symbol"])
-
-    # Fallback: direct Alpha Vantage call (used for local/dev only).
     try:
-        from alpha_vantage import AlphaVantageClient, AlphaVantageConfig
+        from core.alpha_vantage_gateway_client import AlphaVantageGatewayClient
 
-        rate_limit = int(os.environ.get("ALPHA_VANTAGE_RATE_LIMIT_PER_MIN", "300") or 300)
-        timeout = float(os.environ.get("ALPHA_VANTAGE_TIMEOUT_SECONDS", "15") or 15.0)
-
-        av_cfg = AlphaVantageConfig(
-            api_key=str(api_key).strip(),
-            rate_limit_per_min=rate_limit,
-            timeout=timeout,
-            max_workers=1,
-            max_retries=3,
-            backoff_base_seconds=0.5,
-        )
-
-        with AlphaVantageClient(av_cfg) as av:
-            csv_text = av.get_listing_status(state="active")
+        with AlphaVantageGatewayClient.from_env() as av_gateway:
+            csv_text = av_gateway.get_listing_status_csv(state="active")
         return _parse_alpha_vantage_listing_status_csv(str(csv_text))
     except Exception as exc:
-        write_error(f"Failed to get active tickers from Alpha Vantage: {exc}")
-        return pd.DataFrame(columns=["Symbol"])
+        message = f"Failed to get active tickers via API gateway: {exc}"
+        write_error(message)
+        raise RuntimeError(message) from exc
 
 
 def get_active_tickers_massive() -> pd.DataFrame:
