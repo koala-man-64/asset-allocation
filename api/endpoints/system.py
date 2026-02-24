@@ -4080,6 +4080,30 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Max workers for feature engineering concurrency (integer).",
         "example": "8",
     },
+    "GOLD_MARKET_BY_DATE_ENABLED": {
+        "description": "When true, gold-market-job also materializes the consolidated Gold market by-date view.",
+        "example": "true",
+    },
+    "GOLD_MARKET_BY_DATE_PATH": {
+        "description": "Target Delta table path for the consolidated Gold market by-date view.",
+        "example": "market_by_date",
+    },
+    "GOLD_MARKET_BY_DATE_COLUMNS": {
+        "description": "Optional comma-separated projection list for by-date view columns (date/symbol always included).",
+        "example": "close,volume,return_1d,vol_20d",
+    },
+    "GOLD_MARKET_SOURCE_PREFIX": {
+        "description": "Per-symbol Gold market source prefix used by by-date materialization.",
+        "example": "market",
+    },
+    "GOLD_MARKET_BY_DATE_MAX_TABLES": {
+        "description": "Optional debug cap on discovered per-symbol source tables when materializing the by-date view.",
+        "example": "250",
+    },
+    "MATERIALIZE_YEAR_MONTH": {
+        "description": "Optional YYYY-MM partition filter used by by-date materialization for partial rebuilds.",
+        "example": "2026-02",
+    },
     "TRIGGER_NEXT_JOB_NAME": {
         "description": "Optional downstream job name to trigger on success.",
         "example": "silver-market-job",

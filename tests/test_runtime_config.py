@@ -13,6 +13,15 @@ def test_normalize_env_override_bool_falsey():
     assert normalize_env_override("SILVER_LATEST_ONLY", "off") == "false"
 
 
+def test_normalize_env_override_gold_market_by_date_bool():
+    assert normalize_env_override("GOLD_MARKET_BY_DATE_ENABLED", "true") == "true"
+    assert normalize_env_override("GOLD_MARKET_BY_DATE_ENABLED", "0") == "false"
+
+
+def test_normalize_env_override_gold_market_by_date_max_tables_int():
+    assert normalize_env_override("GOLD_MARKET_BY_DATE_MAX_TABLES", "25") == "25"
+
+
 def test_normalize_env_override_alpha_vantage_rate_wait_timeout_float():
     assert normalize_env_override("ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS", "120.5") == "120.5"
 

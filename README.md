@@ -83,6 +83,21 @@ The runtime-config allowlist includes common pipeline knobs (backfills/materiali
 
 Alpha Vantage Bronze jobs use per-job locks only; provider-level contention is handled by API-side fair-share rate limiting keyed by caller job headers.
 
+## Gold Market By-Date View
+
+You can materialize a single by-date Gold market table (`market_by_date`) from per-symbol Gold tables (`market/<symbol>`):
+
+```bash
+python3 -m tasks.market_data.materialize_gold_market_by_date
+```
+
+Column projection is configurable:
+- `GOLD_MARKET_BY_DATE_COLUMNS=close,volume,return_1d,vol_20d` (always includes `date` and `symbol`)
+- `MATERIALIZE_YEAR_MONTH=YYYY-MM` for partial partition rebuilds
+
+To run this as part of the regular Gold market job, set:
+- `GOLD_MARKET_BY_DATE_ENABLED=true`
+
 ## Deployment
 
 Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under `deploy/`.

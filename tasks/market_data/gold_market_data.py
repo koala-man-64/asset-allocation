@@ -26,6 +26,17 @@ class FeatureJobConfig:
     tickers: Sequence[str]
 
 
+def _is_truthy(raw: Optional[str], *, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    return default
+
+
 def _coerce_datetime(series: pd.Series) -> pd.Series:
     value = pd.to_datetime(series, errors="coerce")
     if hasattr(value.dt, "tz_convert") and value.dt.tz is not None:
@@ -369,10 +380,16 @@ def main() -> int:
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env
     from tasks.common.system_health_markers import write_system_health_marker
+    from core import core as mdc
 
     job_name = "gold-market-job"
     ensure_api_awake_from_env(required=True)
     exit_code = main()
+    if exit_code == 0 and _is_truthy(os.environ.get("GOLD_MARKET_BY_DATE_ENABLED"), default=False):
+        from tasks.market_data.materialize_gold_market_by_date import main as materialize_by_date_main
+
+        mdc.write_line("Running Gold market by-date materialization (GOLD_MARKET_BY_DATE_ENABLED=true)...")
+        exit_code = materialize_by_date_main([])
     if exit_code == 0:
         write_system_health_marker(layer="gold", domain="market", job_name=job_name)
     raise SystemExit(exit_code)
