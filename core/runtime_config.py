@@ -40,8 +40,6 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "MASSIVE_MAX_WORKERS",
     "MASSIVE_FINANCE_FRESH_DAYS",
     "MASSIVE_PREFER_OFFICIAL_SDK",
-    "BACKFILL_START_DATE",
-    "BACKFILL_END_DATE",
     "SILVER_LATEST_ONLY",
     "SILVER_MARKET_LATEST_ONLY",
     "SILVER_FINANCE_LATEST_ONLY",
@@ -94,7 +92,6 @@ DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     "DOMAIN_METADATA_MAX_SCANNED_BLOBS",
 }
 
-_DATE_KEYS = {"BACKFILL_START_DATE", "BACKFILL_END_DATE"}
 _INT_KEYS = {
     "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN",
     "ALPHA_VANTAGE_MAX_WORKERS",
@@ -157,16 +154,6 @@ def normalize_env_override(key: str, value: object) -> str:
 
     if resolved_key in _REQUIRED_NONEMPTY_KEYS and not text:
         raise ValueError(f"{resolved_key} cannot be empty when set via DB override.")
-
-    if resolved_key in _DATE_KEYS:
-        if not text:
-            return ""
-        try:
-            # Accept ISO date syntax.
-            dt = datetime.fromisoformat(text).date()
-        except Exception as exc:
-            raise ValueError(f"{resolved_key} must be YYYY-MM-DD.") from exc
-        return dt.isoformat()
 
     if resolved_key in _INT_KEYS:
         if not text:

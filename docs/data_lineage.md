@@ -61,8 +61,6 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 - Market/Earnings default to **latest-only** ingestion:
   - `SILVER_LATEST_ONLY` (global)
   - `SILVER_MARKET_LATEST_ONLY`, `SILVER_EARNINGS_LATEST_ONLY` (domain overrides)
-- Optional backfill range filters:
-  - `BACKFILL_START_DATE`, `BACKFILL_END_DATE` (YYYY-MM-DD)
 
 ### Gold feature engineering
 - Gold jobs skip unchanged tickers using Silver commit watermarks:

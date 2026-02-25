@@ -246,7 +246,7 @@ async def main_async() -> int:
     list_manager.load()
     backfill_start = _resolve_price_target_backfill_start()
     if backfill_start is not None:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze price-target data: {backfill_start.isoformat()}")
+        mdc.write_line(f"Applying historical cutoff to bronze price-target data: {backfill_start.isoformat()}")
     
     df_symbols = mdc.get_symbols()
     # Filter NaNs and ensure string

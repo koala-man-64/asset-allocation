@@ -247,7 +247,7 @@ def main():
     mdc.log_environment_diagnostics()
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to silver market data: {backfill_start.date().isoformat()}")
+        mdc.write_line(f"Applying historical cutoff to silver market data: {backfill_start.date().isoformat()}")
     
     # List all files in Bronze market-data folder
     # Assuming mdc has a list_blobs or similar, otherwise use client directly

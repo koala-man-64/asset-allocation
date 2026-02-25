@@ -49,10 +49,7 @@ def test_bronze_ingestion(unique_ticker):
         return_value=b"",
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
-    ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(None, None),
-    ):
+    ) as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
 
         bronze.download_and_save_raw(symbol, mock_massive)
@@ -79,6 +76,79 @@ def test_bronze_ingestion(unique_ticker):
         assert float(df["ShortInterest"].iloc[-1]) == pytest.approx(1200.0)
         assert float(df["ShortVolume"].iloc[0]) == pytest.approx(500.0)
         assert float(df["FloatShares"].iloc[0]) == pytest.approx(1_000_000.0)
+
+
+def test_download_populates_short_interest_short_volume_and_float_for_aapl():
+    symbol = "AAPL"
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-02,190.1,193.0,189.8,192.6,1200000\n"
+        "2024-01-03,192.6,194.2,191.9,193.8,1400000\n"
+    )
+    mock_massive.get_short_interest.return_value = {
+        "results": [
+            {"date": "2024-01-03", "short_interest": 18_500_000},
+        ]
+    }
+    mock_massive.get_short_volume.return_value = {
+        "results": [
+            {"date": "2024-01-03", "short_volume": 5_200_000},
+        ]
+    }
+    mock_massive.get_float.return_value = {
+        "results": [
+            {"date": "2024-01-03", "float_shares": 15_400_000_000},
+        ]
+    }
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=b"",
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2024, 1, 3),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        bronze.download_and_save_raw(symbol, mock_massive)
+
+        mock_massive.get_daily_time_series_csv.assert_called_once()
+        mock_massive.get_short_interest.assert_called_once()
+        mock_massive.get_short_volume.assert_called_once()
+        mock_massive.get_float.assert_called_once_with(symbol=symbol)
+
+        _, si_kwargs = mock_massive.get_short_interest.call_args
+        assert si_kwargs["symbol"] == symbol
+        assert si_kwargs["settlement_date_gte"] == "1970-01-01"
+        assert si_kwargs["settlement_date_lte"] == "2024-01-03"
+
+        _, sv_kwargs = mock_massive.get_short_volume.call_args
+        assert sv_kwargs["symbol"] == symbol
+        assert sv_kwargs["date_gte"] == "1970-01-01"
+        assert sv_kwargs["date_lte"] == "2024-01-03"
+
+        args, _ = mock_store.call_args
+        df = pd.read_csv(BytesIO(args[0]))
+        assert list(df.columns) == [
+            "Date",
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume",
+            "ShortInterest",
+            "ShortVolume",
+            "FloatShares",
+        ]
+        assert df["ShortInterest"].notna().all()
+        assert df["ShortVolume"].notna().all()
+        assert df["FloatShares"].notna().all()
+        assert float(df.loc[df["Date"] == "2024-01-03", "ShortInterest"].iloc[0]) == pytest.approx(18_500_000.0)
+        assert float(df.loc[df["Date"] == "2024-01-03", "ShortVolume"].iloc[0]) == pytest.approx(5_200_000.0)
+        assert float(df.loc[df["Date"] == "2024-01-03", "FloatShares"].iloc[0]) == pytest.approx(15_400_000_000.0)
 
 
 def test_header_only_csv_blacklists_symbol(unique_ticker):
@@ -115,10 +185,7 @@ def test_header_only_with_existing_data_does_not_blacklist(unique_ticker):
         return_value=existing_csv,
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
-    ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(None, None),
-    ):
+    ) as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
         bronze.download_and_save_raw(symbol, mock_massive)
 
@@ -151,9 +218,6 @@ def test_download_uses_existing_data_window_and_merges(unique_ticker):
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(None, None),
-    ), patch(
         "tasks.market_data.bronze_market_data._utc_today",
         return_value=date(2024, 1, 4),
     ):
@@ -171,7 +235,7 @@ def test_download_uses_existing_data_window_and_merges(unique_ticker):
         assert float(df.loc[df["Date"] == "2024-01-04", "ShortInterest"].iloc[0]) == pytest.approx(1500.0)
 
 
-def test_download_drops_rows_before_backfill_start(unique_ticker):
+def test_download_keeps_rows_without_configurable_backfill_cutoff(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
     mock_massive.get_daily_time_series_csv.return_value = (
@@ -196,9 +260,6 @@ def test_download_drops_rows_before_backfill_start(unique_ticker):
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(pd.Timestamp("2024-01-03"), None),
-    ), patch(
         "tasks.market_data.bronze_market_data._utc_today",
         return_value=date(2024, 1, 4),
     ):
@@ -206,15 +267,15 @@ def test_download_drops_rows_before_backfill_start(unique_ticker):
         bronze.download_and_save_raw(symbol, mock_massive)
 
         _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
-        assert fetch_kwargs["from_date"] == "2024-01-03"
+        assert fetch_kwargs["from_date"] == "2024-01-02"
         assert fetch_kwargs["to_date"] == "2024-01-04"
 
         args, _ = mock_store.call_args
         df = pd.read_csv(BytesIO(args[0]))
-        assert df["Date"].tolist() == ["2024-01-03", "2024-01-04"]
+        assert df["Date"].tolist() == ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
 
 
-def test_download_deletes_blob_when_cutoff_removes_all_rows(unique_ticker):
+def test_download_does_not_delete_blob_without_backfill_cutoff(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
     mock_massive.get_daily_time_series_csv.return_value = (
@@ -243,17 +304,17 @@ def test_download_deletes_blob_when_cutoff_removes_all_rows(unique_ticker):
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(pd.Timestamp("2024-01-03"), None),
-    ), patch(
         "tasks.market_data.bronze_market_data._utc_today",
         return_value=date(2024, 1, 4),
     ):
         mock_list_manager.is_blacklisted.return_value = False
         bronze.download_and_save_raw(symbol, mock_massive)
 
-        mock_store.assert_not_called()
-        mock_bronze_client.delete_file.assert_called_once_with(f"market-data/{symbol}.csv")
+        _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
+        assert fetch_kwargs["from_date"] == "2023-12-30"
+        assert fetch_kwargs["to_date"] == "2024-01-04"
+        mock_store.assert_called_once()
+        mock_bronze_client.delete_file.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
 
 
@@ -304,6 +365,30 @@ def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
     with pytest.raises(bronze.MassiveGatewayNotFoundError):
         bronze._download_and_save_raw_with_recovery(symbol, manager, max_attempts=3, sleep_seconds=0.25)
 
+    assert manager.reset_current_calls == 0
+    assert sleep_calls == []
+
+
+def test_download_with_recovery_does_not_retry_non_recoverable_gateway_error(monkeypatch):
+    symbol = "AAPL"
+    manager = _FakeClientManager()
+    sleep_calls: list[float] = []
+    call_count = {"count": 0}
+
+    def _fake_download(_sym, _client, *, snapshot_row=None):
+        call_count["count"] += 1
+        raise bronze.MassiveGatewayError(
+            "API gateway error (status=400).",
+            status_code=400,
+        )
+
+    monkeypatch.setattr(bronze, "download_and_save_raw", _fake_download)
+    monkeypatch.setattr(bronze.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    with pytest.raises(bronze.MassiveGatewayError):
+        bronze._download_and_save_raw_with_recovery(symbol, manager, max_attempts=3, sleep_seconds=0.25)
+
+    assert call_count["count"] == 1
     assert manager.reset_current_calls == 0
     assert sleep_calls == []
 
@@ -371,9 +456,6 @@ def test_download_uses_snapshot_row_when_incremental_window_allows(unique_ticker
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(None, None),
-    ), patch(
         "tasks.market_data.bronze_market_data._utc_today",
         return_value=date(2024, 1, 3),
     ):
@@ -418,9 +500,6 @@ def test_download_skips_when_snapshot_is_not_newer(unique_ticker):
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(None, None),
-    ), patch(
         "tasks.market_data.bronze_market_data._utc_today",
         return_value=date(2024, 1, 3),
     ):
@@ -458,9 +537,6 @@ def test_download_skips_when_no_new_daily_rows_and_supplementals_complete(unique
     ), patch(
         "tasks.market_data.bronze_market_data.list_manager"
     ) as mock_list_manager, patch(
-        "tasks.market_data.bronze_market_data.get_backfill_range",
-        return_value=(None, None),
-    ), patch(
         "tasks.market_data.bronze_market_data._utc_today",
         return_value=date(2024, 1, 3),
     ):

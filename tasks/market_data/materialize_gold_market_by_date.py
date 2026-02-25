@@ -254,7 +254,7 @@ def materialize_market_by_date(
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
         mdc.write_line(
-            "Applying BACKFILL_START_DATE cutoff to gold market by-date view: "
+            "Applying historical cutoff to gold market by-date view: "
             f"{backfill_start.date().isoformat()}"
         )
 

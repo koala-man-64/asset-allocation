@@ -30,7 +30,7 @@ async def test_runtime_config_catalog(monkeypatch):
     payload = resp.json()
     assert "items" in payload
     keys = [item.get("key") for item in payload["items"]]
-    assert "BACKFILL_START_DATE" in keys
+    assert "SILVER_LATEST_ONLY" in keys
 
 
 @pytest.mark.asyncio
@@ -48,7 +48,7 @@ async def test_get_runtime_config_returns_items(monkeypatch):
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
-    rows = [_item(key="BACKFILL_START_DATE", value="2024-01-01")]
+    rows = [_item(key="SILVER_LATEST_ONLY", value="false")]
     with patch("api.endpoints.system.list_runtime_config", return_value=rows):
         app = create_app()
         async with get_test_client(app) as client:
@@ -57,8 +57,8 @@ async def test_get_runtime_config_returns_items(monkeypatch):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["scope"] == "global"
-    assert payload["items"][0]["key"] == "BACKFILL_START_DATE"
-    assert payload["items"][0]["value"] == "2024-01-01"
+    assert payload["items"][0]["key"] == "SILVER_LATEST_ONLY"
+    assert payload["items"][0]["value"] == "false"
 
 
 @pytest.mark.asyncio

@@ -174,7 +174,7 @@ def main():
     mdc.log_environment_diagnostics()
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to silver earnings data: {backfill_start.date().isoformat()}")
+        mdc.write_line(f"Applying historical cutoff to silver earnings data: {backfill_start.date().isoformat()}")
     
     mdc.write_line("Listing Bronze files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="earnings-data/")

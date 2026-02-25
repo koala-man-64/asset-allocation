@@ -322,7 +322,7 @@ async def main_async() -> int:
     backfill_start_ts, _ = get_backfill_range()
     backfill_start = backfill_start_ts.to_pydatetime().date() if backfill_start_ts is not None else None
     if backfill_start is not None:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze finance data: {backfill_start.isoformat()}")
+        mdc.write_line(f"Applying historical cutoff to bronze finance data: {backfill_start.isoformat()}")
 
     max_workers = max(
         1,

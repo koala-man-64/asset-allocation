@@ -274,8 +274,6 @@ $Config += "SILVER_MARKET_LATEST_ONLY=" + (Prompt-Var "SILVER_MARKET_LATEST_ONLY
 $Config += "SILVER_FINANCE_LATEST_ONLY=" + (Prompt-Var "SILVER_FINANCE_LATEST_ONLY" "" "Optional: override latest-only for finance.")
 $Config += "SILVER_EARNINGS_LATEST_ONLY=" + (Prompt-Var "SILVER_EARNINGS_LATEST_ONLY" "" "Optional: override latest-only for earnings.")
 $Config += "SILVER_PRICE_TARGET_LATEST_ONLY=" + (Prompt-Var "SILVER_PRICE_TARGET_LATEST_ONLY" "" "Optional: override latest-only for price targets.")
-$Config += "BACKFILL_START_DATE=" + (Prompt-Var "BACKFILL_START_DATE" "" "Optional: YYYY-MM-DD (backfill start).")
-$Config += "BACKFILL_END_DATE=" + (Prompt-Var "BACKFILL_END_DATE" "" "Optional: YYYY-MM-DD (backfill end).")
 $Config += "TRIGGER_NEXT_JOB_NAME=" + (Prompt-Var "TRIGGER_NEXT_JOB_NAME" "" "Optional: if set, trigger next job when current finishes.")
 $Config += "TRIGGER_NEXT_JOB_REQUIRED=" + (Prompt-Var "TRIGGER_NEXT_JOB_REQUIRED" "" "Optional: whether triggering the next job is required (true/false).")
 $Config += "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS=" + (Prompt-Var "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS" "" "Optional: retries when triggering next job (default 3).")

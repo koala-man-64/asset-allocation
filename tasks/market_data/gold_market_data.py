@@ -307,7 +307,7 @@ def main() -> int:
     backfill_start, _ = get_backfill_range()
     backfill_start_iso = backfill_start.date().isoformat() if backfill_start is not None else None
     if backfill_start_iso:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to gold market features: {backfill_start_iso}")
+        mdc.write_line(f"Applying historical cutoff to gold market features: {backfill_start_iso}")
 
     watermarks = load_watermarks("gold_market_features")
     watermarks_dirty = False

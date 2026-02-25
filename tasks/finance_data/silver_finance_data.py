@@ -722,7 +722,7 @@ def main() -> int:
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
         mdc.write_line(
-            f"Applying BACKFILL_START_DATE cutoff to silver finance data: {backfill_start.date().isoformat()}"
+            f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}"
         )
     checkpoint_skipped = 0
     candidate_blobs: list[dict] = []

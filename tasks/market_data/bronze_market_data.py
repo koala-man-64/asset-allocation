@@ -8,7 +8,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from io import BytesIO, StringIO
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -20,7 +20,6 @@ from core.massive_gateway_client import (
 )
 from core import core as mdc
 from core.pipeline import ListManager
-from tasks.common.backfill import get_backfill_range
 from tasks.market_data import config as cfg
 
 
@@ -372,10 +371,7 @@ def _fetch_snapshot_daily_rows(symbols: list[str]) -> dict[str, dict[str, float 
 def _can_use_snapshot_for_incremental(
     *,
     existing_latest_date: date | None,
-    backfill_start: date | None,
 ) -> bool:
-    if backfill_start is not None:
-        return False
     if existing_latest_date is None:
         return False
 
@@ -628,23 +624,8 @@ def _extract_latest_market_date(existing_df: pd.DataFrame) -> date | None:
         return None
 
 
-def _resolve_backfill_range_dates() -> tuple[Optional[date], Optional[date]]:
-    """Resolve shared backfill date window from BACKFILL_START_DATE / BACKFILL_END_DATE."""
-    backfill_start, backfill_end = get_backfill_range()
-    return (
-        backfill_start.to_pydatetime().date() if backfill_start is not None else None,
-        backfill_end.to_pydatetime().date() if backfill_end is not None else None,
-    )
-
-
 def _resolve_fetch_window(*, existing_latest_date: date | None) -> tuple[str, str]:
     today = _utc_today()
-    backfill_start, backfill_end = _resolve_backfill_range_dates()
-    if backfill_start or backfill_end:
-        from_date = backfill_start.isoformat() if isinstance(backfill_start, date) else _FULL_HISTORY_START_DATE
-        to_date = backfill_end.isoformat() if isinstance(backfill_end, date) else today.isoformat()
-        return from_date, to_date
-
     if existing_latest_date is None:
         from_date = _FULL_HISTORY_START_DATE
     else:
@@ -671,19 +652,6 @@ def _merge_existing_and_new_market_data(existing_df: pd.DataFrame, incoming_df: 
     merged = merged.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
     merged["Date"] = merged["Date"].dt.strftime("%Y-%m-%d")
     return merged
-
-
-def _drop_rows_before_backfill_start(df: pd.DataFrame, *, backfill_start: date | None) -> pd.DataFrame:
-    if backfill_start is None or df.empty or "Date" not in df.columns:
-        return df
-
-    out = df.copy()
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
-    out = out.loc[out["Date"].notna() & (out["Date"] >= pd.Timestamp(backfill_start))].copy()
-    if out.empty:
-        return pd.DataFrame(columns=df.columns)
-    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
-    return out.reset_index(drop=True)
 
 
 def _safe_close_massive_client(client: MassiveGatewayClient | None) -> None:
@@ -810,13 +778,11 @@ def download_and_save_raw(
     existing_df = _load_existing_market_df(symbol)
     existing_latest_date = _extract_latest_market_date(existing_df)
     from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
-    backfill_start, _ = _resolve_backfill_range_dates()
     raw_text = ""
     df_daily = None
     snapshot_date = _extract_snapshot_date(snapshot_row)
     if _can_use_snapshot_for_incremental(
         existing_latest_date=existing_latest_date,
-        backfill_start=backfill_start,
     ):
         if snapshot_date is not None and existing_latest_date is not None and snapshot_date <= existing_latest_date:
             # Snapshot confirms we are already at the latest obtainable daily bar.
@@ -861,8 +827,7 @@ def download_and_save_raw(
             incoming_df=df_daily,
         )
         if (
-            backfill_start is None
-            and existing_latest_date is not None
+            existing_latest_date is not None
             and not has_new_daily_rows
             and _existing_has_complete_supplementals(existing_df, as_of_date=existing_latest_date)
         ):
@@ -900,15 +865,7 @@ def download_and_save_raw(
             float_payload=float_payload,
         )
         df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
-        df_daily = _drop_rows_before_backfill_start(df_daily, backfill_start=backfill_start)
-        if backfill_start is not None and df_daily.empty:
-            bronze_client.delete_file(blob_path)
-            mdc.write_line(
-                f"No market rows on/after {backfill_start.isoformat()} for {symbol}; deleted bronze {blob_path}."
-            )
-            list_manager.add_to_whitelist(symbol)
-            return
-        if backfill_start is None and not existing_df.empty and _market_frames_equal(existing_df, df_daily):
+        if not existing_df.empty and _market_frames_equal(existing_df, df_daily):
             list_manager.add_to_whitelist(symbol)
             return
         raw_bytes = _serialize_market_csv(df_daily)
@@ -950,9 +907,6 @@ _normalize_alpha_vantage_daily_csv = _normalize_provider_daily_csv
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
-    backfill_start, _ = _resolve_backfill_range_dates()
-    if backfill_start is not None:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze market data: {backfill_start.isoformat()}")
 
     list_manager.load()
     mdc.write_line(
@@ -980,7 +934,7 @@ async def main_async() -> int:
     mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
 
     snapshot_rows_by_symbol: dict[str, dict[str, float | str]] = {}
-    if backfill_start is None and symbols:
+    if symbols:
         try:
             mdc.write_line(
                 f"Prefetching Massive unified snapshots in batches (chunk_size={_SNAPSHOT_BATCH_SIZE})..."

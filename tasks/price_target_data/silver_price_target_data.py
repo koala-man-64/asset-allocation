@@ -236,7 +236,7 @@ def main():
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
         mdc.write_line(
-            f"Applying BACKFILL_START_DATE cutoff to silver price-target data: {backfill_start.date().isoformat()}"
+            f"Applying historical cutoff to silver price-target data: {backfill_start.date().isoformat()}"
         )
     mdc.write_line("Listing Bronze Price Target files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")

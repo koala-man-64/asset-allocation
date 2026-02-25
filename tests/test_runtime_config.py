@@ -39,16 +39,7 @@ def test_normalize_env_override_required_nonempty_rejects_blank():
         raise AssertionError("Expected ValueError for empty SYSTEM_HEALTH_TTL_SECONDS")
 
 
-def test_normalize_env_override_date():
-    assert normalize_env_override("BACKFILL_START_DATE", "2024-01-02") == "2024-01-02"
-
-
-def test_normalize_env_override_date_rejects_invalid():
-    try:
-        normalize_env_override("BACKFILL_START_DATE", "not-a-date")
-    except ValueError as exc:
-        assert "YYYY-MM-DD" in str(exc)
-    else:
-        raise AssertionError("Expected ValueError for invalid date")
+def test_normalize_env_override_unknown_key_passthrough():
+    assert normalize_env_override("UNMANAGED_KEY", "  any-value  ") == "any-value"
 
 

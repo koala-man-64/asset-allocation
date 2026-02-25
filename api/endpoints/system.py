@@ -4048,14 +4048,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "When true, Massive integration prefers the official Massive SDK if installed.",
         "example": "true",
     },
-    "BACKFILL_START_DATE": {
-        "description": "Optional inclusive start date for backfill runs (YYYY-MM-DD).",
-        "example": "2024-01-01",
-    },
-    "BACKFILL_END_DATE": {
-        "description": "Optional inclusive end date for backfill runs (YYYY-MM-DD).",
-        "example": "2024-03-31",
-    },
     "SILVER_LATEST_ONLY": {
         "description": "When true, silver jobs prefer latest-only processing if supported.",
         "example": "true",

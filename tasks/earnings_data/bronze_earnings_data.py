@@ -273,7 +273,7 @@ async def main_async() -> int:
     av = AlphaVantageGatewayClient.from_env()
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
-        mdc.write_line(f"Applying BACKFILL_START_DATE cutoff to bronze earnings data: {backfill_start.date().isoformat()}")
+        mdc.write_line(f"Applying historical cutoff to bronze earnings data: {backfill_start.date().isoformat()}")
 
     max_workers = max(1, int(cfg.ALPHA_VANTAGE_MAX_WORKERS))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-earnings")
