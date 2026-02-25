@@ -30,7 +30,7 @@ list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
-_FULL_HISTORY_START_DATE = "1900-01-01"
+_FULL_HISTORY_START_DATE = "1970-01-01"
 _SNAPSHOT_BATCH_SIZE = 250
 _SNAPSHOT_ASSET_TYPE = "stocks"
 

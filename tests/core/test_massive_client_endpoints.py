@@ -70,7 +70,7 @@ def test_massive_client_paths_align_with_docs() -> None:
     assert seen[7][0] == "/stocks/financials/v1/balance-sheets"
     assert seen[8][0] == "/stocks/financials/v1/ratios"
     assert seen[9][0] == "/v3/snapshot"
-    assert seen[9][1].get("type") == "stocks"
+    assert seen[9][1].get("type") is None
     assert seen[9][1].get("ticker.any_of") == "AAPL,MSFT"
     assert seen[9][1].get("limit") == "2"
 
@@ -234,3 +234,26 @@ def test_unified_snapshot_chunks_over_250_tickers() -> None:
     assert len(seen_chunks[1]) == 50
     assert isinstance(payload, dict)
     assert len(payload.get("results", [])) == 300
+
+
+def test_unified_snapshot_strips_type_param_when_filtering_by_ticker() -> None:
+    seen_params: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_params.append(dict(request.url.params))
+        return httpx.Response(200, json={"results": [{"ticker": "AAPL"}]})
+
+    client = _build_client(handler)
+    try:
+        payload = client.get_unified_snapshot(
+            tickers=["AAPL"],
+            asset_type="stocks",
+            params={"type": "stocks"},
+        )
+    finally:
+        client.close()
+
+    assert payload["results"][0]["ticker"] == "AAPL"
+    assert len(seen_params) == 1
+    assert seen_params[0].get("ticker.any_of") == "AAPL"
+    assert seen_params[0].get("type") is None

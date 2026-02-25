@@ -52,14 +52,15 @@ const navSections: NavSection[] = [
     title: 'LIVE OPERATIONS',
     items: [
       { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
-        { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
-        { path: '/data-profiling', label: 'Data Profiling', icon: BarChart3 },
-        { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
-        { path: '/alerts', label: 'Alerts', icon: Bell },
+      { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
+      { path: '/data-profiling', label: 'Data Profiling', icon: BarChart3 },
+      { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
+      { path: '/alerts', label: 'Alerts', icon: Bell },
       { path: '/system-status', label: 'System Status', icon: Activity },
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
       { path: '/symbol-purge', label: 'Symbol Purge', icon: Filter },
-      { path: '/runtime-config', label: 'Runtime Config', icon: SlidersHorizontal }
+      { path: '/runtime-config', label: 'Runtime Config', icon: SlidersHorizontal },
+      { path: '/gold-materialization', label: 'Gold Materialization', icon: SlidersHorizontal }
     ]
   }
 ];

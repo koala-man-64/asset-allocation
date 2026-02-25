@@ -59,7 +59,7 @@ def test_bronze_ingestion(unique_ticker):
 
         mock_massive.get_daily_time_series_csv.assert_called_once()
         _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
-        assert fetch_kwargs["from_date"] == "1900-01-01"
+        assert fetch_kwargs["from_date"] == "1970-01-01"
         assert fetch_kwargs["adjusted"] is True
         mock_store.assert_called_once()
         args, kwargs = mock_store.call_args

@@ -126,7 +126,7 @@ def test_daily_time_series_defaults_to_full_history_window() -> None:
 
     csv_text = gateway.get_daily_time_series_csv(symbol="AAPL")
     assert csv_text.splitlines()[0] == "Date,Open,High,Low,Close,Volume"
-    assert captured["from_"] == "1900-01-01"
+    assert captured["from_"] == "1970-01-01"
     assert captured["ticker"] == "AAPL"
 
 

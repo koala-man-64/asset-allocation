@@ -22,7 +22,7 @@ from massive_provider.errors import (
 from massive_provider.utils import ms_to_iso_date
 
 logger = logging.getLogger("asset-allocation.api.massive")
-_FULL_HISTORY_START_DATE = "1900-01-01"
+_FULL_HISTORY_START_DATE = "1970-01-01"
 
 FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "overview", "ratios"]
 

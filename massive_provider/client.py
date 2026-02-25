@@ -481,7 +481,6 @@ class MassiveClient:
             raise ValueError("tickers is required")
 
         requested_limit = max(1, min(int(limit), _MAX_SNAPSHOT_TICKERS_PER_REQUEST))
-        type_filter = str(asset_type or "").strip() or "stocks"
 
         merged_results: list[Any] = []
         merged_payload: Optional[dict[str, Any]] = None
@@ -489,9 +488,10 @@ class MassiveClient:
 
         for chunk in self._iter_ticker_chunks(normalized_tickers, _MAX_SNAPSHOT_TICKERS_PER_REQUEST):
             q: dict[str, Any] = dict(params or {})
+            # Massive rejects combining ticker filters with type on /v3/snapshot.
+            q.pop("type", None)
             q.update(
                 {
-                    "type": type_filter,
                     "ticker.any_of": ",".join(chunk),
                     "limit": min(requested_limit, max(1, len(chunk))),
                 }
