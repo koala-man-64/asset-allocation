@@ -223,3 +223,103 @@ def test_fetch_and_save_raw_skips_write_when_no_new_finance_dates(unique_ticker)
         assert wrote is False
         mock_store.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+
+
+def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
+    symbol = unique_ticker
+    mock_av = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_av
+    attempts: dict[str, int] = {"balance_sheet": 0}
+
+    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None):
+        assert symbol_arg == symbol
+        assert av_client is mock_av
+        report_name = report["report"]
+        if report_name == "balance_sheet":
+            attempts["balance_sheet"] += 1
+            if attempts["balance_sheet"] == 1:
+                raise bronze.AlphaVantageGatewayThrottleError("throttled", status_code=429)
+            return True
+        return False
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
+        "tasks.finance_data.bronze_finance_data.time.sleep"
+    ) as mock_sleep:
+        wrote, blacklisted, failures = bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=3,
+            sleep_seconds=0.5,
+        )
+
+    assert wrote == 1
+    assert blacklisted is False
+    assert failures == []
+    assert attempts["balance_sheet"] == 2
+    manager.reset_current.assert_called_once()
+    mock_sleep.assert_called_once_with(0.5)
+
+
+def test_process_symbol_with_recovery_continues_after_nonrecoverable_report_failure(unique_ticker):
+    symbol = unique_ticker
+    mock_av = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_av
+    seen_reports: list[str] = []
+
+    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None):
+        assert symbol_arg == symbol
+        assert av_client is mock_av
+        report_name = report["report"]
+        seen_reports.append(report_name)
+        if report_name == "cash_flow":
+            raise bronze.AlphaVantageGatewayError("bad request", status_code=400)
+        return True
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
+        wrote, blacklisted, failures = bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=3,
+            sleep_seconds=0.0,
+        )
+
+    assert blacklisted is False
+    assert wrote == 3
+    assert len(failures) == 1
+    assert failures[0][0] == "cash_flow"
+    manager.reset_current.assert_not_called()
+    assert seen_reports == [report["report"] for report in bronze.REPORTS]
+
+
+def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
+    symbol = unique_ticker
+    mock_av = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_av
+    seen_reports: list[str] = []
+
+    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None):
+        assert symbol_arg == symbol
+        assert av_client is mock_av
+        report_name = report["report"]
+        seen_reports.append(report_name)
+        if report_name == "balance_sheet":
+            raise bronze.AlphaVantageGatewayInvalidSymbolError("invalid", status_code=404)
+        return True
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
+        wrote, blacklisted, failures = bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=3,
+            sleep_seconds=0.0,
+        )
+
+    assert wrote == 0
+    assert blacklisted is True
+    assert len(failures) == 1
+    assert failures[0][0] == "balance_sheet"
+    manager.reset_current.assert_not_called()
+    assert seen_reports == ["balance_sheet"]

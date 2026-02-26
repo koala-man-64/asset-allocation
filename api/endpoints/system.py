@@ -10,7 +10,7 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Literal, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Literal, Tuple, TypeVar, Sequence
 
 import httpx
 from anyio import from_thread
@@ -2903,6 +2903,20 @@ _DOMAIN_PREFIXES: Dict[str, Dict[str, List[str]]] = {
     },
 }
 
+_SILVER_JOB_CHECKPOINT_KEYS: Dict[str, Tuple[str, str]] = {
+    "market": ("bronze_market_data", "silver_market_data"),
+    "finance": ("bronze_finance_data", "silver_finance_data"),
+    "earnings": ("bronze_earnings_data", "silver_earnings_data"),
+    "price-target": ("bronze_price_target_data", "silver_price_target_data"),
+}
+
+_GOLD_JOB_WATERMARK_KEYS: Dict[str, str] = {
+    "market": "gold_market_features",
+    "finance": "gold_finance_features",
+    "earnings": "gold_earnings_features",
+    "price-target": "gold_price_target_features",
+}
+
 
 def _resolve_container(layer: str) -> str:
     env_key = _LAYER_CONTAINER_ENV.get(layer)
@@ -3164,8 +3178,117 @@ def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[st
     return targets
 
 
+def _watermark_blob_path(key: str) -> str:
+    cleaned = (key or "").strip().replace(" ", "_")
+    return f"system/watermarks/{cleaned}.json"
+
+
+def _run_checkpoint_blob_path(key: str) -> str:
+    cleaned = (key or "").strip().replace(" ", "_")
+    return f"system/watermarks/runs/{cleaned}.json"
+
+
+def _collect_domains_for_layer(
+    targets: List[Dict[str, Optional[str]]],
+    *,
+    layer: str,
+    supported_domains: Sequence[str],
+) -> List[str]:
+    domains: set[str] = set()
+    include_all_domains = False
+
+    for target in targets:
+        target_layer = _normalize_layer(str(target.get("layer") or ""))
+        if target_layer != layer:
+            continue
+
+        raw_domain = target.get("domain")
+        target_domain = _normalize_domain(str(raw_domain or "")) if raw_domain is not None else None
+        if not target_domain:
+            include_all_domains = True
+            continue
+        if target_domain in supported_domains:
+            domains.add(target_domain)
+
+    if include_all_domains:
+        domains.update(supported_domains)
+    return [name for name in supported_domains if name in domains]
+
+
+def _build_silver_checkpoint_reset_targets(targets: List[Dict[str, Optional[str]]]) -> List[Dict[str, Optional[str]]]:
+    domains = _collect_domains_for_layer(
+        targets,
+        layer="silver",
+        supported_domains=list(_SILVER_JOB_CHECKPOINT_KEYS.keys()),
+    )
+    if not domains:
+        return []
+
+    common_container = str(getattr(cfg, "AZURE_CONTAINER_COMMON", "") or "").strip()
+    if not common_container:
+        raise HTTPException(status_code=503, detail="Missing AZURE_CONTAINER_COMMON for silver checkpoint reset.")
+
+    checkpoint_targets: List[Dict[str, Optional[str]]] = []
+    for domain in domains:
+        bronze_watermark_key, silver_run_key = _SILVER_JOB_CHECKPOINT_KEYS[domain]
+        checkpoint_targets.append(
+            {
+                "layer": "common",
+                "domain": domain,
+                "container": common_container,
+                "prefix": _watermark_blob_path(bronze_watermark_key),
+                "operation": "reset-watermark",
+            }
+        )
+        checkpoint_targets.append(
+            {
+                "layer": "common",
+                "domain": domain,
+                "container": common_container,
+                "prefix": _run_checkpoint_blob_path(silver_run_key),
+                "operation": "reset-run-checkpoint",
+            }
+        )
+
+    return checkpoint_targets
+
+
+def _build_gold_checkpoint_reset_targets(targets: List[Dict[str, Optional[str]]]) -> List[Dict[str, Optional[str]]]:
+    domains = _collect_domains_for_layer(
+        targets,
+        layer="gold",
+        supported_domains=list(_GOLD_JOB_WATERMARK_KEYS.keys()),
+    )
+    if not domains:
+        return []
+
+    common_container = str(getattr(cfg, "AZURE_CONTAINER_COMMON", "") or "").strip()
+    if not common_container:
+        raise HTTPException(status_code=503, detail="Missing AZURE_CONTAINER_COMMON for gold checkpoint reset.")
+
+    checkpoint_targets: List[Dict[str, Optional[str]]] = []
+    for domain in domains:
+        watermark_key = _GOLD_JOB_WATERMARK_KEYS[domain]
+        checkpoint_targets.append(
+            {
+                "layer": "common",
+                "domain": domain,
+                "container": common_container,
+                "prefix": _watermark_blob_path(watermark_key),
+                "operation": "reset-watermark",
+            }
+        )
+
+    return checkpoint_targets
+
+
 def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     targets = _resolve_purge_targets(payload.scope, payload.layer, payload.domain)
+    targets = [
+        *targets,
+        *_build_silver_checkpoint_reset_targets(targets),
+        *_build_gold_checkpoint_reset_targets(targets),
+    ]
 
     worker_count = _resolve_purge_scope_workers(len(targets))
     planned_by_index: Dict[int, Tuple[BlobStorageClient, Dict[str, Optional[str]]]] = {}
@@ -3253,15 +3376,16 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
                 )
                 raise HTTPException(status_code=502, detail=f"Purge failed for {container}:{prefix}: {exc}") from exc
 
-            results.append(
-                {
-                    "container": container,
-                    "prefix": prefix,
-                    "layer": target.get("layer"),
-                    "domain": target.get("domain"),
-                    "deleted": deleted,
-                }
-            )
+            result: Dict[str, Any] = {
+                "container": container,
+                "prefix": prefix,
+                "layer": target.get("layer"),
+                "domain": target.get("domain"),
+                "deleted": deleted,
+            }
+            if target.get("operation"):
+                result["operation"] = target.get("operation")
+            results.append(result)
             total_deleted += int(deleted or 0)
     else:
         delete_results_by_index: Dict[int, Dict[str, Any]] = {}
@@ -3272,13 +3396,16 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
             container = str(target.get("container") or "")
             prefix = target.get("prefix")
             deleted = client.delete_prefix(prefix)
-            return idx, {
+            result: Dict[str, Any] = {
                 "container": container,
                 "prefix": prefix,
                 "layer": target.get("layer"),
                 "domain": target.get("domain"),
                 "deleted": deleted,
             }
+            if target.get("operation"):
+                result["operation"] = target.get("operation")
+            return idx, result
 
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="purge-delete") as executor:
             future_to_target: Dict[Any, Tuple[int, Dict[str, Optional[str]]]] = {}

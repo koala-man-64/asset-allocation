@@ -107,6 +107,13 @@ export function LeftNavigation() {
     .map((path) => findNavItem(path))
     .filter((item): item is NavItem => !!item);
 
+  const visibleSections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => !pinnedPaths.includes(item.path))
+    }))
+    .filter((section) => section.items.length > 0);
+
   // Grouped Rendering Helper
   const renderNavItem = (item: NavItem, isPinnedSection: boolean = false) => {
     const isPinned = pinnedPaths.includes(item.path);
@@ -226,7 +233,7 @@ export function LeftNavigation() {
           </div>
         )}
 
-        {navSections.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.title} className="px-3">
             {!collapsed && (
               <h4 className="mb-2 px-2 text-xs font-semibold text-muted-foreground/70 tracking-wider">

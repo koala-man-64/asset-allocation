@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from core.alpha_vantage_gateway_client import (
     AlphaVantageGatewayClient,
@@ -50,6 +52,8 @@ REPORTS = [
 
 
 FINANCE_REPORT_STALE_DAYS = 7
+_RECOVERY_MAX_ATTEMPTS = 3
+_RECOVERY_SLEEP_SECONDS = 5.0
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -294,6 +298,125 @@ def _format_failure_reason(exc: BaseException) -> str:
     return " ".join(reason_parts)
 
 
+def _safe_close_alpha_vantage_client(client: AlphaVantageGatewayClient | None) -> None:
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
+class _ThreadLocalAlphaVantageClientManager:
+    def __init__(self, factory: Callable[[], AlphaVantageGatewayClient] | None = None) -> None:
+        self._factory = factory or AlphaVantageGatewayClient.from_env
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._clients: dict[int, tuple[int, AlphaVantageGatewayClient]] = {}
+
+    def get_client(self) -> AlphaVantageGatewayClient:
+        thread_id = threading.get_ident()
+        with self._lock:
+            current = self._clients.get(thread_id)
+            if current and current[0] == self._generation:
+                return current[1]
+            if current:
+                _safe_close_alpha_vantage_client(current[1])
+            fresh_client = self._factory()
+            self._clients[thread_id] = (self._generation, fresh_client)
+            return fresh_client
+
+    def reset_current(self) -> None:
+        thread_id = threading.get_ident()
+        with self._lock:
+            current = self._clients.pop(thread_id, None)
+        if current:
+            _safe_close_alpha_vantage_client(current[1])
+
+    def close_all(self) -> None:
+        with self._lock:
+            for _, client in list(self._clients.values()):
+                _safe_close_alpha_vantage_client(client)
+            self._clients.clear()
+
+
+def _is_recoverable_alpha_vantage_error(exc: BaseException) -> bool:
+    if isinstance(exc, AlphaVantageGatewayInvalidSymbolError):
+        return False
+
+    if isinstance(exc, AlphaVantageGatewayThrottleError):
+        return True
+
+    if isinstance(exc, AlphaVantageGatewayError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {408, 429, 500, 502, 503, 504}:
+            return True
+
+        message = str(exc).strip().lower()
+        transient_markers = (
+            "timeout",
+            "timed out",
+            "connection",
+            "server disconnected",
+            "remoteprotocolerror",
+            "readerror",
+            "connecterror",
+            "gateway unavailable",
+        )
+        return any(marker in message for marker in transient_markers)
+
+    return False
+
+
+def _process_symbol_with_recovery(
+    symbol: str,
+    client_manager: _ThreadLocalAlphaVantageClientManager,
+    *,
+    backfill_start: Optional[date] = None,
+    max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
+    sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
+) -> tuple[int, bool, list[tuple[str, BaseException]]]:
+    attempts = max(1, int(max_attempts))
+    sleep_seconds = max(0.0, float(sleep_seconds))
+    pending_reports = list(REPORTS)
+    wrote = 0
+    final_failures: list[tuple[str, BaseException]] = []
+
+    for attempt in range(1, attempts + 1):
+        next_pending: list[dict[str, str]] = []
+        transient_failures: list[tuple[str, BaseException]] = []
+
+        for report in pending_reports:
+            report_name = str(report.get("report") or "unknown")
+            try:
+                av_client = client_manager.get_client()
+                if fetch_and_save_raw(symbol, report, av_client, backfill_start=backfill_start):
+                    wrote += 1
+            except AlphaVantageGatewayInvalidSymbolError as exc:
+                return wrote, True, [(report_name, exc)]
+            except BaseException as exc:
+                if _is_recoverable_alpha_vantage_error(exc) and attempt < attempts:
+                    next_pending.append(report)
+                    transient_failures.append((report_name, exc))
+                else:
+                    final_failures.append((report_name, exc))
+
+        if not next_pending:
+            return wrote, False, final_failures
+
+        report_labels = ",".join(sorted({name for name, _ in transient_failures})) or "unknown"
+        mdc.write_warning(
+            f"Transient Alpha Vantage error for {symbol}; attempt {attempt}/{attempts} failed for report(s) "
+            f"[{report_labels}]. Sleeping {sleep_seconds:.1f}s and retrying remaining reports."
+        )
+        client_manager.reset_current()
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        pending_reports = next_pending
+
+    return wrote, False, final_failures
+
+
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
@@ -318,7 +441,7 @@ async def main_async() -> int:
 
     mdc.write_line(f"Starting Alpha Vantage Bronze Finance Ingestion for {len(symbols)} symbols...")
 
-    av_client = AlphaVantageGatewayClient.from_env()
+    client_manager = _ThreadLocalAlphaVantageClientManager()
     backfill_start_ts, _ = get_backfill_range()
     backfill_start = backfill_start_ts.to_pydatetime().date() if backfill_start_ts is not None else None
     if backfill_start is not None:
@@ -339,58 +462,63 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
 
     progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    retry_next_run: set[str] = set()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
-    def worker(symbol: str) -> int:
-        wrote = 0
-        for report in REPORTS:
-            if fetch_and_save_raw(symbol, report, av_client, backfill_start=backfill_start):
-                wrote += 1
-        return wrote
+    def worker(symbol: str) -> tuple[int, bool, list[tuple[str, BaseException]]]:
+        return _process_symbol_with_recovery(
+            symbol,
+            client_manager,
+            backfill_start=backfill_start,
+        )
 
-    async def record_failure(symbol: str, exc: BaseException) -> None:
-        failure_type = type(exc).__name__
-        failure_reason = _format_failure_reason(exc)
+    async def record_failures(symbol: str, failures: list[tuple[str, BaseException]]) -> None:
+        failure_reasons: list[str] = []
         async with progress_lock:
             progress["failed"] += 1
-            failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
-            failure_examples.setdefault(failure_type, f"symbol={symbol} {failure_reason}")
+            retry_next_run.add(symbol)
+            for report_name, exc in failures:
+                failure_type = type(exc).__name__
+                failure_reason = _format_failure_reason(exc)
+                failure_reasons.append(f"report={report_name} {failure_reason}")
+                failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
+                failure_examples.setdefault(
+                    failure_type,
+                    f"symbol={symbol} report={report_name} {failure_reason}",
+                )
             failed_total = progress["failed"]
-            type_total = failure_counts[failure_type]
 
         # Sample detailed failures to avoid log flooding while still exposing root causes.
-        if type_total <= 3 or failed_total % 250 == 0:
+        if failed_total <= 20 or failed_total % 250 == 0:
+            summary = " | ".join(failure_reasons[:4])
             mdc.write_warning(
-                "Bronze AV finance failure: symbol={symbol} {reason} total_failed={failed_total} "
-                "type_failed={type_total}".format(
+                "Bronze AV finance symbol failure: symbol={symbol} total_failed={failed_total} details={summary}".format(
                     symbol=symbol,
-                    reason=failure_reason,
                     failed_total=failed_total,
-                    type_total=type_total,
+                    summary=summary,
                 )
             )
 
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
-                wrote = await loop.run_in_executor(executor, worker, symbol)
-                async with progress_lock:
-                    if wrote:
-                        progress["written"] += 1
-                    else:
-                        progress["skipped"] += 1
-            except AlphaVantageGatewayInvalidSymbolError:
-                list_manager.add_to_blacklist(symbol)
-                async with progress_lock:
-                    progress["blacklisted"] += 1
-            except AlphaVantageGatewayThrottleError as exc:
-                await record_failure(symbol, exc)
-            except AlphaVantageGatewayError as exc:
-                await record_failure(symbol, exc)
+                wrote, blacklisted, failures = await loop.run_in_executor(executor, worker, symbol)
+                if blacklisted:
+                    list_manager.add_to_blacklist(symbol)
+                    async with progress_lock:
+                        progress["blacklisted"] += 1
+                elif failures:
+                    await record_failures(symbol, failures)
+                else:
+                    async with progress_lock:
+                        if wrote:
+                            progress["written"] += 1
+                        else:
+                            progress["skipped"] += 1
             except Exception as exc:
-                await record_failure(symbol, exc)
+                await record_failures(symbol, [("unknown", exc)])
             finally:
                 async with progress_lock:
                     progress["processed"] += 1
@@ -408,7 +536,7 @@ async def main_async() -> int:
         except Exception:
             pass
         try:
-            av_client.close()
+            client_manager.close_all()
         except Exception:
             pass
         try:
@@ -424,6 +552,12 @@ async def main_async() -> int:
             example = failure_examples.get(name)
             if example:
                 mdc.write_warning(f"Bronze AV finance failure example ({name}): {example}")
+    if retry_next_run:
+        preview = ", ".join(sorted(retry_next_run)[:50])
+        suffix = " ..." if len(retry_next_run) > 50 else ""
+        mdc.write_line(
+            f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
+        )
 
     mdc.write_line(
         "Bronze AV finance ingest complete: processed={processed} written={written} skipped={skipped} "

@@ -97,8 +97,28 @@ def test_run_purge_operation_parallel_preserves_target_order(monkeypatch: pytest
         {"layer": "silver", "domain": "earnings", "container": "c", "prefix": "p3"},
     ]
 
-    delay_by_prefix = {"p1": 0.03, "p2": 0.01, "p3": 0.0}
-    deleted_by_prefix = {"p1": 1, "p2": 2, "p3": 3}
+    checkpoint_prefixes = [
+        "system/watermarks/bronze_market_data.json",
+        "system/watermarks/runs/silver_market_data.json",
+        "system/watermarks/bronze_finance_data.json",
+        "system/watermarks/runs/silver_finance_data.json",
+        "system/watermarks/bronze_earnings_data.json",
+        "system/watermarks/runs/silver_earnings_data.json",
+    ]
+    ordered_prefixes = ["p1", "p2", "p3", *checkpoint_prefixes]
+    delay_by_prefix = {prefix: 0.0 for prefix in ordered_prefixes}
+    delay_by_prefix.update({"p1": 0.03, "p2": 0.01})
+    deleted_by_prefix = {
+        "p1": 1,
+        "p2": 2,
+        "p3": 3,
+        "system/watermarks/bronze_market_data.json": 1,
+        "system/watermarks/runs/silver_market_data.json": 1,
+        "system/watermarks/bronze_finance_data.json": 1,
+        "system/watermarks/runs/silver_finance_data.json": 1,
+        "system/watermarks/bronze_earnings_data.json": 1,
+        "system/watermarks/runs/silver_earnings_data.json": 1,
+    }
 
     monkeypatch.setenv("PURGE_SCOPE_MAX_WORKERS", "3")
     monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
@@ -119,9 +139,70 @@ def test_run_purge_operation_parallel_preserves_target_order(monkeypatch: pytest
     payload = system.PurgeRequest(scope="layer", layer="silver", confirm=True)
     result = system._run_purge_operation(payload)
 
-    assert [entry.get("prefix") for entry in result["targets"]] == ["p1", "p2", "p3"]
-    assert [entry.get("deleted") for entry in result["targets"]] == [1, 2, 3]
-    assert result["totalDeleted"] == 6
+    assert [entry.get("prefix") for entry in result["targets"]] == ordered_prefixes
+    assert [entry.get("deleted") for entry in result["targets"]] == [deleted_by_prefix[prefix] for prefix in ordered_prefixes]
+    assert result["totalDeleted"] == sum(deleted_by_prefix.values())
+
+
+def test_build_silver_checkpoint_reset_targets_for_layer_scope_includes_all_silver_jobs() -> None:
+    targets = [{"layer": "silver", "domain": None, "container": "silver", "prefix": None}]
+
+    reset_targets = system._build_silver_checkpoint_reset_targets(targets)
+
+    assert [entry.get("prefix") for entry in reset_targets] == [
+        "system/watermarks/bronze_market_data.json",
+        "system/watermarks/runs/silver_market_data.json",
+        "system/watermarks/bronze_finance_data.json",
+        "system/watermarks/runs/silver_finance_data.json",
+        "system/watermarks/bronze_earnings_data.json",
+        "system/watermarks/runs/silver_earnings_data.json",
+        "system/watermarks/bronze_price_target_data.json",
+        "system/watermarks/runs/silver_price_target_data.json",
+    ]
+
+
+def test_build_gold_checkpoint_reset_targets_for_layer_scope_includes_all_gold_jobs() -> None:
+    targets = [{"layer": "gold", "domain": None, "container": "gold", "prefix": None}]
+
+    reset_targets = system._build_gold_checkpoint_reset_targets(targets)
+
+    assert [entry.get("prefix") for entry in reset_targets] == [
+        "system/watermarks/gold_market_features.json",
+        "system/watermarks/gold_finance_features.json",
+        "system/watermarks/gold_earnings_features.json",
+        "system/watermarks/gold_price_target_features.json",
+    ]
+
+
+def test_run_purge_operation_appends_gold_checkpoint_resets(monkeypatch: pytest.MonkeyPatch) -> None:
+    targets = [{"layer": "gold", "domain": "market", "container": "g", "prefix": "market/"}]
+    deleted_by_prefix = {
+        "market/": 3,
+        "system/watermarks/gold_market_features.json": 1,
+    }
+
+    monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False):
+            self.container_name = container_name
+
+        def has_blobs(self, prefix):
+            return True
+
+        def delete_prefix(self, prefix):
+            return deleted_by_prefix[prefix]
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = system.PurgeRequest(scope="layer-domain", layer="gold", domain="market", confirm=True)
+    result = system._run_purge_operation(payload)
+
+    assert [entry.get("prefix") for entry in result["targets"]] == [
+        "market/",
+        "system/watermarks/gold_market_features.json",
+    ]
+    assert result["totalDeleted"] == 4
 
 
 def test_run_purge_symbol_operation_parallel_preserves_layer_order(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LeftNavigation } from '../components/layout/LeftNavigation';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -73,5 +73,31 @@ describe('LeftNavigation', () => {
     // The component uses 'collapsed' state to change classes.
     // We expect the button to exist and be clickable.
     expect(toggleButton).toBeDefined();
+  });
+
+  it('moves pinned items to the pinned section without duplication', async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <LeftNavigation />
+        </BrowserRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Data Quality').length).toBe(1);
+    });
+
+    const dataQualityLink = screen.getByRole('link', { name: 'Data Quality' });
+    const navRow = dataQualityLink.closest('div.group.relative.flex.items-center');
+    expect(navRow).toBeTruthy();
+
+    const pinButton = navRow?.querySelector('button[title="Pin to top"]');
+    expect(pinButton).toBeTruthy();
+
+    fireEvent.click(pinButton as HTMLButtonElement);
+
+    expect(screen.getByText('PINNED')).toBeDefined();
+    expect(screen.getAllByText('Data Quality').length).toBe(1);
   });
 });
