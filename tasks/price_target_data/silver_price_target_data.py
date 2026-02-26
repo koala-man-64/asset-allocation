@@ -24,6 +24,11 @@ from tasks.common.silver_contracts import (
     normalize_date_column,
     normalize_columns_to_snake_case,
 )
+from tasks.common.market_reconciliation import (
+    collect_bronze_price_target_symbols_from_blob_infos,
+    collect_delta_market_symbols,
+    purge_orphan_tables,
+)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -231,13 +236,33 @@ def process_blob(blob, *, watermarks: dict) -> str:
         return "failed"
 
 
+def _run_price_target_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
+    if silver_client is None:
+        raise RuntimeError("Silver price-target reconciliation requires silver storage client.")
+
+    bronze_symbols = collect_bronze_price_target_symbols_from_blob_infos(bronze_blob_list)
+    silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix="price-target-data")
+    orphan_symbols, deleted_blobs = purge_orphan_tables(
+        upstream_symbols=bronze_symbols,
+        downstream_symbols=silver_symbols,
+        downstream_path_builder=DataPaths.get_price_target_path,
+        delete_prefix=silver_client.delete_prefix,
+    )
+    if orphan_symbols:
+        mdc.write_line(
+            "Silver price-target reconciliation purged orphan symbols: "
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+        )
+    else:
+        mdc.write_line("Silver price-target reconciliation: no orphan symbols detected.")
+    return len(orphan_symbols), deleted_blobs
+
+
 def main():
     mdc.log_environment_diagnostics()
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
-        mdc.write_line(
-            f"Applying historical cutoff to silver price-target data: {backfill_start.date().isoformat()}"
-        )
+        mdc.write_line(f"Applying historical cutoff to silver price-target data: {backfill_start.date().isoformat()}")
     mdc.write_line("Listing Bronze Price Target files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     watermarks = load_watermarks("bronze_price_target_data")
@@ -295,14 +320,27 @@ def main():
         else:
             failed += 1
 
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    try:
+        reconciliation_orphans, reconciliation_deleted_blobs = _run_price_target_reconciliation(
+            bronze_blob_list=blob_list
+        )
+    except Exception as exc:
+        reconciliation_failed = 1
+        mdc.write_error(f"Silver price-target reconciliation failed: {exc}")
+
+    total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver price target job complete: "
         f"ok_or_skipped={ok_or_skipped} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} "
-        f"skipped_checkpoint={checkpoint_skipped} failed={failed}"
+        f"skipped_checkpoint={checkpoint_skipped} reconciled_orphans={reconciliation_orphans} "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} failed={total_failed}"
     )
     if watermarks_dirty:
         save_watermarks("bronze_price_target_data", watermarks)
-    if failed == 0:
+    if total_failed == 0:
         save_last_success(
             "silver_price_target_data",
             metadata={
@@ -311,6 +349,8 @@ def main():
                 "ok_or_skipped": ok_or_skipped,
                 "skipped_checkpoint": checkpoint_skipped,
                 "forced_schema_migration": forced_schema_migration,
+                "reconciled_orphans": reconciliation_orphans,
+                "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },
         )
         return 0

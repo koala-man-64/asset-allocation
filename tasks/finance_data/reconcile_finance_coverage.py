@@ -87,17 +87,26 @@ def _build_report() -> dict:
     silver = _collect_silver_symbols()
 
     by_subfolder: Dict[str, dict] = {}
-    total_missing = 0
+    total_bronze_only = 0
+    total_silver_only = 0
     for _, silver_folder, _ in _FINANCE_SUBFOLDERS:
         bronze_symbols = bronze.get(silver_folder, set())
         silver_symbols = silver.get(silver_folder, set())
-        missing = sorted(bronze_symbols - silver_symbols)
-        total_missing += len(missing)
+        bronze_only = sorted(bronze_symbols - silver_symbols)
+        silver_only = sorted(silver_symbols - bronze_symbols)
+        total_bronze_only += len(bronze_only)
+        total_silver_only += len(silver_only)
         by_subfolder[silver_folder] = {
             "bronzeSymbolCount": len(bronze_symbols),
             "silverSymbolCount": len(silver_symbols),
-            "lagSymbolCount": len(missing),
-            "lagSymbolSample": missing[:100],
+            # Backward-compatible lag fields (bronze-only symbols).
+            "lagSymbolCount": len(bronze_only),
+            "lagSymbolSample": bronze_only[:100],
+            # Explicit directional drift fields.
+            "bronzeOnlySymbolCount": len(bronze_only),
+            "bronzeOnlySymbolSample": bronze_only[:100],
+            "silverOnlySymbolCount": len(silver_only),
+            "silverOnlySymbolSample": silver_only[:100],
         }
 
     return {
@@ -105,7 +114,9 @@ def _build_report() -> dict:
         "generatedAt": generated_at,
         "domain": "finance",
         "layerPair": "bronze->silver",
-        "totalLagSymbolCount": total_missing,
+        "totalLagSymbolCount": total_bronze_only,
+        "totalBronzeOnlySymbolCount": total_bronze_only,
+        "totalSilverOnlySymbolCount": total_silver_only,
         "subfolders": by_subfolder,
     }
 

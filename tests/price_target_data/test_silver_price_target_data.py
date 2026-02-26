@@ -1,6 +1,8 @@
 import pandas as pd
+import pytest
 
 from tasks.price_target_data import silver_price_target_data as silver
+from core.pipeline import DataPaths
 
 
 def _sample_price_target_frame(date_value: pd.Timestamp) -> pd.DataFrame:
@@ -124,3 +126,39 @@ def test_process_blob_applies_backfill_start_cutoff(monkeypatch):
     assert status == "ok"
     assert "df" in captured
     assert pd.to_datetime(captured["df"]["obs_date"]).min().date().isoformat() >= "2024-01-01"
+
+
+def test_run_price_target_reconciliation_purges_silver_orphans(monkeypatch):
+    class _FakeSilverClient:
+        def __init__(self) -> None:
+            self.deleted_paths: list[str] = []
+
+        def delete_prefix(self, path: str) -> int:
+            self.deleted_paths.append(path)
+            return 3
+
+    fake_client = _FakeSilverClient()
+    monkeypatch.setattr(silver, "silver_client", fake_client)
+    monkeypatch.setattr(
+        silver,
+        "collect_delta_market_symbols",
+        lambda *, client, root_prefix: {"AAPL", "MSFT"},
+    )
+
+    orphan_count, deleted_blobs = silver._run_price_target_reconciliation(
+        bronze_blob_list=[
+            {"name": "price-target-data/AAPL.parquet"},
+            {"name": "price-target-data/not_used.json"},
+        ]
+    )
+
+    assert orphan_count == 1
+    assert deleted_blobs == 3
+    assert fake_client.deleted_paths == [DataPaths.get_price_target_path("MSFT")]
+
+
+def test_run_price_target_reconciliation_requires_storage_client(monkeypatch):
+    monkeypatch.setattr(silver, "silver_client", None)
+
+    with pytest.raises(RuntimeError, match="requires silver storage client"):
+        silver._run_price_target_reconciliation(bronze_blob_list=[])

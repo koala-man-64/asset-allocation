@@ -106,6 +106,7 @@ def test_collect_delta_table_metadata_parses_string_date_stats(monkeypatch) -> N
 
 def _fake_add_action_factory() -> type:
     """Build a fake add-actions object for collect_delta_table_metadata tests."""
+
     class _FakeStructArray:
         def __init__(self, rows: list[dict[str, object]]) -> None:
             self._rows = rows
@@ -224,15 +225,15 @@ def test_collect_delta_table_metadata_uses_partition_values(monkeypatch) -> None
         def get_add_actions(self, *args, **kwargs):
             return fake_actions(
                 [
-                        {
-                            "num_records": 2,
-                            "size_bytes": 160,
-                            "partition_values": {"date": "2024-05-01"},
-                        },
-                        {
-                            "num_records": 1,
-                            "size_bytes": 80,
-                            "partition_values": {"Date": "2024-05-03"},
+                    {
+                        "num_records": 2,
+                        "size_bytes": 160,
+                        "partition_values": {"date": "2024-05-01"},
+                    },
+                    {
+                        "num_records": 1,
+                        "size_bytes": 80,
+                        "partition_values": {"Date": "2024-05-03"},
                     },
                 ]
             )
@@ -263,9 +264,7 @@ def test_collect_delta_table_metadata_handles_no_files_in_log_segment(monkeypatc
     assert meta["totalBytes"] == 0
     assert meta["totalRows"] == 0
     assert meta["dateRange"] is None
-    assert warnings == [
-        "Delta table not readable at market-data/AAPL; no commit files found in _delta_log yet."
-    ]
+    assert warnings == ["Delta table not readable at market-data/AAPL; no commit files found in _delta_log yet."]
 
 
 def test_count_finance_symbols_from_listing_dedupes_and_tracks_subfolders() -> None:
@@ -316,10 +315,16 @@ def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) 
         def list_blobs(self, *, name_starts_with: str):
             assert name_starts_with == "finance-data/"
             return [
-                _Blob("finance-data/balance_sheet/AAPL_quarterly_balance-sheet/_delta_log/00000000000000000000.json", 10),
-                _Blob("finance-data/income_statement/AAPL_quarterly_financials/_delta_log/00000000000000000000.json", 11),
+                _Blob(
+                    "finance-data/balance_sheet/AAPL_quarterly_balance-sheet/_delta_log/00000000000000000000.json", 10
+                ),
+                _Blob(
+                    "finance-data/income_statement/AAPL_quarterly_financials/_delta_log/00000000000000000000.json", 11
+                ),
                 _Blob("finance-data/cash_flow/MSFT_quarterly_cash-flow/_delta_log/00000000000000000000.json", 12),
-                _Blob("finance-data/valuation/MSFT_quarterly_valuation_measures/_delta_log/00000000000000000000.json", 13),
+                _Blob(
+                    "finance-data/valuation/MSFT_quarterly_valuation_measures/_delta_log/00000000000000000000.json", 13
+                ),
             ]
 
     class _FakeBlobStorageClient:
@@ -629,5 +634,5 @@ def test_collect_domain_metadata_enriches_finance_coverage_status(monkeypatch) -
 
     assert payload["coverageStatus"] == "lagging"
     assert payload["lagSymbolCount"] == 7
+    assert payload["silverOnlySymbolCount"] == 0
     assert payload["asOfCutoff"] == "2026-02-26T17:00:00+00:00"
-

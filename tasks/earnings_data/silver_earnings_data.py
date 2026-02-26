@@ -1,4 +1,3 @@
-
 import pandas as pd
 from datetime import datetime
 
@@ -28,10 +27,16 @@ from tasks.common.silver_contracts import (
     normalize_date_column,
     normalize_columns_to_snake_case,
 )
+from tasks.common.market_reconciliation import (
+    collect_bronze_earnings_symbols_from_blob_infos,
+    collect_delta_market_symbols,
+    purge_orphan_tables,
+)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
+
 
 def process_file(blob_name: str) -> bool:
     """
@@ -41,33 +46,35 @@ def process_file(blob_name: str) -> bool:
     """
     return process_blob({"name": blob_name}, watermarks={}) != "failed"
 
+
 def process_blob(blob: dict, *, watermarks: dict) -> str:
     blob_name = blob["name"]  # earnings-data/{symbol}.json
     if not blob_name.endswith(".json"):
         return "skipped_non_json"
 
     # Expecting earnings-data/{symbol}.json
-    prefix_len = len(cfg.EARNINGS_DATA_PREFIX) + 1 # +1 for slash
-    ticker = blob_name[prefix_len:].replace('.json', '')
+    prefix_len = len(cfg.EARNINGS_DATA_PREFIX) + 1  # +1 for slash
+    ticker = blob_name[prefix_len:].replace(".json", "")
     mdc.write_line(f"Processing {ticker} from {blob_name}...")
 
     cloud_path = DataPaths.get_earnings_path(ticker)
     unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
     if unchanged:
         return "skipped_unchanged"
-    
+
     # 1. Read Raw from Bronze
     try:
         raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
         from io import BytesIO
+
         # JSON
-        df_new = pd.read_json(BytesIO(raw_bytes), orient='records')
+        df_new = pd.read_json(BytesIO(raw_bytes), orient="records")
     except Exception as e:
         mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
         return "failed"
 
     # 2. Clean/Normalize
-    df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors='ignore')
+    df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors="ignore")
     try:
         df_new = normalize_date_column(
             df_new,
@@ -75,14 +82,12 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
             aliases=("Date", "date"),
             canonical="Date",
         )
-        df_new = assert_no_unexpected_mixed_empty(
-            df_new, context=f"earnings date filter {blob_name}", alias="Date"
-        )
+        df_new = assert_no_unexpected_mixed_empty(df_new, context=f"earnings date filter {blob_name}", alias="Date")
     except ContractViolation as exc:
         log_contract_violation(f"earnings preflight failed for {blob_name}", exc, severity="ERROR")
         return "failed"
-    
-    df_new['Symbol'] = ticker
+
+    df_new["Symbol"] = ticker
 
     backfill_start, backfill_end = get_backfill_range()
     if backfill_start or backfill_end:
@@ -95,14 +100,14 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
     if latest_only and "Date" in df_new.columns and not df_new.empty:
         latest_date = df_new["Date"].max()
         df_new = df_new[df_new["Date"] == latest_date].copy()
-    
+
     # 3. Load Existing Silver (History)
     df_history = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
-    
+
     # 4. Merge
     # Earnings data is tricky. We often want to UPDATE fields (Surprise) for past dates.
     # Simple strategy: Concat -> Drop Duplicates on [Symbol, Date] -> Keep Last (Latest Snapshot version of that date).
-    
+
     if df_history is None or df_history.empty:
         df_merged = df_new
     else:
@@ -112,14 +117,14 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         elif "date" in df_history.columns:
             df_history = df_history.rename(columns={"date": "Date"})
             df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
-            
+
         df_merged = pd.concat([df_history, df_new], ignore_index=True)
-    
+
     # Sort
-    df_merged = df_merged.sort_values(by=['Date'], ascending=True)
-    
+    df_merged = df_merged.sort_values(by=["Date"], ascending=True)
+
     # Dedup: Keep LAST (Newest information for that Earnings Date)
-    df_merged = df_merged.drop_duplicates(subset=['Date', 'Symbol'], keep='last')
+    df_merged = df_merged.drop_duplicates(subset=["Date", "Symbol"], keep="last")
     df_merged = df_merged.reset_index(drop=True)
 
     # Enforce shared backfill cutoff on final merged Silver payload.
@@ -147,7 +152,7 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         return "failed"
 
     df_merged = normalize_columns_to_snake_case(df_merged)
-    
+
     # 5. Write to Silver
     try:
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
@@ -170,20 +175,44 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         watermarks[blob_name] = signature
     return "ok"
 
+
+def _run_earnings_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
+    if silver_client is None:
+        raise RuntimeError("Silver earnings reconciliation requires silver storage client.")
+
+    bronze_symbols = collect_bronze_earnings_symbols_from_blob_infos(bronze_blob_list)
+    earnings_prefix = str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/")
+    silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix=earnings_prefix)
+    orphan_symbols, deleted_blobs = purge_orphan_tables(
+        upstream_symbols=bronze_symbols,
+        downstream_symbols=silver_symbols,
+        downstream_path_builder=DataPaths.get_earnings_path,
+        delete_prefix=silver_client.delete_prefix,
+    )
+    if orphan_symbols:
+        mdc.write_line(
+            "Silver earnings reconciliation purged orphan symbols: "
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+        )
+    else:
+        mdc.write_line("Silver earnings reconciliation: no orphan symbols detected.")
+    return len(orphan_symbols), deleted_blobs
+
+
 def main():
     mdc.log_environment_diagnostics()
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to silver earnings data: {backfill_start.date().isoformat()}")
-    
+
     mdc.write_line("Listing Bronze files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="earnings-data/")
     watermarks = load_watermarks("bronze_earnings_data")
     last_success = load_last_success("silver_earnings_data")
     watermarks_dirty = False
     blob_list = [b for b in blobs if b["name"].endswith(".json")]
-    
-    if hasattr(cfg, 'DEBUG_SYMBOLS') and cfg.DEBUG_SYMBOLS:
+
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Filtering for {cfg.DEBUG_SYMBOLS}")
         blob_list = [b for b in blob_list if any(s in b["name"] for s in cfg.DEBUG_SYMBOLS)]
 
@@ -207,7 +236,7 @@ def main():
             f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} skipped_checkpoint={checkpoint_skipped}"
         )
     mdc.write_line(f"Found {len(blob_list)} files total; {len(candidate_blobs)} candidate files to process.")
-    
+
     processed = 0
     failed = 0
     skipped_unchanged = 0
@@ -224,14 +253,27 @@ def main():
         else:
             failed += 1
 
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    try:
+        reconciliation_orphans, reconciliation_deleted_blobs = _run_earnings_reconciliation(bronze_blob_list=blob_list)
+    except Exception as exc:
+        reconciliation_failed = 1
+        mdc.write_error(f"Silver earnings reconciliation failed: {exc}")
+
+    total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver earnings job complete: "
         f"processed={processed} skipped_unchanged={skipped_unchanged} "
-        f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} failed={failed}"
+        f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} "
+        f"reconciled_orphans={reconciliation_orphans} "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} "
+        f"failed={total_failed}"
     )
     if watermarks_dirty:
         save_watermarks("bronze_earnings_data", watermarks)
-    if failed == 0:
+    if total_failed == 0:
         save_last_success(
             "silver_earnings_data",
             metadata={
@@ -241,10 +283,13 @@ def main():
                 "skipped_checkpoint": checkpoint_skipped,
                 "skipped_unchanged": skipped_unchanged,
                 "skipped_other": skipped_other,
+                "reconciled_orphans": reconciliation_orphans,
+                "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },
         )
         return 0
     return 1
+
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env

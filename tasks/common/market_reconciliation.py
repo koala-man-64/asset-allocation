@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Sequence, Set, Tuple
 
+_FINANCE_BRONZE_SUBFOLDERS = {
+    "Balance Sheet",
+    "Income Statement",
+    "Cash Flow",
+    "Valuation",
+}
+_FINANCE_SUFFIXES = (
+    "quarterly_balance-sheet",
+    "quarterly_financials",
+    "quarterly_cash-flow",
+    "quarterly_valuation_measures",
+)
 _FINANCE_SILVER_SUBFOLDERS = {
     "balance_sheet",
     "income_statement",
@@ -21,6 +33,52 @@ def _extract_bronze_market_symbol(blob_name: str) -> Optional[str]:
         return None
     symbol = filename[: -len(".csv")].strip()
     return symbol or None
+
+
+def _extract_bronze_earnings_symbol(blob_name: str) -> Optional[str]:
+    parts = str(blob_name or "").strip("/").split("/")
+    if len(parts) != 2 or parts[0] != "earnings-data":
+        return None
+    filename = parts[1].strip()
+    if not filename.endswith(".json"):
+        return None
+    if filename in {"whitelist.csv", "blacklist.csv"}:
+        return None
+    symbol = filename[: -len(".json")].strip()
+    return symbol or None
+
+
+def _extract_bronze_price_target_symbol(blob_name: str) -> Optional[str]:
+    parts = str(blob_name or "").strip("/").split("/")
+    if len(parts) != 2 or parts[0] != "price-target-data":
+        return None
+    filename = parts[1].strip()
+    if not filename.endswith(".parquet"):
+        return None
+    if filename in {"whitelist.csv", "blacklist.csv"}:
+        return None
+    symbol = filename[: -len(".parquet")].strip()
+    return symbol or None
+
+
+def _extract_bronze_finance_symbol(blob_name: str) -> Optional[str]:
+    parts = str(blob_name or "").strip("/").split("/")
+    if len(parts) != 3:
+        return None
+    if parts[0] != "finance-data":
+        return None
+    if parts[1] not in _FINANCE_BRONZE_SUBFOLDERS:
+        return None
+    filename = parts[2].strip()
+    if not filename.endswith(".json"):
+        return None
+    stem = filename[: -len(".json")].strip()
+    for suffix in _FINANCE_SUFFIXES:
+        token = f"_{suffix}"
+        if stem.endswith(token):
+            symbol = stem[: -len(token)].strip()
+            return symbol or None
+    return None
 
 
 def _extract_delta_symbol(blob_name: str, *, root_prefix: str) -> Optional[str]:
@@ -56,6 +114,33 @@ def collect_bronze_market_symbols_from_blob_infos(blob_infos: Sequence[dict[str,
     symbols: Set[str] = set()
     for blob in blob_infos:
         symbol = _extract_bronze_market_symbol(str(blob.get("name") or ""))
+        if symbol:
+            symbols.add(symbol)
+    return symbols
+
+
+def collect_bronze_earnings_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
+    symbols: Set[str] = set()
+    for blob in blob_infos:
+        symbol = _extract_bronze_earnings_symbol(str(blob.get("name") or ""))
+        if symbol:
+            symbols.add(symbol)
+    return symbols
+
+
+def collect_bronze_price_target_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
+    symbols: Set[str] = set()
+    for blob in blob_infos:
+        symbol = _extract_bronze_price_target_symbol(str(blob.get("name") or ""))
+        if symbol:
+            symbols.add(symbol)
+    return symbols
+
+
+def collect_bronze_finance_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
+    symbols: Set[str] = set()
+    for blob in blob_infos:
+        symbol = _extract_bronze_finance_symbol(str(blob.get("name") or ""))
         if symbol:
             symbols.add(symbol)
     return symbols

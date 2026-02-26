@@ -38,6 +38,11 @@ from tasks.common.silver_contracts import (
     require_non_empty_frame,
     normalize_columns_to_snake_case,
 )
+from tasks.common.market_reconciliation import (
+    collect_bronze_finance_symbols_from_blob_infos,
+    collect_delta_silver_finance_symbols,
+    purge_orphan_tables,
+)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -61,6 +66,12 @@ _KNOWN_FINANCE_SUFFIXES: Tuple[str, ...] = (
     "quarterly_valuation_measures",
     "quarterly_cash-flow",
     "quarterly_financials",
+)
+_FINANCE_RECONCILIATION_TABLES: Tuple[Tuple[str, str], ...] = (
+    ("balance_sheet", "quarterly_balance-sheet"),
+    ("income_statement", "quarterly_financials"),
+    ("cash_flow", "quarterly_cash-flow"),
+    ("valuation", "quarterly_valuation_measures"),
 )
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
@@ -201,6 +212,36 @@ def _build_checkpoint_candidates(
         else:
             checkpoint_skipped += 1
     return candidates, checkpoint_skipped
+
+
+def _run_finance_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
+    if silver_client is None:
+        raise RuntimeError("Silver finance reconciliation requires silver storage client.")
+
+    bronze_symbols = collect_bronze_finance_symbols_from_blob_infos(bronze_blob_list)
+    silver_symbols = collect_delta_silver_finance_symbols(client=silver_client)
+
+    def _delete_symbol_tables(symbol: str) -> int:
+        deleted = 0
+        for folder, suffix in _FINANCE_RECONCILIATION_TABLES:
+            table_path = DataPaths.get_finance_path(folder, symbol, suffix)
+            deleted += int(silver_client.delete_prefix(table_path) or 0)
+        return deleted
+
+    orphan_symbols, deleted_blobs = purge_orphan_tables(
+        upstream_symbols=bronze_symbols,
+        downstream_symbols=silver_symbols,
+        downstream_path_builder=lambda symbol: symbol,
+        delete_prefix=_delete_symbol_tables,
+    )
+    if orphan_symbols:
+        mdc.write_line(
+            "Silver finance reconciliation purged orphan symbols: "
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+        )
+    else:
+        mdc.write_line("Silver finance reconciliation: no orphan symbols detected.")
+    return len(orphan_symbols), deleted_blobs
 
 
 def _normalize_key(name: Any) -> str:
@@ -353,6 +394,7 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
 
     return pd.DataFrame()
 
+
 def _utc_today() -> pd.Timestamp:
     return pd.Timestamp(datetime.now(timezone.utc).date())
 
@@ -361,31 +403,32 @@ def resample_daily_ffill(df: pd.DataFrame, *, extend_to: Optional[pd.Timestamp] 
     """
     Resamples sparse dataframe to daily frequency using forward fill.
     """
-    if 'Date' not in df.columns:
+    if "Date" not in df.columns:
         return df
-        
+
     df = df.copy()
-    df['Date'] = pd.to_datetime(df['Date'], errors="coerce", utc=True).dt.tz_convert(None)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
     df = df.dropna(subset=["Date"])
     if df.empty:
         return df
 
-    df = df.set_index('Date')
+    df = df.set_index("Date")
     df = df.sort_index()
-    
+
     # Resample and ffill
     # We must restrict to the known date range
     if df.empty:
         return df
-        
+
     end = df.index.max()
     if extend_to is not None and extend_to > end:
         end = extend_to
 
     full_range = pd.date_range(start=df.index.min(), end=end, freq="D", name="Date")
     df_daily = df.reindex(full_range).ffill()
-    
+
     return df_daily.reset_index()
+
 
 def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
     return align_to_existing_schema(df, container=container, path=path)
@@ -398,7 +441,7 @@ def process_blob(
     backfill_start: Optional[pd.Timestamp] = None,
     watermarks: dict,
 ) -> BlobProcessResult:
-    blob_name = blob['name'] 
+    blob_name = blob["name"]
     parsed_blob = _parse_supported_blob_name(blob_name)
     if parsed_blob is None:
         return BlobProcessResult(
@@ -409,7 +452,7 @@ def process_blob(
             error=f"Unsupported finance blob format: {blob_name}",
         )
     folder_name, ticker, suffix = parsed_blob
-    
+
     # Silver Path
     # Use DataPaths or manual? DataPaths uses folder name.
     # DataPaths.get_finance_path(folder_name, ticker, suffix)
@@ -422,7 +465,7 @@ def process_blob(
             ticker=ticker,
             status="skipped",
         )
-    
+
     unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
     if unchanged:
         return BlobProcessResult(
@@ -433,7 +476,7 @@ def process_blob(
         )
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
-    
+
     try:
         raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
         df_raw = _read_finance_json(raw_bytes, ticker=ticker, suffix=suffix)
@@ -450,9 +493,7 @@ def process_blob(
         df_clean = df_raw
 
         try:
-            df_clean = require_non_empty_frame(
-                df_clean, context=f"finance preflight {blob_name}"
-            )
+            df_clean = require_non_empty_frame(df_clean, context=f"finance preflight {blob_name}")
             df_clean = normalize_date_column(
                 df_clean,
                 context=f"finance date parse {blob_name}",
@@ -504,7 +545,7 @@ def process_blob(
                 status="failed",
                 error=f"Storage client unavailable for cutoff purge {silver_path}.",
             )
-        
+
         # Resample to daily frequency (forward fill)
         df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
         if df_clean is None or df_clean.empty:
@@ -515,17 +556,17 @@ def process_blob(
                 status="failed",
                 error="No valid dated rows after cleaning/resample.",
             )
-        
-        # Write to Silver (Overwrite is fine for finance snapshots, or merge? 
-        # Typically Finance Sheets are full snapshots. Replacing is safer for consistency, 
-        # but if we want history of OLD financial restatements... 
+
+        # Write to Silver (Overwrite is fine for finance snapshots, or merge?
+        # Typically Finance Sheets are full snapshots. Replacing is safer for consistency,
+        # but if we want history of OLD financial restatements...
         # Current logic: Overwrite/Upsert. store_delta defaults to append?
         # Let's use overwrite mode for now as Transposed data is simpler.
-        # But wait, store_delta default implementation? 
-        # Checking delta_core usage: usually it appends or overwrites. 
+        # But wait, store_delta default implementation?
+        # Checking delta_core usage: usually it appends or overwrites.
         # I'll check store_delta signature in next turn if needed.
         # Assuming overwrite for the partition/table is safest for now to avoid specific duplicates.
-        
+
         df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
         df_clean = normalize_columns_to_snake_case(df_clean)
         delta_core.store_delta(
@@ -557,7 +598,7 @@ def process_blob(
             rows_written=int(len(df_clean)),
             watermark_signature=watermark_signature,
         )
-        
+
     except Exception as e:
         mdc.write_error(f"Failed to process {blob_name}: {e}")
         return BlobProcessResult(
@@ -577,9 +618,7 @@ def _process_candidate_blobs(
     watermarks: dict,
 ) -> tuple[list[BlobProcessResult], float]:
     max_workers = _get_ingest_max_workers()
-    mdc.write_line(
-        f"Silver finance ingest workers={max_workers} candidates={len(candidate_blobs)}."
-    )
+    mdc.write_line(f"Silver finance ingest workers={max_workers} candidates={len(candidate_blobs)}.")
 
     ingest_started = time.perf_counter()
     results: list[BlobProcessResult] = []
@@ -635,9 +674,7 @@ def main() -> int:
     desired_end = _utc_today()
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
-        mdc.write_line(
-            f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}"
-        )
+        mdc.write_line(f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}")
     mdc.write_line("Listing Bronze Finance files...")
 
     manifest_run_id: Optional[str] = None
@@ -657,8 +694,9 @@ def main() -> int:
                 initial_blobs = _select_preferred_blob_candidates(manifest_blobs(manifest))
                 initial_source = "bronze-manifest"
                 mdc.write_line(
-                    "Silver finance will consume bronze manifest runId={run_id} manifestBlobs={blob_count}."
-                    .format(run_id=manifest_run_id, blob_count=len(initial_blobs))
+                    "Silver finance will consume bronze manifest runId={run_id} manifestBlobs={blob_count}.".format(
+                        run_id=manifest_run_id, blob_count=len(initial_blobs)
+                    )
                 )
             elif candidate_run_id:
                 mdc.write_line(
@@ -678,6 +716,7 @@ def main() -> int:
     checkpoint_skipped_total = 0
     all_results: list[BlobProcessResult] = []
     total_ingest_elapsed = 0.0
+    reconciliation_source_blobs: list[dict] = list(initial_blobs)
 
     while pass_count < max_passes:
         pass_count += 1
@@ -688,6 +727,7 @@ def main() -> int:
             deduped_total += deduped
 
         current_blob_names = {str(item.get("name", "")).strip() for item in blobs if item.get("name")}
+        reconciliation_source_blobs = list(blobs)
         if pass_count > 1:
             newly_seen = current_blob_names - seen_blob_names
             if newly_seen:
@@ -714,8 +754,7 @@ def main() -> int:
 
         mdc.write_line(
             "Silver finance ingest pass {pass_no}/{max_passes}: source={source} total={total} "
-            "candidates={candidates} skipped_checkpoint={skipped}."
-            .format(
+            "candidates={candidates} skipped_checkpoint={skipped}.".format(
                 pass_no=pass_count,
                 max_passes=max_passes,
                 source=initial_source if pass_count == 1 else "live-listing",
@@ -744,6 +783,7 @@ def main() -> int:
     lag_candidate_count = 0
     try:
         latest_blobs, deduped = _list_bronze_finance_candidates()
+        reconciliation_source_blobs = list(latest_blobs)
         deduped_total += deduped
         lag_candidates, _ = _build_checkpoint_candidates(
             blobs=latest_blobs,
@@ -760,20 +800,33 @@ def main() -> int:
     attempts = len(all_results)
     distinct_tickers = len({str(r.ticker).strip() for r in all_results if r.ticker})
     rows_written = sum(int(r.rows_written or 0) for r in all_results if r.status == "ok")
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    try:
+        reconciliation_orphans, reconciliation_deleted_blobs = _run_finance_reconciliation(
+            bronze_blob_list=reconciliation_source_blobs
+        )
+    except Exception as exc:
+        reconciliation_failed = 1
+        mdc.write_error(f"Silver finance reconciliation failed: {exc}")
+
+    total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver finance ingest complete: "
-        f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={failed}, "
+        f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={total_failed}, "
         f"skippedCheckpoint={checkpoint_skipped_first_pass}, "
         f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={total_ingest_elapsed:.2f}, "
         f"passes={pass_count}, newlyDiscoveredAfterFirstPass={len(newly_discovered_blob_names)}, "
-        f"lagCandidates={lag_candidate_count}"
+        f"lagCandidates={lag_candidate_count}, reconciled_orphans={reconciliation_orphans}, "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}"
     )
     if watermarks_dirty:
         save_watermarks("bronze_finance_data", watermarks)
 
     run_ended_at = datetime.now(timezone.utc)
     manifest_ack_path: Optional[str] = None
-    if failed == 0:
+    if total_failed == 0:
         checkpoint_metadata = {
             "total_blobs": len(initial_blobs),
             "source": initial_source,
@@ -793,6 +846,8 @@ def main() -> int:
             "deduped_candidates_total": deduped_total,
             "manifest_run_id": manifest_run_id,
             "manifest_path": manifest_path,
+            "reconciled_orphans": reconciliation_orphans,
+            "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
         }
         save_last_success(
             "silver_finance_data",
@@ -806,7 +861,7 @@ def main() -> int:
                 status="succeeded",
                 metadata={
                     "processed": processed,
-                    "failed": failed,
+                    "failed": total_failed,
                     "skipped": skipped,
                     "attempts": attempts,
                     "rows_written": rows_written,
@@ -815,15 +870,12 @@ def main() -> int:
                 },
             )
             if manifest_ack_path:
-                mdc.write_line(
-                    f"Silver finance manifest ack written: runId={manifest_run_id} path={manifest_ack_path}"
-                )
+                mdc.write_line(f"Silver finance manifest ack written: runId={manifest_run_id} path={manifest_ack_path}")
         return 0
     if manifest_run_id:
-        mdc.write_warning(
-            f"Silver finance run failed; bronze manifest runId={manifest_run_id} was not acknowledged."
-        )
+        mdc.write_warning(f"Silver finance run failed; bronze manifest runId={manifest_run_id} was not acknowledged.")
     return 1
+
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env

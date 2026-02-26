@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from tasks.common.market_reconciliation import (
+    collect_bronze_earnings_symbols_from_blob_infos,
+    collect_bronze_finance_symbols_from_blob_infos,
     collect_delta_silver_finance_symbols,
+    collect_bronze_price_target_symbols_from_blob_infos,
     collect_bronze_market_symbols_from_blob_infos,
     collect_delta_market_symbols,
     purge_orphan_market_tables,
@@ -77,3 +80,43 @@ def test_collect_delta_silver_finance_symbols_extracts_union_of_subfolders() -> 
     symbols = collect_delta_silver_finance_symbols(client=_Client())
 
     assert symbols == {"AAPL", "MSFT", "NVDA", "TSLA"}
+
+
+def test_collect_bronze_earnings_symbols_extracts_json_symbols() -> None:
+    blob_infos = [
+        {"name": "earnings-data/AAPL.json"},
+        {"name": "earnings-data/MSFT.json"},
+        {"name": "earnings-data/whitelist.csv"},
+        {"name": "earnings-data/not_json.parquet"},
+    ]
+
+    symbols = collect_bronze_earnings_symbols_from_blob_infos(blob_infos)
+
+    assert symbols == {"AAPL", "MSFT"}
+
+
+def test_collect_bronze_price_target_symbols_extracts_parquet_symbols() -> None:
+    blob_infos = [
+        {"name": "price-target-data/AAPL.parquet"},
+        {"name": "price-target-data/MSFT.parquet"},
+        {"name": "price-target-data/not_parquet.json"},
+    ]
+
+    symbols = collect_bronze_price_target_symbols_from_blob_infos(blob_infos)
+
+    assert symbols == {"AAPL", "MSFT"}
+
+
+def test_collect_bronze_finance_symbols_extracts_known_suffixes() -> None:
+    blob_infos = [
+        {"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json"},
+        {"name": "finance-data/Income Statement/AAPL_quarterly_financials.json"},
+        {"name": "finance-data/Cash Flow/MSFT_quarterly_cash-flow.json"},
+        {"name": "finance-data/Valuation/NVDA_quarterly_valuation_measures.json"},
+        {"name": "finance-data/Valuation/NVDA_other_suffix.json"},
+        {"name": "finance-data/blacklist.csv"},
+    ]
+
+    symbols = collect_bronze_finance_symbols_from_blob_infos(blob_infos)
+
+    assert symbols == {"AAPL", "MSFT", "NVDA"}

@@ -36,21 +36,29 @@ def test_build_report_computes_lag_counts(monkeypatch):
             "balance_sheet": {"A"},
             "income_statement": {"A"},
             "cash_flow": {"A"},
-            "valuation": {"A", "B"},
+            "valuation": {"A", "B", "Z"},
         },
     )
 
     report = reconcile._build_report()
     assert report["totalLagSymbolCount"] == 2
+    assert report["totalBronzeOnlySymbolCount"] == 2
+    assert report["totalSilverOnlySymbolCount"] == 1
     assert report["subfolders"]["balance_sheet"]["lagSymbolCount"] == 1
+    assert report["subfolders"]["balance_sheet"]["silverOnlySymbolCount"] == 0
     assert report["subfolders"]["valuation"]["lagSymbolCount"] == 1
+    assert report["subfolders"]["valuation"]["silverOnlySymbolCount"] == 1
 
 
 def test_main_writes_report(monkeypatch):
     saved = {}
     monkeypatch.setattr(reconcile.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(reconcile, "_build_report", lambda: {"totalLagSymbolCount": 0})
-    monkeypatch.setattr(reconcile.mdc, "save_common_json_content", lambda payload, path: saved.update({"payload": payload, "path": path}))
+    monkeypatch.setattr(
+        reconcile.mdc,
+        "save_common_json_content",
+        lambda payload, path: saved.update({"payload": payload, "path": path}),
+    )
     monkeypatch.setattr(reconcile.mdc, "write_line", lambda _msg: None)
 
     exit_code = reconcile.main()

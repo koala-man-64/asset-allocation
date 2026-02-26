@@ -332,7 +332,9 @@ def _count_symbols_from_listing(
             if ticker:
                 tickers.add(ticker)
     except Exception as exc:
-        logger.warning("Failed to list blobs for symbol count: container=%s prefix=%s err=%s", client.container_name, prefix, exc)
+        logger.warning(
+            "Failed to list blobs for symbol count: container=%s prefix=%s err=%s", client.container_name, prefix, exc
+        )
         return None, False
 
     return len(tickers), truncated
@@ -345,9 +347,7 @@ def _count_finance_symbols_from_listing(
     max_scanned_blobs: int,
 ) -> Tuple[Optional[int], Optional[Dict[FinanceSubfolderKey, int]], bool]:
     tickers: set[str] = set()
-    by_subfolder: Dict[FinanceSubfolderKey, set[str]] = {
-        key: set() for key in _FINANCE_SUBFOLDER_KEYS
-    }
+    by_subfolder: Dict[FinanceSubfolderKey, set[str]] = {key: set() for key in _FINANCE_SUBFOLDER_KEYS}
     scanned = 0
     truncated = False
 
@@ -401,16 +401,26 @@ def _finance_coverage_fields(
     generated_at = str(report.get("generatedAt") or "").strip() or None
     lag_count_raw = report.get("totalLagSymbolCount")
     lag_count = int(lag_count_raw) if isinstance(lag_count_raw, int) else None
+    silver_only_raw = report.get("totalSilverOnlySymbolCount")
+    if isinstance(silver_only_raw, int):
+        silver_only_count = int(silver_only_raw)
+    elif silver_only_raw is None:
+        silver_only_count = 0
+    else:
+        silver_only_count = None
     fields: Dict[str, Any] = {
         "coverageReportPath": _FINANCE_COVERAGE_REPORT_PATH,
         "asOfCutoff": generated_at,
         "lagSymbolCount": lag_count,
+        "silverOnlySymbolCount": silver_only_count,
     }
     if layer_key == "silver":
-        if lag_count is None:
+        if lag_count is None or silver_only_count is None:
             fields["coverageStatus"] = "unknown"
-        elif lag_count == 0:
+        elif lag_count == 0 and silver_only_count == 0:
             fields["coverageStatus"] = "aligned"
+        elif lag_count == 0 and silver_only_count > 0:
+            fields["coverageStatus"] = "orphaned"
         else:
             fields["coverageStatus"] = "lagging"
     elif layer_key == "bronze":
@@ -445,7 +455,9 @@ def _summarize_blob_prefix(
             if modified_dt is not None and (latest_modified is None or modified_dt > latest_modified):
                 latest_modified = modified_dt
     except Exception as exc:
-        logger.warning("Failed to list blobs for prefix summary: container=%s prefix=%s err=%s", client.container_name, prefix, exc)
+        logger.warning(
+            "Failed to list blobs for prefix summary: container=%s prefix=%s err=%s", client.container_name, prefix, exc
+        )
         return None, None, None, False
 
     return files, total_bytes, _to_iso_datetime(latest_modified), truncated
@@ -533,7 +545,9 @@ def _pick_date_like_column(candidates: List[str]) -> Optional[str]:
     return candidates[0]
 
 
-def _collect_partition_date_bounds(rows: List[Dict[str, Any]]) -> tuple[
+def _collect_partition_date_bounds(
+    rows: List[Dict[str, Any]],
+) -> tuple[
     Optional[str],
     Optional[datetime],
     Optional[datetime],
@@ -632,9 +646,7 @@ def collect_delta_table_metadata(
         is_no_files_error = "no files in log segment" in message
         is_table_not_found_error = exc.__class__.__name__ == "TableNotFoundError"
         if is_no_files_error or is_table_not_found_error:
-            local_warnings.append(
-                f"Delta table not readable at {table_path}; no commit files found in _delta_log yet."
-            )
+            local_warnings.append(f"Delta table not readable at {table_path}; no commit files found in _delta_log yet.")
             return {
                 "deltaVersion": None,
                 "fileCount": 0,
@@ -715,13 +727,9 @@ def collect_delta_table_metadata(
                 f"Date range for table={table_path} was not parseable from partition and stats metadata."
             )
         elif date_column is None:
-            local_warnings.append(
-                f"Date range stats for table={table_path} were not found in table metadata."
-            )
+            local_warnings.append(f"Date range stats for table={table_path} were not found in table metadata.")
         else:
-            local_warnings.append(
-                f"Date range stats for table={table_path} could not be parsed from min/max metadata."
-            )
+            local_warnings.append(f"Date range stats for table={table_path} could not be parsed from min/max metadata.")
 
     return {
         "deltaVersion": version,
@@ -796,12 +804,10 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         finance_subfolder_symbol_counts: Optional[Dict[FinanceSubfolderKey, int]] = None
         listing_prefix = _ticker_listing_prefix(layer_key, domain_key)
         if domain_key == "finance" and prefix == "finance-data/":
-            symbol_count, finance_subfolder_symbol_counts, symbol_truncated = (
-                _count_finance_symbols_from_listing(
-                    client,
-                    prefix=prefix,
-                    max_scanned_blobs=max_scanned_blobs,
-                )
+            symbol_count, finance_subfolder_symbol_counts, symbol_truncated = _count_finance_symbols_from_listing(
+                client,
+                prefix=prefix,
+                max_scanned_blobs=max_scanned_blobs,
             )
         elif listing_prefix:
             symbol_count, symbol_truncated = _count_symbols_from_listing(
@@ -820,10 +826,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             try:
                 whitelist_blob_bytes = client.download_data(whitelist_path)
                 whitelist_symbol_count = _parse_list_size(whitelist_blob_bytes)
-                if not (
-                    layer_key == "bronze"
-                    and domain_key in {"market", "price-target", "finance", "earnings"}
-                ):
+                if not (layer_key == "bronze" and domain_key in {"market", "price-target", "finance", "earnings"}):
                     symbol_count = whitelist_symbol_count
             except Exception as exc:
                 warnings.append(f"Unable to read whitelist.csv: {exc}")
@@ -840,11 +843,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
 
         # Bronze market/earnings/price-target is one blob per symbol; whitelist can be intentionally empty.
         # Use file count as symbol count and exclude list artifacts when they exist.
-        if (
-            layer_key == "bronze"
-            and domain_key in {"market", "earnings", "price-target"}
-            and isinstance(files, int)
-        ):
+        if layer_key == "bronze" and domain_key in {"market", "earnings", "price-target"} and isinstance(files, int):
             list_artifact_count = 0
             if whitelist_blob_bytes is not None:
                 list_artifact_count += 1
