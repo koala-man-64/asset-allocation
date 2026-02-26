@@ -13,6 +13,8 @@ import type {
   ContainerAppLogsResponse,
   ContainerAppControlResponse,
   ContainerAppsStatusResponse,
+  DomainCheckpointResetRequest,
+  DomainCheckpointResetResponse,
   DomainListResetRequest,
   DomainListResetResponse,
   DomainListsResponse,
@@ -235,6 +237,12 @@ export const DataService = {
 
   resetDomainLists(payload: DomainListResetRequest): Promise<DomainListResetResponse> {
     return apiService.resetDomainLists(payload);
+  },
+
+  resetDomainCheckpoints(
+    payload: DomainCheckpointResetRequest
+  ): Promise<DomainCheckpointResetResponse> {
+    return apiService.resetDomainCheckpoints(payload);
   },
 
   getDomainLists(

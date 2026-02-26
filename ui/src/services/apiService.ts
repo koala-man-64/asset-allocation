@@ -404,6 +404,29 @@ export interface DomainListResetResponse {
   updatedAt: string;
 }
 
+export interface DomainCheckpointResetRequest {
+  layer: string;
+  domain: string;
+  confirm: boolean;
+}
+
+export interface DomainCheckpointResetResponse {
+  layer: string;
+  domain: string;
+  container: string | null;
+  resetCount: number;
+  deletedCount: number;
+  targets: Array<{
+    operation: string;
+    path: string;
+    status: 'reset';
+    existed: boolean;
+    deleted: boolean;
+  }>;
+  updatedAt: string;
+  note?: string | null;
+}
+
 export interface DomainListFilePreview {
   listType: 'whitelist' | 'blacklist';
   path: string;
@@ -946,6 +969,15 @@ export const apiService = {
 
   resetDomainLists(payload: DomainListResetRequest): Promise<DomainListResetResponse> {
     return request<DomainListResetResponse>('/system/domain-lists/reset', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  resetDomainCheckpoints(
+    payload: DomainCheckpointResetRequest
+  ): Promise<DomainCheckpointResetResponse> {
+    return request<DomainCheckpointResetResponse>('/system/domain-checkpoints/reset', {
       method: 'POST',
       body: JSON.stringify(payload)
     });

@@ -128,6 +128,10 @@ function KillSwitchControl({
     jobNames.length > 0
       ? 'Use only for emergency stop or maintenance windows.'
       : 'No Azure jobs were detected in the latest system-health payload.';
+  const scopeText =
+    jobNames.length > 0
+      ? `${jobNames.length} job(s) in scope • ${runningJobNames.length} running`
+      : 'No jobs in scope';
 
   useEffect(() => {
     if (optimisticChecked === null) return;
@@ -187,11 +191,21 @@ function KillSwitchControl({
 
   if (variant === 'inline') {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-mcm-walnut/15 bg-mcm-cream/55 px-4 py-2.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-        <div className="min-w-0">
+      <div
+        className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 px-4 py-2.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)] ${
+          checked
+            ? 'border-rose-700/40 bg-rose-100/30'
+            : 'border-mcm-walnut/15 bg-mcm-cream/55'
+        }`}
+      >
+        <div className="min-w-0 space-y-0.5">
           <p className="text-sm font-semibold text-mcm-walnut">{statusText}</p>
+          <p className="text-xs text-mcm-walnut/70">{scopeText}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Badge variant="outline" className="h-6 text-[9px]">
+            {jobNames.length} job(s)
+          </Badge>
           {isApplying ? <Loader2 className="h-4 w-4 animate-spin text-mcm-walnut/65" /> : null}
           <Switch
             checked={checked}

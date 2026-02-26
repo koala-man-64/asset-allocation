@@ -1626,6 +1626,12 @@ class DomainListResetRequest(BaseModel):
     confirm: bool = False
 
 
+class DomainCheckpointResetRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    confirm: bool = False
+
+
 class DomainListFileResponse(BaseModel):
     listType: Literal["whitelist", "blacklist"]
     path: str
@@ -1643,6 +1649,25 @@ class DomainListsResponse(BaseModel):
     limit: int
     files: List[DomainListFileResponse] = Field(default_factory=list)
     loadedAt: str
+
+
+class DomainCheckpointTargetResponse(BaseModel):
+    operation: str
+    path: str
+    status: Literal["reset"]
+    existed: bool
+    deleted: bool
+
+
+class DomainCheckpointResetResponse(BaseModel):
+    layer: str
+    domain: str
+    container: Optional[str] = None
+    resetCount: int
+    deletedCount: int
+    targets: List[DomainCheckpointTargetResponse] = Field(default_factory=list)
+    updatedAt: str
+    note: Optional[str] = None
 
 
 class PurgeCandidatesRequest(BaseModel):
@@ -3089,6 +3114,109 @@ def _reset_domain_lists(client: BlobStorageClient, *, layer: str, domain: str) -
     }
 
 
+def _reset_domain_checkpoints(*, layer: str, domain: str) -> Dict[str, Any]:
+    layer_norm = _normalize_layer(layer)
+    domain_norm = _normalize_domain(domain)
+    if not layer_norm:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not domain_norm:
+        raise HTTPException(status_code=400, detail="domain is required.")
+
+    if domain_norm not in _DOMAIN_PREFIXES.get(layer_norm, {}):
+        raise HTTPException(status_code=400, detail=f"Unknown domain '{domain_norm}' for layer '{layer_norm}'.")
+
+    scope_targets: List[Dict[str, Optional[str]]] = [
+        {
+            "layer": layer_norm,
+            "domain": domain_norm,
+            "container": None,
+            "prefix": None,
+        }
+    ]
+    raw_targets = [
+        *_build_silver_checkpoint_reset_targets(scope_targets),
+        *_build_gold_checkpoint_reset_targets(scope_targets),
+    ]
+
+    deduped_targets: List[Dict[str, Optional[str]]] = []
+    seen: set[Tuple[str, str, str]] = set()
+    for target in raw_targets:
+        container = str(target.get("container") or "").strip()
+        prefix = str(target.get("prefix") or "").strip()
+        operation = str(target.get("operation") or "reset-checkpoint").strip() or "reset-checkpoint"
+        if not container or not prefix:
+            continue
+        dedupe_key = (container, prefix, operation)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        deduped_targets.append(
+            {
+                "container": container,
+                "prefix": prefix,
+                "operation": operation,
+            }
+        )
+
+    if not deduped_targets:
+        return {
+            "layer": layer_norm,
+            "domain": domain_norm,
+            "container": None,
+            "resetCount": 0,
+            "deletedCount": 0,
+            "targets": [],
+            "updatedAt": _utc_timestamp(),
+            "note": "No checkpoint gates are configured for this layer/domain.",
+        }
+
+    clients: Dict[str, BlobStorageClient] = {}
+    results: List[Dict[str, Any]] = []
+    deleted_count = 0
+    for target in deduped_targets:
+        container = str(target["container"])
+        prefix = str(target["prefix"])
+        operation = str(target["operation"])
+        client = clients.get(container)
+        if client is None:
+            client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+            clients[container] = client
+
+        try:
+            existed = bool(client.file_exists(prefix))
+            deleted = False
+            if existed:
+                client.delete_file(prefix)
+                deleted = True
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to reset checkpoint {operation} for {layer_norm}/{domain_norm}: {exc}",
+            ) from exc
+
+        results.append(
+            {
+                "operation": operation,
+                "path": prefix,
+                "status": "reset",
+                "existed": existed,
+                "deleted": deleted,
+            }
+        )
+        if deleted:
+            deleted_count += 1
+
+    return {
+        "layer": layer_norm,
+        "domain": domain_norm,
+        "container": str(deduped_targets[0]["container"]),
+        "resetCount": len(results),
+        "deletedCount": deleted_count,
+        "targets": results,
+        "updatedAt": _utc_timestamp(),
+    }
+
+
 def _normalize_symbol_candidates(symbols: Sequence[Any]) -> List[str]:
     seen: set[str] = set()
     normalized: List[str] = []
@@ -4223,6 +4351,26 @@ def reset_domain_lists(payload: DomainListResetRequest, request: Request) -> JSO
         domain_norm,
         container,
         result.get("resetCount"),
+    )
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/domain-checkpoints/reset")
+def reset_domain_checkpoints(payload: DomainCheckpointResetRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to reset checkpoint gates.")
+
+    result = _reset_domain_checkpoints(layer=payload.layer, domain=payload.domain)
+    actor = _get_actor(request)
+    logger.warning(
+        "Domain checkpoints reset: actor=%s layer=%s domain=%s container=%s reset=%s deleted=%s",
+        actor or "-",
+        result.get("layer"),
+        result.get("domain"),
+        result.get("container") or "-",
+        result.get("resetCount"),
+        result.get("deletedCount"),
     )
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 

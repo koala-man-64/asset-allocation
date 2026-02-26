@@ -13,6 +13,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  RotateCcw,
   ScrollText,
   Square,
   Trash2
@@ -72,9 +73,17 @@ import type { DataDomain, JobRun } from '@/types/strategy';
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
 const ACTION_LAYER_PRIORITY = ['gold', 'silver', 'bronze', 'platinum'] as const;
+const CHECKPOINT_RESET_LAYERS = new Set<LayerKey>(['silver', 'gold']);
 const DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY = 'asset-allocation.domain-metadata-snapshot.v1';
 const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
+type LayerVisualConfig = {
+  accent: string;
+  softBg: string;
+  strongBg: string;
+  border: string;
+  mutedText: string;
+};
 
 type LayerColumn = {
   key: LayerKey;
@@ -88,6 +97,36 @@ const FINANCE_SUBFOLDER_ITEMS = [
   { key: 'cash_flow', label: 'Cash Flow' },
   { key: 'valuation', label: 'Valuation' }
 ] as const;
+const LAYER_VISUALS: Record<LayerKey, LayerVisualConfig> = {
+  bronze: {
+    accent: '#9a5b2d',
+    softBg: 'rgba(154, 91, 45, 0.14)',
+    strongBg: 'rgba(154, 91, 45, 0.22)',
+    border: 'rgba(154, 91, 45, 0.5)',
+    mutedText: 'rgba(122, 72, 34, 0.88)'
+  },
+  silver: {
+    accent: '#4b5563',
+    softBg: 'rgba(75, 85, 99, 0.14)',
+    strongBg: 'rgba(75, 85, 99, 0.22)',
+    border: 'rgba(75, 85, 99, 0.5)',
+    mutedText: 'rgba(55, 65, 81, 0.88)'
+  },
+  gold: {
+    accent: '#9a7400',
+    softBg: 'rgba(154, 116, 0, 0.14)',
+    strongBg: 'rgba(154, 116, 0, 0.22)',
+    border: 'rgba(154, 116, 0, 0.5)',
+    mutedText: 'rgba(120, 90, 0, 0.9)'
+  },
+  platinum: {
+    accent: '#0f766e',
+    softBg: 'rgba(15, 118, 110, 0.14)',
+    strongBg: 'rgba(15, 118, 110, 0.22)',
+    border: 'rgba(15, 118, 110, 0.5)',
+    mutedText: 'rgba(17, 94, 89, 0.9)'
+  }
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -112,6 +151,10 @@ function toLayerKey(value: string): LayerKey | null {
   const normalized = normalizeLayerKey(value);
   if (!LAYER_ORDER.includes(normalized as LayerKey)) return null;
   return normalized as LayerKey;
+}
+
+function getLayerVisual(layerKey: LayerKey): LayerVisualConfig {
+  return LAYER_VISUALS[layerKey];
 }
 
 function hasFiniteNumber(value: number | null | undefined): value is number {
@@ -174,6 +217,11 @@ function formatInt(value: number | null | undefined): string {
   return numberFormatter.format(value);
 }
 
+function formatSymbolCount(value: number | null | undefined): string {
+  if (!hasFiniteNumber(value)) return 'N/A';
+  return `${numberFormatter.format(value)} symbols`;
+}
+
 function compareSymbols(
   current: DomainMetadata,
   previous: DomainMetadata
@@ -182,7 +230,7 @@ function compareSymbols(
   className: string;
 } {
   if (!hasFiniteNumber(current.symbolCount) || !hasFiniteNumber(previous.symbolCount)) {
-    return { text: 'symbols n/a', className: 'text-mcm-walnut/50' };
+    return { text: 'symbols n/a', className: 'text-mcm-walnut/70' };
   }
 
   const delta = current.symbolCount - previous.symbolCount;
@@ -199,14 +247,14 @@ function compareSymbols(
 
 function summarizeBlacklistCount(metadata: DomainMetadata): { text: string; className: string } {
   if (!hasFiniteNumber(metadata.blacklistedSymbolCount)) {
-    return { text: 'blacklist n/a', className: 'text-mcm-walnut/50' };
+    return { text: 'blacklist n/a', className: 'text-mcm-walnut/70' };
   }
   if (metadata.blacklistedSymbolCount === 0) {
     return { text: '0 blacklisted', className: 'text-mcm-teal' };
   }
   return {
     text: `${numberFormatter.format(metadata.blacklistedSymbolCount)} blacklisted`,
-    className: 'text-mcm-walnut/70'
+    className: 'text-mcm-walnut/85'
   };
 }
 
@@ -265,10 +313,18 @@ export function DomainLayerComparisonPanel({
     domainKey: string;
     domainLabel: string;
   } | null>(null);
+  const [checkpointResetTarget, setCheckpointResetTarget] = useState<{
+    layerKey: LayerKey;
+    layerLabel: string;
+    domainKey: string;
+    domainLabel: string;
+  } | null>(null);
   const [isResetAllDialogOpen, setIsResetAllDialogOpen] = useState(false);
   const [isResettingLists, setIsResettingLists] = useState(false);
   const [isResettingAllLists, setIsResettingAllLists] = useState(false);
+  const [isResettingCheckpoints, setIsResettingCheckpoints] = useState(false);
   const [resettingCellKey, setResettingCellKey] = useState<string | null>(null);
+  const [resettingCheckpointCellKey, setResettingCheckpointCellKey] = useState<string | null>(null);
   const [expandedRowKey, setExpandedRowKey] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState(() => new Date());
   const overallStatusConfig = getStatusConfig(overall);
@@ -481,9 +537,12 @@ export function DomainLayerComparisonPanel({
     Boolean(isRefreshing) ||
     Boolean(isFetching) ||
     isRefreshingPanelCounts ||
+    isResettingCheckpoints ||
     metadataSnapshotQuery.isLoading ||
     metadataSnapshotQuery.isFetching ||
     refreshingCells.size > 0;
+  const isPanelActionBusy =
+    isRefreshingPanelCounts || isResettingAllLists || isResettingLists || isResettingCheckpoints;
 
   const filteredDomainRows = useMemo(() => {
     return domainRows.filter((row) => Boolean(domainsByLayer.get(row.key)));
@@ -766,12 +825,47 @@ export function DomainLayerComparisonPanel({
     }
   }, [clearDomainMetadataCache, handleCellRefresh, listResetTarget, queryClient]);
 
+  const confirmDomainCheckpointReset = useCallback(async () => {
+    const target = checkpointResetTarget;
+    if (!target) return;
+    const targetCellKey = makeCellKey(target.layerKey, target.domainKey);
+    setIsResettingCheckpoints(true);
+    setResettingCheckpointCellKey(targetCellKey);
+    try {
+      const result = await DataService.resetDomainCheckpoints({
+        layer: target.layerKey,
+        domain: target.domainKey,
+        confirm: true
+      });
+      if (result.resetCount === 0) {
+        toast.warning(
+          result.note ||
+            `No checkpoint gates are configured for ${target.layerLabel} • ${target.domainLabel}.`
+        );
+      } else {
+        toast.success(
+          `Reset ${result.deletedCount}/${result.resetCount} checkpoint gate file(s) for ${target.layerLabel} • ${target.domainLabel}.`
+        );
+      }
+      await clearDomainMetadataCache([{ layerKey: target.layerKey, domainKey: target.domainKey }]);
+      await handleCellRefresh(target.layerKey, target.domainKey);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+    } catch (error) {
+      toast.error(`Checkpoint reset failed (${formatSystemStatusText(error) || 'Unknown error'})`);
+    } finally {
+      setIsResettingCheckpoints(false);
+      setResettingCheckpointCellKey(null);
+      setCheckpointResetTarget(null);
+    }
+  }, [checkpointResetTarget, clearDomainMetadataCache, handleCellRefresh, queryClient]);
+
   const refreshAllPanelCounts = useCallback(async () => {
     if (
       queryPairs.length === 0 ||
       isRefreshingPanelCounts ||
       isResettingAllLists ||
-      isResettingLists
+      isResettingLists ||
+      isResettingCheckpoints
     ) {
       return;
     }
@@ -820,6 +914,7 @@ export function DomainLayerComparisonPanel({
     domainRows,
     isRefreshingPanelCounts,
     isResettingAllLists,
+    isResettingCheckpoints,
     isResettingLists,
     layerColumns,
     queryClient,
@@ -832,7 +927,8 @@ export function DomainLayerComparisonPanel({
       queryPairs.length === 0 ||
       isRefreshingPanelCounts ||
       isResettingAllLists ||
-      isResettingLists
+      isResettingLists ||
+      isResettingCheckpoints
     ) {
       return;
     }
@@ -888,6 +984,7 @@ export function DomainLayerComparisonPanel({
     handleCellRefresh,
     isRefreshingPanelCounts,
     isResettingAllLists,
+    isResettingCheckpoints,
     isResettingLists,
     queryClient,
     queryPairs
@@ -939,6 +1036,46 @@ export function DomainLayerComparisonPanel({
                 </span>
               ) : (
                 'Purge'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(checkpointResetTarget)}
+        onOpenChange={(open) => (!open ? setCheckpointResetTarget(null) : undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Confirm checkpoint reset
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will clear incremental checkpoint gate files for{' '}
+              <strong>
+                {checkpointResetTarget
+                  ? `${checkpointResetTarget.layerLabel} • ${checkpointResetTarget.domainLabel}`
+                  : 'selected scope'}
+              </strong>
+              . Data tables and list files are not deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isResettingCheckpoints}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmDomainCheckpointReset()}
+              disabled={isResettingCheckpoints}
+            >
+              {isResettingCheckpoints ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Resetting...
+                </span>
+              ) : (
+                'Reset Checkpoints'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1023,16 +1160,25 @@ export function DomainLayerComparisonPanel({
       </AlertDialog>
 
       <CardHeader className="gap-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex min-w-0 items-start gap-2">
-            <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="inline-flex items-center gap-2">
-                <span
-                  className={`${StatusTypos.MONO} text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70`}
-                >
-                  System status
-                </span>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex min-w-0 items-start gap-2">
+              <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="flex min-w-0 flex-col gap-1">
+                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+                <p className="text-[15px] leading-relaxed text-muted-foreground">
+                  Layer-by-layer health, freshness, controls, and symbol coverage for each domain.
+                </p>
+              </div>
+            </div>
+            <div className="flex w-full flex-wrap items-start gap-2 self-start xl:w-auto xl:justify-end">
+              <div
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]"
+              >
+                <span className="text-[12px] font-semibold text-mcm-walnut/85">System status</span>
                 <span
                   className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest"
                   style={{
@@ -1045,99 +1191,89 @@ export function DomainLayerComparisonPanel({
                   {overallLabel || 'UNKNOWN'}
                 </span>
               </div>
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Layer-by-layer health, freshness, controls, and symbol coverage for each domain.
-                </p>
+
+              <div className="inline-flex min-w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-mcm-olive">
+                  Uptime clock
+                </span>
+                <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/85`}>
+                  {centralClock.time} {centralClock.tz}
+                </span>
               </div>
             </div>
           </div>
-          <div className="flex w-full flex-wrap items-center gap-2 self-start xl:w-auto xl:justify-end">
-            <div className="inline-flex w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-              <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>
-                UPTIME CLOCK
-              </span>
-              <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/70`}>
-                {centralClock.time} {centralClock.tz}
-              </span>
-            </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-mcm-walnut/15 pt-2">
+            {managedContainerJobs.length > 0 ? (
+              <JobKillSwitchInline jobs={managedContainerJobs} />
+            ) : null}
 
             {onRefresh ? (
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 px-3 text-xs"
+                className="h-9 px-3.5 text-[11px]"
                 onClick={onRefresh}
                 disabled={!onRefresh || isAnyRefreshInProgress}
               >
                 {isAnyRefreshInProgress ? (
                   <span className="inline-flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Refreshing
+                    Refreshing...
                   </span>
                 ) : (
-                  'Refresh'
+                  <>
+                    <RefreshCw className="h-4 w-4" />
+                    Refresh health
+                  </>
                 )}
               </Button>
             ) : null}
 
-            {managedContainerJobs.length > 0 ? (
-              <JobKillSwitchInline jobs={managedContainerJobs} />
-            ) : null}
-
             {queryPairs.length > 0 ? (
-              <div className="inline-flex items-center gap-1">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 rounded-full text-mcm-walnut/65 hover:text-mcm-walnut"
-                      onClick={() => void refreshAllPanelCounts()}
-                      disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
-                      aria-label="Refresh counts for the entire panel"
-                    >
-                      {isRefreshingPanelCounts ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    {isRefreshingPanelCounts
-                      ? 'Refreshing counts for the entire panel...'
-                      : 'Refresh counts for the entire panel'}
-                  </TooltipContent>
-                </Tooltip>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 px-3.5 text-[11px]"
+                  onClick={() => void refreshAllPanelCounts()}
+                  disabled={isPanelActionBusy}
+                >
+                  {isRefreshingPanelCounts ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Refreshing counts...
+                    </span>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4" />
+                      Refresh counts
+                    </>
+                  )}
+                </Button>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 rounded-full text-rose-700/70 hover:bg-rose-500/10 hover:text-rose-800"
-                      onClick={() => setIsResetAllDialogOpen(true)}
-                      disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
-                      aria-label="Reset lists for the entire panel"
-                    >
-                      {isResettingAllLists ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    {isResettingAllLists
-                      ? 'Resetting lists for the entire panel...'
-                      : 'Reset lists for the entire panel'}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-9 px-3.5 text-[11px]"
+                  onClick={() => setIsResetAllDialogOpen(true)}
+                  disabled={isPanelActionBusy}
+                >
+                  {isResettingAllLists ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Resetting lists...
+                    </span>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Reset lists
+                    </>
+                  )}
+                </Button>
+              </>
             ) : null}
           </div>
         </div>
@@ -1164,24 +1300,37 @@ export function DomainLayerComparisonPanel({
                   Compact layer-by-layer domain coverage summary with expandable details.
                 </caption>
                 <TableHeader>
-                  <TableRow className="h-12">
-                    <TableHead className="sticky left-0 top-0 z-30 w-[210px] border-b border-mcm-walnut/25 bg-mcm-cream/90">
+                  <TableRow className="h-14">
+                    <TableHead className="sticky left-0 top-0 z-30 w-[320px] border-b border-mcm-walnut/25 bg-mcm-cream/90">
                       Domain
                     </TableHead>
                     {layerColumns.map((layer) => {
                       const aggregate = layerAggregateStatus.get(layer.key);
+                      const layerVisual = getLayerVisual(layer.key);
                       return (
                         <TableHead
                           key={`compact-head-${layer.key}`}
-                          className="sticky top-0 z-20 min-w-[190px] border-b border-mcm-walnut/25 bg-mcm-cream/90"
+                          className="sticky top-0 z-20 min-w-[190px] border-b border-mcm-walnut/25"
+                          style={{
+                            backgroundColor: layerVisual.strongBg,
+                            boxShadow: `inset 0 2px 0 ${layerVisual.border}, inset 2px 0 0 ${layerVisual.border}, inset -1px 0 0 ${layerVisual.border}`
+                          }}
                         >
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-[11px] font-black uppercase tracking-widest text-mcm-walnut">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest"
+                              style={{
+                                backgroundColor: layerVisual.strongBg,
+                                color: layerVisual.accent,
+                                borderColor: layerVisual.border
+                              }}
+                            >
                               {layer.label}
                             </span>
                             {aggregate ? (
                               <span
-                                className={`${StatusTypos.MONO} text-[9px] uppercase tracking-wider text-mcm-walnut/60`}
+                                className={`${StatusTypos.MONO} text-[10px] font-semibold uppercase tracking-wider`}
+                                style={{ color: layerVisual.mutedText }}
                               >
                                 ok {aggregate.ok} • warn {aggregate.warn} • fail {aggregate.fail}
                               </span>
@@ -1190,12 +1339,6 @@ export function DomainLayerComparisonPanel({
                         </TableHead>
                       );
                     })}
-                    <TableHead className="sticky top-0 z-20 min-w-[120px] border-b border-mcm-walnut/25 bg-mcm-cream/90">
-                      <span className="sr-only">Overall</span>
-                    </TableHead>
-                    <TableHead className="sticky top-0 z-20 min-w-[180px] border-b border-mcm-walnut/25 bg-mcm-cream/90 text-right">
-                      <span className="sr-only">Actions</span>
-                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1215,6 +1358,8 @@ export function DomainLayerComparisonPanel({
                       const isCellRefreshing = refreshingCells.has(key);
                       const isCellBusy = isCellRefreshing || isPending;
                       const isResettingThisCell = resettingCellKey === key && isResettingLists;
+                      const isResettingThisCheckpointCell =
+                        resettingCheckpointCellKey === key && isResettingCheckpoints;
 
                       const domainConfig = isConfigured
                         ? domainConfigByLayer.get(layerColumn.key)?.get(row.key)
@@ -1300,6 +1445,7 @@ export function DomainLayerComparisonPanel({
                         isCellBusy ||
                         isResettingLists ||
                         isResettingAllLists ||
+                        isResettingCheckpoints ||
                         isRefreshingPanelCounts;
 
                       const executionsUrl = getAzureJobExecutionsUrl(domainConfig?.jobUrl);
@@ -1333,7 +1479,7 @@ export function DomainLayerComparisonPanel({
                           : null;
                       const blacklistSummary = metadata
                         ? summarizeBlacklistCount(metadata)
-                        : { text: 'blacklist n/a', className: 'text-mcm-walnut/50' };
+                        : { text: 'blacklist n/a', className: 'text-mcm-walnut/70' };
                       const financeSubfolderCounts =
                         row.key === 'finance' && metadata
                           ? FINANCE_SUBFOLDER_ITEMS.map((item) => ({
@@ -1344,6 +1490,8 @@ export function DomainLayerComparisonPanel({
                       const showFinanceSubfolders =
                         financeSubfolderCounts.length > 0 &&
                         financeSubfolderCounts.some((item) => hasFiniteNumber(item.count));
+                      const layerVisual = getLayerVisual(layerColumn.key);
+                      const supportsCheckpointReset = CHECKPOINT_RESET_LAYERS.has(layerColumn.key);
 
                       return {
                         key,
@@ -1356,6 +1504,7 @@ export function DomainLayerComparisonPanel({
                         isCellRefreshing,
                         isCellBusy,
                         isResettingThisCell,
+                        isResettingThisCheckpointCell,
                         domainConfig,
                         baseFolderUrl,
                         jobName,
@@ -1383,7 +1532,9 @@ export function DomainLayerComparisonPanel({
                         previousLabel,
                         blacklistSummary,
                         financeSubfolderCounts,
-                        showFinanceSubfolders
+                        showFinanceSubfolders,
+                        layerVisual,
+                        supportsCheckpointReset
                       };
                     });
 
@@ -1405,33 +1556,13 @@ export function DomainLayerComparisonPanel({
                       configuredModels[0] ||
                       null;
 
-                    const hasCritical = configuredModels.some(
-                      (model) =>
-                        Boolean(model.error) ||
-                        ['error', 'failed', 'critical'].includes(model.dataStatusKey) ||
-                        ['error', 'failed'].includes(model.jobStatusKey)
-                    );
-                    const hasWarning =
-                      !hasCritical &&
-                      configuredModels.some(
-                        (model) =>
-                          ['stale', 'warning', 'degraded', 'pending'].includes(
-                            model.dataStatusKey
-                          ) ||
-                          ['pending'].includes(model.jobStatusKey) ||
-                          model.jobLabel === 'NO RUN'
-                      );
-                    const rowOverallKey = hasCritical
-                      ? 'critical'
-                      : hasWarning
-                        ? 'warning'
-                        : 'healthy';
-                    const rowOverallLabel = hasCritical ? 'FAIL' : hasWarning ? 'WARN' : 'OK';
-                    const rowOverallConfig = getStatusConfig(rowOverallKey);
-                    const RowOverallIcon = rowOverallConfig.icon;
-
                     const refreshDomainRow = async () => {
-                      if (isRefreshingPanelCounts || isResettingAllLists || isResettingLists)
+                      if (
+                        isRefreshingPanelCounts ||
+                        isResettingAllLists ||
+                        isResettingLists ||
+                        isResettingCheckpoints
+                      )
                         return;
                       const refreshTargets = configuredModels.map((model) =>
                         handleCellRefresh(model.layerColumn.key, row.key)
@@ -1445,11 +1576,135 @@ export function DomainLayerComparisonPanel({
                         className="h-[52px] even:[&>td]:bg-mcm-cream/20"
                       >
                         <TableCell className="sticky left-0 z-10 border-b border-mcm-walnut/20 bg-mcm-paper/95 py-1.5">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold text-mcm-walnut">{row.label}</span>
-                            <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
-                              {row.key}
-                            </span>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex flex-col gap-0.5">
+                              <span className="truncate font-semibold text-mcm-walnut">{row.label}</span>
+                              <span className={`${StatusTypos.MONO} truncate text-[11px] text-mcm-walnut/75`}>
+                                {row.key}
+                              </span>
+                            </div>
+                            <div className="flex shrink-0 items-center justify-end gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-[11px]"
+                                disabled={
+                                  !preferredModel?.actionJobName || preferredModel.isJobControlBlocked
+                                }
+                                onClick={() => {
+                                  if (!preferredModel?.actionJobName) return;
+                                  if (preferredModel.isRunning) {
+                                    void setJobSuspended(preferredModel.actionJobName, true);
+                                  } else {
+                                    void triggerJob(preferredModel.actionJobName);
+                                  }
+                                }}
+                              >
+                                {preferredModel?.isControlling ||
+                                preferredModel?.isTriggeringThisJob ? (
+                                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                ) : preferredModel?.isRunning ? (
+                                  <Square className="mr-1 h-3.5 w-3.5" />
+                                ) : (
+                                  <Play className="mr-1 h-3.5 w-3.5" />
+                                )}
+                                {preferredModel?.isRunning ? 'Stop' : 'Run'}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-[11px]"
+                                onClick={() =>
+                                  setExpandedRowKey((previous) =>
+                                    previous === row.key ? null : row.key
+                                  )
+                                }
+                                aria-expanded={isExpanded}
+                                aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${row.label} details`}
+                              >
+                                <Eye className="mr-1 h-3.5 w-3.5" />
+                                View
+                                <ChevronDown
+                                  className={`ml-1 h-3.5 w-3.5 transition-transform ${
+                                    isExpanded ? 'rotate-180' : ''
+                                  }`}
+                                />
+                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    aria-label={`More actions for ${row.label}`}
+                                  >
+                                    <EllipsisVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-56">
+                                  <DropdownMenuLabel>{row.label}</DropdownMenuLabel>
+                                  <DropdownMenuItem
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      void refreshDomainRow();
+                                    }}
+                                  >
+                                    <RefreshCw className="h-4 w-4" />
+                                    Refresh domain counts
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      setExpandedRowKey((previous) =>
+                                        previous === row.key ? null : row.key
+                                      )
+                                    }
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                    {isExpanded ? 'Hide details' : 'Show details'}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  {preferredModel?.jobPortalUrl ? (
+                                    <DropdownMenuItem asChild>
+                                      <a
+                                        href={preferredModel.jobPortalUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        <ExternalLink className="h-4 w-4" />
+                                        Open job in Azure
+                                      </a>
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  {preferredModel?.executionsUrl ? (
+                                    <DropdownMenuItem asChild>
+                                      <a
+                                        href={preferredModel.executionsUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        <ScrollText className="h-4 w-4" />
+                                        Open run history
+                                      </a>
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  {preferredModel?.baseFolderUrl ? (
+                                    <DropdownMenuItem asChild>
+                                      <a
+                                        href={preferredModel.baseFolderUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        <FolderOpen className="h-4 w-4" />
+                                        Open ADLS folder
+                                      </a>
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
                           </div>
                         </TableCell>
 
@@ -1458,7 +1713,11 @@ export function DomainLayerComparisonPanel({
                             return (
                               <TableCell
                                 key={`summary-${row.key}-${model.layerColumn.key}`}
-                                className={`${StatusTypos.MONO} border-b border-mcm-walnut/20 py-1.5 text-center text-[12px] text-mcm-walnut/45`}
+                                className={`${StatusTypos.MONO} border-b border-mcm-walnut/20 py-1.5 text-center text-[12px] text-mcm-walnut/65`}
+                                style={{
+                                  backgroundColor: model.layerVisual.softBg,
+                                  boxShadow: `inset 3px 0 0 ${model.layerVisual.border}, inset -1px 0 0 ${model.layerVisual.border}`
+                                }}
                               >
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -1480,17 +1739,21 @@ export function DomainLayerComparisonPanel({
                             <TableCell
                               key={`summary-${row.key}-${model.layerColumn.key}`}
                               className="border-b border-mcm-walnut/20 py-1.5"
+                              style={{
+                                backgroundColor: model.layerVisual.softBg,
+                                boxShadow: `inset 3px 0 0 ${model.layerVisual.border}, inset -1px 0 0 ${model.layerVisual.border}`
+                              }}
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <span
                                   className={`${StatusTypos.MONO} tabular-nums text-right text-sm font-bold text-mcm-walnut`}
                                 >
-                                  {formatInt(model.metadata?.symbolCount)}
+                                  {formatSymbolCount(model.metadata?.symbolCount)}
                                 </span>
                                 <div className="flex flex-col items-end gap-1">
                                   <span
                                     tabIndex={0}
-                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
                                     style={{
                                       backgroundColor: model.dataConfig.bg,
                                       color: model.dataConfig.text,
@@ -1502,7 +1765,7 @@ export function DomainLayerComparisonPanel({
                                   </span>
                                   <span
                                     tabIndex={0}
-                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
                                     style={{
                                       backgroundColor: model.jobConfig.bg,
                                       color: model.jobConfig.text,
@@ -1516,14 +1779,14 @@ export function DomainLayerComparisonPanel({
                               </div>
                               {model.isPending ? (
                                 <div
-                                  className={`${StatusTypos.MONO} mt-1 text-[10px] text-mcm-walnut/50`}
+                                  className={`${StatusTypos.MONO} mt-1 text-[11px] text-mcm-walnut/70`}
                                 >
                                   refreshing...
                                 </div>
                               ) : null}
                               {model.error ? (
                                 <div
-                                  className={`${StatusTypos.MONO} mt-1 text-[10px] text-destructive/80`}
+                                  className={`${StatusTypos.MONO} mt-1 text-[11px] text-destructive/90`}
                                 >
                                   metadata warning
                                 </div>
@@ -1532,144 +1795,6 @@ export function DomainLayerComparisonPanel({
                           );
                         })}
 
-                        <TableCell className="border-b border-mcm-walnut/20 py-1.5">
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest"
-                            style={{
-                              backgroundColor: rowOverallConfig.bg,
-                              color: rowOverallConfig.text,
-                              borderColor: rowOverallConfig.border
-                            }}
-                          >
-                            <RowOverallIcon className="h-3.5 w-3.5" />
-                            {rowOverallLabel}
-                          </span>
-                        </TableCell>
-
-                        <TableCell className="border-b border-mcm-walnut/20 py-1.5">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2 text-[11px]"
-                              disabled={
-                                !preferredModel?.actionJobName || preferredModel.isJobControlBlocked
-                              }
-                              onClick={() => {
-                                if (!preferredModel?.actionJobName) return;
-                                if (preferredModel.isRunning) {
-                                  void setJobSuspended(preferredModel.actionJobName, true);
-                                } else {
-                                  void triggerJob(preferredModel.actionJobName);
-                                }
-                              }}
-                            >
-                              {preferredModel?.isControlling ||
-                              preferredModel?.isTriggeringThisJob ? (
-                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                              ) : preferredModel?.isRunning ? (
-                                <Square className="mr-1 h-3.5 w-3.5" />
-                              ) : (
-                                <Play className="mr-1 h-3.5 w-3.5" />
-                              )}
-                              {preferredModel?.isRunning ? 'Stop' : 'Run'}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-[11px]"
-                              onClick={() =>
-                                setExpandedRowKey((previous) =>
-                                  previous === row.key ? null : row.key
-                                )
-                              }
-                              aria-expanded={isExpanded}
-                              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${row.label} details`}
-                            >
-                              <Eye className="mr-1 h-3.5 w-3.5" />
-                              View
-                              <ChevronDown
-                                className={`ml-1 h-3.5 w-3.5 transition-transform ${
-                                  isExpanded ? 'rotate-180' : ''
-                                }`}
-                              />
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  aria-label={`More actions for ${row.label}`}
-                                >
-                                  <EllipsisVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-56">
-                                <DropdownMenuLabel>{row.label}</DropdownMenuLabel>
-                                <DropdownMenuItem
-                                  onSelect={(event) => {
-                                    event.preventDefault();
-                                    void refreshDomainRow();
-                                  }}
-                                >
-                                  <RefreshCw className="h-4 w-4" />
-                                  Refresh domain counts
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onSelect={() =>
-                                    setExpandedRowKey((previous) =>
-                                      previous === row.key ? null : row.key
-                                    )
-                                  }
-                                >
-                                  <Eye className="h-4 w-4" />
-                                  {isExpanded ? 'Hide details' : 'Show details'}
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                {preferredModel?.jobPortalUrl ? (
-                                  <DropdownMenuItem asChild>
-                                    <a
-                                      href={preferredModel.jobPortalUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      <ExternalLink className="h-4 w-4" />
-                                      Open job in Azure
-                                    </a>
-                                  </DropdownMenuItem>
-                                ) : null}
-                                {preferredModel?.executionsUrl ? (
-                                  <DropdownMenuItem asChild>
-                                    <a
-                                      href={preferredModel.executionsUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      <ScrollText className="h-4 w-4" />
-                                      Open run history
-                                    </a>
-                                  </DropdownMenuItem>
-                                ) : null}
-                                {preferredModel?.baseFolderUrl ? (
-                                  <DropdownMenuItem asChild>
-                                    <a
-                                      href={preferredModel.baseFolderUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      <FolderOpen className="h-4 w-4" />
-                                      Open ADLS folder
-                                    </a>
-                                  </DropdownMenuItem>
-                                ) : null}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </TableCell>
                       </TableRow>,
 
                       <TableRow
@@ -1677,7 +1802,7 @@ export function DomainLayerComparisonPanel({
                         className="border-0 hover:bg-transparent"
                       >
                         <TableCell
-                          colSpan={layerColumns.length + 3}
+                          colSpan={layerColumns.length + 1}
                           className="border-0 bg-transparent p-0"
                         >
                           <div
@@ -1697,21 +1822,29 @@ export function DomainLayerComparisonPanel({
                                     <div
                                       key={`detail-card-${row.key}-${model.layerColumn.key}`}
                                       className="flex min-h-[132px] flex-col rounded-lg border border-mcm-walnut/20 bg-mcm-cream/35 p-2.5"
+                                      style={{
+                                        backgroundColor: model.layerVisual.strongBg,
+                                        borderColor: model.layerVisual.border,
+                                        boxShadow: `inset 4px 0 0 ${model.layerVisual.border}, inset 0 2px 0 ${model.layerVisual.border}`
+                                      }}
                                     >
                                       <div className="flex items-start justify-between gap-2">
                                         <div>
-                                          <div className="text-[11px] font-black uppercase tracking-widest text-mcm-walnut">
+                                          <div
+                                            className="text-[11px] font-black uppercase tracking-widest"
+                                            style={{ color: model.layerVisual.accent }}
+                                          >
                                             {model.layerColumn.label}
                                           </div>
                                           <div
                                             className={`${StatusTypos.MONO} tabular-nums text-lg font-black text-mcm-walnut`}
                                           >
-                                            {formatInt(model.metadata?.symbolCount)}
+                                            {formatSymbolCount(model.metadata?.symbolCount)}
                                           </div>
                                         </div>
                                         <div className="flex flex-col items-end gap-1">
                                           <span
-                                            className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                            className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
                                             style={{
                                               backgroundColor: model.dataConfig.bg,
                                               color: model.dataConfig.text,
@@ -1722,7 +1855,7 @@ export function DomainLayerComparisonPanel({
                                             {model.dataLabel}
                                           </span>
                                           <span
-                                            className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                            className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
                                             style={{
                                               backgroundColor: model.jobConfig.bg,
                                               color: model.jobConfig.text,
@@ -1735,16 +1868,16 @@ export function DomainLayerComparisonPanel({
                                         </div>
                                       </div>
 
-                                      <div className="mt-2 space-y-1 text-[10px]">
+                                      <div className="mt-2 space-y-1 text-[11px] leading-snug">
                                         {model.symbolComparison ? (
                                           <div className={`${StatusTypos.MONO}`}>
-                                            <span className="text-mcm-walnut/50">
+                                            <span className="text-mcm-walnut/70">
                                               vs {model.previousLabel}:{' '}
                                             </span>
                                             <span className={model.symbolComparison.className}>
                                               {model.symbolComparison.text}
                                             </span>
-                                            <span className="text-mcm-walnut/40">{' | '}</span>
+                                            <span className="text-mcm-walnut/60">{' | '}</span>
                                             <span className={model.blacklistSummary.className}>
                                               {model.blacklistSummary.text}
                                             </span>
@@ -1759,9 +1892,9 @@ export function DomainLayerComparisonPanel({
                                         <div
                                           className={`${StatusTypos.MONO} flex items-center gap-1`}
                                         >
-                                          <span className="text-mcm-walnut/50">last start:</span>
+                                          <span className="text-mcm-walnut/70">last start:</span>
                                           <span
-                                            className="text-mcm-walnut/80"
+                                            className="text-mcm-walnut/90"
                                             title={model.run?.startTime || undefined}
                                           >
                                             {model.lastStartDisplay}
@@ -1770,9 +1903,9 @@ export function DomainLayerComparisonPanel({
                                         <div
                                           className={`${StatusTypos.MONO} flex items-center gap-1`}
                                         >
-                                          <span className="text-mcm-walnut/50">schedule:</span>
+                                          <span className="text-mcm-walnut/70">schedule:</span>
                                           <span
-                                            className="truncate text-mcm-walnut/80"
+                                            className="truncate text-mcm-walnut/90"
                                             title={model.scheduleRaw || undefined}
                                           >
                                             {model.scheduleDisplay}
@@ -1785,11 +1918,11 @@ export function DomainLayerComparisonPanel({
                                                 key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
                                                 className="flex items-center justify-between"
                                               >
-                                                <span className="text-mcm-walnut/65">
+                                                <span className="text-mcm-walnut/80">
                                                   {item.label}
                                                 </span>
                                                 <span
-                                                  className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/85`}
+                                                  className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/95`}
                                                 >
                                                   {formatInt(item.count)}
                                                 </span>
@@ -1799,7 +1932,7 @@ export function DomainLayerComparisonPanel({
                                         ) : null}
                                         {model.isCellRefreshing ? (
                                           <div
-                                            className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-mcm-walnut/55`}
+                                            className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-mcm-walnut/75`}
                                           >
                                             <RefreshCw className="h-3 w-3 animate-spin" />
                                             refreshing...
@@ -1851,7 +1984,7 @@ export function DomainLayerComparisonPanel({
                                               <span>{model.layerColumn.label} • {row.label}</span>
                                               {model.isCellRefreshing ? (
                                                 <span
-                                                  className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wide text-mcm-walnut/55`}
+                                                  className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-mcm-walnut/75`}
                                                 >
                                                   <RefreshCw className="h-3 w-3 animate-spin" />
                                                   refreshing
@@ -1859,7 +1992,11 @@ export function DomainLayerComparisonPanel({
                                               ) : null}
                                             </DropdownMenuLabel>
                                             <DropdownMenuItem
-                                              disabled={model.isCellBusy || isResettingAllLists}
+                                              disabled={
+                                                model.isCellBusy ||
+                                                isResettingAllLists ||
+                                                isResettingCheckpoints
+                                              }
                                               onSelect={(event) => {
                                                 event.preventDefault();
                                                 void handleCellRefresh(
@@ -1936,7 +2073,33 @@ export function DomainLayerComparisonPanel({
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
                                               disabled={
+                                                !model.supportsCheckpointReset ||
                                                 model.isCellBusy ||
+                                                isResettingCheckpoints ||
+                                                isResettingLists ||
+                                                isRefreshingPanelCounts ||
+                                                isResettingAllLists
+                                              }
+                                              onSelect={() =>
+                                                setCheckpointResetTarget({
+                                                  layerKey: model.layerColumn.key,
+                                                  layerLabel: model.layerColumn.label,
+                                                  domainKey: row.key,
+                                                  domainLabel: row.label
+                                                })
+                                              }
+                                            >
+                                              <RotateCcw className="h-4 w-4" />
+                                              {model.isResettingThisCheckpointCell
+                                                ? 'Resetting checkpoints...'
+                                                : model.supportsCheckpointReset
+                                                  ? 'Reset checkpoints'
+                                                  : 'Checkpoint reset unavailable'}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                model.isCellBusy ||
+                                                isResettingCheckpoints ||
                                                 isResettingLists ||
                                                 isRefreshingPanelCounts ||
                                                 isResettingAllLists
@@ -1959,6 +2122,7 @@ export function DomainLayerComparisonPanel({
                                               disabled={
                                                 isPurging ||
                                                 model.isCellBusy ||
+                                                isResettingCheckpoints ||
                                                 isResettingLists ||
                                                 isResettingAllLists ||
                                                 isRefreshingPanelCounts
