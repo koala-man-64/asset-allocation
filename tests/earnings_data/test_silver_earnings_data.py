@@ -80,6 +80,7 @@ def test_run_earnings_reconciliation_purges_silver_orphans(monkeypatch):
         "collect_delta_market_symbols",
         lambda *, client, root_prefix: {"AAPL", "MSFT"},
     )
+    monkeypatch.setattr(silver, "get_backfill_range", lambda: (None, None))
 
     orphan_count, deleted_blobs = silver._run_earnings_reconciliation(
         bronze_blob_list=[
@@ -91,6 +92,38 @@ def test_run_earnings_reconciliation_purges_silver_orphans(monkeypatch):
     assert orphan_count == 1
     assert deleted_blobs == 2
     assert fake_client.deleted_paths == [DataPaths.get_earnings_path("MSFT")]
+
+
+def test_run_earnings_reconciliation_applies_cutoff_sweep(monkeypatch):
+    class _FakeSilverClient:
+        def delete_prefix(self, _path: str) -> int:
+            return 0
+
+    fake_client = _FakeSilverClient()
+    captured: dict = {}
+
+    monkeypatch.setattr(silver, "silver_client", fake_client)
+    monkeypatch.setattr(
+        silver,
+        "collect_delta_market_symbols",
+        lambda *, client, root_prefix: {"AAPL", "MSFT"},
+    )
+    monkeypatch.setattr(
+        silver,
+        "enforce_backfill_cutoff_on_tables",
+        lambda **kwargs: captured.update(kwargs)
+        or type(
+            "_Stats",
+            (),
+            {"tables_scanned": 0, "tables_rewritten": 0, "deleted_blobs": 0, "rows_dropped": 0, "errors": 0},
+        )(),
+    )
+    monkeypatch.setattr(silver, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
+
+    silver._run_earnings_reconciliation(bronze_blob_list=[{"name": "earnings-data/AAPL.json"}])
+
+    assert captured["symbols"] == {"AAPL"}
+    assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
 
 
 def test_run_earnings_reconciliation_requires_storage_client(monkeypatch):

@@ -7,6 +7,8 @@ import pandas as pd
 
 from core import core as mdc
 
+_DEFAULT_BACKFILL_START = pd.Timestamp("2016-01-01")
+
 
 def _parse_bool(raw: Optional[str], *, default: bool) -> bool:
     if raw is None:
@@ -27,10 +29,50 @@ def get_latest_only_flag(domain: str, *, default: bool = True) -> bool:
     return _parse_bool(domain_raw, default=default)
 
 
+def _parse_env_timestamp(name: str) -> Optional[pd.Timestamp]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        ts = pd.to_datetime(text, errors="raise")
+    except Exception:
+        mdc.write_warning(f"Ignoring invalid {name} value: {raw!r}")
+        return None
+    normalized = pd.Timestamp(ts)
+    if getattr(normalized, "tzinfo", None) is not None:
+        normalized = normalized.tz_localize(None)
+    return normalized.normalize()
+
+
 def get_backfill_range() -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
-    # Backfill dates are intentionally non-configurable.
-    # Callers should derive the minimal required window from existing data.
-    return None, None
+    start = _parse_env_timestamp("BACKFILL_START_DATE")
+    if start is None:
+        start = _parse_env_timestamp("MARKET_BACKFILL_START_DATE")
+        if start is not None:
+            mdc.write_warning("MARKET_BACKFILL_START_DATE is deprecated; use BACKFILL_START_DATE instead.")
+    if start is None:
+        start = _DEFAULT_BACKFILL_START
+    if start < _DEFAULT_BACKFILL_START:
+        mdc.write_warning(
+            "BACKFILL_START_DATE cannot be earlier than 2016-01-01; clamping to baseline cutoff."
+        )
+        start = _DEFAULT_BACKFILL_START
+
+    end = _parse_env_timestamp("BACKFILL_END_DATE")
+    if end is None:
+        end = _parse_env_timestamp("MARKET_BACKFILL_END_DATE")
+        if end is not None:
+            mdc.write_warning("MARKET_BACKFILL_END_DATE is deprecated; use BACKFILL_END_DATE instead.")
+    if end is not None and end < start:
+        mdc.write_warning(
+            f"Ignoring BACKFILL_END_DATE ({end.date().isoformat()}) older than start cutoff ({start.date().isoformat()})."
+        )
+        end = None
+
+    return start, end
 
 
 def filter_by_date(df: pd.DataFrame, date_col: str, start: Optional[pd.Timestamp], end: Optional[pd.Timestamp]) -> pd.DataFrame:

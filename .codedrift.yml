@@ -2,48 +2,47 @@ baseline:
   branch: main
 
 standards:
-  format:
-    - "npm run format -- --check"
+  format: []
   lint:
-    - "npm run lint"
-  typecheck:
-    - "npm run typecheck"
+    - "python3 -m ruff check ."
+  typecheck: []
   test_fast:
-    - "npm test -- --runInBand"
+    - "python3 -m pytest -q tests/tasks tests/market_data tests/finance_data tests/earnings_data tests/price_target_data"
   test_full:
-    - "npm test"
+    - "python3 -m pytest -q"
   format_fix:
-    - "npm run format"
+    - "python3 -m ruff format ."
   lint_fix:
-    - "npm run lint -- --fix"
+    - "python3 -m ruff check --fix ."
 
 architecture:
   layers:
-    - name: "domain"
-      path_glob: "src/domain/**"
+    - name: "api"
+      path_glob: "api/**"
       forbid_imports_from:
-        - "src/infrastructure/**"
-    - name: "infrastructure"
-      path_glob: "src/infrastructure/**"
+        - "ui/**"
+    - name: "tasks"
+      path_glob: "tasks/**"
       allow_imports_from:
-        - "src/domain/**"
-        - "src/shared/**"
+        - "core/**"
+        - "tasks/**"
+        - "monitoring/**"
   blessed_patterns:
-    - "Result-based error boundaries"
-    - "Dependency injection via constructors"
+    - "Idempotent storage reconciliation flows"
+    - "Environment-driven runtime configuration"
 
 dependencies:
   denylist:
     - "left-pad"
-  allowlist:
-    - "zod"
-    - "axios"
+  allowlist: []
   lockfile_required: true
 
 api:
   public_globs:
-    - "src/public/**"
-    - "src/index.ts"
+    - "api/endpoints/**"
+    - "api/service/settings.py"
+    - "api/service/app.py"
+    - "core/runtime_config.py"
   breaking_change_policy: "strict"
 
 thresholds:
@@ -64,17 +63,22 @@ auto_remediate:
   enabled: false
   max_files_changed: 50
   safe_directories:
-    - "src/**"
+    - "api/**"
+    - "core/**"
+    - "tasks/**"
+    - "tests/**"
     - "docs/**"
+    - ".github/workflows/**"
   commands:
-    - "npm run format"
-    - "npm run lint -- --fix"
+    - "python3 -m ruff format ."
+    - "python3 -m ruff check --fix ."
 
 risk_controls:
   protected_globs:
-    - "migrations/**"
+    - "deploy/sql/postgres/migrations/**"
     - "infra/**"
-    - "src/auth/**"
+    - ".github/workflows/deploy.yml"
+    - "api/endpoints/system.py"
   require_tests_passing_before_automerge: true
 
 reporting:
@@ -83,4 +87,6 @@ reporting:
   patch_path: "artifacts/drift_remediation.patch"
 
 detection:
-  lookback_days: 14
+  lookback_days: 7
+  exclude_globs:
+    - "artifacts/**"

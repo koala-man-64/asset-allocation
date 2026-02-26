@@ -15,7 +15,6 @@ import json
 import os
 import pathlib
 import re
-import shlex
 import subprocess
 import sys
 import textwrap
@@ -108,6 +107,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "detection": {
         "lookback_days": 14,
+        "exclude_globs": [],
     },
 }
 
@@ -171,6 +171,10 @@ CODE_PATH_PATTERNS = [
     "**/*.java",
     "**/*.cs",
     "**/*.rs",
+]
+
+DEFAULT_EXCLUDED_PATH_PATTERNS = [
+    "artifacts/**",
 ]
 
 SIGNATURE_PATTERNS = [
@@ -369,6 +373,13 @@ def path_matches(path: str, patterns: list[str]) -> bool:
         if fnmatch.fnmatch(path, pattern):
             return True
     return False
+
+
+def is_excluded_path(path: str, exclude_globs: list[str] | None) -> bool:
+    patterns = list(DEFAULT_EXCLUDED_PATH_PATTERNS)
+    if exclude_globs:
+        patterns.extend(str(item) for item in exclude_globs if str(item).strip())
+    return path_matches(path, patterns)
 
 
 def normalize_import_target(value: str) -> str:
@@ -602,7 +613,13 @@ def resolve_compare_refs(
     return compare_from, compare_to, ci_detected
 
 
-def list_changed_files(repo: pathlib.Path, compare_from: str, compare_to: str, include_worktree: bool) -> list[str]:
+def list_changed_files(
+    repo: pathlib.Path,
+    compare_from: str,
+    compare_to: str,
+    include_worktree: bool,
+    exclude_globs: list[str] | None = None,
+) -> list[str]:
     changed = set(
         line.strip()
         for line in git_maybe_output(repo, ["diff", "--name-only", f"{compare_from}..{compare_to}"], timeout=120).splitlines()
@@ -621,7 +638,44 @@ def list_changed_files(repo: pathlib.Path, compare_from: str, compare_to: str, i
             if line.strip()
         )
 
-    return sorted(changed)
+    kept = [path for path in sorted(changed) if not is_excluded_path(path, exclude_globs)]
+    return kept
+
+
+def iter_removed_lines_by_file(
+    diff_text: str,
+    *,
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    removed: list[tuple[str, str]] = []
+    current_file: str | None = None
+
+    for raw_line in diff_text.splitlines():
+        line = raw_line.rstrip("\n")
+        if line.startswith("diff --git "):
+            current_file = None
+            continue
+        if line.startswith("+++ "):
+            candidate = line[4:].strip()
+            if candidate.startswith("b/"):
+                candidate = candidate[2:]
+            if not candidate or candidate == "/dev/null":
+                current_file = None
+                continue
+            current_file = candidate
+            continue
+        if not line.startswith("-") or line.startswith("---"):
+            continue
+        if not current_file:
+            continue
+        if include_patterns and not path_matches(current_file, include_patterns):
+            continue
+        if exclude_patterns and path_matches(current_file, exclude_patterns):
+            continue
+        removed.append((current_file, line))
+
+    return removed
 
 
 def collect_recent_log(repo: pathlib.Path, lookback_days: int) -> str:
@@ -1002,10 +1056,17 @@ def detect_behavioral_and_test_drift(
             )
         )
 
-    removed_test_markers = []
-    for line in compare_diff.splitlines():
-        if line.startswith("-") and re.search(r"\b(def\s+test_|it\(|test\()", line):
-            removed_test_markers.append(line)
+    removed_test_markers: list[str] = []
+    removed_test_files: set[str] = set()
+    removed_test_lines = iter_removed_lines_by_file(
+        compare_diff,
+        include_patterns=TEST_PATH_PATTERNS,
+        exclude_patterns=DEFAULT_EXCLUDED_PATH_PATTERNS,
+    )
+    for file_path, removed_line in removed_test_lines:
+        if re.search(r"\b(def\s+test_|it\(|test\()", removed_line):
+            removed_test_files.add(file_path)
+            removed_test_markers.append(f"{file_path}: {removed_line}")
 
     if removed_test_markers:
         findings.append(
@@ -1016,7 +1077,7 @@ def detect_behavioral_and_test_drift(
                 title="Test cases removed",
                 expected="Coverage should not regress for changed behavior.",
                 observed="Detected removed test definitions/assertions in diff.",
-                files=[],
+                files=sorted(removed_test_files),
                 evidence=removed_test_markers[:12],
                 remediation="Restore removed tests or add equivalent coverage for modified behavior.",
                 risk="medium",
@@ -1229,11 +1290,23 @@ def detect_config_infra_drift(
 ) -> list[Finding]:
     findings: list[Finding] = []
 
-    touched_config = [path for path in changed_files if path_matches(path, CONFIG_PATH_PATTERNS)]
+    touched_config = [
+        path
+        for path in changed_files
+        if path_matches(path, CONFIG_PATH_PATTERNS) and not is_excluded_path(path, DEFAULT_EXCLUDED_PATH_PATTERNS)
+    ]
     if touched_config:
-        weakened_gate_lines = [
-            line for line in compare_diff.splitlines() if line.startswith("-") and re.search(r"\b(lint|typecheck|test|security)\b", line, re.IGNORECASE)
-        ]
+        touched_config_set = set(touched_config)
+        weakened_gate_lines: list[str] = []
+        for file_path, removed_line in iter_removed_lines_by_file(
+            compare_diff,
+            include_patterns=CONFIG_PATH_PATTERNS,
+            exclude_patterns=DEFAULT_EXCLUDED_PATH_PATTERNS,
+        ):
+            if file_path not in touched_config_set:
+                continue
+            if re.search(r"\b(lint|typecheck|test|security)\b", removed_line, re.IGNORECASE):
+                weakened_gate_lines.append(f"{file_path}: {removed_line}")
         severity = "high" if weakened_gate_lines else "medium"
         findings.append(
             Finding(
@@ -1290,6 +1363,9 @@ def detect_multi_agent_patterns(
     if not code_files:
         return findings
 
+    non_test_code_files = [path for path in code_files if not path_matches(path, TEST_PATH_PATTERNS)]
+    test_code_files = [path for path in code_files if path_matches(path, TEST_PATH_PATTERNS)]
+
     strategy_hits: Counter[str] = Counter()
     baseline_hits: Counter[str] = Counter()
 
@@ -1298,7 +1374,7 @@ def detect_multi_agent_patterns(
 
     test_style_hits: Counter[str] = Counter()
 
-    for file_path in code_files:
+    for file_path in non_test_code_files:
         content = read_file_if_exists(repo / file_path)
         baseline_content = read_file_from_ref(repo, compare_from, file_path)
 
@@ -1315,34 +1391,35 @@ def detect_multi_agent_patterns(
         for match in re.finditer(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*(Service|Manager|Client|Wrapper))", content, re.MULTILINE):
             abstraction_defs[match.group(1)].append(file_path)
 
-        if path_matches(file_path, TEST_PATH_PATTERNS):
-            if re.search(r"toMatchSnapshot|snapshot", content):
-                test_style_hits["snapshot"] += 1
-            if re.search(r"jest\.mock|mock\.patch|sinon", content):
-                test_style_hits["mock-heavy"] += 1
-            if re.search(r"integration|@pytest\.mark\.integration|describe\(['\"]integration", content, re.IGNORECASE):
-                test_style_hits["integration-heavy"] += 1
+    for file_path in test_code_files:
+        content = read_file_if_exists(repo / file_path)
+        if re.search(r"toMatchSnapshot|snapshot", content):
+            test_style_hits["snapshot"] += 1
+        if re.search(r"jest\.mock|mock\.patch|sinon", content):
+            test_style_hits["mock-heavy"] += 1
+        if re.search(r"integration|@pytest\.mark\.integration|describe\(['\"]integration", content, re.IGNORECASE):
+            test_style_hits["integration-heavy"] += 1
 
     observed_strategies = [name for name, count in strategy_hits.items() if count > 0]
-    if len(observed_strategies) >= 2:
-        winner = observed_strategies[0]
-        if baseline_hits:
-            winner = baseline_hits.most_common(1)[0][0]
-        findings.append(
-            Finding(
-                category="architecture",
-                severity="medium",
-                confidence=0.7,
-                title="Inconsistent micro-architecture patterns",
-                expected=f"Use a consistent error-handling pattern. Baseline prevalence favors `{winner}`.",
-                observed=f"Competing patterns detected in changed files: {', '.join(sorted(observed_strategies))}.",
-                files=code_files[:20],
-                evidence=[f"Baseline strategy counts: {dict(baseline_hits)}", f"Observed strategy counts: {dict(strategy_hits)}"],
-                remediation=f"Standardize error handling around `{winner}` and migrate divergent paths incrementally.",
-                risk="medium",
-                verification=["Run targeted tests for standardized paths", "Re-run drift audit"],
+    if len(observed_strategies) >= 2 and baseline_hits:
+        baseline_winner = baseline_hits.most_common(1)[0][0]
+        observed_winner = strategy_hits.most_common(1)[0][0]
+        if baseline_winner != observed_winner:
+            findings.append(
+                Finding(
+                    category="architecture",
+                    severity="medium",
+                    confidence=0.7,
+                    title="Inconsistent micro-architecture patterns",
+                    expected=f"Use a consistent error-handling pattern. Baseline prevalence favors `{baseline_winner}`.",
+                    observed=f"Dominant strategy shifted from `{baseline_winner}` to `{observed_winner}`.",
+                    files=non_test_code_files[:20],
+                    evidence=[f"Baseline strategy counts: {dict(baseline_hits)}", f"Observed strategy counts: {dict(strategy_hits)}"],
+                    remediation=f"Standardize error handling around `{baseline_winner}` and migrate divergent paths incrementally.",
+                    risk="medium",
+                    verification=["Run targeted tests for standardized paths", "Re-run drift audit"],
+                )
             )
-        )
 
     duplicate_helpers = {name: paths for name, paths in helper_defs.items() if len(set(paths)) > 1}
     if duplicate_helpers:
@@ -1393,36 +1470,11 @@ def detect_multi_agent_patterns(
                 title="Test philosophy drift",
                 expected="A single dominant testing style should be applied within a module area.",
                 observed=f"Competing test styles detected: {dict(test_style_hits)}.",
-                files=[path for path in code_files if path_matches(path, TEST_PATH_PATTERNS)][:20],
+                files=test_code_files[:20],
                 evidence=[f"Test style counts: {dict(test_style_hits)}"],
                 remediation="Define module-level test style guidance (snapshot vs mocks vs integration) and align suites.",
                 risk="low",
                 verification=["Run full test suite", "Review flaky test rates"],
-            )
-        )
-
-    config_touch_commits = 0
-    for block in recent_log.split("\n\n"):
-        lines = [line for line in block.splitlines() if line.strip()]
-        if not lines:
-            continue
-        if any(path_matches(line, CONFIG_PATH_PATTERNS) for line in lines[1:]):
-            config_touch_commits += 1
-
-    if config_touch_commits >= 4:
-        findings.append(
-            Finding(
-                category="config_infra",
-                severity="low",
-                confidence=0.7,
-                title="Config churn trend",
-                expected="CI/lint/config should evolve through coordinated, low-churn changes.",
-                observed=f"{config_touch_commits} recent commits modified config-related files.",
-                files=[],
-                evidence=[f"Commits touching config in lookback: {config_touch_commits}"],
-                remediation="Batch configuration changes and codify ownership/approval expectations.",
-                risk="low",
-                verification=["Inspect config commit history"],
             )
         )
 
@@ -1936,7 +1988,15 @@ def main() -> int:
     compare_from, compare_to, ci_context = resolve_compare_refs(repo, baseline_ref, args.ci, args.pr_head)
 
     include_worktree = not ci_context
-    changed_files = list_changed_files(repo, compare_from, compare_to, include_worktree)
+    detection_cfg = config.get("detection", {}) or {}
+    configured_excludes = [str(item) for item in (detection_cfg.get("exclude_globs", []) or []) if str(item).strip()]
+    changed_files = list_changed_files(
+        repo,
+        compare_from,
+        compare_to,
+        include_worktree,
+        exclude_globs=configured_excludes,
+    )
 
     range_diff = get_diff(repo, compare_from, compare_to)
     working_diff = get_working_tree_diff(repo) if include_worktree else ""

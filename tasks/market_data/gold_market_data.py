@@ -18,6 +18,7 @@ from tasks.technical_analysis.technical_indicators import (
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
+    enforce_backfill_cutoff_on_tables,
     purge_orphan_market_tables,
 )
 
@@ -314,6 +315,7 @@ def _build_job_config() -> FeatureJobConfig:
 
 def _run_market_reconciliation(*, silver_container: str, gold_container: str) -> tuple[int, int]:
     from core import core as mdc
+    from core import delta_core
     from core.pipeline import DataPaths
 
     silver_client = mdc.get_storage_client(silver_container)
@@ -338,6 +340,37 @@ def _run_market_reconciliation(*, silver_container: str, gold_container: str) ->
         )
     else:
         mdc.write_line("Gold market reconciliation: no orphan symbols detected.")
+
+    backfill_start, _ = get_backfill_range()
+    cutoff_symbols = gold_symbols.difference(set(orphan_symbols))
+    cutoff_stats = enforce_backfill_cutoff_on_tables(
+        symbols=cutoff_symbols,
+        table_paths_for_symbol=lambda symbol: [DataPaths.get_gold_features_path(symbol)],
+        load_table=lambda path: delta_core.load_delta(gold_container, path),
+        store_table=lambda df, path: delta_core.store_delta(df, gold_container, path, mode="overwrite"),
+        delete_prefix=gold_client.delete_prefix,
+        date_column_candidates=("date", "Date"),
+        backfill_start=backfill_start,
+        context="gold market reconciliation cutoff",
+        vacuum_table=lambda path: delta_core.vacuum_delta_table(
+            gold_container,
+            path,
+            retention_hours=0,
+            dry_run=False,
+            enforce_retention_duration=False,
+            full=True,
+        ),
+    )
+    if cutoff_stats.rows_dropped > 0 or cutoff_stats.tables_rewritten > 0 or cutoff_stats.deleted_blobs > 0:
+        mdc.write_line(
+            "Gold market reconciliation cutoff sweep: "
+            f"tables_scanned={cutoff_stats.tables_scanned} "
+            f"tables_rewritten={cutoff_stats.tables_rewritten} "
+            f"deleted_blobs={cutoff_stats.deleted_blobs} "
+            f"rows_dropped={cutoff_stats.rows_dropped}"
+        )
+    if cutoff_stats.errors > 0:
+        mdc.write_warning(f"Gold market reconciliation cutoff sweep encountered errors={cutoff_stats.errors}.")
     return len(orphan_symbols), deleted_blobs
 
 

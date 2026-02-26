@@ -9,8 +9,10 @@ from tasks.common.market_reconciliation import (
     collect_bronze_price_target_symbols_from_blob_infos,
     collect_bronze_market_symbols_from_blob_infos,
     collect_delta_market_symbols,
+    enforce_backfill_cutoff_on_tables,
     purge_orphan_market_tables,
 )
+import pandas as pd
 
 
 def test_collect_bronze_market_symbols_ignores_non_symbol_files() -> None:
@@ -120,3 +122,77 @@ def test_collect_bronze_finance_symbols_extracts_known_suffixes() -> None:
     symbols = collect_bronze_finance_symbols_from_blob_infos(blob_infos)
 
     assert symbols == {"AAPL", "MSFT", "NVDA"}
+
+
+def test_enforce_backfill_cutoff_on_tables_rewrites_and_deletes() -> None:
+    saved: dict[str, pd.DataFrame] = {}
+    deleted_paths: list[str] = []
+    vacuumed_paths: list[str] = []
+
+    def _table_paths(symbol: str) -> list[str]:
+        return [f"market-data/{symbol}"]
+
+    def _load_table(path: str) -> pd.DataFrame | None:
+        if path.endswith("AAPL"):
+            return pd.DataFrame(
+                {
+                    "Date": [pd.Timestamp("2015-12-31"), pd.Timestamp("2016-01-02")],
+                    "value": [1, 2],
+                }
+            )
+        if path.endswith("MSFT"):
+            return pd.DataFrame({"Date": [pd.Timestamp("2015-12-30")], "value": [7]})
+        return None
+
+    def _store_table(df: pd.DataFrame, path: str) -> None:
+        saved[path] = df.copy()
+
+    def _delete_prefix(path: str) -> int:
+        deleted_paths.append(path)
+        return 3
+
+    def _vacuum(path: str) -> None:
+        vacuumed_paths.append(path)
+
+    stats = enforce_backfill_cutoff_on_tables(
+        symbols={"AAPL", "MSFT"},
+        table_paths_for_symbol=_table_paths,
+        load_table=_load_table,
+        store_table=_store_table,
+        delete_prefix=_delete_prefix,
+        date_column_candidates=("date", "obs_date"),
+        backfill_start=pd.Timestamp("2016-01-01"),
+        context="test cutoff",
+        vacuum_table=_vacuum,
+    )
+
+    assert stats.tables_scanned == 2
+    assert stats.tables_rewritten == 1
+    assert stats.deleted_blobs == 3
+    assert stats.rows_dropped == 2
+    assert stats.errors == 0
+
+    assert list(saved.keys()) == ["market-data/AAPL"]
+    assert pd.to_datetime(saved["market-data/AAPL"]["Date"]).min() == pd.Timestamp("2016-01-02")
+    assert deleted_paths == ["market-data/MSFT"]
+    assert vacuumed_paths == ["market-data/AAPL"]
+
+
+def test_enforce_backfill_cutoff_on_tables_handles_missing_date_column() -> None:
+    stats = enforce_backfill_cutoff_on_tables(
+        symbols={"AAPL"},
+        table_paths_for_symbol=lambda _symbol: ["market-data/AAPL"],
+        load_table=lambda _path: pd.DataFrame({"close": [1.0, 2.0]}),
+        store_table=lambda _df, _path: None,
+        delete_prefix=lambda _path: 0,
+        date_column_candidates=("date", "obs_date"),
+        backfill_start=pd.Timestamp("2016-01-01"),
+        context="test cutoff",
+        vacuum_table=None,
+    )
+
+    assert stats.tables_scanned == 1
+    assert stats.tables_rewritten == 0
+    assert stats.deleted_blobs == 0
+    assert stats.rows_dropped == 0
+    assert stats.errors == 0

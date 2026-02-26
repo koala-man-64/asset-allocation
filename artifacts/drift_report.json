@@ -9,94 +9,125 @@
     "resolved": "main"
   },
   "category_counts": {
-    "architecture": 1,
-    "config_infra": 3,
-    "test": 1
+    "config_infra": 2
   },
   "category_scores": {
-    "architecture": 25.0,
-    "config_infra": 45.0,
-    "test": 37.5
+    "config_infra": 30.0
   },
   "changed_files": [
+    ".codedrift.yml",
+    ".codex/skills/code-drift-sentinel/scripts/codedrift_sentinel.py",
     ".env.template",
+    ".github/dependabot.yml",
+    ".github/workflows/supply_chain_security.yml",
     "README.md",
-    "api/endpoints/system.py",
-    "core/runtime_config.py",
-    "deploy/app_api.yaml",
+    "deploy/job_bronze_earnings_data.yaml",
     "deploy/job_bronze_finance_data.yaml",
+    "deploy/job_bronze_market_data.yaml",
+    "deploy/job_bronze_price_target_data.yaml",
+    "deploy/job_gold_earnings_data.yaml",
+    "deploy/job_gold_finance_data.yaml",
+    "deploy/job_gold_market_data.yaml",
+    "deploy/job_gold_price_target_data.yaml",
+    "deploy/job_silver_earnings_data.yaml",
     "deploy/job_silver_finance_data.yaml",
-    "monitoring/domain_metadata.py",
-    "scripts/delete_all_jobs.ps1",
-    "tasks/finance_data/bronze_finance_data.py",
+    "deploy/job_silver_market_data.yaml",
+    "deploy/job_silver_price_target_data.yaml",
+    "pyproject.toml",
+    "requirements.lock.txt",
+    "requirements.txt",
+    "scripts/setup-env.ps1",
+    "scripts/sync-all-to-github.ps1",
+    "tasks/common/backfill.py",
+    "tasks/common/market_reconciliation.py",
+    "tasks/earnings_data/gold_earnings_data.py",
+    "tasks/earnings_data/silver_earnings_data.py",
+    "tasks/finance_data/gold_finance_data.py",
     "tasks/finance_data/silver_finance_data.py",
     "tasks/market_data/gold_market_data.py",
-    "tasks/market_data/materialize_gold_market_by_date.py",
     "tasks/market_data/silver_market_data.py",
+    "tasks/price_target_data/gold_price_target_data.py",
+    "tasks/price_target_data/silver_price_target_data.py",
+    "tests/conftest.py",
+    "tests/earnings_data/test_gold_earnings_data_reconciliation.py",
+    "tests/earnings_data/test_silver_earnings_data.py",
+    "tests/finance_data/test_gold_finance_data_reconciliation.py",
     "tests/finance_data/test_silver_finance_data.py",
-    "tests/market_data/test_materialize_gold_market_by_date.py",
+    "tests/market_data/test_gold_market_data_reconciliation.py",
     "tests/market_data/test_silver_market_data.py",
-    "tests/monitoring/test_domain_metadata.py",
-    "tests/test_runtime_config.py",
-    "ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
-    "ui/src/app/components/pages/GoldMaterializationPage.tsx",
-    "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-    "ui/src/types/strategy.ts"
+    "tests/price_target_data/test_gold_price_target_data_reconciliation.py",
+    "tests/price_target_data/test_silver_price_target_data.py",
+    "tests/tasks/test_market_reconciliation.py",
+    "tmp_market_14.json"
   ],
-  "drift_score": 107.5,
+  "drift_score": 30.0,
   "findings": [
     {
-      "attribution": {},
-      "category": "test",
-      "confidence": 0.8,
-      "evidence": [
-        "-def test_normalize_env_override_gold_market_by_date_max_tables_int():",
-        "-  const isYearMonthValid = !yearMonthTrimmed || /^\\d{4}-\\d{2}$/.test(yearMonthTrimmed);",
-        "-  const isMaxTablesValid = !maxTablesTrimmed || /^[1-9]\\d*$/.test(maxTablesTrimmed);"
-      ],
-      "expected": "Coverage should not regress for changed behavior.",
-      "files": [],
-      "observed": "Detected removed test definitions/assertions in diff.",
-      "remediation": "Restore removed tests or add equivalent coverage for modified behavior.",
-      "risk": "medium",
-      "score": 37.5,
-      "severity": "high",
-      "title": "Test cases removed",
-      "verification": [
-        "Run fast and full tests",
-        "Check coverage trend"
-      ]
-    },
-    {
       "attribution": {
-        "deploy/app_api.yaml": [
-          "7faca87|rdprokes|2026-02-25|updated replica count"
+        ".github/dependabot.yml": [
+          "8ce79b6|rdprokes|2026-02-26|done"
+        ],
+        ".github/workflows/supply_chain_security.yml": [
+          "8ce79b6|rdprokes|2026-02-26|done"
+        ],
+        "deploy/job_bronze_earnings_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
         ],
         "deploy/job_bronze_finance_data.yaml": [
+          "b61bf5b|rdprokes|2026-02-26|purge parity"
+        ],
+        "deploy/job_bronze_market_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_bronze_price_target_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_gold_earnings_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_gold_finance_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_gold_market_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_gold_price_target_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_silver_earnings_data.yaml": [
           "4b8c4fd|rdprokes|2026-02-25|removed backfill"
         ],
         "deploy/job_silver_finance_data.yaml": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+          "b61bf5b|rdprokes|2026-02-26|purge parity"
         ]
       },
       "category": "config_infra",
       "confidence": 0.8,
       "evidence": [
-        "--- a/ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
-        "-  const isYearMonthValid = !yearMonthTrimmed || /^\\d{4}-\\d{2}$/.test(yearMonthTrimmed);",
-        "-  const isMaxTablesValid = !maxTablesTrimmed || /^[1-9]\\d*$/.test(maxTablesTrimmed);"
+        "Changed config files: .github/dependabot.yml, .github/workflows/supply_chain_security.yml, deploy/job_bronze_earnings_data.yaml, deploy/job_bronze_finance_data.yaml, deploy/job_bronze_market_data.yaml, deploy/job_bronze_price_target_data.yaml, deploy/job_gold_earnings_data.yaml, deploy/job_gold_finance_data.yaml, deploy/job_gold_market_data.yaml, deploy/job_gold_price_target_data.yaml, deploy/job_silver_earnings_data.yaml, deploy/job_silver_finance_data.yaml"
       ],
       "expected": "Pipeline and infra changes should preserve or strengthen quality/safety gates.",
       "files": [
-        "deploy/app_api.yaml",
+        ".github/dependabot.yml",
+        ".github/workflows/supply_chain_security.yml",
+        "deploy/job_bronze_earnings_data.yaml",
         "deploy/job_bronze_finance_data.yaml",
-        "deploy/job_silver_finance_data.yaml"
+        "deploy/job_bronze_market_data.yaml",
+        "deploy/job_bronze_price_target_data.yaml",
+        "deploy/job_gold_earnings_data.yaml",
+        "deploy/job_gold_finance_data.yaml",
+        "deploy/job_gold_market_data.yaml",
+        "deploy/job_gold_price_target_data.yaml",
+        "deploy/job_silver_earnings_data.yaml",
+        "deploy/job_silver_finance_data.yaml",
+        "deploy/job_silver_market_data.yaml",
+        "deploy/job_silver_price_target_data.yaml"
       ],
       "observed": "CI/deploy/configuration files were modified.",
       "remediation": "Review config deltas with release/security owners and validate gates remain enforced.",
       "risk": "medium",
-      "score": 22.5,
-      "severity": "high",
+      "score": 15.0,
+      "severity": "medium",
       "title": "Configuration/infra files changed",
       "verification": [
         "Run CI pipeline in branch",
@@ -108,11 +139,11 @@
       "category": "config_infra",
       "confidence": 0.6,
       "evidence": [
-        "Lookback config-touching commits: 32"
+        "Lookback config-touching commits: 17"
       ],
       "expected": "Configuration should remain stable and coordinated across contributors.",
       "files": [],
-      "observed": "32 recent commits touched config/infra files in lookback window.",
+      "observed": "17 recent commits touched config/infra files in lookback window.",
       "remediation": "Consolidate config ownership, batch related changes, and document rationale in PRs.",
       "risk": "medium",
       "score": 15.0,
@@ -122,202 +153,112 @@
         "Inspect recent config PRs",
         "Audit gate consistency across workflows"
       ]
-    },
-    {
-      "attribution": {
-        "api/endpoints/system.py": [
-          "1691099|rdprokes|2026-02-26|gold purge"
-        ],
-        "core/runtime_config.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
-        ],
-        "monitoring/domain_metadata.py": [
-          "8ce79b6|rdprokes|2026-02-26|done"
-        ],
-        "tasks/finance_data/bronze_finance_data.py": [
-          "98b6921|rdprokes|2026-02-25|fixed purging"
-        ],
-        "tasks/finance_data/silver_finance_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
-        ],
-        "tasks/market_data/gold_market_data.py": [
-          "8ce79b6|rdprokes|2026-02-26|done"
-        ],
-        "tasks/market_data/materialize_gold_market_by_date.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
-        ],
-        "tasks/market_data/silver_market_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
-        ],
-        "tests/finance_data/test_silver_finance_data.py": [
-          "fb8bba3|rdprokes|2026-02-23|dont even know"
-        ],
-        "tests/market_data/test_materialize_gold_market_by_date.py": [
-          "18216cc|rdprokes|2026-02-24|materialize gold"
-        ],
-        "tests/market_data/test_silver_market_data.py": [
-          "0c70eff|rdprokes|2026-02-21|big commit"
-        ],
-        "tests/monitoring/test_domain_metadata.py": [
-          "8ce79b6|rdprokes|2026-02-26|done"
-        ]
-      },
-      "category": "architecture",
-      "confidence": 0.7,
-      "evidence": [
-        "Baseline strategy counts: {'exceptions': 11, 'sentinel_returns': 8}",
-        "Observed strategy counts: {'exceptions': 12, 'sentinel_returns': 8}"
-      ],
-      "expected": "Use a consistent error-handling pattern. Baseline prevalence favors `exceptions`.",
-      "files": [
-        "api/endpoints/system.py",
-        "core/runtime_config.py",
-        "monitoring/domain_metadata.py",
-        "tasks/finance_data/bronze_finance_data.py",
-        "tasks/finance_data/silver_finance_data.py",
-        "tasks/market_data/gold_market_data.py",
-        "tasks/market_data/materialize_gold_market_by_date.py",
-        "tasks/market_data/silver_market_data.py",
-        "tests/finance_data/test_silver_finance_data.py",
-        "tests/market_data/test_materialize_gold_market_by_date.py",
-        "tests/market_data/test_silver_market_data.py",
-        "tests/monitoring/test_domain_metadata.py",
-        "tests/test_runtime_config.py",
-        "ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
-        "ui/src/app/components/pages/GoldMaterializationPage.tsx",
-        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-        "ui/src/types/strategy.ts"
-      ],
-      "observed": "Competing patterns detected in changed files: exceptions, sentinel_returns.",
-      "remediation": "Standardize error handling around `exceptions` and migrate divergent paths incrementally.",
-      "risk": "medium",
-      "score": 25.0,
-      "severity": "medium",
-      "title": "Inconsistent micro-architecture patterns",
-      "verification": [
-        "Run targeted tests for standardized paths",
-        "Re-run drift audit"
-      ]
-    },
-    {
-      "attribution": {},
-      "category": "config_infra",
-      "confidence": 0.7,
-      "evidence": [
-        "Commits touching config in lookback: 32"
-      ],
-      "expected": "CI/lint/config should evolve through coordinated, low-churn changes.",
-      "files": [],
-      "observed": "32 recent commits modified config-related files.",
-      "remediation": "Batch configuration changes and codify ownership/approval expectations.",
-      "risk": "low",
-      "score": 7.5,
-      "severity": "low",
-      "title": "Config churn trend",
-      "verification": [
-        "Inspect config commit history"
-      ]
     }
   ],
-  "gate_result": "fail",
-  "generated_at": "2026-02-26T19:00:02.206300+00:00",
+  "gate_result": "pass",
+  "generated_at": "2026-02-26T23:40:10.663870+00:00",
   "hotspots": [
     {
-      "findings": 3,
+      "findings": 1,
       "path": "(command-output)",
-      "score": 60.0
+      "score": 15.0
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_silver_market_data.yaml",
+      "score": 1.07
+    },
+    {
+      "findings": 1,
+      "path": ".github/workflows/supply_chain_security.yml",
+      "score": 1.07
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_bronze_price_target_data.yaml",
+      "score": 1.07
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_gold_market_data.yaml",
+      "score": 1.07
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_bronze_market_data.yaml",
+      "score": 1.07
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_silver_price_target_data.yaml",
+      "score": 1.07
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_gold_earnings_data.yaml",
+      "score": 1.07
     },
     {
       "findings": 1,
       "path": "deploy/job_silver_finance_data.yaml",
-      "score": 7.5
+      "score": 1.07
     },
     {
       "findings": 1,
       "path": "deploy/job_bronze_finance_data.yaml",
-      "score": 7.5
-    },
-    {
-      "findings": 1,
-      "path": "deploy/app_api.yaml",
-      "score": 7.5
-    },
-    {
-      "findings": 1,
-      "path": "monitoring/domain_metadata.py",
-      "score": 1.47
-    },
-    {
-      "findings": 1,
-      "path": "tests/monitoring/test_domain_metadata.py",
-      "score": 1.47
-    },
-    {
-      "findings": 1,
-      "path": "tasks/finance_data/silver_finance_data.py",
-      "score": 1.47
-    },
-    {
-      "findings": 1,
-      "path": "tests/test_runtime_config.py",
-      "score": 1.47
-    },
-    {
-      "findings": 1,
-      "path": "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-      "score": 1.47
-    },
-    {
-      "findings": 1,
-      "path": "api/endpoints/system.py",
-      "score": 1.47
+      "score": 1.07
     }
   ],
-  "mode": "audit",
-  "patch_preview": [],
+  "mode": "recommend",
+  "patch_preview": [
+    {
+      "file": "deploy/job_silver_market_data.yaml",
+      "hunks": [
+        "@@ -40,6 +40,10 @@ properties:\n         value: INFO\n       - name: DISABLE_DOTENV\n         value: \"true\"\n+      - name: BACKFILL_START_DATE\n+        value: ${BACKFILL_START_DATE}\n+      - name: BACKFILL_END_DATE\n+        value: ${BACKFILL_END_DATE}\n       - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID\n         value: ${AZURE_SUBSCRIPTION_ID}\n       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP"
+      ]
+    },
+    {
+      "file": ".github/workflows/supply_chain_security.yml",
+      "hunks": [
+        "@@ -5,6 +5,8 @@ on:\n   push:\n     branches:\n       - main\n+  schedule:\n+    - cron: \"17 9 * * 1-5\"\n   workflow_dispatch:\n \n permissions:",
+        "@@ -35,6 +37,20 @@ jobs:\n           python -m pip install --upgrade pip\n           python -m pip install pip-audit\n \n+      - name: Prepare audit artifacts\n+        run: |\n+          mkdir -p artifacts\n+\n+      - name: Collect runtime audit report (JSON)\n+        run: |\n+          set -euo pipefail\n+          pip-audit -r requirements.lock.txt --format json -o artifacts/pip-audit-runtime.json || true\n+\n+      - name: Collect development audit report (JSON)\n+        run: |\n+          set -euo pipefail\n+          pip-audit -r requirements-dev.lock.txt --format json -o artifacts/pip-audit-dev.json || true\n... (hunk trimmed)"
+      ]
+    },
+    {
+      "file": "deploy/job_bronze_price_target_data.yaml",
+      "hunks": [
+        "@@ -43,6 +43,10 @@ properties:\n         value: INFO\n       - name: DISABLE_DOTENV\n         value: \"true\"\n+      - name: BACKFILL_START_DATE\n+        value: ${BACKFILL_START_DATE}\n+      - name: BACKFILL_END_DATE\n+        value: ${BACKFILL_END_DATE}\n       - name: DEBUG_SYMBOLS\n         value: \"${DEBUG_SYMBOLS}\"\n       - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID"
+      ]
+    },
+    {
+      "file": "deploy/job_gold_market_data.yaml",
+      "hunks": [
+        "@@ -44,6 +44,10 @@ properties:\n         value: INFO\n       - name: DISABLE_DOTENV\n         value: \"true\"\n+      - name: BACKFILL_START_DATE\n+        value: ${BACKFILL_START_DATE}\n+      - name: BACKFILL_END_DATE\n+        value: ${BACKFILL_END_DATE}\n       - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID\n         value: ${AZURE_SUBSCRIPTION_ID}\n       - name: SYSTEM_HEALTH_ARM_RESOURCE_GROUP"
+      ]
+    }
+  ],
   "suggested_actions": [
     {
-      "category": "architecture",
+      "category": "config_infra",
       "files": [
-        "api/endpoints/system.py",
-        "core/runtime_config.py",
-        "monitoring/domain_metadata.py",
-        "tasks/finance_data/bronze_finance_data.py",
-        "tasks/finance_data/silver_finance_data.py",
-        "tasks/market_data/gold_market_data.py",
-        "tasks/market_data/materialize_gold_market_by_date.py",
-        "tasks/market_data/silver_market_data.py",
-        "tests/finance_data/test_silver_finance_data.py",
-        "tests/market_data/test_materialize_gold_market_by_date.py",
-        "tests/market_data/test_silver_market_data.py",
-        "tests/monitoring/test_domain_metadata.py",
-        "tests/test_runtime_config.py",
-        "ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
-        "ui/src/app/components/pages/GoldMaterializationPage.tsx",
-        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-        "ui/src/types/strategy.ts"
+        ".github/dependabot.yml",
+        ".github/workflows/supply_chain_security.yml",
+        "deploy/job_bronze_earnings_data.yaml",
+        "deploy/job_bronze_finance_data.yaml",
+        "deploy/job_bronze_market_data.yaml",
+        "deploy/job_bronze_price_target_data.yaml",
+        "deploy/job_gold_earnings_data.yaml",
+        "deploy/job_gold_finance_data.yaml",
+        "deploy/job_gold_market_data.yaml",
+        "deploy/job_gold_price_target_data.yaml",
+        "deploy/job_silver_earnings_data.yaml",
+        "deploy/job_silver_finance_data.yaml",
+        "deploy/job_silver_market_data.yaml",
+        "deploy/job_silver_price_target_data.yaml"
       ],
       "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
       "risk_level": "medium",
       "severity": "medium",
-      "title": "Inconsistent micro-architecture patterns",
-      "verification_steps": [
-        "Run targeted tests for standardized paths",
-        "Re-run drift audit"
-      ],
-      "what_to_change": "Standardize error handling around `exceptions` and migrate divergent paths incrementally.",
-      "why_it_is_drift": "Expected: Use a consistent error-handling pattern. Baseline prevalence favors `exceptions`. Observed: Competing patterns detected in changed files: exceptions, sentinel_returns."
-    },
-    {
-      "category": "config_infra",
-      "files": [
-        "deploy/app_api.yaml",
-        "deploy/job_bronze_finance_data.yaml",
-        "deploy/job_silver_finance_data.yaml"
-      ],
-      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
-      "risk_level": "medium",
-      "severity": "high",
       "title": "Configuration/infra files changed",
       "verification_steps": [
         "Run CI pipeline in branch",
@@ -338,34 +279,7 @@
         "Audit gate consistency across workflows"
       ],
       "what_to_change": "Consolidate config ownership, batch related changes, and document rationale in PRs.",
-      "why_it_is_drift": "Expected: Configuration should remain stable and coordinated across contributors. Observed: 32 recent commits touched config/infra files in lookback window."
-    },
-    {
-      "category": "config_infra",
-      "files": [],
-      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
-      "risk_level": "low",
-      "severity": "low",
-      "title": "Config churn trend",
-      "verification_steps": [
-        "Inspect config commit history"
-      ],
-      "what_to_change": "Batch configuration changes and codify ownership/approval expectations.",
-      "why_it_is_drift": "Expected: CI/lint/config should evolve through coordinated, low-churn changes. Observed: 32 recent commits modified config-related files."
-    },
-    {
-      "category": "test",
-      "files": [],
-      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
-      "risk_level": "medium",
-      "severity": "high",
-      "title": "Test cases removed",
-      "verification_steps": [
-        "Run fast and full tests",
-        "Check coverage trend"
-      ],
-      "what_to_change": "Restore removed tests or add equivalent coverage for modified behavior.",
-      "why_it_is_drift": "Expected: Coverage should not regress for changed behavior. Observed: Detected removed test definitions/assertions in diff."
+      "why_it_is_drift": "Expected: Configuration should remain stable and coordinated across contributors. Observed: 17 recent commits touched config/infra files in lookback window."
     }
   ],
   "thresholds": {
@@ -373,12 +287,20 @@
   },
   "tool_run_status": [
     {
-      "command": "<skipped>",
-      "duration_sec": 0.0,
-      "exit_code": null,
-      "name": "quality-gates",
-      "output_excerpt": "Skipped by --skip-quality-gates",
-      "status": "skipped"
+      "command": "python3 -m ruff check .",
+      "duration_sec": 0.37,
+      "exit_code": 0,
+      "name": "lint",
+      "output_excerpt": "All checks passed!",
+      "status": "passed"
+    },
+    {
+      "command": "python3 -m pytest -q tests/tasks tests/market_data tests/finance_data tests/earnings_data tests/price_target_data",
+      "duration_sec": 9.56,
+      "exit_code": 0,
+      "name": "test_fast",
+      "output_excerpt": "..................................................................................................................................\n=============================== warnings summary ===============================\ntests/earnings_data/test_feature_generator.py::test_compute_features_adds_expected_columns\ntests/earnings_data/test_feature_generator.py::test_compute_features_rolls_over_quarters\ntests/earnings_data/test_feature_generator.py::test_compute_features_handles_divide_by_zero\ntests/earnings_data/test_gold_earnings_data.py::test_compute_features\n  /mnt/c/Users/rdpro/Projects/AssetAllocation/tasks/earnings_data/gold_earnings_data.py:142: DeprecationWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.\n    out = out.groupby(\"symbol\", sort=False, group_keys=False).apply(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n130 passed, 4 warnings in 7.29s",
+      "status": "passed"
     }
   ]
 }

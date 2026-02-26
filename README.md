@@ -18,6 +18,7 @@ python3 -m pip install -e .
 ### Configure environment
 - Copy `.env.template` to `.env` and fill required values, or run the interactive setup:
   - `pwsh scripts/setup-env.ps1`
+- Reconciliation cutoff default is `BACKFILL_START_DATE=2016-01-01` (set as a GitHub Variable in deployed environments).
 
 ### Run tests
 ```bash
@@ -124,8 +125,14 @@ To run this as part of the regular Gold market job, set:
 Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under `deploy/`.
 
 ## Dependency lockfiles
+- Runtime source-of-truth is `pyproject.toml` `[project].dependencies`.
+- `requirements.txt` and `requirements.lock.txt` are synchronized from `pyproject.toml` via:
+  - `python3 scripts/dependency_governance.py sync`
+- Validate dependency governance locally:
+  - `python3 scripts/dependency_governance.py check --report artifacts/dependency_governance_report.json`
 - `requirements.lock.txt` is used by Docker builds for reproducible images.
 - `requirements-dev.lock.txt` is used by CI for reproducible test installs.
+- Full runbook: `docs/dependency_governance.md`.
 
 ## Docs
 - `api/API_ENDPOINTS.md`

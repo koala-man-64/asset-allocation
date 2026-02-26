@@ -27,6 +27,7 @@ from tasks.common.silver_contracts import (
 from tasks.common.market_reconciliation import (
     collect_bronze_price_target_symbols_from_blob_infos,
     collect_delta_market_symbols,
+    enforce_backfill_cutoff_on_tables,
     purge_orphan_tables,
 )
 
@@ -255,6 +256,39 @@ def _run_price_target_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[i
         )
     else:
         mdc.write_line("Silver price-target reconciliation: no orphan symbols detected.")
+
+    backfill_start, _ = get_backfill_range()
+    cutoff_symbols = silver_symbols.difference(set(orphan_symbols))
+    cutoff_stats = enforce_backfill_cutoff_on_tables(
+        symbols=cutoff_symbols,
+        table_paths_for_symbol=lambda symbol: [DataPaths.get_price_target_path(symbol)],
+        load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
+        store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
+        delete_prefix=silver_client.delete_prefix,
+        date_column_candidates=("obs_date", "date", "Date"),
+        backfill_start=backfill_start,
+        context="silver price-target reconciliation cutoff",
+        vacuum_table=lambda path: delta_core.vacuum_delta_table(
+            cfg.AZURE_CONTAINER_SILVER,
+            path,
+            retention_hours=0,
+            dry_run=False,
+            enforce_retention_duration=False,
+            full=True,
+        ),
+    )
+    if cutoff_stats.rows_dropped > 0 or cutoff_stats.tables_rewritten > 0 or cutoff_stats.deleted_blobs > 0:
+        mdc.write_line(
+            "Silver price-target reconciliation cutoff sweep: "
+            f"tables_scanned={cutoff_stats.tables_scanned} "
+            f"tables_rewritten={cutoff_stats.tables_rewritten} "
+            f"deleted_blobs={cutoff_stats.deleted_blobs} "
+            f"rows_dropped={cutoff_stats.rows_dropped}"
+        )
+    if cutoff_stats.errors > 0:
+        mdc.write_warning(
+            f"Silver price-target reconciliation cutoff sweep encountered errors={cutoff_stats.errors}."
+        )
     return len(orphan_symbols), deleted_blobs
 
 

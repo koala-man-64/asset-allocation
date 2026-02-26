@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "17 9 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -35,6 +37,20 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pip-audit
 
+      - name: Prepare audit artifacts
+        run: |
+          mkdir -p artifacts
+
+      - name: Collect runtime audit report (JSON)
+        run: |
+          set -euo pipefail
+          pip-audit -r requirements.lock.txt --format json -o artifacts/pip-audit-runtime.json || true
+
+      - name: Collect development audit report (JSON)
+        run: |
+          set -euo pipefail
+          pip-audit -r requirements-dev.lock.txt --format json -o artifacts/pip-audit-dev.json || true
+
       - name: Audit runtime dependencies
         run: |
           set -euo pipefail
@@ -44,6 +60,15 @@ jobs:
         run: |
           set -euo pipefail
           pip-audit --strict -r requirements-dev.lock.txt
+
+      - name: Upload Python audit artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-pip-audit-reports
+          path: artifacts/pip-audit-*.json
+          if-no-files-found: error
+          retention-days: 30
 
   ui-dependency-audit:
     runs-on: ubuntu-22.04

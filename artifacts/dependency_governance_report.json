@@ -1,0 +1,18 @@
+{
+  "files": {
+    "dev_lock": "requirements-dev.lock.txt",
+    "requirements": "requirements.txt",
+    "runtime_lock": "requirements.lock.txt"
+  },
+  "findings": [],
+  "runtime_dependency_count": 26,
+  "runtime_source_of_truth": "pyproject.toml:[project].dependencies",
+  "status": "pass",
+  "summary": {
+    "dev_lock_dependencies": 4,
+    "finding_count": 0,
+    "pyproject_dependencies": 26,
+    "requirements_dependencies": 26,
+    "runtime_lock_dependencies": 26
+  }
+}

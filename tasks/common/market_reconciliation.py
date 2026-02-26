@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence, Set, Tuple
+
+import pandas as pd
+
+from tasks.common.backfill import apply_backfill_start_cutoff
 
 _FINANCE_BRONZE_SUBFOLDERS = {
     "Balance Sheet",
@@ -20,6 +25,15 @@ _FINANCE_SILVER_SUBFOLDERS = {
     "cash_flow",
     "valuation",
 }
+
+
+@dataclass(frozen=True)
+class CutoffSweepStats:
+    tables_scanned: int
+    tables_rewritten: int
+    deleted_blobs: int
+    rows_dropped: int
+    errors: int
 
 
 def _extract_bronze_market_symbol(blob_name: str) -> Optional[str]:
@@ -195,4 +209,98 @@ def purge_orphan_market_tables(
         downstream_symbols=downstream_symbols,
         downstream_path_builder=downstream_path_builder,
         delete_prefix=delete_prefix,
+    )
+
+
+def _resolve_date_column(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
+    by_normalized: dict[str, str] = {}
+    for col in df.columns:
+        key = str(col).strip().lower()
+        if key and key not in by_normalized:
+            by_normalized[key] = str(col)
+    for candidate in candidates:
+        key = str(candidate).strip().lower()
+        if key in by_normalized:
+            return by_normalized[key]
+    return None
+
+
+def enforce_backfill_cutoff_on_tables(
+    *,
+    symbols: Set[str],
+    table_paths_for_symbol: Callable[[str], Sequence[str]],
+    load_table: Callable[[str], Optional[pd.DataFrame]],
+    store_table: Callable[[pd.DataFrame, str], None],
+    delete_prefix: Callable[[str], int],
+    date_column_candidates: Sequence[str],
+    backfill_start: Optional[pd.Timestamp],
+    context: str,
+    vacuum_table: Optional[Callable[[str], None]] = None,
+) -> CutoffSweepStats:
+    if backfill_start is None:
+        return CutoffSweepStats(
+            tables_scanned=0,
+            tables_rewritten=0,
+            deleted_blobs=0,
+            rows_dropped=0,
+            errors=0,
+        )
+
+    tables_scanned = 0
+    tables_rewritten = 0
+    deleted_blobs = 0
+    rows_dropped = 0
+    errors = 0
+
+    for symbol in sorted(symbols):
+        for table_path in table_paths_for_symbol(symbol):
+            tables_scanned += 1
+            try:
+                df = load_table(table_path)
+            except Exception:
+                errors += 1
+                continue
+            if df is None or df.empty:
+                continue
+
+            date_col = _resolve_date_column(df, date_column_candidates)
+            if not date_col:
+                continue
+
+            try:
+                filtered, dropped = apply_backfill_start_cutoff(
+                    df,
+                    date_col=date_col,
+                    backfill_start=backfill_start,
+                    context=f"{context} {symbol}",
+                )
+            except Exception:
+                errors += 1
+                continue
+
+            if dropped <= 0:
+                continue
+
+            rows_dropped += int(dropped)
+            if filtered is None or filtered.empty:
+                try:
+                    deleted_blobs += int(delete_prefix(table_path) or 0)
+                except Exception:
+                    errors += 1
+                continue
+
+            try:
+                store_table(filtered, table_path)
+                tables_rewritten += 1
+                if vacuum_table is not None:
+                    vacuum_table(table_path)
+            except Exception:
+                errors += 1
+
+    return CutoffSweepStats(
+        tables_scanned=tables_scanned,
+        tables_rewritten=tables_rewritten,
+        deleted_blobs=deleted_blobs,
+        rows_dropped=rows_dropped,
+        errors=errors,
     )
