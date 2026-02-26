@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { GitCompareArrows, Info, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, GitCompareArrows, Info, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
 import {
@@ -20,6 +20,17 @@ import { normalizeDomainKey, normalizeLayerKey } from './SystemPurgeControls';
 import { getDomainOrderEntries } from './domainOrdering';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { formatSystemStatusText } from './systemStatusText';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/app/components/ui/alert-dialog';
+import { toast } from 'sonner';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
@@ -192,6 +203,14 @@ function compareDateRanges(current: DomainMetadata, previous: DomainMetadata): {
 export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLayer[] }) {
   const queryClient = useQueryClient();
   const [refreshingCells, setRefreshingCells] = useState<Set<string>>(new Set());
+  const [listResetTarget, setListResetTarget] = useState<{
+    layerKey: LayerKey;
+    layerLabel: string;
+    domainKey: string;
+    domainLabel: string;
+  } | null>(null);
+  const [isResettingLists, setIsResettingLists] = useState(false);
+  const [resettingCellKey, setResettingCellKey] = useState<string | null>(null);
 
   const layersByKey = useMemo(() => {
     const index = new Map<LayerKey, DataLayer>();
@@ -379,8 +398,74 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     [queryClient, refreshingCells, snapshotQueryKey]
   );
 
+  const confirmDomainListReset = useCallback(async () => {
+    const target = listResetTarget;
+    if (!target) return;
+    const targetCellKey = makeCellKey(target.layerKey, target.domainKey);
+    setIsResettingLists(true);
+    setResettingCellKey(targetCellKey);
+    try {
+      const result = await DataService.resetDomainLists({
+        layer: target.layerKey,
+        domain: target.domainKey,
+        confirm: true
+      });
+      toast.success(
+        `Reset ${result.resetCount} list file(s) for ${target.layerLabel} • ${target.domainLabel}.`
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+    } catch (error) {
+      toast.error(`List reset failed (${formatSystemStatusText(error) || 'Unknown error'})`);
+    } finally {
+      setIsResettingLists(false);
+      setResettingCellKey(null);
+      setListResetTarget(null);
+    }
+  }, [listResetTarget, queryClient]);
+
   return (
     <Card className="h-full">
+      <AlertDialog
+        open={Boolean(listResetTarget)}
+        onOpenChange={(open) => (!open ? setListResetTarget(null) : undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Confirm list reset
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will clear both <strong>whitelist.csv</strong> and <strong>blacklist.csv</strong>{' '}
+              for{' '}
+              <strong>
+                {listResetTarget
+                  ? `${listResetTarget.layerLabel} • ${listResetTarget.domainLabel}`
+                  : 'selected scope'}
+              </strong>
+              .
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isResettingLists}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmDomainListReset()}
+              disabled={isResettingLists}
+            >
+              {isResettingLists ? (
+                <span className="inline-flex items-center gap-2">
+                  <RotateCcw className="h-4 w-4 animate-spin" />
+                  Resetting...
+                </span>
+              ) : (
+                'Reset Lists'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <CardHeader className="gap-3">
         <div className="min-w-0">
           <div className="flex min-w-0 items-start gap-2">
@@ -460,18 +545,19 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                           const isPending = pendingByCell.has(key);
                           const isCellRefreshing = refreshingCells.has(key);
                           const isCellBusy = isCellRefreshing || isPending;
+                          const isResettingThisCell = resettingCellKey === key && isResettingLists;
                           const refreshButton = (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
-                                    onClick={() => void handleCellRefresh(layerColumn.key, row.key)}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
+                                  onClick={() => void handleCellRefresh(layerColumn.key, row.key)}
                                   disabled={isCellBusy}
-                                    aria-label={`Refresh ${layerColumn.label} ${row.label} lineage`}
-                                  >
+                                  aria-label={`Refresh ${layerColumn.label} ${row.label} lineage`}
+                                >
                                   {isCellBusy ? (
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                   ) : (
@@ -483,6 +569,45 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                 Refresh {layerColumn.label} • {row.label}
                               </TooltipContent>
                             </Tooltip>
+                          );
+                          const resetButton = (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
+                                  onClick={() =>
+                                    setListResetTarget({
+                                      layerKey: layerColumn.key,
+                                      layerLabel: layerColumn.label,
+                                      domainKey: row.key,
+                                      domainLabel: row.label
+                                    })
+                                  }
+                                  disabled={isCellBusy || isResettingLists}
+                                  aria-label={`Reset ${layerColumn.label} ${row.label} whitelist and blacklist`}
+                                >
+                                  {isResettingThisCell ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                {isResettingThisCell
+                                  ? `Resetting ${layerColumn.label} • ${row.label}`
+                                  : `Reset lists ${layerColumn.label} • ${row.label}`}
+                              </TooltipContent>
+                            </Tooltip>
+                          );
+                          const cellActions = (
+                            <div className="inline-flex items-center gap-1">
+                              {refreshButton}
+                              {resetButton}
+                            </div>
                           );
 
                           if (!metadata && isPending) {
@@ -496,7 +621,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                     Loading metadata
                                   </span>
-                                  {refreshButton}
+                                  {cellActions}
                                 </div>
                               </TableCell>
                             );
@@ -513,7 +638,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                     <div className={`${StatusTypos.MONO} text-[11px] text-destructive`}>
                                       Metadata unavailable
                                     </div>
-                                    {refreshButton}
+                                    {cellActions}
                                   </div>
                                   <div
                                     className={`${StatusTypos.MONO} text-[10px] text-destructive/80 break-words`}
@@ -533,7 +658,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <span>Awaiting metadata</span>
-                                  {refreshButton}
+                                  {cellActions}
                                 </div>
                               </TableCell>
                             );
@@ -582,7 +707,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                       symbols
                                     </span>
                                   </div>
-                                  {refreshButton}
+                                  {cellActions}
                                 </div>
                                 {showFinanceSubfolders ? (
                                   <div className="rounded-md border border-mcm-walnut/15 bg-mcm-cream/30 p-2">

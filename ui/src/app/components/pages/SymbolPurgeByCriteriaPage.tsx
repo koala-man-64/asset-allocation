@@ -7,6 +7,7 @@ import {
   ClipboardCopy,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2
 } from 'lucide-react';
@@ -594,6 +595,18 @@ export function SymbolPurgeByCriteriaPage() {
     }
   };
 
+  const handleResetPurgeList = () => {
+    setSelectedSymbols(new Set());
+    setOperationId(null);
+    setOperationStatus(null);
+    setOperationError(null);
+    setSymbolExecutionResults([]);
+    setCompletionSummary(null);
+    setConfirmChecked(false);
+    setConfirmText('');
+    toast.success('Purge list reset.');
+  };
+
   const handleRunBlacklistPurge = async () => {
     if (!canSubmitBlacklist) {
       setOperationError('Complete all confirmation steps before running.');
@@ -649,6 +662,16 @@ export function SymbolPurgeByCriteriaPage() {
       setIsSubmitting(false);
     }
   };
+
+  const hasPurgeListState =
+    selectedCount > 0 ||
+    Boolean(operationId) ||
+    Boolean(operationStatus) ||
+    Boolean(operationError) ||
+    symbolExecutionResults.length > 0 ||
+    Boolean(completionSummary) ||
+    confirmChecked ||
+    confirmText.trim().length > 0;
 
   const statusClass = (symbolRow: PurgeSymbolResultItem): string => {
     if (symbolRow.status === 'succeeded') return 'text-emerald-600';
@@ -948,49 +971,64 @@ export function SymbolPurgeByCriteriaPage() {
             </p>
           ) : null}
 
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <label className="inline-flex min-w-0 flex-1 items-start gap-3 text-xs font-semibold uppercase tracking-wide">
+          <div className="mt-4 space-y-3">
+            <label className="inline-flex w-full items-start gap-3 text-xs font-semibold uppercase tracking-wide">
               <Checkbox checked={confirmChecked} onCheckedChange={(next) => setConfirmChecked(Boolean(next))} />
-              <span className="min-w-0 break-words">I understand this is destructive and cannot be undone.</span>
+              <span className="leading-snug">I understand this is destructive and cannot be undone.</span>
             </label>
 
-            <label className="inline-flex items-center gap-2 shrink-0">
-              <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Type PURGE to confirm</span>
+            <div className="grid gap-3 xl:grid-cols-[auto_200px_minmax(0,1fr)] xl:items-center">
+              <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">
+                Type PURGE to confirm
+              </span>
               <Input
                 value={confirmText}
                 onChange={(event) => setConfirmText(event.target.value)}
                 placeholder="PURGE"
-                className={`${formInputClass} h-9 w-[180px]`}
+                className={`${formInputClass} h-9 w-full xl:w-[200px]`}
               />
-            </label>
-            <Button
-              onClick={() => void handleRunPurge()}
-              className="h-9 w-full shrink-0 gap-2 sm:w-auto"
-              disabled={!canSubmit}
-              variant="destructive"
-            >
-              {isSubmitting || operationStatus === 'running' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              {isSubmitting || operationStatus === 'running' ? 'Running purge…' : 'Run purge for selected symbols'}
-            </Button>
-            <Button
-              onClick={() => void handleRunBlacklistPurge()}
-              className="h-9 w-full shrink-0 gap-2 sm:w-auto"
-              disabled={!canSubmitBlacklist}
-              variant="destructive"
-            >
-              {isSubmitting || operationStatus === 'running' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {isSubmitting || operationStatus === 'running'
-                ? 'Running purge…'
-                : 'Run purge for blacklist symbols'}
-            </Button>
+              <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                <Button
+                  onClick={handleResetPurgeList}
+                  className="h-9 w-full shrink-0 gap-2 sm:w-auto"
+                  disabled={!hasPurgeListState || isSubmitting || operationStatus === 'running'}
+                  variant="outline"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reset purge list
+                </Button>
+                <Button
+                  onClick={() => void handleRunPurge()}
+                  className="h-9 w-full shrink-0 gap-2 sm:w-auto"
+                  disabled={!canSubmit}
+                  variant="destructive"
+                >
+                  {isSubmitting || operationStatus === 'running' ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  {isSubmitting || operationStatus === 'running'
+                    ? 'Running purge…'
+                    : 'Run purge for selected symbols'}
+                </Button>
+                <Button
+                  onClick={() => void handleRunBlacklistPurge()}
+                  className="h-9 w-full shrink-0 gap-2 sm:w-auto"
+                  disabled={!canSubmitBlacklist}
+                  variant="destructive"
+                >
+                  {isSubmitting || operationStatus === 'running' ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  {isSubmitting || operationStatus === 'running'
+                    ? 'Running purge…'
+                    : 'Run purge for blacklist symbols'}
+                </Button>
+              </div>
+            </div>
           </div>
 
           {operationId ? (

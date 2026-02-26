@@ -388,6 +388,27 @@ describe('SymbolPurgeByCriteriaPage', () => {
     expect(runButton).toBeEnabled();
   });
 
+  it('resets purge list state from execution panel', async () => {
+    renderWithProviders(<SymbolPurgeByCriteriaPage />);
+    await waitForColumns();
+    await previewCandidates();
+
+    const runButton = screen.getByRole('button', { name: /run purge for selected symbols/i });
+    const confirmCheckbox = screen.getByRole('checkbox', { name: /i understand this is destructive/i });
+    const confirmInput = screen.getByPlaceholderText('PURGE');
+
+    fireEvent.click(confirmCheckbox);
+    fireEvent.change(confirmInput, { target: { value: 'PURGE' } });
+    expect(runButton).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /reset purge list/i }));
+
+    expect(confirmInput).toHaveValue('');
+    expect(confirmCheckbox).toHaveAttribute('aria-checked', 'false');
+    expect(runButton).toBeDisabled();
+    expect(mockToastSuccess).toHaveBeenCalledWith('Purge list reset.');
+  });
+
   it('runs purge, polls operation status, and renders completion details', async () => {
     const rows = makeCandidateRows();
     vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
