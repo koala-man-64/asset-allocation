@@ -1,4 +1,4 @@
-pandas==2.2.3
+pandas==2.3.3
 numpy==1.26.4
 colorama==0.4.6
 pyarrow==19.0.1
