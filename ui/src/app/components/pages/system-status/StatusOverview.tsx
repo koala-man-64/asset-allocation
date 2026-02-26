@@ -26,6 +26,7 @@ import {
   MoreHorizontal,
   Play,
   RefreshCw,
+  RotateCcw,
   ScrollText,
   Square,
   Trash2
@@ -119,6 +120,17 @@ export function StatusOverview({
     layer: string;
     domain: string;
   } | null>(null);
+  const [listResetTarget, setListResetTarget] = useState<{
+    layer: string;
+    domain: string;
+    displayLayer: string;
+    displayDomain: string;
+  } | null>(null);
+  const [isResettingLists, setIsResettingLists] = useState(false);
+  const [activeListResetTarget, setActiveListResetTarget] = useState<{
+    layer: string;
+    domain: string;
+  } | null>(null);
   const [metadataTarget, setMetadataTarget] = useState<DomainMetadataSheetTarget | null>(null);
 
   const waitForPurgeResult = async (operationId: string) => {
@@ -200,6 +212,31 @@ export function StatusOverview({
       setIsPurging(false);
       setActivePurgeTarget(null);
       setPurgeTarget(null);
+    }
+  };
+
+  const confirmDomainListReset = async () => {
+    const target = listResetTarget;
+    if (!target) return;
+    setIsResettingLists(true);
+    setActiveListResetTarget({ layer: target.layer, domain: target.domain });
+    try {
+      const result = await DataService.resetDomainLists({
+        layer: target.layer,
+        domain: target.domain,
+        confirm: true
+      });
+      toast.success(
+        `Reset ${result.resetCount} list file(s) for ${target.displayLayer} • ${target.displayDomain}.`
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`List reset failed (${message})`);
+    } finally {
+      setIsResettingLists(false);
+      setActiveListResetTarget(null);
+      setListResetTarget(null);
     }
   };
 
@@ -415,6 +452,47 @@ export function StatusOverview({
                 </span>
               ) : (
                 'Purge'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(listResetTarget)}
+        onOpenChange={(open) => (!open ? setListResetTarget(null) : undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Confirm list reset
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will clear both <strong>whitelist.csv</strong> and <strong>blacklist.csv</strong>{' '}
+              for{' '}
+              <strong>
+                {listResetTarget
+                  ? `${listResetTarget.displayLayer} • ${listResetTarget.displayDomain}`
+                  : 'selected scope'}
+              </strong>
+              .
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isResettingLists}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmDomainListReset()}
+              disabled={isResettingLists}
+            >
+              {isResettingLists ? (
+                <span className="inline-flex items-center gap-2">
+                  <RotateCcw className="h-4 w-4 animate-spin" />
+                  Resetting...
+                </span>
+              ) : (
+                'Reset Lists'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -729,7 +807,7 @@ export function StatusOverview({
                         <TableHead className={`${matrixHead} h-8 text-center w-[96px]`}>
                           STATUS
                         </TableHead>
-                        <TableHead className={`${matrixHead} h-8 text-center w-[140px]`}>
+                        <TableHead className={`${matrixHead} h-8 text-center w-[176px]`}>
                           ACTIONS
                         </TableHead>
                       </React.Fragment>
@@ -1065,6 +1143,10 @@ export function StatusOverview({
                                   isPurging &&
                                   activePurgeTarget?.layer === layerKey &&
                                   activePurgeTarget?.domain === domainKey;
+                                const isResettingListsThisTarget =
+                                  isResettingLists &&
+                                  activeListResetTarget?.layer === layerKey &&
+                                  activeListResetTarget?.domain === domainKey;
 
                                 return (
                                   <div className="inline-flex items-center gap-1">
@@ -1180,9 +1262,38 @@ export function StatusOverview({
                                       <TooltipTrigger asChild>
                                         <button
                                           type="button"
+                                          className={actionButtonBase}
+                                          aria-label="Reset whitelist and blacklist"
+                                          disabled={isPurging || isResettingLists}
+                                          onClick={() =>
+                                            setListResetTarget({
+                                              layer: layerKey,
+                                              domain: domainKey,
+                                              displayLayer: layer.name,
+                                              displayDomain: domainName
+                                            })
+                                          }
+                                        >
+                                          <RotateCcw
+                                            className={`h-4 w-4 ${isResettingListsThisTarget ? 'animate-spin text-rose-600' : ''
+                                              }`}
+                                          />
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom">
+                                        {isResettingListsThisTarget
+                                          ? 'Resetting whitelist + blacklist...'
+                                          : 'Reset whitelist + blacklist'}
+                                      </TooltipContent>
+                                    </Tooltip>
+
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          type="button"
                                           className={actionButtonDestructive}
                                           aria-label="Purge data"
-                                          disabled={isPurging}
+                                          disabled={isPurging || isResettingLists}
                                           onClick={() =>
                                             setPurgeTarget({
                                               layer: layerKey,

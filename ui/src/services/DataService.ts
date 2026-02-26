@@ -13,11 +13,14 @@ import type {
   ContainerAppLogsResponse,
   ContainerAppControlResponse,
   ContainerAppsStatusResponse,
+  DomainListResetRequest,
+  DomainListResetResponse,
   DomainMetadataSnapshotResponse,
   DomainColumnsResponse,
   DebugSymbolsResponse,
   JobLogsResponse,
   PurgeCandidatesRequest,
+  PurgeBlacklistSymbolsResponse,
   PurgeRequest,
   PurgeOperationResponse,
   ResponseWithMeta,
@@ -229,8 +232,16 @@ export const DataService = {
     return apiService.purgeData(payload);
   },
 
+  resetDomainLists(payload: DomainListResetRequest): Promise<DomainListResetResponse> {
+    return apiService.resetDomainLists(payload);
+  },
+
   getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
     return apiService.getPurgeOperation(operationId);
+  },
+
+  getPurgeBlacklistSymbols(): Promise<PurgeBlacklistSymbolsResponse> {
+    return apiService.getPurgeBlacklistSymbols();
   },
 
   getPurgeCandidates(

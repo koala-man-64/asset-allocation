@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
@@ -12,6 +13,82 @@ from api.endpoints import system
 class _DummyBlobClient:
     def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
         self.container_name = container_name
+
+
+def test_load_symbols_from_bronze_blacklists_merges_and_warns(monkeypatch) -> None:
+    monkeypatch.setattr(system.cfg, "EARNINGS_DATA_PREFIX", "earnings-data", raising=False)
+
+    rows_by_path = {
+        "market-data/blacklist.csv": ["aaa", "BBB", ""],
+        "finance-data/blacklist.csv": ["bbb", " ccc ", "", None],
+        "earnings-data/blacklist.csv": ["ddd"],
+    }
+
+    def fake_load_ticker_list(path: str, client: Any) -> List[str]:
+        if path == "price-target-data/blacklist.csv":
+            raise RuntimeError("missing file")
+        return rows_by_path.get(path, [])
+
+    monkeypatch.setattr(system.mdc, "load_ticker_list", fake_load_ticker_list)
+
+    payload = system._load_symbols_from_bronze_blacklists(SimpleNamespace(container_name="bronze-container"))
+
+    assert payload["container"] == "bronze-container"
+    assert payload["symbolCount"] == 4
+    assert payload["symbols"] == ["AAA", "BBB", "CCC", "DDD"]
+    assert payload["sources"] == [
+        {"path": "market-data/blacklist.csv", "symbolCount": 2},
+        {"path": "finance-data/blacklist.csv", "symbolCount": 2},
+        {"path": "earnings-data/blacklist.csv", "symbolCount": 1},
+        {
+            "path": "price-target-data/blacklist.csv",
+            "symbolCount": 0,
+            "warning": "RuntimeError: missing file",
+        },
+    ]
+
+
+def test_get_blacklist_symbols_for_purge_returns_payload(monkeypatch) -> None:
+    validate_calls: List[Any] = []
+    load_calls: List[Any] = []
+
+    monkeypatch.setattr(system, "validate_auth", lambda request: validate_calls.append(request))
+    monkeypatch.setattr(system, "_resolve_container", lambda layer: "bronze-container")
+
+    class _FakeBlobClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobClient)
+
+    def fake_load_symbols_from_bronze_blacklists(client: Any) -> Dict[str, Any]:
+        load_calls.append(client)
+        return {
+            "container": client.container_name,
+            "symbolCount": 2,
+            "symbols": ["AAA", "BBB"],
+            "sources": [{"path": "market-data/blacklist.csv", "symbolCount": 2}],
+        }
+
+    monkeypatch.setattr(system, "_load_symbols_from_bronze_blacklists", fake_load_symbols_from_bronze_blacklists)
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-02-26T00:00:00Z")
+
+    response = system.get_blacklist_symbols_for_purge(SimpleNamespace())
+
+    assert len(validate_calls) == 1
+    assert len(load_calls) == 1
+    assert load_calls[0].container_name == "bronze-container"
+    assert load_calls[0].ensure_container_exists is False
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert json.loads(response.body.decode("utf-8")) == {
+        "container": "bronze-container",
+        "symbolCount": 2,
+        "symbols": ["AAA", "BBB"],
+        "sources": [{"path": "market-data/blacklist.csv", "symbolCount": 2}],
+        "loadedAt": "2026-02-26T00:00:00Z",
+    }
 
 
 def test_remove_symbol_from_bronze_storage_covers_all_medallion_domain_folders(monkeypatch) -> None:
@@ -271,3 +348,126 @@ def test_execute_purge_rule_runs_symbol_purges_without_extra_cleanup(monkeypatch
     assert result["failedSymbols"] == []
     assert result["purgedCount"] == 7
     assert "byDateTargets" not in result
+
+
+def test_resolve_domain_list_paths_for_medallion_domain() -> None:
+    assert system._resolve_domain_list_paths("silver", "market") == [
+        {"listType": "whitelist", "path": "market-data/whitelist.csv"},
+        {"listType": "blacklist", "path": "market-data/blacklist.csv"},
+    ]
+
+
+def test_reset_domain_lists_rewrites_whitelist_and_blacklist(monkeypatch) -> None:
+    writes: List[Dict[str, Any]] = []
+
+    class _FakeBlobClient:
+        container_name = "silver-container"
+
+        @staticmethod
+        def file_exists(path: str) -> bool:
+            return path.endswith("whitelist.csv")
+
+    def fake_store_csv(df, path: str, client: Any) -> None:
+        writes.append(
+            {
+                "path": path,
+                "columns": list(df.columns),
+                "isEmpty": bool(getattr(df, "empty", False)),
+            }
+        )
+
+    monkeypatch.setattr(system.mdc, "store_csv", fake_store_csv)
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-02-26T00:00:00Z")
+
+    payload = system._reset_domain_lists(_FakeBlobClient(), layer="silver", domain="market")
+
+    assert payload["layer"] == "silver"
+    assert payload["domain"] == "market"
+    assert payload["container"] == "silver-container"
+    assert payload["resetCount"] == 2
+    assert payload["updatedAt"] == "2026-02-26T00:00:00Z"
+    assert payload["targets"] == [
+        {
+            "listType": "whitelist",
+            "path": "market-data/whitelist.csv",
+            "status": "reset",
+            "existed": True,
+        },
+        {
+            "listType": "blacklist",
+            "path": "market-data/blacklist.csv",
+            "status": "reset",
+            "existed": False,
+        },
+    ]
+    assert writes == [
+        {"path": "market-data/whitelist.csv", "columns": ["Symbol"], "isEmpty": True},
+        {"path": "market-data/blacklist.csv", "columns": ["Symbol"], "isEmpty": True},
+    ]
+
+
+def test_reset_domain_lists_endpoint_validates_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(system, "validate_auth", lambda request: None)
+
+    try:
+        system.reset_domain_lists(
+            system.DomainListResetRequest(layer="silver", domain="market", confirm=False),
+            SimpleNamespace(),
+        )
+        raise AssertionError("Expected HTTPException for missing confirmation.")
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "Confirmation required" in str(exc.detail)
+
+
+def test_reset_domain_lists_endpoint_returns_payload(monkeypatch) -> None:
+    validate_calls: List[Any] = []
+    reset_calls: List[Dict[str, Any]] = []
+
+    monkeypatch.setattr(system, "validate_auth", lambda request: validate_calls.append(request))
+    monkeypatch.setattr(system, "_resolve_container", lambda layer: "silver-container")
+    monkeypatch.setattr(system, "_get_actor", lambda request: "tester")
+
+    class _FakeBlobClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobClient)
+
+    def fake_reset(client: Any, *, layer: str, domain: str) -> Dict[str, Any]:
+        reset_calls.append({"container": client.container_name, "layer": layer, "domain": domain})
+        return {
+            "layer": layer,
+            "domain": domain,
+            "container": client.container_name,
+            "resetCount": 2,
+            "targets": [
+                {"listType": "whitelist", "path": "market-data/whitelist.csv", "status": "reset", "existed": True},
+                {"listType": "blacklist", "path": "market-data/blacklist.csv", "status": "reset", "existed": False},
+            ],
+            "updatedAt": "2026-02-26T00:00:00Z",
+        }
+
+    monkeypatch.setattr(system, "_reset_domain_lists", fake_reset)
+
+    response = system.reset_domain_lists(
+        system.DomainListResetRequest(layer="silver", domain="market", confirm=True),
+        SimpleNamespace(),
+    )
+
+    assert len(validate_calls) == 1
+    assert reset_calls == [{"container": "silver-container", "layer": "silver", "domain": "market"}]
+    assert response.status_code == 200
+    assert response.headers.get("Cache-Control") == "no-store"
+    assert json.loads(response.body.decode("utf-8")) == {
+        "layer": "silver",
+        "domain": "market",
+        "container": "silver-container",
+        "resetCount": 2,
+        "targets": [
+            {"listType": "whitelist", "path": "market-data/whitelist.csv", "status": "reset", "existed": True},
+            {"listType": "blacklist", "path": "market-data/blacklist.csv", "status": "reset", "existed": False},
+        ],
+        "updatedAt": "2026-02-26T00:00:00Z",
+    }

@@ -4,6 +4,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { SymbolPurgeByCriteriaPage } from '@/app/components/pages/SymbolPurgeByCriteriaPage';
 import { DataService } from '@/services/DataService';
 import type {
+  PurgeBlacklistSymbolsResponse,
   PurgeCandidateRow,
   PurgeCandidatesResponse,
   PurgeOperationResponse
@@ -30,7 +31,8 @@ vi.mock('@/services/DataService', () => ({
     refreshDomainColumns: vi.fn(),
     createPurgeCandidatesOperation: vi.fn(),
     purgeSymbolsBatch: vi.fn(),
-    getPurgeOperation: vi.fn()
+    getPurgeOperation: vi.fn(),
+    getPurgeBlacklistSymbols: vi.fn()
   }
 }));
 
@@ -194,6 +196,22 @@ function makeBatchSucceededOperation(
   };
 }
 
+function makeBlacklistSymbolsResponse(
+  overrides: Partial<PurgeBlacklistSymbolsResponse> = {}
+): PurgeBlacklistSymbolsResponse {
+  return {
+    container: 'bronze',
+    symbolCount: 2,
+    symbols: ['AAA', 'BBB'],
+    sources: [
+      { path: 'market-data/blacklist.csv', symbolCount: 2 },
+      { path: 'finance-data/blacklist.csv', symbolCount: 1 }
+    ],
+    loadedAt: TIMESTAMP,
+    ...overrides
+  };
+}
+
 async function waitForColumns(): Promise<void> {
   await waitFor(() => {
     expect(DataService.getDomainColumns).toHaveBeenCalled();
@@ -238,6 +256,7 @@ describe('SymbolPurgeByCriteriaPage', () => {
     );
     vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchSucceededOperation('op-default'));
     vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-default'));
+    vi.mocked(DataService.getPurgeBlacklistSymbols).mockResolvedValue(makeBlacklistSymbolsResponse());
 
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -414,6 +433,40 @@ describe('SymbolPurgeByCriteriaPage', () => {
     expect(await screen.findByText('Purge completed successfully. Deleted 5')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /symbol execution status/i })).toBeInTheDocument();
     expect(screen.getAllByText('SUCCEEDED').length).toBeGreaterThan(0);
+  });
+
+  it('loads blacklist symbols and runs full symbol purge in one action', async () => {
+    const rows: PurgeCandidateRow[] = [
+      { symbol: 'BBB', matchedValue: 0.98, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' },
+      { symbol: 'AAA', matchedValue: 0.99, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' }
+    ];
+    vi.mocked(DataService.getPurgeBlacklistSymbols).mockResolvedValue(
+      makeBlacklistSymbolsResponse({
+        symbolCount: 3,
+        symbols: ['BBB', 'AAA', 'BBB']
+      })
+    );
+    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-blacklist'));
+    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-blacklist', rows));
+
+    renderWithProviders(<SymbolPurgeByCriteriaPage />);
+    await waitForColumns();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /i understand this is destructive/i }));
+    fireEvent.change(screen.getByPlaceholderText('PURGE'), { target: { value: 'PURGE' } });
+    fireEvent.click(screen.getByRole('button', { name: /run purge for blacklist symbols/i }));
+
+    await waitFor(() => {
+      expect(DataService.getPurgeBlacklistSymbols).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(DataService.purgeSymbolsBatch).toHaveBeenCalledWith({
+        symbols: ['BBB', 'AAA'],
+        confirm: true,
+        scope_note: 'bronze blacklist union / selected 2 / sources 2',
+        dry_run: false
+      });
+    });
   });
 
   it('renders live progress while symbols are being purged', async () => {

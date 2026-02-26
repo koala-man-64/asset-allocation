@@ -339,6 +339,7 @@ export function SymbolPurgeByCriteriaPage() {
     confirmChecked &&
     isConfirmPhraseValid &&
     !isSubmitting;
+  const canSubmitBlacklist = confirmChecked && isConfirmPhraseValid && !isSubmitting;
 
   const applyOperationProgress = useCallback((operation: PurgeOperationResponse): void => {
     setOperationStatus(operation.status);
@@ -585,6 +586,62 @@ export function SymbolPurgeByCriteriaPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (error: unknown) {
       const message = formatSystemStatusText(error) || 'Symbol purge failed.';
+      setOperationStatus('failed');
+      setOperationError(message);
+      toast.error(`Purge failed: ${message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRunBlacklistPurge = async () => {
+    if (!canSubmitBlacklist) {
+      setOperationError('Complete all confirmation steps before running.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setOperationStatus('running');
+    setOperationError(null);
+    setCompletionSummary(null);
+    setSymbolExecutionResults([]);
+
+    try {
+      const blacklist = await DataService.getPurgeBlacklistSymbols();
+      const symbols = (blacklist.symbols || []).map((item) => String(item || '').trim()).filter((item) => item.length > 0);
+      const uniqueSymbols = Array.from(new Set(symbols));
+      if (!uniqueSymbols.length) {
+        setOperationStatus(null);
+        toast.warning('No symbols found in bronze blacklists. Nothing to purge.');
+        return;
+      }
+
+      setSelectedSymbols(new Set(uniqueSymbols));
+
+      const response = await DataService.purgeSymbolsBatch({
+        symbols: uniqueSymbols,
+        confirm: true,
+        scope_note: `bronze blacklist union / selected ${uniqueSymbols.length} / sources ${(blacklist.sources || []).length}`,
+        dry_run: false
+      });
+
+      setOperationId(response.operationId);
+      applyOperationProgress(response);
+      const finished = response.status === 'succeeded' ? response : await pollOperation(response.operationId);
+
+      const result = extractBatchResult(finished);
+      if (!result) {
+        throw new Error('Purge completed without batch result payload.');
+      }
+
+      if (result.failed > 0 || finished.status === 'failed') {
+        toast.error(`Blacklist purge completed with ${result.failed} failed symbol(s).`);
+      } else {
+        toast.success(`Blacklist purge completed. Total deleted blobs: ${result.totalDeleted}.`);
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+    } catch (error: unknown) {
+      const message = formatSystemStatusText(error) || 'Blacklist symbol purge failed.';
       setOperationStatus('failed');
       setOperationError(message);
       toast.error(`Purge failed: ${message}`);
@@ -918,6 +975,21 @@ export function SymbolPurgeByCriteriaPage() {
                 <Trash2 className="h-4 w-4" />
               )}
               {isSubmitting || operationStatus === 'running' ? 'Running purge…' : 'Run purge for selected symbols'}
+            </Button>
+            <Button
+              onClick={() => void handleRunBlacklistPurge()}
+              className="h-9 w-full shrink-0 gap-2 sm:w-auto"
+              disabled={!canSubmitBlacklist}
+              variant="destructive"
+            >
+              {isSubmitting || operationStatus === 'running' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {isSubmitting || operationStatus === 'running'
+                ? 'Running purge…'
+                : 'Run purge for blacklist symbols'}
             </Button>
           </div>
 

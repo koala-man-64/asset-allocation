@@ -384,6 +384,26 @@ export interface PurgeRequest {
   confirm: boolean;
 }
 
+export interface DomainListResetRequest {
+  layer: string;
+  domain: string;
+  confirm: boolean;
+}
+
+export interface DomainListResetResponse {
+  layer: string;
+  domain: string;
+  container: string;
+  resetCount: number;
+  targets: Array<{
+    listType: 'whitelist' | 'blacklist';
+    path: string;
+    status: 'reset';
+    existed: boolean;
+  }>;
+  updatedAt: string;
+}
+
 export interface DomainColumnsResponse {
   layer: 'bronze' | 'silver' | 'gold';
   domain: string;
@@ -454,6 +474,20 @@ export interface PurgeSymbolResultItem {
   deleted?: number;
   dryRun?: boolean;
   error?: string;
+}
+
+export interface PurgeBlacklistSource {
+  path: string;
+  symbolCount: number;
+  warning?: string;
+}
+
+export interface PurgeBlacklistSymbolsResponse {
+  container: string;
+  symbolCount: number;
+  symbols: string[];
+  sources: PurgeBlacklistSource[];
+  loadedAt?: string;
 }
 
 export interface PurgeBatchOperationResult {
@@ -891,6 +925,13 @@ export const apiService = {
     });
   },
 
+  resetDomainLists(payload: DomainListResetRequest): Promise<DomainListResetResponse> {
+    return request<DomainListResetResponse>('/system/domain-lists/reset', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
   getPurgeCandidates(payload: PurgeCandidatesRequest): Promise<PurgeCandidatesResponse> {
     return request<PurgeCandidatesResponse>('/system/purge-candidates', {
       params: payload,
@@ -910,6 +951,10 @@ export const apiService = {
 
   getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {
     return request<PurgeOperationResponse>(`/system/purge/${encodeURIComponent(operationId)}`);
+  },
+
+  getPurgeBlacklistSymbols(): Promise<PurgeBlacklistSymbolsResponse> {
+    return request<PurgeBlacklistSymbolsResponse>('/system/purge-symbols/blacklist');
   },
 
   purgeSymbolsBatch(payload: {

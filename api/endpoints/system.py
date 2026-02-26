@@ -1620,6 +1620,12 @@ class PurgeRequest(BaseModel):
     confirm: bool = False
 
 
+class DomainListResetRequest(BaseModel):
+    layer: str = Field(..., min_length=1, max_length=32)
+    domain: str = Field(..., min_length=1, max_length=64)
+    confirm: bool = False
+
+
 class PurgeCandidatesRequest(BaseModel):
     layer: str = Field(..., min_length=1, max_length=32)
     domain: str = Field(..., min_length=1, max_length=64)
@@ -2947,15 +2953,133 @@ def _delete_prefix_if_exists(client: BlobStorageClient, path: str) -> int:
     return int(client.delete_prefix(path))
 
 
-def _append_symbol_to_bronze_blacklists(client: BlobStorageClient, symbol: str) -> Dict[str, Any]:
-    normalized_symbol = _normalize_purge_symbol(symbol)
+def _bronze_blacklist_paths() -> List[str]:
     earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
-    blacklist_paths = [
+    return [
         "market-data/blacklist.csv",
         "finance-data/blacklist.csv",
         f"{earnings_prefix}/blacklist.csv",
         "price-target-data/blacklist.csv",
     ]
+
+
+def _resolve_domain_list_paths(layer: str, domain: str) -> List[Dict[str, str]]:
+    layer_norm = _normalize_layer(layer)
+    domain_norm = _normalize_domain(domain)
+    if not layer_norm:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not domain_norm:
+        raise HTTPException(status_code=400, detail="domain is required.")
+
+    prefixes = _DOMAIN_PREFIXES.get(layer_norm, {}).get(domain_norm, [])
+    if not prefixes:
+        raise HTTPException(status_code=400, detail=f"Unknown domain '{domain_norm}' for layer '{layer_norm}'.")
+
+    paths: List[Dict[str, str]] = []
+    seen: set[Tuple[str, str]] = set()
+    for prefix in prefixes:
+        base = str(prefix or "").strip().strip("/")
+        if not base:
+            continue
+        for list_type in ("whitelist", "blacklist"):
+            path = f"{base}/{list_type}.csv"
+            dedupe_key = (list_type, path)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            paths.append({"listType": list_type, "path": path})
+
+    if not paths:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No blacklist/whitelist list paths are configured for layer '{layer_norm}' domain '{domain_norm}'.",
+        )
+    return paths
+
+
+def _reset_domain_lists(client: BlobStorageClient, *, layer: str, domain: str) -> Dict[str, Any]:
+    layer_norm = _normalize_layer(layer)
+    domain_norm = _normalize_domain(domain)
+    if not layer_norm:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not domain_norm:
+        raise HTTPException(status_code=400, detail="domain is required.")
+
+    list_paths = _resolve_domain_list_paths(layer_norm, domain_norm)
+    empty_symbols = pd.DataFrame(columns=["Symbol"])
+    targets: List[Dict[str, Any]] = []
+    for item in list_paths:
+        list_type = str(item["listType"]).strip().lower()
+        path = str(item["path"]).strip()
+        existed = bool(client.file_exists(path))
+        try:
+            mdc.store_csv(empty_symbols, path, client=client)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to reset {list_type} list for {layer_norm}/{domain_norm}: {exc}",
+            ) from exc
+        targets.append({"listType": list_type, "path": path, "status": "reset", "existed": existed})
+
+    return {
+        "layer": layer_norm,
+        "domain": domain_norm,
+        "container": client.container_name,
+        "resetCount": len(targets),
+        "targets": targets,
+        "updatedAt": _utc_timestamp(),
+    }
+
+
+def _normalize_symbol_candidates(symbols: Sequence[Any]) -> List[str]:
+    seen: set[str] = set()
+    normalized: List[str] = []
+    for raw in symbols:
+        try:
+            symbol = _normalize_purge_symbol(str(raw or ""))
+        except HTTPException:
+            continue
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    return normalized
+
+
+def _load_symbols_from_bronze_blacklists(client: BlobStorageClient) -> Dict[str, Any]:
+    merged: List[str] = []
+    sources: List[Dict[str, Any]] = []
+    for path in _bronze_blacklist_paths():
+        loaded: Sequence[Any] = []
+        warning: Optional[str] = None
+        try:
+            loaded = mdc.load_ticker_list(path, client=client) or []
+        except Exception as exc:
+            warning = f"{type(exc).__name__}: {exc}"
+            logger.warning("Blacklist load failed: container=%s path=%s error=%s", client.container_name, path, warning)
+
+        normalized = _normalize_symbol_candidates(loaded)
+        merged.extend(normalized)
+        source_info: Dict[str, Any] = {
+            "path": path,
+            "symbolCount": len(normalized),
+        }
+        if warning:
+            source_info["warning"] = warning
+        sources.append(source_info)
+
+    symbols = _normalize_symbol_candidates(merged)
+    return {
+        "container": client.container_name,
+        "symbolCount": len(symbols),
+        "symbols": symbols,
+        "sources": sources,
+    }
+
+
+def _append_symbol_to_bronze_blacklists(client: BlobStorageClient, symbol: str) -> Dict[str, Any]:
+    normalized_symbol = _normalize_purge_symbol(symbol)
+    blacklist_paths = _bronze_blacklist_paths()
 
     for path in blacklist_paths:
         mdc.update_csv_set(path, normalized_symbol, client=client)
@@ -3971,6 +4095,34 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
     )
 
 
+@router.post("/domain-lists/reset")
+def reset_domain_lists(payload: DomainListResetRequest, request: Request) -> JSONResponse:
+    validate_auth(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirmation required to reset blacklist/whitelist lists.")
+
+    layer_norm = _normalize_layer(payload.layer)
+    domain_norm = _normalize_domain(payload.domain)
+    if not layer_norm:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not domain_norm:
+        raise HTTPException(status_code=400, detail="domain is required.")
+
+    container = _resolve_container(layer_norm)
+    client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+    result = _reset_domain_lists(client, layer=layer_norm, domain=domain_norm)
+    actor = _get_actor(request)
+    logger.warning(
+        "Domain lists reset: actor=%s layer=%s domain=%s container=%s reset=%s",
+        actor or "-",
+        layer_norm,
+        domain_norm,
+        container,
+        result.get("resetCount"),
+    )
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/purge-candidates")
 def get_purge_candidates(
     request: Request,
@@ -4032,6 +4184,24 @@ def create_purge_candidates_operation(payload: PurgeCandidatesRequest, request: 
         raise HTTPException(status_code=500, detail="Failed to initialize purge-candidates operation.")
 
     return JSONResponse(operation, status_code=202)
+
+
+@router.get("/purge-symbols/blacklist")
+def get_blacklist_symbols_for_purge(request: Request) -> JSONResponse:
+    validate_auth(request)
+
+    container_bronze = _resolve_container("bronze")
+    bronze_client = BlobStorageClient(container_name=container_bronze, ensure_container_exists=False)
+    payload = _load_symbols_from_bronze_blacklists(bronze_client)
+    payload["loadedAt"] = _utc_timestamp()
+
+    logger.info(
+        "Loaded blacklist symbols for purge: container=%s symbols=%s sources=%s",
+        container_bronze,
+        payload.get("symbolCount"),
+        len(payload.get("sources") or []),
+    )
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/purge-symbols")
