@@ -18,8 +18,8 @@ def test_normalize_env_override_gold_market_by_date_bool():
     assert normalize_env_override("GOLD_MARKET_BY_DATE_ENABLED", "0") == "false"
 
 
-def test_normalize_env_override_gold_market_by_date_max_tables_int():
-    assert normalize_env_override("GOLD_MARKET_BY_DATE_MAX_TABLES", "25") == "25"
+def test_normalize_env_override_gold_by_date_domain_passthrough():
+    assert normalize_env_override("GOLD_BY_DATE_DOMAIN", "finance") == "finance"
 
 
 def test_normalize_env_override_alpha_vantage_rate_wait_timeout_float():

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Play, RefreshCw, Save, Trash2 } from 'lucide-react';
 
@@ -18,17 +18,27 @@ import { PageLoader } from '@/app/components/common/PageLoader';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Checkbox } from '@/app/components/ui/checkbox';
 import { Input } from '@/app/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { Switch } from '@/app/components/ui/switch';
 import { Textarea } from '@/app/components/ui/textarea';
 
+type GoldDomain = 'market' | 'finance' | 'earnings' | 'price-target';
+
+type DomainOption = {
+  value: GoldDomain;
+  label: string;
+  defaultTargetPath: string;
+};
+
 type MaterializationFormState = {
+  domain: GoldDomain;
   enabled: boolean;
   targetPath: string;
-  sourcePrefix: string;
   columns: string;
-  maxTables: string;
-  yearMonth: string;
+  yearMonthStart: string;
+  yearMonthEnd: string;
 };
 
 type ConfigKeyDef = {
@@ -40,6 +50,14 @@ type ConfigKeyDef = {
 
 const SCOPE = 'global';
 const GOLD_MARKET_JOB = 'gold-market-job';
+const GOLD_LAYER = 'gold';
+
+const DOMAIN_OPTIONS: DomainOption[] = [
+  { value: 'market', label: 'Market', defaultTargetPath: 'market_by_date' },
+  { value: 'finance', label: 'Finance', defaultTargetPath: 'finance_by_date' },
+  { value: 'earnings', label: 'Earnings', defaultTargetPath: 'earnings_by_date' },
+  { value: 'price-target', label: 'Price Target', defaultTargetPath: 'price_target_by_date' }
+];
 
 const KEY_DEFS: ConfigKeyDef[] = [
   {
@@ -55,9 +73,9 @@ const KEY_DEFS: ConfigKeyDef[] = [
     placeholder: 'market_by_date'
   },
   {
-    key: 'GOLD_MARKET_SOURCE_PREFIX',
-    label: 'Source prefix',
-    helper: 'Per-symbol Gold source prefix to scan for market tables.',
+    key: 'GOLD_BY_DATE_DOMAIN',
+    label: 'Domain',
+    helper: 'Gold domain to materialize by-date (market|finance|earnings|price-target).',
     placeholder: 'market'
   },
   {
@@ -67,18 +85,15 @@ const KEY_DEFS: ConfigKeyDef[] = [
     placeholder: 'close,volume,return_1d,vol_20d'
   },
   {
-    key: 'GOLD_MARKET_BY_DATE_MAX_TABLES',
-    label: 'Max source tables (optional)',
-    helper: 'Debug throttle for source table discovery. Leave blank for full scan.',
-    placeholder: '250'
-  },
-  {
     key: 'MATERIALIZE_YEAR_MONTH',
-    label: 'Year-month partition (optional)',
-    helper: 'Limit materialization to YYYY-MM for partial rebuilds.',
-    placeholder: '2026-02'
+    label: 'Year-month range (optional)',
+    helper: 'Limit materialization to YYYY-MM or YYYY-MM..YYYY-MM for partial rebuilds.',
+    placeholder: '2026-01..2026-03'
   }
 ];
+
+const YEAR_MONTH_RE = /^\d{4}-\d{2}$/;
+const YEAR_MONTH_RANGE_RE = /^(\d{4}-\d{2})(?:\s*(?:\.\.|to)\s*(\d{4}-\d{2}))?$/i;
 
 function parseBool(value: string, fallback = false): boolean {
   const lowered = String(value || '').trim().toLowerCase();
@@ -93,6 +108,54 @@ function parseColumns(raw: string): string[] {
     .map((token) => token.trim())
     .filter(Boolean)
     .map((token) => token.toLowerCase());
+}
+
+function findDomainOption(value: GoldDomain): DomainOption {
+  return DOMAIN_OPTIONS.find((option) => option.value === value) || DOMAIN_OPTIONS[0];
+}
+
+function parseDomain(value: string | undefined): GoldDomain {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+  if (normalized === "targets") return "price-target";
+  return (
+    DOMAIN_OPTIONS.find((option) => option.value === normalized)?.value || "market"
+  );
+}
+
+function normalizeColumnList(columns: string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const value of columns || []) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    ordered.push(normalized);
+  }
+  return ordered;
+}
+
+function parseYearMonthRange(raw: string): { start: string; end: string } {
+  const value = String(raw || '').trim();
+  if (!value) return { start: '', end: '' };
+
+  const match = YEAR_MONTH_RANGE_RE.exec(value);
+  if (!match) {
+    return { start: value, end: '' };
+  }
+  const start = String(match[1] || '').trim();
+  const end = String(match[2] || '').trim() || start;
+  return { start, end };
+}
+
+function serializeYearMonthRange(startRaw: string, endRaw: string): string {
+  const start = String(startRaw || '').trim();
+  const end = String(endRaw || '').trim();
+  if (!start) return '';
+  if (!end || end === start) return start;
+  return `${start}..${end}`;
 }
 
 function sourceBadge(item: RuntimeConfigItem | undefined) {
@@ -126,16 +189,46 @@ export function GoldMaterializationPage() {
   const { triggeringJob, triggerJob } = useJobTrigger();
 
   const [form, setForm] = useState<MaterializationFormState>({
+    domain: 'market',
     enabled: false,
     targetPath: 'market_by_date',
-    sourcePrefix: 'market',
     columns: '',
-    maxTables: '',
-    yearMonth: ''
+    yearMonthStart: '',
+    yearMonthEnd: ''
   });
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+
+  const domainColumnsQueryKey = useMemo(() => ['domainColumns', GOLD_LAYER, form.domain] as const, [form.domain]);
+  const domainColumnsQuery = useQuery({
+    queryKey: domainColumnsQueryKey,
+    queryFn: async () => {
+      let cached: Awaited<ReturnType<typeof DataService.getDomainColumns>> | null = null;
+      try {
+        cached = await DataService.getDomainColumns(GOLD_LAYER, form.domain);
+        if (cached.found && cached.columns.length > 0) {
+          return { ...cached, columns: normalizeColumnList(cached.columns) };
+        }
+      } catch {
+        // Ignore cache read failures here and fallback to an explicit refresh call.
+      }
+
+      try {
+        const refreshed = await DataService.refreshDomainColumns({ layer: GOLD_LAYER, domain: form.domain });
+        return { ...refreshed, columns: normalizeColumnList(refreshed.columns) };
+      } catch (error) {
+        if (cached) {
+          return { ...cached, columns: normalizeColumnList(cached.columns) };
+        }
+        throw error;
+      }
+    },
+    enabled: Boolean(form.domain),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false
+  });
 
   const byKey = useMemo(() => {
     const map = new Map<string, RuntimeConfigItem>();
@@ -155,23 +248,43 @@ export function GoldMaterializationPage() {
 
   useEffect(() => {
     if (isDirty) return;
+    const configuredDomain = parseDomain(byKey.get('GOLD_BY_DATE_DOMAIN')?.value || 'market');
+    const inferredDomainOption = findDomainOption(configuredDomain);
+    const parsedRange = parseYearMonthRange(byKey.get('MATERIALIZE_YEAR_MONTH')?.value || '');
     setForm({
+      domain: configuredDomain,
       enabled: parseBool(byKey.get('GOLD_MARKET_BY_DATE_ENABLED')?.value || 'false', false),
-      targetPath: byKey.get('GOLD_MARKET_BY_DATE_PATH')?.value || 'market_by_date',
-      sourcePrefix: byKey.get('GOLD_MARKET_SOURCE_PREFIX')?.value || 'market',
+      targetPath: byKey.get('GOLD_MARKET_BY_DATE_PATH')?.value || inferredDomainOption.defaultTargetPath,
       columns: byKey.get('GOLD_MARKET_BY_DATE_COLUMNS')?.value || '',
-      maxTables: byKey.get('GOLD_MARKET_BY_DATE_MAX_TABLES')?.value || '',
-      yearMonth: byKey.get('MATERIALIZE_YEAR_MONTH')?.value || ''
+      yearMonthStart: parsedRange.start,
+      yearMonthEnd: parsedRange.end
     });
   }, [byKey, isDirty]);
 
-  const yearMonthTrimmed = form.yearMonth.trim();
-  const maxTablesTrimmed = form.maxTables.trim();
+  const yearMonthStartTrimmed = form.yearMonthStart.trim();
+  const yearMonthEndTrimmed = form.yearMonthEnd.trim();
+  const yearMonthSerialized = serializeYearMonthRange(yearMonthStartTrimmed, yearMonthEndTrimmed);
   const columnsPreview = useMemo(() => parseColumns(form.columns), [form.columns]);
+  const selectedColumns = useMemo(() => normalizeColumnList(parseColumns(form.columns)), [form.columns]);
+  const selectedColumnSet = useMemo(() => new Set<string>(selectedColumns), [selectedColumns]);
+  const selectedDomainOption = useMemo(() => findDomainOption(form.domain), [form.domain]);
+  const selectableColumns = useMemo(
+    () =>
+      (domainColumnsQuery.data?.columns || []).filter(
+        (column) => !['date', 'symbol', 'year_month'].includes(String(column || '').toLowerCase())
+      ),
+    [domainColumnsQuery.data?.columns]
+  );
 
-  const isYearMonthValid = !yearMonthTrimmed || /^\d{4}-\d{2}$/.test(yearMonthTrimmed);
-  const isMaxTablesValid = !maxTablesTrimmed || /^[1-9]\d*$/.test(maxTablesTrimmed);
-  const hasValidationError = !isYearMonthValid || !isMaxTablesValid;
+  const isYearMonthStartValid = !yearMonthStartTrimmed || YEAR_MONTH_RE.test(yearMonthStartTrimmed);
+  const isYearMonthEndValid = !yearMonthEndTrimmed || YEAR_MONTH_RE.test(yearMonthEndTrimmed);
+  const isYearMonthRangeShapeValid = !yearMonthEndTrimmed || Boolean(yearMonthStartTrimmed);
+  const isYearMonthRangeOrdered = !yearMonthStartTrimmed || !yearMonthEndTrimmed || yearMonthEndTrimmed >= yearMonthStartTrimmed;
+  const hasValidationError =
+    !isYearMonthStartValid ||
+    !isYearMonthEndValid ||
+    !isYearMonthRangeShapeValid ||
+    !isYearMonthRangeOrdered;
 
   const refresh = async () => {
     await Promise.all([
@@ -185,16 +298,58 @@ export function GoldMaterializationPage() {
     setIsDirty(true);
   };
 
+  const setDomain = (domain: GoldDomain) => {
+    const next = findDomainOption(domain);
+    setForm((prev) => {
+      const previousDomain = findDomainOption(prev.domain);
+      const currentTarget = prev.targetPath.trim();
+      const preserveCustomTarget =
+        currentTarget.length > 0 && currentTarget !== previousDomain.defaultTargetPath;
+      return {
+        ...prev,
+        domain,
+        targetPath: preserveCustomTarget ? prev.targetPath : next.defaultTargetPath,
+        columns: ''
+      };
+    });
+    setIsDirty(true);
+  };
+
+  const setSelectedColumns = (columns: string[]) => {
+    setField('columns', normalizeColumnList(columns).join(','));
+  };
+
+  const toggleColumn = (column: string, checked: boolean) => {
+    const normalized = String(column || '').trim().toLowerCase();
+    const next = selectedColumns.filter((item) => item !== normalized);
+    if (checked && normalized) {
+      next.push(normalized);
+    }
+    setSelectedColumns(next);
+  };
+
+  const refreshDomainColumns = async () => {
+    try {
+      const refreshed = await DataService.refreshDomainColumns({ layer: GOLD_LAYER, domain: form.domain });
+      queryClient.setQueryData(domainColumnsQueryKey, {
+        ...refreshed,
+        columns: normalizeColumnList(refreshed.columns)
+      });
+      toast.success(`Loaded ${refreshed.columns.length} selectable columns for ${findDomainOption(form.domain).label}.`);
+    } catch (error) {
+      toast.error(`Failed to load columns: ${formatSystemStatusText(error)}`);
+    }
+  };
+
   const saveOverrides = async () => {
     if (hasValidationError) return;
 
     const payload: Array<{ key: string; value: string }> = [
       { key: 'GOLD_MARKET_BY_DATE_ENABLED', value: form.enabled ? 'true' : 'false' },
+      { key: 'GOLD_BY_DATE_DOMAIN', value: form.domain },
       { key: 'GOLD_MARKET_BY_DATE_PATH', value: form.targetPath.trim() },
-      { key: 'GOLD_MARKET_SOURCE_PREFIX', value: form.sourcePrefix.trim() },
       { key: 'GOLD_MARKET_BY_DATE_COLUMNS', value: form.columns.trim() },
-      { key: 'GOLD_MARKET_BY_DATE_MAX_TABLES', value: maxTablesTrimmed },
-      { key: 'MATERIALIZE_YEAR_MONTH', value: yearMonthTrimmed }
+      { key: 'MATERIALIZE_YEAR_MONTH', value: yearMonthSerialized }
     ];
 
     setIsSaving(true);
@@ -270,8 +425,7 @@ export function GoldMaterializationPage() {
           <p className="page-kicker">Live Operations</p>
           <h1 className="page-title">Gold Materialization</h1>
           <p className="page-subtitle">
-            Configure by-date Gold market materialization (`market_by_date`) and trigger a run through
-            `{` ${GOLD_MARKET_JOB} `}`.
+            Configure by-date Gold materialization per domain and trigger a run through `{` ${GOLD_MARKET_JOB} `}`.
           </p>
         </div>
 
@@ -312,7 +466,7 @@ export function GoldMaterializationPage() {
                 <div className="text-sm">
                   {form.enabled
                     ? 'Runs after gold-market-job feature generation.'
-                    : 'Gold market job skips by-date materialization.'}
+                    : 'Gold job skips by-date materialization.'}
                 </div>
               </div>
               <Switch
@@ -323,6 +477,23 @@ export function GoldMaterializationPage() {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label htmlFor="gold-materialization-domain" className="text-xs uppercase text-muted-foreground">
+                  Domain
+                </label>
+                <Select value={form.domain} onValueChange={(value) => setDomain(value as GoldDomain)}>
+                  <SelectTrigger id="gold-materialization-domain">
+                    <SelectValue placeholder="Select domain" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DOMAIN_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-2">
                 <label htmlFor="gold-materialization-target-path" className="text-xs uppercase text-muted-foreground">
                   Target Path
@@ -335,67 +506,114 @@ export function GoldMaterializationPage() {
                   className="font-mono text-sm"
                 />
               </div>
-              <div className="space-y-2">
-                <label htmlFor="gold-materialization-source-prefix" className="text-xs uppercase text-muted-foreground">
-                  Source Prefix
-                </label>
-                <Input
-                  id="gold-materialization-source-prefix"
-                  value={form.sourcePrefix}
-                  onChange={(event) => setField('sourcePrefix', event.target.value)}
-                  placeholder="market"
-                  className="font-mono text-sm"
-                />
-              </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label htmlFor="gold-materialization-max-tables" className="text-xs uppercase text-muted-foreground">
-                  Max Source Tables
-                </label>
+            <div className="space-y-2">
+              <label className="text-xs uppercase text-muted-foreground">
+                Year-Month Range
+              </label>
+              <div className="grid gap-2 sm:max-w-md sm:grid-cols-2">
                 <Input
-                  id="gold-materialization-max-tables"
-                  value={form.maxTables}
-                  onChange={(event) => setField('maxTables', event.target.value)}
-                  placeholder="250"
+                  id="gold-materialization-year-month-start"
+                  value={form.yearMonthStart}
+                  onChange={(event) => setField('yearMonthStart', event.target.value)}
+                  placeholder="From YYYY-MM"
                   className="font-mono text-sm"
                 />
-                {!isMaxTablesValid ? (
-                  <p className="text-xs text-destructive">Must be a positive integer.</p>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="gold-materialization-year-month" className="text-xs uppercase text-muted-foreground">
-                  Year-Month Partition
-                </label>
                 <Input
-                  id="gold-materialization-year-month"
-                  value={form.yearMonth}
-                  onChange={(event) => setField('yearMonth', event.target.value)}
-                  placeholder="YYYY-MM"
+                  id="gold-materialization-year-month-end"
+                  value={form.yearMonthEnd}
+                  onChange={(event) => setField('yearMonthEnd', event.target.value)}
+                  placeholder="To YYYY-MM"
                   className="font-mono text-sm"
                 />
-                {!isYearMonthValid ? (
-                  <p className="text-xs text-destructive">Use YYYY-MM format (example: 2026-02).</p>
-                ) : null}
               </div>
+              {!isYearMonthStartValid || !isYearMonthEndValid ? (
+                <p className="text-xs text-destructive">Use YYYY-MM format (example: 2026-02).</p>
+              ) : null}
+              {!isYearMonthRangeShapeValid ? (
+                <p className="text-xs text-destructive">Set a start month before setting an end month.</p>
+              ) : null}
+              {!isYearMonthRangeOrdered ? (
+                <p className="text-xs text-destructive">Range end must be the same month or later than range start.</p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
               <label htmlFor="gold-materialization-columns" className="text-xs uppercase text-muted-foreground">
                 Included Columns
               </label>
+              <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    Select columns for <span className="font-mono">{selectedDomainOption.label}</span>.
+                    `date` and `symbol` are always included.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => setSelectedColumns(selectableColumns)}
+                      disabled={!selectableColumns.length}
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => setSelectedColumns([])}
+                      disabled={!selectedColumns.length}
+                    >
+                      Clear
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => void refreshDomainColumns()}
+                      disabled={domainColumnsQuery.isFetching}
+                    >
+                      <RefreshCw className={`h-4 w-4 ${domainColumnsQuery.isFetching ? 'animate-spin' : ''}`} />
+                      Refresh Columns
+                    </Button>
+                  </div>
+                </div>
+
+                {domainColumnsQuery.isLoading ? (
+                  <p className="mt-3 text-xs text-muted-foreground">Loading selectable columns...</p>
+                ) : selectableColumns.length ? (
+                  <div className="mt-3 grid max-h-56 gap-2 overflow-auto pr-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {selectableColumns.map((column) => (
+                      <label
+                        key={column}
+                        className="flex items-center gap-2 rounded-md border border-border/40 bg-background/70 px-2 py-1"
+                      >
+                        <Checkbox
+                          checked={selectedColumnSet.has(column)}
+                          onCheckedChange={(next) => toggleColumn(column, Boolean(next))}
+                        />
+                        <span className="font-mono text-xs">{column}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    No cached columns found for this domain yet. Click <span className="font-mono">Refresh Columns</span>.
+                  </p>
+                )}
+              </div>
               <Textarea
                 id="gold-materialization-columns"
                 value={form.columns}
                 onChange={(event) => setField('columns', event.target.value)}
                 placeholder="close,volume,return_1d,vol_20d"
-                className="min-h-[132px] font-mono text-sm"
+                className="min-h-[96px] font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Leave blank to include all columns from per-symbol Gold tables. `date` and `symbol`
-                are always included.
+                This field stays editable for manual tweaks. Leave blank to include all columns from per-symbol Gold
+                tables.
               </p>
               {columnsPreview.length ? (
                 <div className="flex flex-wrap gap-2">

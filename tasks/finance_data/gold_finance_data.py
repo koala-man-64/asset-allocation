@@ -12,6 +12,11 @@ import pandas as pd
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common.market_reconciliation import (
+    collect_delta_market_symbols,
+    collect_delta_silver_finance_symbols,
+    purge_orphan_tables,
+)
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
@@ -121,16 +126,16 @@ def _resolve_column(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str
         if match:
             return match
 
-        prefix_matches = [
-            (normalized, actual)
-            for normalized, actual in normalized_to_actual.items()
-            if normalized.startswith(candidate_norm)
-        ]
-        if prefix_matches:
-            best = min(prefix_matches, key=lambda pair: len(pair[0]))
-            return best[1]
-
     return None
+
+
+def _require_column(df: pd.DataFrame, *, label: str, candidates: Sequence[str]) -> str:
+    resolved = _resolve_column(df, candidates)
+    if resolved:
+        return resolved
+    raise ValueError(
+        f"Missing required source column for {label}; accepted aliases={list(candidates)}"
+    )
 
 
 def _parse_human_number(value: Any) -> float:
@@ -180,19 +185,19 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
     return series.apply(_parse_human_number).astype("float64")
 
 
-def _prepare_table(df: Optional[pd.DataFrame], ticker: str) -> Optional[pd.DataFrame]:
+def _prepare_table(df: Optional[pd.DataFrame], ticker: str, *, source_label: str) -> pd.DataFrame:
     if df is None or df.empty:
-        return None
+        raise ValueError(f"Missing required Silver source table for {source_label} ({ticker}).")
 
     out = _snake_case_columns(df)
 
     if "date" not in out.columns:
-        return None
+        raise ValueError(f"Required date column missing in {source_label} for {ticker}.")
 
     out["date"] = _coerce_datetime(out["date"])
     out = out.dropna(subset=["date"]).copy()
     if out.empty:
-        return None
+        raise ValueError(f"No valid dated rows in {source_label} for {ticker}.")
 
     out["symbol"] = ticker
     out = out.sort_values(["symbol", "date"]).reset_index(drop=True)
@@ -214,14 +219,23 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     symbol_key = out["symbol"]
 
-    revenue_col = _resolve_column(out, ["Total Revenue", "Revenue"])
-    gross_profit_col = _resolve_column(out, ["Gross Profit"])
-    operating_income_col = _resolve_column(out, ["Operating Income", "Operating Income or Loss"])
-    net_income_col = _resolve_column(out, ["Net Income", "Net Income Common Stockholders"])
-    free_cash_flow_col = _resolve_column(out, ["Free Cash Flow"])
-    operating_cash_flow_col = _resolve_column(
+    revenue_col = _require_column(out, label="revenue", candidates=["Total Revenue", "Revenue"])
+    gross_profit_col = _require_column(out, label="gross_profit", candidates=["Gross Profit"])
+    operating_income_col = _require_column(
         out,
-        [
+        label="operating_income",
+        candidates=["Operating Income", "Operating Income or Loss"],
+    )
+    net_income_col = _require_column(
+        out,
+        label="net_income",
+        candidates=["Net Income", "Net Income Common Stockholders"],
+    )
+    free_cash_flow_col = _require_column(out, label="free_cash_flow", candidates=["Free Cash Flow"])
+    operating_cash_flow_col = _require_column(
+        out,
+        label="operating_cash_flow",
+        candidates=[
             "Operating Cash Flow",
             "Total Cash From Operating Activities",
             "Cash Flow From Continuing Operating Activities",
@@ -229,10 +243,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         ],
     )
 
-    total_debt_col = _resolve_column(out, ["Total Debt"])
-    long_term_debt_col = _resolve_column(
+    total_debt_col = _require_column(out, label="total_debt", candidates=["Total Debt"])
+    long_term_debt_col = _require_column(
         out,
-        [
+        label="long_term_debt",
+        candidates=[
             "Long Term Debt",
             "Long Term Debt And Capital Lease Obligation",
             "Long Term Debt & Capital Lease Obligation",
@@ -240,12 +255,19 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
             "Long-Term Debt",
         ],
     )
-    total_assets_col = _resolve_column(out, ["Total Assets"])
-    current_assets_col = _resolve_column(out, ["Current Assets", "Total Current Assets"])
-    current_liabilities_col = _resolve_column(out, ["Current Liabilities", "Total Current Liabilities"])
-    shares_outstanding_col = _resolve_column(
+    total_assets_col = _require_column(out, label="total_assets", candidates=["Total Assets"])
+    current_assets_col = _require_column(
+        out, label="current_assets", candidates=["Current Assets", "Total Current Assets"]
+    )
+    current_liabilities_col = _require_column(
         out,
-        [
+        label="current_liabilities",
+        candidates=["Current Liabilities", "Total Current Liabilities"],
+    )
+    shares_outstanding_col = _require_column(
+        out,
+        label="shares_outstanding",
+        candidates=[
             "Shares Outstanding",
             "Common Stock Shares Outstanding",
             "Common Shares Outstanding",
@@ -254,9 +276,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         ],
     )
 
-    pe_ratio_col = _resolve_column(
+    pe_ratio_col = _require_column(
         out,
-        [
+        label="pe_ratio",
+        candidates=[
             "Trailing P/E",
             "PE Ratio (TTM)",
             "P/E Ratio",
@@ -264,99 +287,72 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
             "PE Ratio",
         ],
     )
-    ev_ebitda_col = _resolve_column(
+    ev_ebitda_col = _require_column(
         out,
-        [
+        label="ev_ebitda",
+        candidates=[
             "Enterprise Value/EBITDA",
             "EV/EBITDA",
             "EV / EBITDA",
         ],
     )
-    market_cap_col = _resolve_column(out, ["Market Cap", "Market Cap (intraday)"])
-    ebitda_col = _resolve_column(out, ["EBITDA", "Normalized EBITDA"])
-    forward_pe_col = _resolve_column(out, ["Forward P/E", "Forward PE"])
-    ev_revenue_col = _resolve_column(
+    market_cap_col = _require_column(out, label="market_cap", candidates=["Market Cap", "Market Cap (intraday)"])
+    ebitda_col = _require_column(out, label="ebitda", candidates=["EBITDA", "Normalized EBITDA"])
+    forward_pe_col = _require_column(out, label="forward_pe", candidates=["Forward P/E", "Forward PE"])
+    ev_revenue_col = _require_column(
         out,
-        [
+        label="ev_revenue",
+        candidates=[
             "Enterprise Value/Revenue",
             "EV/Revenue",
             "EV / Revenue",
         ],
     )
-
-    revenue = _coerce_numeric(out[revenue_col]) if revenue_col else pd.Series(np.nan, index=out.index)
-    gross_profit = _coerce_numeric(out[gross_profit_col]) if gross_profit_col else pd.Series(np.nan, index=out.index)
-    operating_income = (
-        _coerce_numeric(out[operating_income_col]) if operating_income_col else pd.Series(np.nan, index=out.index)
-    )
-    net_income = _coerce_numeric(out[net_income_col]) if net_income_col else pd.Series(np.nan, index=out.index)
-    free_cash_flow = (
-        _coerce_numeric(out[free_cash_flow_col]) if free_cash_flow_col else pd.Series(np.nan, index=out.index)
-    )
-    operating_cash_flow = (
-        _coerce_numeric(out[operating_cash_flow_col]) if operating_cash_flow_col else pd.Series(np.nan, index=out.index)
-    )
-    ebitda = _coerce_numeric(out[ebitda_col]) if ebitda_col else pd.Series(np.nan, index=out.index)
-    forward_pe = _coerce_numeric(out[forward_pe_col]) if forward_pe_col else pd.Series(np.nan, index=out.index)
-    ev_revenue = _coerce_numeric(out[ev_revenue_col]) if ev_revenue_col else pd.Series(np.nan, index=out.index)
-
-    if revenue_col:
-        out[revenue_col] = revenue
-    if gross_profit_col:
-        out[gross_profit_col] = gross_profit
-    if operating_income_col:
-        out[operating_income_col] = operating_income
-    if net_income_col:
-        out[net_income_col] = net_income
-    if free_cash_flow_col:
-        out[free_cash_flow_col] = free_cash_flow
-    if operating_cash_flow_col:
-        out[operating_cash_flow_col] = operating_cash_flow
-
-    total_debt = _coerce_numeric(out[total_debt_col]) if total_debt_col else pd.Series(np.nan, index=out.index)
-    long_term_debt = (
-        _coerce_numeric(out[long_term_debt_col])
-        if long_term_debt_col
-        else total_debt.copy()
-    )
-    total_assets = _coerce_numeric(out[total_assets_col]) if total_assets_col else pd.Series(np.nan, index=out.index)
-    current_assets = (
-        _coerce_numeric(out[current_assets_col]) if current_assets_col else pd.Series(np.nan, index=out.index)
-    )
-    current_liabilities = (
-        _coerce_numeric(out[current_liabilities_col]) if current_liabilities_col else pd.Series(np.nan, index=out.index)
-    )
-    shares_outstanding = (
-        _coerce_numeric(out[shares_outstanding_col]) if shares_outstanding_col else pd.Series(np.nan, index=out.index)
-    )
-    cash_and_equivalents_col = _resolve_column(
-        out, 
-        [
-            "Cash And Cash Equivalents", 
+    cash_and_equivalents_col = _require_column(
+        out,
+        label="cash_and_equivalents",
+        candidates=[
+            "Cash And Cash Equivalents",
             "Cash & Cash Equivalents",
-            "Cash and Cash Equivalents"
-        ]
-    )
-    cash_and_equivalents = (
-        _coerce_numeric(out[cash_and_equivalents_col]) if cash_and_equivalents_col else pd.Series(np.nan, index=out.index)
+            "Cash and Cash Equivalents",
+        ],
     )
 
-    if total_debt_col:
-        out[total_debt_col] = total_debt
-    if long_term_debt_col:
-        out[long_term_debt_col] = long_term_debt
-    if total_assets_col:
-        out[total_assets_col] = total_assets
-    if current_assets_col:
-        out[current_assets_col] = current_assets
-    if current_liabilities_col:
-        out[current_liabilities_col] = current_liabilities
-    if shares_outstanding_col:
-        out[shares_outstanding_col] = shares_outstanding
+    revenue = _coerce_numeric(out[revenue_col])
+    gross_profit = _coerce_numeric(out[gross_profit_col])
+    operating_income = _coerce_numeric(out[operating_income_col])
+    net_income = _coerce_numeric(out[net_income_col])
+    free_cash_flow = _coerce_numeric(out[free_cash_flow_col])
+    operating_cash_flow = _coerce_numeric(out[operating_cash_flow_col])
+    ebitda = _coerce_numeric(out[ebitda_col])
+    forward_pe = _coerce_numeric(out[forward_pe_col])
+    ev_revenue = _coerce_numeric(out[ev_revenue_col])
 
-    pe_ratio = _coerce_numeric(out[pe_ratio_col]) if pe_ratio_col else pd.Series(np.nan, index=out.index)
-    ev_ebitda = _coerce_numeric(out[ev_ebitda_col]) if ev_ebitda_col else pd.Series(np.nan, index=out.index)
-    market_cap = _coerce_numeric(out[market_cap_col]) if market_cap_col else pd.Series(np.nan, index=out.index)
+    out[revenue_col] = revenue
+    out[gross_profit_col] = gross_profit
+    out[operating_income_col] = operating_income
+    out[net_income_col] = net_income
+    out[free_cash_flow_col] = free_cash_flow
+    out[operating_cash_flow_col] = operating_cash_flow
+
+    total_debt = _coerce_numeric(out[total_debt_col])
+    long_term_debt = _coerce_numeric(out[long_term_debt_col])
+    total_assets = _coerce_numeric(out[total_assets_col])
+    current_assets = _coerce_numeric(out[current_assets_col])
+    current_liabilities = _coerce_numeric(out[current_liabilities_col])
+    shares_outstanding = _coerce_numeric(out[shares_outstanding_col])
+    cash_and_equivalents = _coerce_numeric(out[cash_and_equivalents_col])
+
+    out[total_debt_col] = total_debt
+    out[long_term_debt_col] = long_term_debt
+    out[total_assets_col] = total_assets
+    out[current_assets_col] = current_assets
+    out[current_liabilities_col] = current_liabilities
+    out[shares_outstanding_col] = shares_outstanding
+
+    pe_ratio = _coerce_numeric(out[pe_ratio_col])
+    ev_ebitda = _coerce_numeric(out[ev_ebitda_col])
+    market_cap = _coerce_numeric(out[market_cap_col])
 
     out["rev_qoq"] = _safe_div(revenue, revenue.groupby(symbol_key, sort=False).shift(1)) - 1.0
     out["rev_yoy"] = _safe_div(revenue, revenue.groupby(symbol_key, sort=False).shift(4)) - 1.0
@@ -453,43 +449,39 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
-    from core import delta_core
-
-    existing_cols = delta_core.get_delta_schema_columns(container, path)
-    if not existing_cols:
-        return df.reset_index(drop=True)
-
-    out = df.copy()
-    for col in existing_cols:
-        if col not in out.columns:
-            out[col] = pd.NA
-
-    ordered_cols = list(existing_cols) + [col for col in out.columns if col not in existing_cols]
-    out = out[ordered_cols]
-    return out.reset_index(drop=True)
-
-
 def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str, Optional[str]]) -> Dict[str, Any]:
     from core import core as mdc
     from core import delta_core
 
     ticker, income_path, balance_path, cashflow_path, valuation_path, gold_path, silver_container, gold_container, backfill_start_iso = task
 
-    df_income = _prepare_table(delta_core.load_delta(silver_container, income_path), ticker)
-    df_balance = _prepare_table(delta_core.load_delta(silver_container, balance_path), ticker)
-    df_cashflow = _prepare_table(delta_core.load_delta(silver_container, cashflow_path), ticker)
-
-    df_valuation_raw = delta_core.load_delta(silver_container, valuation_path)
-    df_valuation = _prepare_table(df_valuation_raw, ticker) if df_valuation_raw is not None else None
-
-    if not any([df_income is not None, df_balance is not None, df_cashflow is not None, df_valuation is not None]):
-        return {"ticker": ticker, "status": "skipped_no_data"}
+    try:
+        df_income = _prepare_table(
+            delta_core.load_delta(silver_container, income_path),
+            ticker,
+            source_label="income_statement",
+        )
+        df_balance = _prepare_table(
+            delta_core.load_delta(silver_container, balance_path),
+            ticker,
+            source_label="balance_sheet",
+        )
+        df_cashflow = _prepare_table(
+            delta_core.load_delta(silver_container, cashflow_path),
+            ticker,
+            source_label="cash_flow",
+        )
+        df_valuation = _prepare_table(
+            delta_core.load_delta(silver_container, valuation_path),
+            ticker,
+            source_label="valuation",
+        )
+    except Exception as exc:
+        return {"ticker": ticker, "status": "failed_source", "error": str(exc)}
 
     base_dates = []
     for table in (df_income, df_balance, df_cashflow, df_valuation):
-        if table is not None:
-            base_dates.append(table[["date", "symbol"]])
+        base_dates.append(table[["date", "symbol"]])
     keys = pd.concat(base_dates, ignore_index=True).drop_duplicates(subset=["symbol", "date"], keep="last")
 
     merged = keys
@@ -499,8 +491,6 @@ def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str, Optional
         (df_cashflow, "_cf"),
         (df_valuation, "_val"),
     ):
-        if table is None:
-            continue
         merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
 
     try:
@@ -535,9 +525,8 @@ def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str, Optional
         }
 
     try:
-        df_features = _align_to_existing_schema(df_features, gold_container, gold_path)
         df_features = normalize_columns_to_snake_case(df_features)
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite", schema_mode="merge")
+        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
                 gold_container,
@@ -602,18 +591,47 @@ def _build_job_config() -> FeatureJobConfig:
     )
 
 
+def _run_finance_reconciliation(*, silver_container: str, gold_container: str) -> tuple[int, int]:
+    from core import core as mdc
+    from core.pipeline import DataPaths
+
+    silver_client = mdc.get_storage_client(silver_container)
+    gold_client = mdc.get_storage_client(gold_container)
+    if silver_client is None:
+        raise RuntimeError("Gold finance reconciliation requires silver storage client.")
+    if gold_client is None:
+        raise RuntimeError("Gold finance reconciliation requires gold storage client.")
+
+    silver_symbols = collect_delta_silver_finance_symbols(client=silver_client)
+    gold_symbols = collect_delta_market_symbols(client=gold_client, root_prefix="finance")
+    orphan_symbols, deleted_blobs = purge_orphan_tables(
+        upstream_symbols=silver_symbols,
+        downstream_symbols=gold_symbols,
+        downstream_path_builder=DataPaths.get_gold_finance_path,
+        delete_prefix=gold_client.delete_prefix,
+    )
+    if orphan_symbols:
+        mdc.write_line(
+            "Gold finance reconciliation purged orphan symbols: "
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+        )
+    else:
+        mdc.write_line("Gold finance reconciliation: no orphan symbols detected.")
+    return len(orphan_symbols), deleted_blobs
+
+
 def main() -> int:
     from core import core as mdc
     from core.pipeline import DataPaths
     from core import delta_core
-
+	
     mdc.log_environment_diagnostics()
     job_cfg = _build_job_config()
     backfill_start, _ = get_backfill_range()
     backfill_start_iso = backfill_start.date().isoformat() if backfill_start is not None else None
     if backfill_start_iso:
         mdc.write_line(f"Applying historical cutoff to gold finance features: {backfill_start_iso}")
-
+	
     watermarks = load_watermarks("gold_finance_features")
     watermarks_dirty = False
 
@@ -679,12 +697,7 @@ def main() -> int:
             results.append(result)
 
     ok = sum(1 for r in results if r.get("status") == "ok")
-    skipped = sum(1 for r in results if r.get("status") == "skipped_no_data")
-    failed = len(results) - ok - skipped
-    mdc.write_line(
-        f"Finance feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
-        f"skipped_unchanged={skipped_unchanged}, failed={failed}"
-    )
+    failed = len(results) - ok
     for result in results:
         if result.get("status") != "ok":
             continue
@@ -701,7 +714,27 @@ def main() -> int:
         watermarks_dirty = True
     if watermarks_dirty:
         save_watermarks("gold_finance_features", watermarks)
-    return 0 if failed == 0 else 1
+
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    try:
+        reconciliation_orphans, reconciliation_deleted_blobs = _run_finance_reconciliation(
+            silver_container=job_cfg.silver_container,
+            gold_container=job_cfg.gold_container,
+        )
+    except Exception as exc:
+        reconciliation_failed = 1
+        mdc.write_error(f"Gold finance reconciliation failed: {exc}")
+
+    total_failed = failed + reconciliation_failed
+    mdc.write_line(
+        f"Finance feature engineering complete: ok={ok}, "
+        f"skipped_unchanged={skipped_unchanged}, "
+        f"reconciled_orphans={reconciliation_orphans}, "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}, failed={total_failed}"
+    )
+    return 0 if total_failed == 0 else 1
 
 
 if __name__ == "__main__":

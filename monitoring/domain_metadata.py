@@ -10,6 +10,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.blob_storage import BlobStorageClient
+from core import core as mdc
 from core import delta_core
 from deltalake import DeltaTable
 
@@ -27,6 +28,7 @@ _FINANCE_SUBFOLDER_KEYS: Tuple[FinanceSubfolderKey, ...] = (
     "cash_flow",
     "valuation",
 )
+_FINANCE_COVERAGE_REPORT_PATH = "system/reconciliation/finance_coverage/latest.json"
 
 
 def _utc_now_iso() -> str:
@@ -374,16 +376,59 @@ def _count_finance_symbols_from_listing(
     return len(tickers), subfolder_counts, truncated
 
 
+def _load_finance_coverage_report() -> Optional[Dict[str, Any]]:
+    try:
+        payload = mdc.get_common_json_content(_FINANCE_COVERAGE_REPORT_PATH)
+    except Exception as exc:
+        logger.warning("Failed to load finance coverage report: %s", exc)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _finance_coverage_fields(
+    *,
+    layer_key: str,
+    domain_key: str,
+) -> Dict[str, Any]:
+    if domain_key != "finance":
+        return {}
+    report = _load_finance_coverage_report()
+    if not isinstance(report, dict):
+        return {}
+
+    generated_at = str(report.get("generatedAt") or "").strip() or None
+    lag_count_raw = report.get("totalLagSymbolCount")
+    lag_count = int(lag_count_raw) if isinstance(lag_count_raw, int) else None
+    fields: Dict[str, Any] = {
+        "coverageReportPath": _FINANCE_COVERAGE_REPORT_PATH,
+        "asOfCutoff": generated_at,
+        "lagSymbolCount": lag_count,
+    }
+    if layer_key == "silver":
+        if lag_count is None:
+            fields["coverageStatus"] = "unknown"
+        elif lag_count == 0:
+            fields["coverageStatus"] = "aligned"
+        else:
+            fields["coverageStatus"] = "lagging"
+    elif layer_key == "bronze":
+        fields["coverageStatus"] = "source"
+    return fields
+
+
 def _summarize_blob_prefix(
     client: BlobStorageClient,
     *,
     prefix: str,
     max_scanned_blobs: int,
-) -> Tuple[Optional[int], Optional[int], bool]:
+) -> Tuple[Optional[int], Optional[int], Optional[str], bool]:
     files = 0
     total_bytes = 0
     scanned = 0
     truncated = False
+    latest_modified: Optional[datetime] = None
 
     try:
         blobs = client.container_client.list_blobs(name_starts_with=prefix)
@@ -396,11 +441,14 @@ def _summarize_blob_prefix(
             size = getattr(blob, "size", None)
             if isinstance(size, int):
                 total_bytes += size
+            modified_dt = _coerce_datetime(getattr(blob, "last_modified", None))
+            if modified_dt is not None and (latest_modified is None or modified_dt > latest_modified):
+                latest_modified = modified_dt
     except Exception as exc:
         logger.warning("Failed to list blobs for prefix summary: container=%s prefix=%s err=%s", client.container_name, prefix, exc)
-        return None, None, False
+        return None, None, None, False
 
-    return files, total_bytes, truncated
+    return files, total_bytes, _to_iso_datetime(latest_modified), truncated
 
 
 def _coerce_datetime(value: Any) -> Optional[datetime]:
@@ -723,10 +771,12 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "type": "delta",
             "tablePath": delta_path,
             "computedAt": computed_at,
+            "folderLastModified": None,
             "symbolCount": symbol_count,
             "blacklistedSymbolCount": None,
             "warnings": warnings,
             **metrics,
+            **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
         }
         _cache_domain_metadata(layer_key, domain_key, payload)
         return payload
@@ -734,7 +784,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
     prefix = _blob_prefix(layer_key, domain_key)
     if prefix:
         client = BlobStorageClient(container_name=container, ensure_container_exists=False)
-        files, total_bytes, truncated = _summarize_blob_prefix(
+        files, total_bytes, folder_last_modified, truncated = _summarize_blob_prefix(
             client, prefix=prefix, max_scanned_blobs=max_scanned_blobs
         )
         warnings: List[str] = []
@@ -809,12 +859,14 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "type": "blob",
             "prefix": prefix,
             "computedAt": computed_at,
+            "folderLastModified": folder_last_modified,
             "symbolCount": symbol_count,
             "financeSubfolderSymbolCounts": finance_subfolder_symbol_counts,
             "blacklistedSymbolCount": blacklisted_symbol_count,
             "fileCount": files,
             "totalBytes": total_bytes,
             "warnings": warnings,
+            **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
         }
         _cache_domain_metadata(layer_key, domain_key, payload)
         return payload

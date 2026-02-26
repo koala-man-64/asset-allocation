@@ -1,0 +1,384 @@
+{
+  "auto_remediation": null,
+  "baseline": {
+    "ci_context": false,
+    "compare_from": "main",
+    "compare_to": "HEAD",
+    "reason": "configured baseline.branch",
+    "requested": null,
+    "resolved": "main"
+  },
+  "category_counts": {
+    "architecture": 1,
+    "config_infra": 3,
+    "test": 1
+  },
+  "category_scores": {
+    "architecture": 25.0,
+    "config_infra": 45.0,
+    "test": 37.5
+  },
+  "changed_files": [
+    ".env.template",
+    "README.md",
+    "api/endpoints/system.py",
+    "core/runtime_config.py",
+    "deploy/app_api.yaml",
+    "deploy/job_bronze_finance_data.yaml",
+    "deploy/job_silver_finance_data.yaml",
+    "monitoring/domain_metadata.py",
+    "scripts/delete_all_jobs.ps1",
+    "tasks/finance_data/bronze_finance_data.py",
+    "tasks/finance_data/silver_finance_data.py",
+    "tasks/market_data/gold_market_data.py",
+    "tasks/market_data/materialize_gold_market_by_date.py",
+    "tasks/market_data/silver_market_data.py",
+    "tests/finance_data/test_silver_finance_data.py",
+    "tests/market_data/test_materialize_gold_market_by_date.py",
+    "tests/market_data/test_silver_market_data.py",
+    "tests/monitoring/test_domain_metadata.py",
+    "tests/test_runtime_config.py",
+    "ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
+    "ui/src/app/components/pages/GoldMaterializationPage.tsx",
+    "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
+    "ui/src/types/strategy.ts"
+  ],
+  "drift_score": 107.5,
+  "findings": [
+    {
+      "attribution": {},
+      "category": "test",
+      "confidence": 0.8,
+      "evidence": [
+        "-def test_normalize_env_override_gold_market_by_date_max_tables_int():",
+        "-  const isYearMonthValid = !yearMonthTrimmed || /^\\d{4}-\\d{2}$/.test(yearMonthTrimmed);",
+        "-  const isMaxTablesValid = !maxTablesTrimmed || /^[1-9]\\d*$/.test(maxTablesTrimmed);"
+      ],
+      "expected": "Coverage should not regress for changed behavior.",
+      "files": [],
+      "observed": "Detected removed test definitions/assertions in diff.",
+      "remediation": "Restore removed tests or add equivalent coverage for modified behavior.",
+      "risk": "medium",
+      "score": 37.5,
+      "severity": "high",
+      "title": "Test cases removed",
+      "verification": [
+        "Run fast and full tests",
+        "Check coverage trend"
+      ]
+    },
+    {
+      "attribution": {
+        "deploy/app_api.yaml": [
+          "7faca87|rdprokes|2026-02-25|updated replica count"
+        ],
+        "deploy/job_bronze_finance_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "deploy/job_silver_finance_data.yaml": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ]
+      },
+      "category": "config_infra",
+      "confidence": 0.8,
+      "evidence": [
+        "--- a/ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
+        "-  const isYearMonthValid = !yearMonthTrimmed || /^\\d{4}-\\d{2}$/.test(yearMonthTrimmed);",
+        "-  const isMaxTablesValid = !maxTablesTrimmed || /^[1-9]\\d*$/.test(maxTablesTrimmed);"
+      ],
+      "expected": "Pipeline and infra changes should preserve or strengthen quality/safety gates.",
+      "files": [
+        "deploy/app_api.yaml",
+        "deploy/job_bronze_finance_data.yaml",
+        "deploy/job_silver_finance_data.yaml"
+      ],
+      "observed": "CI/deploy/configuration files were modified.",
+      "remediation": "Review config deltas with release/security owners and validate gates remain enforced.",
+      "risk": "medium",
+      "score": 22.5,
+      "severity": "high",
+      "title": "Configuration/infra files changed",
+      "verification": [
+        "Run CI pipeline in branch",
+        "Validate deploy plans and policy checks"
+      ]
+    },
+    {
+      "attribution": {},
+      "category": "config_infra",
+      "confidence": 0.6,
+      "evidence": [
+        "Lookback config-touching commits: 32"
+      ],
+      "expected": "Configuration should remain stable and coordinated across contributors.",
+      "files": [],
+      "observed": "32 recent commits touched config/infra files in lookback window.",
+      "remediation": "Consolidate config ownership, batch related changes, and document rationale in PRs.",
+      "risk": "medium",
+      "score": 15.0,
+      "severity": "medium",
+      "title": "Recent config churn detected",
+      "verification": [
+        "Inspect recent config PRs",
+        "Audit gate consistency across workflows"
+      ]
+    },
+    {
+      "attribution": {
+        "api/endpoints/system.py": [
+          "1691099|rdprokes|2026-02-26|gold purge"
+        ],
+        "core/runtime_config.py": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "monitoring/domain_metadata.py": [
+          "8ce79b6|rdprokes|2026-02-26|done"
+        ],
+        "tasks/finance_data/bronze_finance_data.py": [
+          "98b6921|rdprokes|2026-02-25|fixed purging"
+        ],
+        "tasks/finance_data/silver_finance_data.py": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "tasks/market_data/gold_market_data.py": [
+          "8ce79b6|rdprokes|2026-02-26|done"
+        ],
+        "tasks/market_data/materialize_gold_market_by_date.py": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "tasks/market_data/silver_market_data.py": [
+          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        ],
+        "tests/finance_data/test_silver_finance_data.py": [
+          "fb8bba3|rdprokes|2026-02-23|dont even know"
+        ],
+        "tests/market_data/test_materialize_gold_market_by_date.py": [
+          "18216cc|rdprokes|2026-02-24|materialize gold"
+        ],
+        "tests/market_data/test_silver_market_data.py": [
+          "0c70eff|rdprokes|2026-02-21|big commit"
+        ],
+        "tests/monitoring/test_domain_metadata.py": [
+          "8ce79b6|rdprokes|2026-02-26|done"
+        ]
+      },
+      "category": "architecture",
+      "confidence": 0.7,
+      "evidence": [
+        "Baseline strategy counts: {'exceptions': 11, 'sentinel_returns': 8}",
+        "Observed strategy counts: {'exceptions': 12, 'sentinel_returns': 8}"
+      ],
+      "expected": "Use a consistent error-handling pattern. Baseline prevalence favors `exceptions`.",
+      "files": [
+        "api/endpoints/system.py",
+        "core/runtime_config.py",
+        "monitoring/domain_metadata.py",
+        "tasks/finance_data/bronze_finance_data.py",
+        "tasks/finance_data/silver_finance_data.py",
+        "tasks/market_data/gold_market_data.py",
+        "tasks/market_data/materialize_gold_market_by_date.py",
+        "tasks/market_data/silver_market_data.py",
+        "tests/finance_data/test_silver_finance_data.py",
+        "tests/market_data/test_materialize_gold_market_by_date.py",
+        "tests/market_data/test_silver_market_data.py",
+        "tests/monitoring/test_domain_metadata.py",
+        "tests/test_runtime_config.py",
+        "ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
+        "ui/src/app/components/pages/GoldMaterializationPage.tsx",
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
+        "ui/src/types/strategy.ts"
+      ],
+      "observed": "Competing patterns detected in changed files: exceptions, sentinel_returns.",
+      "remediation": "Standardize error handling around `exceptions` and migrate divergent paths incrementally.",
+      "risk": "medium",
+      "score": 25.0,
+      "severity": "medium",
+      "title": "Inconsistent micro-architecture patterns",
+      "verification": [
+        "Run targeted tests for standardized paths",
+        "Re-run drift audit"
+      ]
+    },
+    {
+      "attribution": {},
+      "category": "config_infra",
+      "confidence": 0.7,
+      "evidence": [
+        "Commits touching config in lookback: 32"
+      ],
+      "expected": "CI/lint/config should evolve through coordinated, low-churn changes.",
+      "files": [],
+      "observed": "32 recent commits modified config-related files.",
+      "remediation": "Batch configuration changes and codify ownership/approval expectations.",
+      "risk": "low",
+      "score": 7.5,
+      "severity": "low",
+      "title": "Config churn trend",
+      "verification": [
+        "Inspect config commit history"
+      ]
+    }
+  ],
+  "gate_result": "fail",
+  "generated_at": "2026-02-26T19:00:02.206300+00:00",
+  "hotspots": [
+    {
+      "findings": 3,
+      "path": "(command-output)",
+      "score": 60.0
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_silver_finance_data.yaml",
+      "score": 7.5
+    },
+    {
+      "findings": 1,
+      "path": "deploy/job_bronze_finance_data.yaml",
+      "score": 7.5
+    },
+    {
+      "findings": 1,
+      "path": "deploy/app_api.yaml",
+      "score": 7.5
+    },
+    {
+      "findings": 1,
+      "path": "monitoring/domain_metadata.py",
+      "score": 1.47
+    },
+    {
+      "findings": 1,
+      "path": "tests/monitoring/test_domain_metadata.py",
+      "score": 1.47
+    },
+    {
+      "findings": 1,
+      "path": "tasks/finance_data/silver_finance_data.py",
+      "score": 1.47
+    },
+    {
+      "findings": 1,
+      "path": "tests/test_runtime_config.py",
+      "score": 1.47
+    },
+    {
+      "findings": 1,
+      "path": "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
+      "score": 1.47
+    },
+    {
+      "findings": 1,
+      "path": "api/endpoints/system.py",
+      "score": 1.47
+    }
+  ],
+  "mode": "audit",
+  "patch_preview": [],
+  "suggested_actions": [
+    {
+      "category": "architecture",
+      "files": [
+        "api/endpoints/system.py",
+        "core/runtime_config.py",
+        "monitoring/domain_metadata.py",
+        "tasks/finance_data/bronze_finance_data.py",
+        "tasks/finance_data/silver_finance_data.py",
+        "tasks/market_data/gold_market_data.py",
+        "tasks/market_data/materialize_gold_market_by_date.py",
+        "tasks/market_data/silver_market_data.py",
+        "tests/finance_data/test_silver_finance_data.py",
+        "tests/market_data/test_materialize_gold_market_by_date.py",
+        "tests/market_data/test_silver_market_data.py",
+        "tests/monitoring/test_domain_metadata.py",
+        "tests/test_runtime_config.py",
+        "ui/src/app/__tests__/GoldMaterializationPage.test.tsx",
+        "ui/src/app/components/pages/GoldMaterializationPage.tsx",
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
+        "ui/src/types/strategy.ts"
+      ],
+      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
+      "risk_level": "medium",
+      "severity": "medium",
+      "title": "Inconsistent micro-architecture patterns",
+      "verification_steps": [
+        "Run targeted tests for standardized paths",
+        "Re-run drift audit"
+      ],
+      "what_to_change": "Standardize error handling around `exceptions` and migrate divergent paths incrementally.",
+      "why_it_is_drift": "Expected: Use a consistent error-handling pattern. Baseline prevalence favors `exceptions`. Observed: Competing patterns detected in changed files: exceptions, sentinel_returns."
+    },
+    {
+      "category": "config_infra",
+      "files": [
+        "deploy/app_api.yaml",
+        "deploy/job_bronze_finance_data.yaml",
+        "deploy/job_silver_finance_data.yaml"
+      ],
+      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
+      "risk_level": "medium",
+      "severity": "high",
+      "title": "Configuration/infra files changed",
+      "verification_steps": [
+        "Run CI pipeline in branch",
+        "Validate deploy plans and policy checks"
+      ],
+      "what_to_change": "Review config deltas with release/security owners and validate gates remain enforced.",
+      "why_it_is_drift": "Expected: Pipeline and infra changes should preserve or strengthen quality/safety gates. Observed: CI/deploy/configuration files were modified."
+    },
+    {
+      "category": "config_infra",
+      "files": [],
+      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
+      "risk_level": "medium",
+      "severity": "medium",
+      "title": "Recent config churn detected",
+      "verification_steps": [
+        "Inspect recent config PRs",
+        "Audit gate consistency across workflows"
+      ],
+      "what_to_change": "Consolidate config ownership, batch related changes, and document rationale in PRs.",
+      "why_it_is_drift": "Expected: Configuration should remain stable and coordinated across contributors. Observed: 32 recent commits touched config/infra files in lookback window."
+    },
+    {
+      "category": "config_infra",
+      "files": [],
+      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
+      "risk_level": "low",
+      "severity": "low",
+      "title": "Config churn trend",
+      "verification_steps": [
+        "Inspect config commit history"
+      ],
+      "what_to_change": "Batch configuration changes and codify ownership/approval expectations.",
+      "why_it_is_drift": "Expected: CI/lint/config should evolve through coordinated, low-churn changes. Observed: 32 recent commits modified config-related files."
+    },
+    {
+      "category": "test",
+      "files": [],
+      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
+      "risk_level": "medium",
+      "severity": "high",
+      "title": "Test cases removed",
+      "verification_steps": [
+        "Run fast and full tests",
+        "Check coverage trend"
+      ],
+      "what_to_change": "Restore removed tests or add equivalent coverage for modified behavior.",
+      "why_it_is_drift": "Expected: Coverage should not regress for changed behavior. Observed: Detected removed test definitions/assertions in diff."
+    }
+  ],
+  "thresholds": {
+    "drift_score_fail": 35.0
+  },
+  "tool_run_status": [
+    {
+      "command": "<skipped>",
+      "duration_sec": 0.0,
+      "exit_code": null,
+      "name": "quality-gates",
+      "output_excerpt": "Skipped by --skip-quality-gates",
+      "status": "skipped"
+    }
+  ]
+}

@@ -509,6 +509,7 @@ class DomainMetadataResponse(BaseModel):
     container: str
     type: Literal["blob", "delta"]
     computedAt: str
+    folderLastModified: Optional[str] = None
     cachedAt: Optional[str] = None
     cacheSource: Optional[Literal["snapshot", "live-refresh"]] = None
     symbolCount: Optional[int] = None
@@ -521,6 +522,10 @@ class DomainMetadataResponse(BaseModel):
     tablePath: Optional[str] = None
     prefix: Optional[str] = None
     blacklistedSymbolCount: Optional[int] = None
+    coverageStatus: Optional[str] = None
+    asOfCutoff: Optional[str] = None
+    lagSymbolCount: Optional[int] = None
+    coverageReportPath: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
 
 
@@ -840,6 +845,7 @@ def domain_metadata(
                 "container": "",
                 "type": "blob",
                 "computedAt": now,
+                "folderLastModified": None,
                 "cachedAt": None,
                 "cacheSource": "snapshot",
                 "symbolCount": None,
@@ -851,6 +857,10 @@ def domain_metadata(
                 "tablePath": None,
                 "prefix": None,
                 "blacklistedSymbolCount": None,
+                "coverageStatus": None,
+                "asOfCutoff": None,
+                "lagSymbolCount": None,
+                "coverageReportPath": None,
                 "warnings": [missing_message],
             }
             return JSONResponse(
@@ -4609,6 +4619,14 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Domain override for finance silver latest-only behavior.",
         "example": "true",
     },
+    "SILVER_FINANCE_CATCHUP_MAX_PASSES": {
+        "description": "Max catch-up relist passes for silver finance ingestion to absorb late Bronze writes (integer).",
+        "example": "3",
+    },
+    "SILVER_FINANCE_USE_BRONZE_MANIFEST": {
+        "description": "When true, silver finance prefers the latest unacknowledged Bronze finance run manifest.",
+        "example": "true",
+    },
     "SILVER_EARNINGS_LATEST_ONLY": {
         "description": "Domain override for earnings silver latest-only behavior.",
         "example": "true",
@@ -4625,6 +4643,10 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "When true, gold-market-job also materializes the consolidated Gold market by-date view.",
         "example": "true",
     },
+    "GOLD_BY_DATE_DOMAIN": {
+        "description": "Gold domain to materialize by-date (market|finance|earnings|price-target).",
+        "example": "market",
+    },
     "GOLD_MARKET_BY_DATE_PATH": {
         "description": "Target Delta table path for the consolidated Gold market by-date view.",
         "example": "market_by_date",
@@ -4633,17 +4655,9 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Optional comma-separated projection list for by-date view columns (date/symbol always included).",
         "example": "close,volume,return_1d,vol_20d",
     },
-    "GOLD_MARKET_SOURCE_PREFIX": {
-        "description": "Per-symbol Gold market source prefix used by by-date materialization.",
-        "example": "market",
-    },
-    "GOLD_MARKET_BY_DATE_MAX_TABLES": {
-        "description": "Optional debug cap on discovered per-symbol source tables when materializing the by-date view.",
-        "example": "250",
-    },
     "MATERIALIZE_YEAR_MONTH": {
-        "description": "Optional YYYY-MM partition filter used by by-date materialization for partial rebuilds.",
-        "example": "2026-02",
+        "description": "Optional YYYY-MM or YYYY-MM..YYYY-MM partition filter used by by-date materialization for partial rebuilds.",
+        "example": "2026-01..2026-03",
     },
     "TRIGGER_NEXT_JOB_NAME": {
         "description": "Optional downstream job name to trigger on success.",
@@ -4660,6 +4674,22 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS": {
         "description": "Downstream trigger retry base delay (float seconds).",
         "example": "1.0",
+    },
+    "FINANCE_RUN_MANIFESTS_ENABLED": {
+        "description": "When true, Bronze finance writes run manifests and Silver finance can persist per-run acknowledgements.",
+        "example": "true",
+    },
+    "FINANCE_PIPELINE_SHARED_LOCK_NAME": {
+        "description": "Shared distributed lock key used to serialize Bronze/Silver finance jobs.",
+        "example": "finance-pipeline-shared",
+    },
+    "BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS": {
+        "description": "How long Bronze finance waits for the shared finance lock before skipping/failing (float seconds).",
+        "example": "0",
+    },
+    "SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS": {
+        "description": "How long Silver finance waits for the shared finance lock before failing (float seconds).",
+        "example": "3600",
     },
     "SYSTEM_HEALTH_TTL_SECONDS": {
         "description": "System health cache TTL for the API (float seconds).",

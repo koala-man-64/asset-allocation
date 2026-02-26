@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
-  ChevronDown,
   CirclePause,
   CirclePlay,
   EllipsisVertical,
   ExternalLink,
-  Eye,
   FolderOpen,
   GitCompareArrows,
   Loader2,
@@ -1456,6 +1454,10 @@ export function DomainLayerComparisonPanel({
                       const updatedLabel = domainConfig?.lastUpdated
                         ? `${updatedAgo} ago`
                         : 'unknown';
+                      const adlsModifiedAt = metadata?.folderLastModified || null;
+                      const adlsModifiedDisplay = adlsModifiedAt
+                        ? formatTimeAgo(adlsModifiedAt)
+                        : 'N/A';
                       const isPurgingThisTarget =
                         isPurging &&
                         activePurgeTarget?.layerKey === layerColumn.key &&
@@ -1527,6 +1529,8 @@ export function DomainLayerComparisonPanel({
                         executionsUrl,
                         jobPortalUrl,
                         updatedLabel,
+                        adlsModifiedAt,
+                        adlsModifiedDisplay,
                         isPurgingThisTarget,
                         symbolComparison,
                         previousLabel,
@@ -1569,11 +1573,24 @@ export function DomainLayerComparisonPanel({
                       );
                       await Promise.allSettled(refreshTargets);
                     };
+                    const toggleRowExpanded = () =>
+                      setExpandedRowKey((previous) => (previous === row.key ? null : row.key));
 
                     return [
                       <TableRow
                         key={`summary-${row.key}`}
-                        className="h-[52px] even:[&>td]:bg-mcm-cream/20"
+                        className="h-[52px] cursor-pointer even:[&>td]:bg-mcm-cream/20"
+                        onClick={(event) => {
+                          const target = event.target as HTMLElement | null;
+                          if (
+                            target?.closest(
+                              'button, a, input, select, textarea, [role="button"], [role="menuitem"], [data-no-row-toggle="true"]'
+                            )
+                          ) {
+                            return;
+                          }
+                          toggleRowExpanded();
+                        }}
                       >
                         <TableCell className="sticky left-0 z-10 border-b border-mcm-walnut/20 bg-mcm-paper/95 py-1.5">
                           <div className="flex items-center justify-between gap-2">
@@ -1611,27 +1628,6 @@ export function DomainLayerComparisonPanel({
                                 )}
                                 {preferredModel?.isRunning ? 'Stop' : 'Run'}
                               </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-[11px]"
-                                onClick={() =>
-                                  setExpandedRowKey((previous) =>
-                                    previous === row.key ? null : row.key
-                                  )
-                                }
-                                aria-expanded={isExpanded}
-                                aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${row.label} details`}
-                              >
-                                <Eye className="mr-1 h-3.5 w-3.5" />
-                                View
-                                <ChevronDown
-                                  className={`ml-1 h-3.5 w-3.5 transition-transform ${
-                                    isExpanded ? 'rotate-180' : ''
-                                  }`}
-                                />
-                              </Button>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button
@@ -1654,16 +1650,6 @@ export function DomainLayerComparisonPanel({
                                   >
                                     <RefreshCw className="h-4 w-4" />
                                     Refresh domain counts
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      setExpandedRowKey((previous) =>
-                                        previous === row.key ? null : row.key
-                                      )
-                                    }
-                                  >
-                                    <Eye className="h-4 w-4" />
-                                    {isExpanded ? 'Hide details' : 'Show details'}
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   {preferredModel?.jobPortalUrl ? (
@@ -1909,6 +1895,17 @@ export function DomainLayerComparisonPanel({
                                             title={model.scheduleRaw || undefined}
                                           >
                                             {model.scheduleDisplay}
+                                          </span>
+                                        </div>
+                                        <div
+                                          className={`${StatusTypos.MONO} flex items-center gap-1`}
+                                        >
+                                          <span className="text-mcm-walnut/70">adls modified:</span>
+                                          <span
+                                            className="text-mcm-walnut/90"
+                                            title={model.adlsModifiedAt || undefined}
+                                          >
+                                            {model.adlsModifiedDisplay}
                                           </span>
                                         </div>
                                         {model.showFinanceSubfolders ? (

@@ -1,0 +1,115 @@
+{
+  "generated_at_utc": "2026-02-26T19:22:35.706059+00:00",
+  "git": {
+    "branch": "main",
+    "commit": "169109910bd075a3bffcbaff93a7f0fc2cd7048d",
+    "status_porcelain": "M .env.template\n M README.md\n M api/endpoints/system.py\n M core/runtime_config.py\n M deploy/app_api.yaml\n M deploy/job_bronze_finance_data.yaml\n M deploy/job_silver_finance_data.yaml\n M monitoring/domain_metadata.py\n M scripts/delete_all_jobs.ps1\n M tasks/earnings_data/gold_earnings_data.py\n M tasks/finance_data/bronze_finance_data.py\n M tasks/finance_data/gold_finance_data.py\n M tasks/finance_data/silver_finance_data.py\n M tasks/market_data/gold_market_data.py\n M tasks/market_data/materialize_gold_market_by_date.py\n M tasks/market_data/silver_market_data.py\n M tasks/price_target_data/gold_price_target_data.py\n M tests/finance_data/test_silver_finance_data.py\n M tests/market_data/test_materialize_gold_market_by_date.py\n M tests/market_data/test_silver_market_data.py\n M tests/monitoring/test_domain_metadata.py\n M tests/test_runtime_config.py\n M ui/src/app/__tests__/GoldMaterializationPage.test.tsx\n M ui/src/app/components/pages/GoldMaterializationPage.tsx\n M ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx\n M ui/src/types/strategy.ts\n?? .codedrift.yml\n?? .codex/skills/code-drift-sentinel/\n?? artifacts/\n?? deploy/job_reconcile_finance_coverage.yaml\n?? tasks/common/market_reconciliation.py\n?? tasks/common/run_manifests.py\n?? tasks/finance_data/reconcile_finance_coverage.py\n?? tests/earnings_data/test_gold_earnings_data_reconciliation.py\n?? tests/finance_data/test_gold_finance_data_reconciliation.py\n?? tests/finance_data/test_reconcile_finance_coverage.py\n?? tests/market_data/test_gold_market_data_reconciliation.py\n?? tests/price_target_data/test_gold_price_target_data_reconciliation.py\n?? tests/tasks/test_market_reconciliation.py\n?? tests/tasks/test_run_manifests.py"
+  },
+  "github": {
+    ".github/workflows": true,
+    ".github/workflows/deploy.yml": true,
+    ".github/workflows/run_tests.yml": true
+  },
+  "instruction_files": {
+    "AGENTS.md": [
+      "AGENTS.md"
+    ],
+    "CONTRIBUTING.md": [
+      "CONTRIBUTING.md"
+    ],
+    "SECURITY.md": [
+      "SECURITY.md"
+    ]
+  },
+  "project_files": {
+    ".editorconfig": false,
+    ".github/CODEOWNERS": true,
+    ".github/dependabot.yml": true,
+    ".pre-commit-config.yaml": false,
+    "CODEOWNERS": false,
+    "Dockerfile": true,
+    "LICENSE": false,
+    "Makefile": false,
+    "README.md": true,
+    "docker-compose.yml": true,
+    "pyproject.toml": true,
+    "requirements-dev.txt": true,
+    "requirements.txt": true
+  },
+  "repo_root": "/mnt/c/Users/rdpro/Projects/AssetAllocation",
+  "workflows": {
+    "files": [
+      {
+        "path": ".github/workflows/deploy.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/lint_workflows.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/run_tests.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/supply_chain_security.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      },
+      {
+        "path": ".github/workflows/trigger_all_jobs.yml",
+        "signals": {
+          "has_curl_pipe_shell": false,
+          "has_permissions": false,
+          "has_pull_request_target": false,
+          "has_wget_pipe_shell": false,
+          "has_write_all": false,
+          "uses_count": 0,
+          "uses_pinned_count": 0,
+          "uses_unpinned_count": 0,
+          "uses_unpinned_sample": []
+        }
+      }
+    ],
+    "path": ".github/workflows"
+  }
+}

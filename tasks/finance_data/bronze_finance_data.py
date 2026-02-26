@@ -18,6 +18,7 @@ from core.alpha_vantage_gateway_client import (
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common.backfill import get_backfill_range
+from tasks.common.run_manifests import create_bronze_finance_manifest
 from tasks.finance_data import config as cfg
 
 
@@ -54,10 +55,26 @@ REPORTS = [
 FINANCE_REPORT_STALE_DAYS = 7
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
+_DEFAULT_SHARED_FINANCE_LOCK = "finance-pipeline-shared"
 
 
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
+    if raw is None:
+        return default
+    value = str(raw).strip()
+    if not value:
+        return default
+    if value.lower() in {"none", "inf", "infinite", "forever"}:
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return default
+    return max(0.0, parsed)
 
 
 def _validate_environment() -> None:
@@ -563,6 +580,30 @@ async def main_async() -> int:
         "Bronze AV finance ingest complete: processed={processed} written={written} skipped={skipped} "
         "blacklisted={blacklisted} failed={failed}".format(**progress)
     )
+    try:
+        listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
+        manifest = create_bronze_finance_manifest(
+            producer_job_name="bronze-finance-job",
+            listed_blobs=listed_blobs,
+            metadata={
+                "jobStatus": "succeeded" if progress["failed"] == 0 else "failed",
+                "processed": int(progress["processed"]),
+                "written": int(progress["written"]),
+                "skipped": int(progress["skipped"]),
+                "blacklisted": int(progress["blacklisted"]),
+                "failed": int(progress["failed"]),
+            },
+        )
+        if manifest:
+            mdc.write_line(
+                "Bronze finance manifest published: runId={run_id} blobCount={blob_count} path={path}".format(
+                    run_id=manifest.get("runId"),
+                    blob_count=manifest.get("blobCount"),
+                    path=manifest.get("manifestPath"),
+                )
+            )
+    except Exception as exc:
+        mdc.write_warning(f"Failed to publish bronze finance manifest: {exc}")
     return 0 if progress["failed"] == 0 else 1
 
 
@@ -575,10 +616,16 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-finance-job"
-    with mdc.JobLock(job_name):
-        ensure_api_awake_from_env(required=True)
-        exit_code = main()
-        if exit_code == 0:
-            write_system_health_marker(layer="bronze", domain="finance", job_name=job_name)
-            trigger_next_job_from_env()
-        raise SystemExit(exit_code)
+    shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_SHARED_FINANCE_LOCK).strip()
+    shared_wait_timeout = _parse_wait_timeout_seconds(
+        os.environ.get("BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
+        default=0.0,
+    )
+    with mdc.JobLock(shared_lock_name, wait_timeout_seconds=shared_wait_timeout):
+        with mdc.JobLock(job_name):
+            ensure_api_awake_from_env(required=True)
+            exit_code = main()
+            if exit_code == 0:
+                write_system_health_marker(layer="bronze", domain="finance", job_name=job_name)
+                trigger_next_job_from_env()
+            raise SystemExit(exit_code)

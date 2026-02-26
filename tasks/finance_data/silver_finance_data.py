@@ -6,7 +6,6 @@ import time
 from typing import Any, Optional, Tuple
 
 import pandas as pd
-from io import BytesIO
 import re
 import json
 
@@ -15,6 +14,13 @@ from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
+from tasks.common.run_manifests import (
+    load_latest_bronze_finance_manifest,
+    manifest_blobs,
+    silver_finance_ack_exists,
+    silver_manifest_consumption_enabled,
+    write_silver_finance_ack,
+)
 from tasks.common.watermarks import (
     check_blob_unchanged,
     load_last_success,
@@ -56,6 +62,9 @@ _KNOWN_FINANCE_SUFFIXES: Tuple[str, ...] = (
     "quarterly_cash-flow",
     "quarterly_financials",
 )
+_DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
+_DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
+_DEFAULT_CATCHUP_MAX_PASSES = 3
 
 
 def _get_available_cpus() -> int:
@@ -81,48 +90,61 @@ def _get_ingest_max_workers() -> int:
     return _get_positive_int_env("SILVER_FINANCE_INGEST_MAX_WORKERS", default_workers)
 
 
-def _get_blob_dedupe_key(blob_name: str) -> Optional[str]:
+def _get_catchup_max_passes() -> int:
+    return _get_positive_int_env("SILVER_FINANCE_CATCHUP_MAX_PASSES", _DEFAULT_CATCHUP_MAX_PASSES)
+
+
+def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | None:
+    if raw is None:
+        return default
+    value = str(raw).strip()
+    if not value:
+        return default
+    if value.lower() in {"none", "inf", "infinite", "forever"}:
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return default
+    return max(0.0, parsed)
+
+
+def _parse_supported_blob_name(blob_name: str) -> Optional[tuple[str, str, str]]:
     parts = str(blob_name).split("/")
     if len(parts) < 3:
         return None
-    folder_name = parts[1]
-    filename = parts[2]
-    if not (filename.endswith(".csv") or filename.endswith(".json")):
+
+    folder_name = str(parts[1]).strip()
+    filename = str(parts[2]).strip()
+    if not filename.endswith(".json"):
         return None
 
-    suffix = None
-    for s in _KNOWN_FINANCE_SUFFIXES:
-        if filename.endswith(s + ".csv") or filename.endswith(s + ".json"):
-            suffix = s
-            break
+    suffix = next((s for s in _KNOWN_FINANCE_SUFFIXES if filename.endswith(f"{s}.json")), None)
     if not suffix:
         return None
 
-    ticker = filename.replace(f"_{suffix}.csv", "").replace(f"_{suffix}.json", "").strip()
+    ticker = filename.replace(f"_{suffix}.json", "").strip()
     if not ticker:
         return None
 
+    return folder_name, ticker, suffix
+
+
+def _get_blob_dedupe_key(blob_name: str) -> Optional[str]:
+    parsed = _parse_supported_blob_name(blob_name)
+    if parsed is None:
+        return None
+    folder_name, ticker, suffix = parsed
     return DataPaths.get_finance_path(folder_name, ticker, suffix)
-
-
-def _blob_preference(blob_name: str) -> tuple[int, str]:
-    name = str(blob_name).strip()
-    if name.endswith(".json"):
-        return (2, name)
-    if name.endswith(".csv"):
-        return (1, name)
-    return (0, name)
 
 
 def _select_preferred_blob_candidates(blobs: list[dict]) -> list[dict]:
     chosen_by_key: dict[str, dict] = {}
-    passthrough: list[dict] = []
 
     for blob in blobs:
         blob_name = str(blob.get("name", "")).strip()
         dedupe_key = _get_blob_dedupe_key(blob_name)
         if not dedupe_key:
-            passthrough.append(blob)
             continue
 
         existing = chosen_by_key.get(dedupe_key)
@@ -130,13 +152,55 @@ def _select_preferred_blob_candidates(blobs: list[dict]) -> list[dict]:
             chosen_by_key[dedupe_key] = blob
             continue
 
-        existing_name = str(existing.get("name", "")).strip()
-        if _blob_preference(blob_name) > _blob_preference(existing_name):
-            chosen_by_key[dedupe_key] = blob
-
-    selected = list(chosen_by_key.values()) + passthrough
+    selected = list(chosen_by_key.values())
     selected.sort(key=lambda item: str(item.get("name", "")))
     return selected
+
+
+def _list_bronze_finance_candidates() -> tuple[list[dict], int]:
+    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
+    blobs = _select_preferred_blob_candidates(listed_blobs)
+    supported_count = sum(
+        1 for blob in listed_blobs if _get_blob_dedupe_key(str(blob.get("name", "")).strip()) is not None
+    )
+    unsupported = max(0, len(listed_blobs) - supported_count)
+    deduped = max(0, supported_count - len(blobs))
+    if unsupported > 0:
+        mdc.write_line(
+            f"Silver finance strict input filter removed {unsupported} unsupported Bronze blob candidate(s); "
+            f"processing {len(blobs)} supported inputs."
+        )
+    if deduped > 0:
+        mdc.write_line(
+            f"Silver finance candidate dedupe removed {deduped} duplicate blob candidate(s); "
+            f"processing {len(blobs)} preferred inputs."
+        )
+    return blobs, deduped
+
+
+def _build_checkpoint_candidates(
+    *,
+    blobs: list[dict],
+    watermarks: dict,
+    last_success: Optional[datetime],
+) -> tuple[list[dict], int]:
+    checkpoint_skipped = 0
+    candidates: list[dict] = []
+    for blob in blobs:
+        blob_name = str(blob.get("name", "")).strip()
+        if _get_blob_dedupe_key(blob_name) is None:
+            continue
+        prior = watermarks.get(blob_name)
+        should_process = should_process_blob_since_last_success(
+            blob,
+            prior_signature=prior,
+            last_success_at=last_success,
+        )
+        if should_process:
+            candidates.append(blob)
+        else:
+            checkpoint_skipped += 1
+    return candidates, checkpoint_skipped
 
 
 def _normalize_key(name: Any) -> str:
@@ -178,45 +242,20 @@ def _get_first_float(payload: dict[str, Any], candidates: list[str]) -> Optional
 
 def _load_close_prices(ticker: str) -> pd.DataFrame:
     """
-    Load close price series for valuation approximation.
-
-    Preference order:
-      1) Silver Delta market table (full history when available)
-      2) Bronze market CSV (often compact)
+    Load close price series for valuation approximation from Silver market Delta only.
+    Fallback sources are intentionally disabled.
     """
     market_path = DataPaths.get_market_data_path(ticker.replace(".", "-"))
-    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["Date", "Close"])
-    if df is not None and not df.empty:
-        if "Close" not in df.columns and "close" in df.columns:
-            df = df.rename(columns={"close": "Close"})
-        if "Date" not in df.columns and "date" in df.columns:
-            df = df.rename(columns={"date": "Date"})
-
-        if {"Date", "Close"}.issubset(df.columns):
-            out = df[["Date", "Close"]].copy()
-            out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-            out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
-            out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
-            if not out.empty:
-                return out
-
-    try:
-        raw_bytes = mdc.read_raw_bytes(f"market-data/{ticker}.csv", client=bronze_client)
-        df_csv = pd.read_csv(BytesIO(raw_bytes))
-        if "Close" not in df_csv.columns and "close" in df_csv.columns:
-            df_csv = df_csv.rename(columns={"close": "Close"})
-        if "Date" not in df_csv.columns and "date" in df_csv.columns:
-            df_csv = df_csv.rename(columns={"date": "Date"})
-        if {"Date", "Close"}.issubset(df_csv.columns):
-            out = df_csv[["Date", "Close"]].copy()
-            out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-            out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
-            out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
-            return out
-    except Exception:
+    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["date", "close"])
+    if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
         return pd.DataFrame()
 
-    return pd.DataFrame()
+    out = df[["date", "close"]].copy()
+    out = out.rename(columns={"date": "Date", "close": "Close"})
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
+    out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
+    return out
 
 
 def _build_valuation_timeseries_from_overview(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
@@ -238,26 +277,7 @@ def _build_valuation_timeseries_from_overview(payload: dict[str, Any], *, ticker
     ebitda_now = _get_first_float(payload, ["EBITDA"])
 
     if df_prices is None or df_prices.empty:
-        today = datetime.now(timezone.utc).date().isoformat()
-        row: dict[str, Any] = {"Date": today, "Symbol": ticker}
-        if market_cap_now is not None:
-            row["market_cap"] = market_cap_now
-        if pe_now is not None:
-            row["pe_ratio"] = pe_now
-        if forward_pe_now is not None:
-            row["forward_pe"] = forward_pe_now
-        if ev_ebitda_now is not None:
-            row["ev_ebitda"] = ev_ebitda_now
-        if ev_revenue_now is not None:
-            row["ev_revenue"] = ev_revenue_now
-        if shares_outstanding_now is not None:
-            row["shares_outstanding"] = shares_outstanding_now
-        if ebitda_now is not None:
-            row["ebitda"] = ebitda_now
-
-        df = pd.DataFrame([row])
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-        return df
+        return pd.DataFrame()
 
     close_now = float(df_prices["Close"].iloc[-1])
     if close_now <= 0:
@@ -296,17 +316,6 @@ def _build_valuation_timeseries_from_overview(payload: dict[str, Any], *, ticker
     return out
 
 
-def _read_finance_csv(raw_bytes: bytes) -> pd.DataFrame:
-    """
-    Read finance CSVs defensively.
-
-    These legacy CSVs commonly include thousands separators and sparse cells.
-    Reading everything as strings (and disabling default NA parsing) avoids mixed
-    object columns like ["1,234", NaN] that later break Arrow/Delta writes.
-    """
-    return pd.read_csv(BytesIO(raw_bytes), dtype=str, keep_default_na=False)
-
-
 def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.DataFrame:
     payload = json.loads(raw_bytes.decode("utf-8"))
 
@@ -342,83 +351,7 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
     if suffix == "quarterly_valuation_measures" and isinstance(payload, dict):
         return _build_valuation_timeseries_from_overview(payload, ticker=ticker)
 
-    # Default: store snapshot-style JSON payload on today's date.
-    if isinstance(payload, dict):
-        today = datetime.now(timezone.utc).date().isoformat()
-        row = {"Date": today, "Symbol": ticker}
-        for k, v in payload.items():
-            if k in {"Symbol"}:
-                continue
-            row[str(k)] = "" if v is None else str(v)
-        df = pd.DataFrame([row])
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-        return df
-
     return pd.DataFrame()
-
-def transpose_dataframe(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    """
-    Transposes legacy finance CSV (Metrics in Rows, Dates in Columns)
-    to (Dates in Rows, Metrics in Columns).
-    """
-    if 'name' in df.columns:
-        df['name'] = df['name'].astype(str).str.strip()
-    elif 'breakdown' in df.columns:
-        df['breakdown'] = df['breakdown'].astype(str).str.strip()
-
-    df = _rename_ttm_columns(df)
-
-    if 'name' in df.columns:
-        df = df.set_index('name')
-    elif 'breakdown' in df.columns:
-        df = df.set_index('breakdown')
-    else:
-        df = df.set_index(df.columns[0])
-    
-    df_t = df.transpose()
-    df_t.index.name = 'Date'
-    df_t = df_t.reset_index()
-    df_t.columns.name = None
-    df_t['Symbol'] = ticker
-    return df_t
-
-
-def _infer_date_format(columns: list[str]) -> str:
-    for raw in columns:
-        value = str(raw).strip()
-        if not value:
-            continue
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-            return "%Y-%m-%d"
-        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", value):
-            return "%m/%d/%Y"
-        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2}", value):
-            return "%m/%d/%y"
-        if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", value):
-            return "%Y/%m/%d"
-    return "%m/%d/%Y"
-
-
-def _rename_ttm_columns(df: pd.DataFrame) -> pd.DataFrame:
-    ttm_cols = [col for col in df.columns if str(col).strip().lower() == "ttm"]
-    if not ttm_cols:
-        return df
-
-    date_candidates = [
-        col
-        for col in df.columns
-        if col not in ttm_cols and str(col).strip().lower() not in {"name", "breakdown"}
-    ]
-    date_format = _infer_date_format([str(c) for c in date_candidates])
-    today_str = datetime.now(timezone.utc).date().strftime(date_format)
-
-    out = df.copy()
-    for col in ttm_cols:
-        if today_str in out.columns:
-            out = out.drop(columns=[col])
-        else:
-            out = out.rename(columns={col: today_str})
-    return out
 
 def _utc_today() -> pd.Timestamp:
     return pd.Timestamp(datetime.now(timezone.utc).date())
@@ -458,19 +391,6 @@ def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd
     return align_to_existing_schema(df, container=container, path=path)
 
 
-def _extract_ticker_from_filename(filename: str) -> Optional[str]:
-    lowered = filename.lower()
-    stem = filename.rsplit(".", 1)[0]
-    lowered_stem = lowered.rsplit(".", 1)[0]
-
-    for suffix in _KNOWN_FINANCE_SUFFIXES:
-        suffix_token = f"_{suffix}"
-        if lowered_stem.endswith(suffix_token):
-            prefix = stem[: - (len(suffix) + 1)]
-            return prefix.strip() or None
-    return None
-
-
 def process_blob(
     blob,
     *,
@@ -479,58 +399,16 @@ def process_blob(
     watermarks: dict,
 ) -> BlobProcessResult:
     blob_name = blob['name'] 
-    # expected: finance-data/Folder Name/ticker_suffix.csv
-    # e.g. finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.csv
-    
-    parts = blob_name.split('/')
-    if len(parts) < 3:
+    parsed_blob = _parse_supported_blob_name(blob_name)
+    if parsed_blob is None:
         return BlobProcessResult(
             blob_name=blob_name,
             silver_path=None,
             ticker=None,
-            status="skipped",
+            status="failed",
+            error=f"Unsupported finance blob format: {blob_name}",
         )
-        
-    folder_name = parts[1]
-    filename = parts[2]
-    
-    if not (filename.endswith(".csv") or filename.endswith(".json")):
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=None,
-            ticker=_extract_ticker_from_filename(filename),
-            status="skipped",
-        )
-        
-    # extract ticker
-    # filename: ticker_suffix.csv
-    # suffix starts with quarterly_...
-    # split by first underscore? Tickers can have no underscores usually.
-    # suffix is known:
-    suffix = None
-    for s in _KNOWN_FINANCE_SUFFIXES:
-        if filename.endswith(s + ".csv") or filename.endswith(s + ".json"):
-            suffix = s
-            break
-            
-    if not suffix:
-        mdc.write_line(f"Skipping unknown file format: {filename}")
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=None,
-            ticker=_extract_ticker_from_filename(filename),
-            status="skipped",
-        )
-        
-    ticker = filename.replace(f"_{suffix}.csv", "").replace(f"_{suffix}.json", "")
-    if not ticker:
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=None,
-            ticker=None,
-            status="skipped",
-            error="Unable to parse ticker from finance file name.",
-        )
+    folder_name, ticker, suffix = parsed_blob
     
     # Silver Path
     # Use DataPaths or manual? DataPaths uses folder name.
@@ -558,26 +436,18 @@ def process_blob(
     
     try:
         raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        if filename.endswith(".json"):
-            df_raw = _read_finance_json(raw_bytes, ticker=ticker, suffix=suffix)
-        else:
-            df_raw = _read_finance_csv(raw_bytes)
+        df_raw = _read_finance_json(raw_bytes, ticker=ticker, suffix=suffix)
 
-        # Header-only or otherwise empty inputs occasionally appear in Bronze.
         if df_raw is None or df_raw.empty:
-            mdc.write_warning(f"Skipping empty finance CSV: {blob_name}")
             return BlobProcessResult(
                 blob_name=blob_name,
                 silver_path=silver_path,
                 ticker=ticker,
-                status="skipped",
+                status="failed",
+                error=f"Empty finance payload: {blob_name}",
             )
 
-        # Legacy CSV requires transpose; AV JSON is already row-oriented by Date.
-        if filename.endswith(".json"):
-            df_clean = df_raw
-        else:
-            df_clean = transpose_dataframe(df_raw, ticker)
+        df_clean = df_raw
 
         try:
             df_clean = require_non_empty_frame(
@@ -638,12 +508,11 @@ def process_blob(
         # Resample to daily frequency (forward fill)
         df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
         if df_clean is None or df_clean.empty:
-            mdc.write_warning(f"No valid dated rows after cleaning/resample for {blob_name}; skipping.")
             return BlobProcessResult(
                 blob_name=blob_name,
                 silver_path=silver_path,
                 ticker=ticker,
-                status="skipped",
+                status="failed",
                 error="No valid dated rows after cleaning/resample.",
             )
         
@@ -700,53 +569,16 @@ def process_blob(
         )
 
 
-def main() -> int:
-    mdc.log_environment_diagnostics()
-
-    mdc.write_line("Listing Bronze Finance files...")
-    # Recursive list? list_blobs(name_starts_with="finance-data/") usually returns all nested.
-    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
-    blobs = _select_preferred_blob_candidates(listed_blobs)
-    deduped = len(listed_blobs) - len(blobs)
-    if deduped > 0:
-        mdc.write_line(
-            f"Silver finance candidate dedupe removed {deduped} duplicate blob candidate(s); "
-            f"processing {len(blobs)} preferred inputs."
-        )
-
-    watermarks = load_watermarks("bronze_finance_data")
-    last_success = load_last_success("silver_finance_data")
-    watermarks_dirty = False
-
-    desired_end = _utc_today()
-    backfill_start, _ = get_backfill_range()
-    if backfill_start is not None:
-        mdc.write_line(
-            f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}"
-        )
-    checkpoint_skipped = 0
-    candidate_blobs: list[dict] = []
-    for blob in blobs:
-        blob_name = str(blob.get("name", "")).strip()
-        prior = watermarks.get(blob_name)
-        should_process = should_process_blob_since_last_success(
-            blob,
-            prior_signature=prior,
-            last_success_at=last_success,
-        )
-        if should_process:
-            candidate_blobs.append(blob)
-        else:
-            checkpoint_skipped += 1
-    if last_success is not None:
-        mdc.write_line(
-            "Silver finance checkpoint filter: "
-            f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} skipped_checkpoint={checkpoint_skipped}"
-        )
-
+def _process_candidate_blobs(
+    *,
+    candidate_blobs: list[dict],
+    desired_end: pd.Timestamp,
+    backfill_start: Optional[pd.Timestamp],
+    watermarks: dict,
+) -> tuple[list[BlobProcessResult], float]:
     max_workers = _get_ingest_max_workers()
     mdc.write_line(
-        f"Silver finance ingest workers={max_workers} total={len(blobs)} candidates={len(candidate_blobs)}."
+        f"Silver finance ingest workers={max_workers} candidates={len(candidate_blobs)}."
     )
 
     ingest_started = time.perf_counter()
@@ -790,42 +622,207 @@ def main() -> int:
                         )
                     )
     ingest_elapsed = time.perf_counter() - ingest_started
+    return results, ingest_elapsed
 
-    for result in results:
-        if result.status != "ok" or not result.watermark_signature:
-            continue
-        watermarks[result.blob_name] = result.watermark_signature
-        watermarks_dirty = True
 
-    processed = sum(1 for r in results if r.status == "ok")
-    skipped = sum(1 for r in results if r.status == "skipped")
-    failed = sum(1 for r in results if r.status == "failed")
-    attempts = len(results)
-    distinct_tickers = len({str(r.ticker).strip() for r in results if r.ticker})
-    rows_written = sum(int(r.rows_written or 0) for r in results if r.status == "ok")
+def main() -> int:
+    mdc.log_environment_diagnostics()
+    run_started_at = datetime.now(timezone.utc)
+    watermarks = load_watermarks("bronze_finance_data")
+    last_success = load_last_success("silver_finance_data")
+    watermarks_dirty = False
+
+    desired_end = _utc_today()
+    backfill_start, _ = get_backfill_range()
+    if backfill_start is not None:
+        mdc.write_line(
+            f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}"
+        )
+    mdc.write_line("Listing Bronze Finance files...")
+
+    manifest_run_id: Optional[str] = None
+    manifest_path: Optional[str] = None
+    initial_source = "live-listing"
+    initial_blobs: list[dict] = []
+    deduped_total = 0
+
+    if silver_manifest_consumption_enabled():
+        manifest = load_latest_bronze_finance_manifest()
+        if isinstance(manifest, dict):
+            candidate_run_id = str(manifest.get("runId") or "").strip()
+            candidate_manifest_path = str(manifest.get("manifestPath") or "").strip()
+            if candidate_run_id and not silver_finance_ack_exists(candidate_run_id):
+                manifest_run_id = candidate_run_id
+                manifest_path = candidate_manifest_path
+                initial_blobs = _select_preferred_blob_candidates(manifest_blobs(manifest))
+                initial_source = "bronze-manifest"
+                mdc.write_line(
+                    "Silver finance will consume bronze manifest runId={run_id} manifestBlobs={blob_count}."
+                    .format(run_id=manifest_run_id, blob_count=len(initial_blobs))
+                )
+            elif candidate_run_id:
+                mdc.write_line(
+                    f"Latest bronze finance manifest runId={candidate_run_id} is already acknowledged; "
+                    "falling back to live listing."
+                )
+
+    if not initial_blobs:
+        initial_blobs, deduped = _list_bronze_finance_candidates()
+        deduped_total += deduped
+
+    max_passes = _get_catchup_max_passes()
+    pass_count = 0
+    seen_blob_names: set[str] = set()
+    newly_discovered_blob_names: set[str] = set()
+    checkpoint_skipped_first_pass = 0
+    checkpoint_skipped_total = 0
+    all_results: list[BlobProcessResult] = []
+    total_ingest_elapsed = 0.0
+
+    while pass_count < max_passes:
+        pass_count += 1
+        if pass_count == 1:
+            blobs = list(initial_blobs)
+        else:
+            blobs, deduped = _list_bronze_finance_candidates()
+            deduped_total += deduped
+
+        current_blob_names = {str(item.get("name", "")).strip() for item in blobs if item.get("name")}
+        if pass_count > 1:
+            newly_seen = current_blob_names - seen_blob_names
+            if newly_seen:
+                newly_discovered_blob_names.update(newly_seen)
+                mdc.write_line(
+                    f"Silver finance catch-up pass discovered {len(newly_seen)} newly listed Bronze blob(s)."
+                )
+        seen_blob_names.update(current_blob_names)
+
+        candidate_blobs, checkpoint_skipped = _build_checkpoint_candidates(
+            blobs=blobs,
+            watermarks=watermarks,
+            last_success=last_success,
+        )
+        checkpoint_skipped_total += checkpoint_skipped
+        if pass_count == 1:
+            checkpoint_skipped_first_pass = checkpoint_skipped
+            if last_success is not None:
+                mdc.write_line(
+                    "Silver finance checkpoint filter: "
+                    f"last_success={last_success.isoformat()} candidates={len(candidate_blobs)} "
+                    f"skipped_checkpoint={checkpoint_skipped_first_pass}"
+                )
+
+        mdc.write_line(
+            "Silver finance ingest pass {pass_no}/{max_passes}: source={source} total={total} "
+            "candidates={candidates} skipped_checkpoint={skipped}."
+            .format(
+                pass_no=pass_count,
+                max_passes=max_passes,
+                source=initial_source if pass_count == 1 else "live-listing",
+                total=len(blobs),
+                candidates=len(candidate_blobs),
+                skipped=checkpoint_skipped,
+            )
+        )
+        if not candidate_blobs:
+            break
+
+        pass_results, pass_elapsed = _process_candidate_blobs(
+            candidate_blobs=candidate_blobs,
+            desired_end=desired_end,
+            backfill_start=backfill_start,
+            watermarks=watermarks,
+        )
+        total_ingest_elapsed += pass_elapsed
+        all_results.extend(pass_results)
+        for result in pass_results:
+            if result.status != "ok" or not result.watermark_signature:
+                continue
+            watermarks[result.blob_name] = result.watermark_signature
+            watermarks_dirty = True
+
+    lag_candidate_count = 0
+    try:
+        latest_blobs, deduped = _list_bronze_finance_candidates()
+        deduped_total += deduped
+        lag_candidates, _ = _build_checkpoint_candidates(
+            blobs=latest_blobs,
+            watermarks=watermarks,
+            last_success=last_success,
+        )
+        lag_candidate_count = len(lag_candidates)
+    except Exception as exc:
+        mdc.write_warning(f"Silver finance lag probe failed: {exc}")
+
+    processed = sum(1 for r in all_results if r.status == "ok")
+    skipped = sum(1 for r in all_results if r.status == "skipped")
+    failed = sum(1 for r in all_results if r.status == "failed")
+    attempts = len(all_results)
+    distinct_tickers = len({str(r.ticker).strip() for r in all_results if r.ticker})
+    rows_written = sum(int(r.rows_written or 0) for r in all_results if r.status == "ok")
     mdc.write_line(
         "Silver finance ingest complete: "
         f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={failed}, "
-        f"skippedCheckpoint={checkpoint_skipped}, "
-        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={ingest_elapsed:.2f}"
+        f"skippedCheckpoint={checkpoint_skipped_first_pass}, "
+        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={total_ingest_elapsed:.2f}, "
+        f"passes={pass_count}, newlyDiscoveredAfterFirstPass={len(newly_discovered_blob_names)}, "
+        f"lagCandidates={lag_candidate_count}"
     )
     if watermarks_dirty:
         save_watermarks("bronze_finance_data", watermarks)
+
+    run_ended_at = datetime.now(timezone.utc)
+    manifest_ack_path: Optional[str] = None
     if failed == 0:
+        checkpoint_metadata = {
+            "total_blobs": len(initial_blobs),
+            "source": initial_source,
+            "candidates": attempts,
+            "attempts": attempts,
+            "processed": processed,
+            "skipped": skipped,
+            "skipped_checkpoint": checkpoint_skipped_first_pass,
+            "skipped_checkpoint_total": checkpoint_skipped_total,
+            "rows_written": rows_written,
+            "elapsed_seconds": round(total_ingest_elapsed, 3),
+            "catchup_passes": pass_count,
+            "new_blobs_discovered_after_first_pass": len(newly_discovered_blob_names),
+            "lag_candidate_count": lag_candidate_count,
+            "run_started_at": run_started_at.isoformat(),
+            "run_ended_at": run_ended_at.isoformat(),
+            "deduped_candidates_total": deduped_total,
+            "manifest_run_id": manifest_run_id,
+            "manifest_path": manifest_path,
+        }
         save_last_success(
             "silver_finance_data",
-            metadata={
-                "total_blobs": len(blobs),
-                "candidates": len(candidate_blobs),
-                "attempts": attempts,
-                "processed": processed,
-                "skipped": skipped,
-                "skipped_checkpoint": checkpoint_skipped,
-                "rows_written": rows_written,
-                "elapsed_seconds": round(ingest_elapsed, 3),
-            },
+            when=run_ended_at,
+            metadata=checkpoint_metadata,
         )
+        if manifest_run_id:
+            manifest_ack_path = write_silver_finance_ack(
+                run_id=manifest_run_id,
+                manifest_path=manifest_path or "",
+                status="succeeded",
+                metadata={
+                    "processed": processed,
+                    "failed": failed,
+                    "skipped": skipped,
+                    "attempts": attempts,
+                    "rows_written": rows_written,
+                    "run_started_at": run_started_at.isoformat(),
+                    "run_ended_at": run_ended_at.isoformat(),
+                },
+            )
+            if manifest_ack_path:
+                mdc.write_line(
+                    f"Silver finance manifest ack written: runId={manifest_run_id} path={manifest_ack_path}"
+                )
         return 0
+    if manifest_run_id:
+        mdc.write_warning(
+            f"Silver finance run failed; bronze manifest runId={manifest_run_id} was not acknowledged."
+        )
     return 1
 
 if __name__ == "__main__":
@@ -833,9 +830,15 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "silver-finance-job"
-    ensure_api_awake_from_env(required=True)
-    exit_code = main()
-    if exit_code == 0:
-        write_system_health_marker(layer="silver", domain="finance", job_name=job_name)
-        trigger_next_job_from_env()
-    raise SystemExit(exit_code)
+    shared_lock_name = (os.environ.get("FINANCE_PIPELINE_SHARED_LOCK_NAME") or _DEFAULT_FINANCE_SHARED_LOCK).strip()
+    shared_wait_timeout = _parse_wait_timeout_seconds(
+        os.environ.get("SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
+        default=_DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS,
+    )
+    with mdc.JobLock(shared_lock_name, wait_timeout_seconds=shared_wait_timeout):
+        ensure_api_awake_from_env(required=True)
+        exit_code = main()
+        if exit_code == 0:
+            write_system_health_marker(layer="silver", domain="finance", job_name=job_name)
+            trigger_next_job_from_env()
+        raise SystemExit(exit_code)

@@ -56,6 +56,16 @@ properties:
         value: ${GOLD_FINANCE_JOB}
       - name: TRIGGER_NEXT_JOB_REQUIRED
         value: "true"
+      - name: FINANCE_RUN_MANIFESTS_ENABLED
+        value: "true"
+      - name: SILVER_FINANCE_USE_BRONZE_MANIFEST
+        value: "true"
+      - name: FINANCE_PIPELINE_SHARED_LOCK_NAME
+        value: "finance-pipeline-shared"
+      - name: SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS
+        value: "3600"
+      - name: SILVER_FINANCE_CATCHUP_MAX_PASSES
+        value: "3"
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING

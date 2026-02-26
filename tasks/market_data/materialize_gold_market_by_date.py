@@ -16,16 +16,29 @@ from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_rang
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 _YEAR_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+_YEAR_MONTH_RANGE_RE = re.compile(r"^(\d{4}-\d{2})(?:\s*(?:\.\.|to)\s*(\d{4}-\d{2}))?$", re.IGNORECASE)
+_DOMAIN_SOURCE_PREFIXES = {
+    "market": "market",
+    "finance": "finance",
+    "earnings": "earnings",
+    "price-target": "targets",
+}
+_DOMAIN_DEFAULT_TARGET_PATH = {
+    "market": DataPaths.get_gold_market_by_date_path(),
+    "finance": "finance_by_date",
+    "earnings": "earnings_by_date",
+    "price-target": "price_target_by_date",
+}
 
 
 @dataclass(frozen=True)
 class MaterializeConfig:
     container: str
-    source_prefix: str
+    domain: str
     target_path: str
     include_columns: Optional[list[str]]
     year_month: Optional[str]
-    max_tables: Optional[int]
+    year_month_end: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -60,19 +73,38 @@ def _normalize_columns(raw_columns: Optional[Iterable[str]]) -> Optional[list[st
     return normalized or None
 
 
-def _parse_year_month(raw: Optional[str]) -> Optional[str]:
+def _parse_year_month(raw: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     value = str(raw or "").strip()
     if not value:
-        return None
-    if not _YEAR_MONTH_RE.fullmatch(value):
-        raise ValueError("year_month must be in YYYY-MM format.")
+        return None, None
+
+    match = _YEAR_MONTH_RANGE_RE.fullmatch(value)
+    if not match:
+        raise ValueError("year_month must be YYYY-MM or YYYY-MM..YYYY-MM.")
+
+    start = str(match.group(1) or "").strip()
+    end = str(match.group(2) or "").strip() or start
+    if not _YEAR_MONTH_RE.fullmatch(start) or not _YEAR_MONTH_RE.fullmatch(end):
+        raise ValueError("year_month must be YYYY-MM or YYYY-MM..YYYY-MM.")
+    if end < start:
+        raise ValueError("year_month range end must be >= start.")
+    return start, end
+
+
+def _normalize_domain(raw: Optional[str]) -> str:
+    value = str(raw or "").strip().lower().replace("_", "-")
+    if value == "targets":
+        value = "price-target"
+    if value not in _DOMAIN_SOURCE_PREFIXES:
+        supported = ", ".join(sorted(_DOMAIN_SOURCE_PREFIXES.keys()))
+        raise ValueError(f"domain must be one of: {supported}")
     return value
 
 
 def _build_config(argv: Optional[Sequence[str]]) -> MaterializeConfig:
-    parser = argparse.ArgumentParser(description="Materialize a by-date Gold market view from per-symbol Gold tables.")
+    parser = argparse.ArgumentParser(description="Materialize a by-date Gold view from per-symbol Gold tables.")
     parser.add_argument("--container", default=None, help="Gold container name (defaults to AZURE_CONTAINER_GOLD).")
-    parser.add_argument("--source-prefix", default=None, help="Per-symbol source prefix (default: market).")
+    parser.add_argument("--domain", default=None, help="Gold domain key (market|finance|earnings|price-target).")
     parser.add_argument("--target-path", default=None, help="By-date table path (default: market_by_date).")
     parser.add_argument(
         "--columns",
@@ -82,9 +114,8 @@ def _build_config(argv: Optional[Sequence[str]]) -> MaterializeConfig:
     parser.add_argument(
         "--year-month",
         default=None,
-        help="Optional YYYY-MM filter for partial materialization (overwrites only that partition).",
+        help="Optional YYYY-MM or YYYY-MM..YYYY-MM filter for partial materialization (overwrites matching partition(s)).",
     )
-    parser.add_argument("--max-tables", type=int, default=None, help="Optional limit for source tables (debug).")
     args = parser.parse_args(argv)
 
     container_raw = args.container or os.environ.get("AZURE_CONTAINER_GOLD")
@@ -92,13 +123,12 @@ def _build_config(argv: Optional[Sequence[str]]) -> MaterializeConfig:
         raise ValueError("Missing Gold container. Set AZURE_CONTAINER_GOLD or pass --container.")
     container = str(container_raw).strip()
 
-    source_prefix = str(args.source_prefix or os.environ.get("GOLD_MARKET_SOURCE_PREFIX") or "market").strip().strip("/")
-    if not source_prefix:
-        source_prefix = "market"
+    domain = _normalize_domain(args.domain or os.environ.get("GOLD_BY_DATE_DOMAIN") or "market")
 
-    target_path = str(args.target_path or os.environ.get("GOLD_MARKET_BY_DATE_PATH") or DataPaths.get_gold_market_by_date_path()).strip().strip("/")
+    target_default = _DOMAIN_DEFAULT_TARGET_PATH.get(domain, DataPaths.get_gold_market_by_date_path())
+    target_path = str(args.target_path or os.environ.get("GOLD_MARKET_BY_DATE_PATH") or target_default).strip().strip("/")
     if not target_path:
-        target_path = DataPaths.get_gold_market_by_date_path()
+        target_path = target_default
 
     columns_raw = args.columns
     if columns_raw is None:
@@ -106,37 +136,29 @@ def _build_config(argv: Optional[Sequence[str]]) -> MaterializeConfig:
     include_columns = _normalize_columns(_parse_csv(columns_raw))
 
     year_month_raw = args.year_month if args.year_month is not None else os.environ.get("MATERIALIZE_YEAR_MONTH")
-    year_month = _parse_year_month(year_month_raw)
-
-    max_tables = args.max_tables
-    if max_tables is None:
-        max_tables_raw = str(os.environ.get("GOLD_MARKET_BY_DATE_MAX_TABLES") or "").strip()
-        if max_tables_raw:
-            max_tables = int(max_tables_raw)
-    if max_tables is not None and max_tables <= 0:
-        raise ValueError("max_tables must be greater than zero when provided.")
+    year_month, year_month_end = _parse_year_month(year_month_raw)
 
     return MaterializeConfig(
         container=container,
-        source_prefix=source_prefix,
+        domain=domain,
         target_path=target_path,
         include_columns=include_columns,
         year_month=year_month,
-        max_tables=max_tables,
+        year_month_end=year_month_end,
     )
 
 
 def _discover_delta_table_paths(
     *,
     container: str,
-    source_prefix: str,
-    max_tables: Optional[int] = None,
+    domain: str,
 ) -> list[str]:
     client = mdc.get_storage_client(container)
     if client is None:
         raise RuntimeError(f"Storage client unavailable for container={container!r}.")
 
     marker = "/_delta_log/"
+    source_prefix = _DOMAIN_SOURCE_PREFIXES[domain]
     search_prefix = f"{source_prefix.strip('/')}/"
     roots: set[str] = set()
     for name in client.list_files(name_starts_with=search_prefix):
@@ -148,10 +170,7 @@ def _discover_delta_table_paths(
             continue
         roots.add(root)
 
-    discovered = sorted(roots)
-    if max_tables is not None:
-        return discovered[:max_tables]
-    return discovered
+    return sorted(roots)
 
 
 def _apply_projection(df: pd.DataFrame, *, include_columns: Optional[list[str]], source_path: str) -> pd.DataFrame:
@@ -187,11 +206,20 @@ def _month_bounds(year_month: str) -> tuple[pd.Timestamp, pd.Timestamp]:
     return month_start, month_end
 
 
+def _year_month_range_bounds(year_month_start: str, year_month_end: Optional[str]) -> tuple[pd.Timestamp, pd.Timestamp]:
+    start, _ = _month_bounds(year_month_start)
+    end_start, end_exclusive = _month_bounds(year_month_end or year_month_start)
+    if end_start < start:
+        raise ValueError("year_month range end must be >= start.")
+    return start, end_exclusive
+
+
 def _prepare_source_frame(
     df_raw: pd.DataFrame,
     *,
     include_columns: Optional[list[str]],
-    year_month: Optional[str],
+    year_month_start: Optional[str],
+    year_month_end: Optional[str],
     backfill_start: Optional[pd.Timestamp],
     source_path: str,
 ) -> pd.DataFrame:
@@ -226,8 +254,8 @@ def _prepare_source_frame(
     if work.empty:
         return work
 
-    if year_month:
-        month_start, month_end = _month_bounds(year_month)
+    if year_month_start:
+        month_start, month_end = _year_month_range_bounds(year_month_start, year_month_end)
         work = work[(work["date"] >= month_start) & (work["date"] < month_end)].copy()
         if work.empty:
             return work
@@ -244,12 +272,12 @@ def materialize_market_by_date(
 ) -> MaterializeResult:
     resolved_paths = list(source_paths) if source_paths is not None else _discover_delta_table_paths(
         container=config.container,
-        source_prefix=config.source_prefix,
-        max_tables=config.max_tables,
+        domain=config.domain,
     )
 
     if not resolved_paths:
-        raise RuntimeError(f"No source Gold market Delta tables found under '{config.source_prefix}/'.")
+        source_prefix = _DOMAIN_SOURCE_PREFIXES[config.domain]
+        raise RuntimeError(f"No source Gold Delta tables found for domain '{config.domain}' under '{source_prefix}/'.")
 
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
@@ -269,7 +297,8 @@ def materialize_market_by_date(
         prepared = _prepare_source_frame(
             df,
             include_columns=config.include_columns,
-            year_month=config.year_month,
+            year_month_start=config.year_month,
+            year_month_end=config.year_month_end,
             backfill_start=backfill_start,
             source_path=path,
         )
@@ -287,7 +316,10 @@ def materialize_market_by_date(
 
     partition_by = ["year_month"]
     if config.year_month:
-        predicate = f"year_month = '{config.year_month}'"
+        if config.year_month_end and config.year_month_end != config.year_month:
+            predicate = f"year_month >= '{config.year_month}' AND year_month <= '{config.year_month_end}'"
+        else:
+            predicate = f"year_month = '{config.year_month}'"
         schema_mode = "merge"
     else:
         predicate = None
@@ -312,6 +344,14 @@ def materialize_market_by_date(
     )
 
 
+def _format_year_month_scope(config: MaterializeConfig) -> str:
+    if not config.year_month:
+        return "ALL"
+    if config.year_month_end and config.year_month_end != config.year_month:
+        return f"{config.year_month}..{config.year_month_end}"
+    return config.year_month
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     mdc.log_environment_diagnostics()
 
@@ -323,9 +363,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     started_at = datetime.now(timezone.utc)
     mdc.write_line(
-        "Materializing Gold market by-date view "
-        f"from '{config.source_prefix}/' to '{config.target_path}' "
-        f"(year_month={config.year_month or 'ALL'}, columns={config.include_columns or 'ALL'})"
+        "Materializing Gold by-date view "
+        f"for domain='{config.domain}' to '{config.target_path}' "
+        f"(year_month={_format_year_month_scope(config)}, columns={config.include_columns or 'ALL'})"
     )
 
     try:

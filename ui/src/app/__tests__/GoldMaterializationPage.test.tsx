@@ -20,19 +20,14 @@ const runtimeConfigCatalogResponse = {
         example: 'market_by_date'
       },
       {
-        key: 'GOLD_MARKET_SOURCE_PREFIX',
-        description: 'Source prefix',
+        key: 'GOLD_BY_DATE_DOMAIN',
+        description: 'Domain',
         example: 'market'
       },
       {
         key: 'GOLD_MARKET_BY_DATE_COLUMNS',
         description: 'Projection columns',
         example: 'close,volume'
-      },
-      {
-        key: 'GOLD_MARKET_BY_DATE_MAX_TABLES',
-        description: 'Max tables',
-        example: '250'
       },
       {
         key: 'MATERIALIZE_YEAR_MONTH',
@@ -82,6 +77,8 @@ vi.mock('@/hooks/useDataQueries', () => ({
 
 vi.mock('@/services/DataService', () => ({
   DataService: {
+    getDomainColumns: vi.fn(),
+    refreshDomainColumns: vi.fn(),
     setRuntimeConfig: vi.fn(),
     deleteRuntimeConfig: vi.fn()
   }
@@ -106,6 +103,26 @@ describe('GoldMaterializationPage', () => {
       description: 'desc',
       updatedAt: null,
       updatedBy: null
+    });
+    vi.mocked(DataService.getDomainColumns).mockResolvedValue({
+      layer: 'gold',
+      domain: 'market',
+      columns: ['date', 'symbol', 'close', 'volume', 'return_1d'],
+      found: true,
+      promptRetrieve: false,
+      source: 'common-file',
+      cachePath: 'metadata/domain-columns.json',
+      updatedAt: null
+    });
+    vi.mocked(DataService.refreshDomainColumns).mockResolvedValue({
+      layer: 'gold',
+      domain: 'market',
+      columns: ['date', 'symbol', 'close', 'volume', 'return_1d'],
+      found: true,
+      promptRetrieve: false,
+      source: 'common-file',
+      cachePath: 'metadata/domain-columns.json',
+      updatedAt: null
     });
     vi.mocked(DataService.deleteRuntimeConfig).mockResolvedValue({
       scope: 'global',
@@ -145,9 +162,12 @@ describe('GoldMaterializationPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save DB Overrides/i }));
 
     await waitFor(() => {
-      expect(DataService.setRuntimeConfig).toHaveBeenCalledTimes(6);
+      expect(DataService.setRuntimeConfig).toHaveBeenCalledTimes(5);
     });
 
+    expect(DataService.setRuntimeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'GOLD_BY_DATE_DOMAIN', value: 'market' })
+    );
     expect(DataService.setRuntimeConfig).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'GOLD_MARKET_BY_DATE_PATH', value: 'market_by_date_v2' })
     );

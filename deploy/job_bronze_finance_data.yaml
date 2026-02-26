@@ -61,6 +61,12 @@ properties:
         value: ${SILVER_FINANCE_JOB}
       - name: TRIGGER_NEXT_JOB_REQUIRED
         value: "true"
+      - name: FINANCE_RUN_MANIFESTS_ENABLED
+        value: "true"
+      - name: FINANCE_PIPELINE_SHARED_LOCK_NAME
+        value: "finance-pipeline-shared"
+      - name: BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS
+        value: "0"
       - name: AZURE_CONTAINER_GOLD
         value: ${AZURE_CONTAINER_GOLD}
       - name: AZURE_STORAGE_ACCOUNT_NAME

@@ -11,26 +11,47 @@ def _make_finance_df(rows: int = 8) -> pd.DataFrame:
     
     # Base metrics
     revenue = np.linspace(100, 200, rows)
-    net_income = revenue * 0.2
+    gross_profit = revenue * 0.4
+    operating_income = revenue * 0.15
+    net_income = revenue * 0.12
+    free_cash_flow = revenue * 0.1
     op_cash_flow = revenue * 0.25
     total_assets = np.full(rows, 1000)
     total_debt = np.full(rows, 300)
+    long_term_debt = np.full(rows, 250)
     current_assets = np.full(rows, 500)
     current_liabilities = np.full(rows, 250)
     shares = np.full(rows, 100)
+    pe_ratio = np.full(rows, 20.0)
+    ev_ebitda = np.full(rows, 10.0)
+    market_cap = np.full(rows, 1_000_000.0)
+    ebitda = revenue * 0.2
+    forward_pe = np.full(rows, 18.0)
+    ev_revenue = np.full(rows, 5.0)
+    cash_and_equivalents = np.full(rows, 75.0)
     
     return pd.DataFrame({
         "Date": dates,
         "Symbol": symbol,
         "Total Revenue": revenue,
+        "Gross Profit": gross_profit,
+        "Operating Income": operating_income,
         "Net Income": net_income,
+        "Free Cash Flow": free_cash_flow,
         "Operating Cash Flow": op_cash_flow,
+        "Total Debt": total_debt,
         "Total Assets": total_assets,
-        "Long Term Debt": total_debt,
+        "Long Term Debt": long_term_debt,
         "Current Assets": current_assets,
         "Current Liabilities": current_liabilities,
         "Shares Outstanding": shares,
-        "Gross Profit": revenue * 0.4,
+        "PE Ratio": pe_ratio,
+        "EV/EBITDA": ev_ebitda,
+        "Market Cap": market_cap,
+        "EBITDA": ebitda,
+        "Forward P/E": forward_pe,
+        "EV/Revenue": ev_revenue,
+        "Cash And Cash Equivalents": cash_and_equivalents,
     })
 
 def test_compute_features_adds_expected_columns():
@@ -57,17 +78,26 @@ def test_piotroski_score_calculation():
     df = pd.DataFrame({
         "Date": dates,
         "Symbol": ["TEST"] * 8,
-        # TTM Sums need rolling 4
-        # Period 0-3 sum vs Period 4-7 sum
-        "Net Income": [10] * 8, # Positive ROA
-        "Total Assets": [1000] * 8,
-        "Operating Cash Flow": [20] * 8, # > Net Income (Accruals)
-        "Long Term Debt": [500, 500, 500, 500, 400, 400, 400, 400], # Decreasing leverage
-        "Current Assets": [200, 200, 200, 200, 300, 300, 300, 300], # Improving liquidity
-        "Current Liabilities": [100] * 8,
-        "Shares Outstanding": [100] * 8, # No new shares
-        "Gross Profit": [50, 50, 50, 50, 60, 60, 60, 60], # Improving margins
+        # TTM sums need rolling 4 periods.
         "Total Revenue": [100] * 8,
+        "Gross Profit": [50, 50, 50, 50, 60, 60, 60, 60],
+        "Operating Income": [20] * 8,
+        "Net Income": [10] * 8,
+        "Free Cash Flow": [8] * 8,
+        "Operating Cash Flow": [20] * 8,
+        "Total Debt": [500] * 8,
+        "Long Term Debt": [500, 500, 500, 500, 400, 400, 400, 400],
+        "Total Assets": [1000] * 8,
+        "Current Assets": [200, 200, 200, 200, 300, 300, 300, 300],
+        "Current Liabilities": [100] * 8,
+        "Shares Outstanding": [100] * 8,
+        "PE Ratio": [20] * 8,
+        "EV/EBITDA": [10] * 8,
+        "Market Cap": [1_000_000] * 8,
+        "EBITDA": [25] * 8,
+        "Forward P/E": [19] * 8,
+        "EV/Revenue": [6] * 8,
+        "Cash And Cash Equivalents": [100] * 8,
     })
     
     out = compute_features(df)
@@ -108,10 +138,27 @@ def test_parse_human_number_integration():
     # compute_features uses _resolve_column -> _coerce_numeric -> _parse_human_number
     # Verify it handles "10M" etc via the dataframe path
     df = pd.DataFrame({
-        "Date": ["01/01/2020"], 
-        "Symbol": ["AAPL"], 
+        "Date": ["01/01/2020"],
+        "Symbol": ["AAPL"],
         "Total Revenue": ["10M"],
-        "Total Assets": [100]
+        "Gross Profit": ["4M"],
+        "Operating Income": ["2M"],
+        "Net Income": ["1M"],
+        "Free Cash Flow": ["500K"],
+        "Operating Cash Flow": ["1.5M"],
+        "Total Debt": [100],
+        "Long Term Debt": [80],
+        "Total Assets": [500],
+        "Current Assets": [200],
+        "Current Liabilities": [100],
+        "Shares Outstanding": [100],
+        "PE Ratio": [20],
+        "EV/EBITDA": [8],
+        "Market Cap": [10_000_000],
+        "EBITDA": [2_000_000],
+        "Forward P/E": [18],
+        "EV/Revenue": [4],
+        "Cash And Cash Equivalents": [60],
     })
     out = compute_features(df)
     assert out.iloc[0]["total_revenue"] == 10_000_000.0

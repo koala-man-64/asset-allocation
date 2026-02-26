@@ -1,0 +1,86 @@
+baseline:
+  branch: main
+
+standards:
+  format:
+    - "npm run format -- --check"
+  lint:
+    - "npm run lint"
+  typecheck:
+    - "npm run typecheck"
+  test_fast:
+    - "npm test -- --runInBand"
+  test_full:
+    - "npm test"
+  format_fix:
+    - "npm run format"
+  lint_fix:
+    - "npm run lint -- --fix"
+
+architecture:
+  layers:
+    - name: "domain"
+      path_glob: "src/domain/**"
+      forbid_imports_from:
+        - "src/infrastructure/**"
+    - name: "infrastructure"
+      path_glob: "src/infrastructure/**"
+      allow_imports_from:
+        - "src/domain/**"
+        - "src/shared/**"
+  blessed_patterns:
+    - "Result-based error boundaries"
+    - "Dependency injection via constructors"
+
+dependencies:
+  denylist:
+    - "left-pad"
+  allowlist:
+    - "zod"
+    - "axios"
+  lockfile_required: true
+
+api:
+  public_globs:
+    - "src/public/**"
+    - "src/index.ts"
+  breaking_change_policy: "strict"
+
+thresholds:
+  drift_score_fail: 35
+  category_weights:
+    security: 40
+    api: 35
+    architecture: 25
+    behavioral: 25
+    dependency: 20
+    test: 25
+    performance: 15
+    style: 5
+    docs: 3
+    config_infra: 15
+
+auto_remediate:
+  enabled: false
+  max_files_changed: 50
+  safe_directories:
+    - "src/**"
+    - "docs/**"
+  commands:
+    - "npm run format"
+    - "npm run lint -- --fix"
+
+risk_controls:
+  protected_globs:
+    - "migrations/**"
+    - "infra/**"
+    - "src/auth/**"
+  require_tests_passing_before_automerge: true
+
+reporting:
+  markdown_path: "artifacts/drift_report.md"
+  json_path: "artifacts/drift_report.json"
+  patch_path: "artifacts/drift_remediation.patch"
+
+detection:
+  lookback_days: 14

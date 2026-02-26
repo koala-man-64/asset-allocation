@@ -122,3 +122,32 @@ def test_silver_processing_applies_backfill_start_cutoff(unique_ticker):
         assert silver.process_file(blob_name) is True
         df_saved = mock_store.call_args[0][0]
         assert pd.to_datetime(df_saved["date"]).min().date().isoformat() >= "2024-01-01"
+
+
+def test_run_market_reconciliation_purges_silver_orphans(monkeypatch):
+    class _FakeSilverClient:
+        def __init__(self) -> None:
+            self.deleted_paths: list[str] = []
+
+        def delete_prefix(self, path: str) -> int:
+            self.deleted_paths.append(path)
+            return 3
+
+    fake_client = _FakeSilverClient()
+    monkeypatch.setattr(silver, "silver_client", fake_client)
+    monkeypatch.setattr(
+        silver,
+        "collect_delta_market_symbols",
+        lambda *, client, root_prefix: {"AAPL", "MSFT"},
+    )
+
+    orphan_count, deleted_blobs = silver._run_market_reconciliation(
+        bronze_blob_list=[
+            {"name": "market-data/AAPL.csv"},
+            {"name": "market-data/blacklist.csv"},
+        ]
+    )
+
+    assert orphan_count == 1
+    assert deleted_blobs == 3
+    assert fake_client.deleted_paths == [DataPaths.get_market_data_path("MSFT")]

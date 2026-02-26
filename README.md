@@ -81,7 +81,24 @@ This repo supports DB-backed runtime configuration so operational knobs can be c
 
 The runtime-config allowlist includes common pipeline knobs (backfills/materialization), system-health probes, and selected non-secret ingestion tunables (e.g., Alpha Vantage rate limits/timeouts).
 
-Alpha Vantage Bronze jobs use per-job locks only; provider-level contention is handled by API-side fair-share rate limiting keyed by caller job headers.
+Alpha Vantage Bronze jobs use per-job locks. Finance Bronze/Silver additionally support a shared cross-layer lock (`FINANCE_PIPELINE_SHARED_LOCK_NAME`) to prevent overlap during handoff windows.
+
+## Finance Bronze -> Silver Handoff
+
+Finance ingestion includes convergence and handoff controls to reduce Bronze/Silver symbol drift:
+
+- `SILVER_FINANCE_CATCHUP_MAX_PASSES` controls bounded relist/catch-up passes per Silver run.
+- `FINANCE_RUN_MANIFESTS_ENABLED=true` enables Bronze finance run manifests in `AZURE_CONTAINER_COMMON` under `system/run-manifests/`.
+- `SILVER_FINANCE_USE_BRONZE_MANIFEST=true` allows Silver finance to prefer the latest unacknowledged Bronze manifest and write per-run acknowledgements.
+- `BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS` / `SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS` tune shared-lock wait behavior.
+
+You can run an explicit reconciliation report to audit current Bronze->Silver finance lag:
+
+```bash
+python3 -m tasks.finance_data.reconcile_finance_coverage
+```
+
+The report is written to `system/reconciliation/finance_coverage/latest.json` in the common container.
 
 ## Gold Market By-Date View
 
@@ -92,8 +109,10 @@ python3 -m tasks.market_data.materialize_gold_market_by_date
 ```
 
 Column projection is configurable:
+- `GOLD_BY_DATE_DOMAIN=market|finance|earnings|price-target`
 - `GOLD_MARKET_BY_DATE_COLUMNS=close,volume,return_1d,vol_20d` (always includes `date` and `symbol`)
-- `MATERIALIZE_YEAR_MONTH=YYYY-MM` for partial partition rebuilds
+- `MATERIALIZE_YEAR_MONTH=YYYY-MM` for a single-month partial rebuild
+- `MATERIALIZE_YEAR_MONTH=YYYY-MM..YYYY-MM` for a month-range partial rebuild
 
 To run this as part of the regular Gold market job, set:
 - `GOLD_MARKET_BY_DATE_ENABLED=true`

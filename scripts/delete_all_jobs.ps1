@@ -16,7 +16,8 @@ $jobs = @(
   "gold-market-job",
   "gold-finance-job",
   "gold-price-target-job",
-  "gold-earnings-job"
+  "gold-earnings-job",
+  "reconcile-finance-coverage-job"
 )
 
 $resolvedApiAppName = $ApiAppName

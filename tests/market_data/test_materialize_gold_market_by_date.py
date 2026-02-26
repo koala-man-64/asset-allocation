@@ -49,11 +49,10 @@ def test_materialize_market_by_date_projects_selected_columns(monkeypatch) -> No
 
     config = by_date.MaterializeConfig(
         container="gold",
-        source_prefix="market",
+        domain="market",
         target_path="market_by_date",
         include_columns=["close", "return_1d", "missing_col"],
         year_month=None,
-        max_tables=None,
     )
 
     result = by_date.materialize_market_by_date(config, source_paths=["market/AAPL", "market/MSFT"])
@@ -95,11 +94,10 @@ def test_materialize_market_by_date_filters_year_month_and_uses_partition_predic
 
     config = by_date.MaterializeConfig(
         container="gold",
-        source_prefix="market",
+        domain="market",
         target_path="market_by_date",
         include_columns=None,
         year_month="2025-01",
-        max_tables=None,
     )
 
     result = by_date.materialize_market_by_date(config, source_paths=["market/AAPL"])
@@ -112,3 +110,45 @@ def test_materialize_market_by_date_filters_year_month_and_uses_partition_predic
     assert captured["kwargs"]["partition_by"] == ["year_month"]
     assert captured["kwargs"]["schema_mode"] == "merge"
     assert captured["kwargs"]["predicate"] == "year_month = '2025-01'"
+
+
+def test_materialize_market_by_date_filters_year_month_range_and_uses_range_predicate(monkeypatch) -> None:
+    frame = pd.DataFrame(
+        {
+            "date": ["2025-01-15", "2025-02-03", "2025-03-10"],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+            "close": [189.0, 193.0, 197.0],
+            "volume": [1000, 1200, 1300],
+        }
+    )
+
+    monkeypatch.setattr(by_date.delta_core, "load_delta", lambda _container, _path, **_kwargs: frame.copy())
+    monkeypatch.setattr(by_date, "get_backfill_range", lambda: (None, None))
+
+    captured: dict[str, Any] = {}
+
+    def fake_store_delta(df: pd.DataFrame, container: str, path: str, mode: str = "overwrite", **kwargs) -> None:
+        captured["df"] = df.copy()
+        captured["kwargs"] = dict(kwargs)
+
+    monkeypatch.setattr(by_date.delta_core, "store_delta", fake_store_delta)
+
+    config = by_date.MaterializeConfig(
+        container="gold",
+        domain="market",
+        target_path="market_by_date",
+        include_columns=None,
+        year_month="2025-01",
+        year_month_end="2025-02",
+    )
+
+    result = by_date.materialize_market_by_date(config, source_paths=["market/AAPL"])
+
+    assert result.rows_written == 2
+    written = captured["df"]
+    assert written["year_month"].tolist() == ["2025-01", "2025-02"]
+    assert written["date"].dt.month.tolist() == [1, 2]
+
+    assert captured["kwargs"]["partition_by"] == ["year_month"]
+    assert captured["kwargs"]["schema_mode"] == "merge"
+    assert captured["kwargs"]["predicate"] == "year_month >= '2025-01' AND year_month <= '2025-02'"

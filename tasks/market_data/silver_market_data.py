@@ -21,6 +21,11 @@ from tasks.common.watermarks import (
     should_process_blob_since_last_success,
 )
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common.market_reconciliation import (
+    collect_bronze_market_symbols_from_blob_infos,
+    collect_delta_market_symbols,
+    purge_orphan_market_tables,
+)
 
 # Suppress warnings
 
@@ -243,6 +248,29 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         watermarks[blob_name] = signature
     return "ok"
 
+
+def _run_market_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
+    if silver_client is None:
+        raise RuntimeError("Silver market reconciliation requires silver storage client.")
+
+    bronze_symbols = collect_bronze_market_symbols_from_blob_infos(bronze_blob_list)
+    silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix="market-data")
+    orphan_symbols, deleted_blobs = purge_orphan_market_tables(
+        upstream_symbols=bronze_symbols,
+        downstream_symbols=silver_symbols,
+        downstream_path_builder=DataPaths.get_market_data_path,
+        delete_prefix=silver_client.delete_prefix,
+    )
+    if orphan_symbols:
+        mdc.write_line(
+            "Silver market reconciliation purged orphan symbols: "
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+        )
+    else:
+        mdc.write_line("Silver market reconciliation: no orphan symbols detected.")
+    return len(orphan_symbols), deleted_blobs
+
+
 def main():
     mdc.log_environment_diagnostics()
     backfill_start, _ = get_backfill_range()
@@ -305,14 +333,29 @@ def main():
         else:
             failed += 1
 
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    try:
+        reconciliation_orphans, reconciliation_deleted_blobs = _run_market_reconciliation(
+            bronze_blob_list=blob_list
+        )
+    except Exception as exc:
+        reconciliation_failed = 1
+        mdc.write_error(f"Silver market reconciliation failed: {exc}")
+
+    total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver market job complete: "
         f"processed={processed} skipped_unchanged={skipped_unchanged} "
-        f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} failed={failed}"
+        f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} "
+        f"reconciled_orphans={reconciliation_orphans} "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} "
+        f"failed={total_failed}"
     )
     if watermarks_dirty:
         save_watermarks("bronze_market_data", watermarks)
-    if failed == 0:
+    if total_failed == 0:
         save_last_success(
             "silver_market_data",
             metadata={
@@ -322,6 +365,8 @@ def main():
                 "skipped_checkpoint": checkpoint_skipped,
                 "skipped_unchanged": skipped_unchanged,
                 "skipped_other": skipped_other,
+                "reconciled_orphans": reconciliation_orphans,
+                "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },
         )
         return 0

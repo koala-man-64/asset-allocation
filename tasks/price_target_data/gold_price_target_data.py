@@ -12,6 +12,7 @@ import pandas as pd
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
+from tasks.common.market_reconciliation import collect_delta_market_symbols, purge_orphan_tables
 
 
 @dataclass(frozen=True)
@@ -299,6 +300,35 @@ def _build_job_config() -> FeatureJobConfig:
     )
 
 
+def _run_price_target_reconciliation(*, silver_container: str, gold_container: str) -> tuple[int, int]:
+    from core import core as mdc
+    from core.pipeline import DataPaths
+
+    silver_client = mdc.get_storage_client(silver_container)
+    gold_client = mdc.get_storage_client(gold_container)
+    if silver_client is None:
+        raise RuntimeError("Gold price-target reconciliation requires silver storage client.")
+    if gold_client is None:
+        raise RuntimeError("Gold price-target reconciliation requires gold storage client.")
+
+    silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix="price-target-data")
+    gold_symbols = collect_delta_market_symbols(client=gold_client, root_prefix="targets")
+    orphan_symbols, deleted_blobs = purge_orphan_tables(
+        upstream_symbols=silver_symbols,
+        downstream_symbols=gold_symbols,
+        downstream_path_builder=DataPaths.get_gold_price_targets_path,
+        delete_prefix=gold_client.delete_prefix,
+    )
+    if orphan_symbols:
+        mdc.write_line(
+            "Gold price-target reconciliation purged orphan symbols: "
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+        )
+    else:
+        mdc.write_line("Gold price-target reconciliation: no orphan symbols detected.")
+    return len(orphan_symbols), deleted_blobs
+
+
 def main() -> int:
     from core import core as mdc
     from core.pipeline import DataPaths
@@ -356,10 +386,6 @@ def main() -> int:
     ok = sum(1 for r in results if r.get("status") == "ok")
     skipped = sum(1 for r in results if r.get("status") == "skipped_no_data")
     failed = len(results) - ok - skipped
-    mdc.write_line(
-        f"Price target feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
-        f"skipped_unchanged={skipped_unchanged}, failed={failed}"
-    )
     for result in results:
         if result.get("status") != "ok":
             continue
@@ -376,7 +402,26 @@ def main() -> int:
         watermarks_dirty = True
     if watermarks_dirty:
         save_watermarks("gold_price_target_features", watermarks)
-    return 0 if failed == 0 else 1
+
+    reconciliation_orphans = 0
+    reconciliation_deleted_blobs = 0
+    reconciliation_failed = 0
+    try:
+        reconciliation_orphans, reconciliation_deleted_blobs = _run_price_target_reconciliation(
+            silver_container=job_cfg.silver_container,
+            gold_container=job_cfg.gold_container,
+        )
+    except Exception as exc:
+        reconciliation_failed = 1
+        mdc.write_error(f"Gold price-target reconciliation failed: {exc}")
+
+    total_failed = failed + reconciliation_failed
+    mdc.write_line(
+        f"Price target feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
+        f"skipped_unchanged={skipped_unchanged}, reconciled_orphans={reconciliation_orphans}, "
+        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}, failed={total_failed}"
+    )
+    return 0 if total_failed == 0 else 1
 
 
 if __name__ == "__main__":

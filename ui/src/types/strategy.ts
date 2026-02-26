@@ -150,6 +150,7 @@ export interface DomainMetadata {
   container: string;
   type: 'blob' | 'delta';
   computedAt: string;
+  folderLastModified?: string | null;
   cachedAt?: string | null;
   cacheSource?: 'snapshot' | 'live-refresh' | null;
   symbolCount?: number | null;
@@ -158,6 +159,10 @@ export interface DomainMetadata {
     number
   > | null;
   blacklistedSymbolCount?: number | null;
+  coverageStatus?: string | null;
+  asOfCutoff?: string | null;
+  lagSymbolCount?: number | null;
+  coverageReportPath?: string | null;
   dateRange?: DomainDateRange | null;
   totalRows?: number | null;
   fileCount?: number | null;

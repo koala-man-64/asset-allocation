@@ -392,6 +392,61 @@ def test_collect_domain_metadata_uses_file_count_for_bronze_market_symbols(monke
     assert payload["blacklistedSymbolCount"] == 1
 
 
+def test_collect_domain_metadata_reports_folder_last_modified(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int, last_modified: datetime) -> None:
+            self.name = name
+            self.size = size
+            self.last_modified = last_modified
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return [
+                _Blob(
+                    "market-data/AAPL.csv",
+                    10,
+                    datetime(2026, 2, 25, 12, 0, tzinfo=timezone.utc),
+                ),
+                _Blob(
+                    "market-data/MSFT.csv",
+                    11,
+                    datetime(2026, 2, 26, 8, 16, tzinfo=timezone.utc),
+                ),
+                _Blob(
+                    "market-data/whitelist.csv",
+                    2,
+                    datetime(2026, 2, 24, 9, 0, tzinfo=timezone.utc),
+                ),
+                _Blob(
+                    "market-data/blacklist.csv",
+                    2,
+                    datetime(2026, 2, 24, 10, 0, tzinfo=timezone.utc),
+                ),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, path: str):
+            if path.endswith("whitelist.csv"):
+                return b"Symbol\n"
+            if path.endswith("blacklist.csv"):
+                return b"Symbol\nZZZZ\n"
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_BRONZE", "bronze-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = collect_domain_metadata(layer="bronze", domain="market")
+
+    assert payload["folderLastModified"] == "2026-02-26T08:16:00+00:00"
+
+
 def test_collect_domain_metadata_uses_file_count_for_bronze_price_target_symbols(monkeypatch) -> None:
     class _Blob:
         def __init__(self, name: str, size: int) -> None:
@@ -528,4 +583,51 @@ def test_collect_domain_metadata_uses_listing_count_for_bronze_finance_symbols(m
         "valuation": 1,
     }
     assert payload["blacklistedSymbolCount"] == 1
+
+
+def test_collect_domain_metadata_enriches_finance_coverage_status(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "finance-data/"
+            return [
+                _Blob(
+                    "finance-data/valuation/AAPL_quarterly_valuation_measures/_delta_log/00000000000000000000.json",
+                    10,
+                )
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.mdc.get_common_json_content",
+        lambda path: (
+            {
+                "generatedAt": "2026-02-26T17:00:00+00:00",
+                "totalLagSymbolCount": 7,
+            }
+            if str(path).endswith("system/reconciliation/finance_coverage/latest.json")
+            else None
+        ),
+    )
+
+    payload = collect_domain_metadata(layer="silver", domain="finance")
+
+    assert payload["coverageStatus"] == "lagging"
+    assert payload["lagSymbolCount"] == 7
+    assert payload["asOfCutoff"] == "2026-02-26T17:00:00+00:00"
 
