@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, GitCompareArrows, Info, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
+import { AlertTriangle, GitCompareArrows, Info, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
 import {
@@ -203,13 +203,16 @@ function compareDateRanges(current: DomainMetadata, previous: DomainMetadata): {
 export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLayer[] }) {
   const queryClient = useQueryClient();
   const [refreshingCells, setRefreshingCells] = useState<Set<string>>(new Set());
+  const [isRefreshingPanelCounts, setIsRefreshingPanelCounts] = useState(false);
   const [listResetTarget, setListResetTarget] = useState<{
     layerKey: LayerKey;
     layerLabel: string;
     domainKey: string;
     domainLabel: string;
   } | null>(null);
+  const [isResetAllDialogOpen, setIsResetAllDialogOpen] = useState(false);
   const [isResettingLists, setIsResettingLists] = useState(false);
+  const [isResettingAllLists, setIsResettingAllLists] = useState(false);
   const [resettingCellKey, setResettingCellKey] = useState<string | null>(null);
 
   const layersByKey = useMemo(() => {
@@ -423,6 +426,109 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     }
   }, [listResetTarget, queryClient]);
 
+  const refreshAllPanelCounts = useCallback(async () => {
+    if (queryPairs.length === 0 || isRefreshingPanelCounts || isResettingAllLists || isResettingLists) {
+      return;
+    }
+
+    const panelCellKeys = queryPairs.map((pair) => makeCellKey(pair.layerKey, pair.domainKey));
+    setIsRefreshingPanelCounts(true);
+    setRefreshingCells((previous) => {
+      const next = new Set(previous);
+      panelCellKeys.forEach((key) => next.add(key));
+      return next;
+    });
+
+    try {
+      const snapshot = await DataService.getDomainMetadataSnapshot({
+        layers: layerColumns.map((layer) => layer.key).join(','),
+        domains: domainRows.map((row) => row.key).join(','),
+        refresh: true
+      });
+      persistSnapshot(snapshot);
+      queryClient.setQueryData(snapshotQueryKey, snapshot);
+      for (const pair of queryPairs) {
+        const entry = snapshot.entries?.[makeSnapshotKey(pair.layerKey, pair.domainKey)];
+        if (entry) {
+          queryClient.setQueryData(queryKeys.domainMetadata(pair.layerKey, pair.domainKey), entry);
+        }
+      }
+      void DataService.savePersistedDomainMetadataSnapshotCache(snapshot).catch(() => {
+        // best-effort persistence to common container
+      });
+      const refreshedCells = queryPairs.reduce((count, pair) => {
+        const key = makeSnapshotKey(pair.layerKey, pair.domainKey);
+        return snapshot.entries?.[key] ? count + 1 : count;
+      }, 0);
+      toast.success(`Refreshed counts for ${refreshedCells}/${queryPairs.length} panel cells.`);
+    } catch (error) {
+      toast.error(`Refresh failed (${formatSystemStatusText(error) || 'Unknown error'})`);
+    } finally {
+      setIsRefreshingPanelCounts(false);
+      setRefreshingCells((previous) => {
+        const next = new Set(previous);
+        panelCellKeys.forEach((key) => next.delete(key));
+        return next;
+      });
+    }
+  }, [
+    domainRows,
+    isRefreshingPanelCounts,
+    isResettingAllLists,
+    isResettingLists,
+    layerColumns,
+    queryClient,
+    queryPairs,
+    snapshotQueryKey
+  ]);
+
+  const confirmResetAllPanelLists = useCallback(async () => {
+    if (queryPairs.length === 0 || isRefreshingPanelCounts || isResettingAllLists || isResettingLists) {
+      return;
+    }
+
+    setIsResettingAllLists(true);
+    try {
+      const resetResults = await Promise.allSettled(
+        queryPairs.map((pair) =>
+          DataService.resetDomainLists({
+            layer: pair.layerKey,
+            domain: pair.domainKey,
+            confirm: true
+          })
+        )
+      );
+      let successfulResets = 0;
+      let failedResets = 0;
+      let totalFilesReset = 0;
+      let firstFailureMessage = '';
+      for (const result of resetResults) {
+        if (result.status === 'fulfilled') {
+          successfulResets += 1;
+          totalFilesReset += result.value.resetCount;
+          continue;
+        }
+        failedResets += 1;
+        if (!firstFailureMessage) {
+          firstFailureMessage = formatSystemStatusText(result.reason) || 'Unknown error';
+        }
+      }
+
+      if (successfulResets > 0) {
+        toast.success(
+          `Reset ${totalFilesReset} list file(s) across ${successfulResets}/${queryPairs.length} panel cells.`
+        );
+        void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+      }
+      if (failedResets > 0) {
+        toast.error(`Failed to reset ${failedResets} panel cells (first: ${firstFailureMessage})`);
+      }
+    } finally {
+      setIsResettingAllLists(false);
+      setIsResetAllDialogOpen(false);
+    }
+  }, [isRefreshingPanelCounts, isResettingAllLists, isResettingLists, queryClient, queryPairs]);
+
   return (
     <Card className="h-full">
       <AlertDialog
@@ -455,7 +561,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
             >
               {isResettingLists ? (
                 <span className="inline-flex items-center gap-2">
-                  <RotateCcw className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                   Resetting...
                 </span>
               ) : (
@@ -466,8 +572,44 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog
+        open={isResetAllDialogOpen}
+        onOpenChange={(open) => (!isResettingAllLists ? setIsResetAllDialogOpen(open) : undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Confirm panel-wide list reset
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will clear both <strong>whitelist.csv</strong> and <strong>blacklist.csv</strong>{' '}
+              for all <strong>{queryPairs.length}</strong> configured layer/domain cells in this
+              panel.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isResettingAllLists}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmResetAllPanelLists()}
+              disabled={isResettingAllLists}
+            >
+              {isResettingAllLists ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Resetting all...
+                </span>
+              ) : (
+                'Reset All Lists'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <CardHeader className="gap-3">
-        <div className="min-w-0">
+        <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-2">
             <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -477,6 +619,59 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
               </p>
             </div>
           </div>
+          {queryPairs.length > 0 ? (
+            <div className="inline-flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-full text-mcm-walnut/65 hover:text-mcm-walnut"
+                    onClick={() => void refreshAllPanelCounts()}
+                    disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
+                    aria-label="Refresh counts for the entire panel"
+                  >
+                    {isRefreshingPanelCounts ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {isRefreshingPanelCounts
+                    ? 'Refreshing counts for the entire panel...'
+                    : 'Refresh counts for the entire panel'}
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-full text-rose-700/70 hover:bg-rose-500/10 hover:text-rose-800"
+                    onClick={() => setIsResetAllDialogOpen(true)}
+                    disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
+                    aria-label="Reset lists for the entire panel"
+                  >
+                    {isResettingAllLists ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {isResettingAllLists
+                    ? 'Resetting lists for the entire panel...'
+                    : 'Reset lists for the entire panel'}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : null}
         </div>
       </CardHeader>
 
@@ -555,7 +750,9 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                   size="icon"
                                   className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
                                   onClick={() => void handleCellRefresh(layerColumn.key, row.key)}
-                                  disabled={isCellBusy}
+                                  disabled={
+                                    isCellBusy || isRefreshingPanelCounts || isResettingAllLists
+                                  }
                                   aria-label={`Refresh ${layerColumn.label} ${row.label} lineage`}
                                 >
                                   {isCellBusy ? (
@@ -577,7 +774,7 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
+                                  className="h-6 w-6 shrink-0 rounded-full text-rose-700/70 hover:bg-rose-500/10 hover:text-rose-800"
                                   onClick={() =>
                                     setListResetTarget({
                                       layerKey: layerColumn.key,
@@ -586,13 +783,18 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                                       domainLabel: row.label
                                     })
                                   }
-                                  disabled={isCellBusy || isResettingLists}
+                                  disabled={
+                                    isCellBusy ||
+                                    isResettingLists ||
+                                    isRefreshingPanelCounts ||
+                                    isResettingAllLists
+                                  }
                                   aria-label={`Reset ${layerColumn.label} ${row.label} whitelist and blacklist`}
                                 >
                                   {isResettingThisCell ? (
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                   ) : (
-                                    <RotateCcw className="h-3.5 w-3.5" />
+                                    <Trash2 className="h-3.5 w-3.5" />
                                   )}
                                 </Button>
                               </TooltipTrigger>
