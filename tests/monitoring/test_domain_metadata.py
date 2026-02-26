@@ -348,3 +348,184 @@ def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) 
         "valuation": 1,
     }
 
+
+def test_collect_domain_metadata_uses_file_count_for_bronze_market_symbols(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return [
+                _Blob("market-data/AAPL.csv", 10),
+                _Blob("market-data/MSFT.csv", 11),
+                _Blob("market-data/whitelist.csv", 2),
+                _Blob("market-data/blacklist.csv", 2),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, path: str):
+            if path.endswith("whitelist.csv"):
+                return b"Symbol\n"
+            if path.endswith("blacklist.csv"):
+                return b"Symbol\nZZZZ\n"
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_BRONZE", "bronze-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = collect_domain_metadata(layer="bronze", domain="market")
+
+    assert payload["layer"] == "bronze"
+    assert payload["domain"] == "market"
+    assert payload["type"] == "blob"
+    assert payload["fileCount"] == 4
+    assert payload["symbolCount"] == 2
+    assert payload["blacklistedSymbolCount"] == 1
+
+
+def test_collect_domain_metadata_uses_file_count_for_bronze_price_target_symbols(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "price-target-data/"
+            return [
+                _Blob("price-target-data/AAPL.parquet", 10),
+                _Blob("price-target-data/MSFT.parquet", 11),
+                _Blob("price-target-data/whitelist.csv", 2),
+                _Blob("price-target-data/blacklist.csv", 2),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, path: str):
+            if path.endswith("whitelist.csv"):
+                return b"Symbol\n"
+            if path.endswith("blacklist.csv"):
+                return b"Symbol\nZZZZ\n"
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_BRONZE", "bronze-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = collect_domain_metadata(layer="bronze", domain="price-target")
+
+    assert payload["layer"] == "bronze"
+    assert payload["domain"] == "price-target"
+    assert payload["type"] == "blob"
+    assert payload["fileCount"] == 4
+    assert payload["symbolCount"] == 2
+    assert payload["blacklistedSymbolCount"] == 1
+
+
+def test_collect_domain_metadata_uses_file_count_for_bronze_earnings_symbols(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "earnings-data/"
+            return [
+                _Blob("earnings-data/AAPL.json", 10),
+                _Blob("earnings-data/MSFT.json", 11),
+                _Blob("earnings-data/whitelist.csv", 2),
+                _Blob("earnings-data/blacklist.csv", 2),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, path: str):
+            if path.endswith("whitelist.csv"):
+                # Ensure whitelist size does not override file-based symbol count.
+                return b"Symbol\nAAPL\nMSFT\nNVDA\n"
+            if path.endswith("blacklist.csv"):
+                return b"Symbol\nZZZZ\n"
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_BRONZE", "bronze-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = collect_domain_metadata(layer="bronze", domain="earnings")
+
+    assert payload["layer"] == "bronze"
+    assert payload["domain"] == "earnings"
+    assert payload["type"] == "blob"
+    assert payload["fileCount"] == 4
+    assert payload["symbolCount"] == 2
+    assert payload["blacklistedSymbolCount"] == 1
+
+
+def test_collect_domain_metadata_uses_listing_count_for_bronze_finance_symbols(monkeypatch) -> None:
+    class _Blob:
+        def __init__(self, name: str, size: int) -> None:
+            self.name = name
+            self.size = size
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "finance-data/"
+            return [
+                _Blob("finance-data/balance_sheet/AAPL_quarterly_balance-sheet.json", 10),
+                _Blob("finance-data/income_statement/AAPL_quarterly_financials.json", 11),
+                _Blob("finance-data/cash_flow/MSFT_quarterly_cash-flow.json", 12),
+                _Blob("finance-data/valuation/MSFT_quarterly_valuation_measures.json", 13),
+                _Blob("finance-data/whitelist.csv", 2),
+                _Blob("finance-data/blacklist.csv", 2),
+            ]
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, path: str):
+            if path.endswith("whitelist.csv"):
+                return b"Symbol\n"
+            if path.endswith("blacklist.csv"):
+                return b"Symbol\nZZZZ\n"
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_BRONZE", "bronze-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = collect_domain_metadata(layer="bronze", domain="finance")
+
+    assert payload["layer"] == "bronze"
+    assert payload["domain"] == "finance"
+    assert payload["type"] == "blob"
+    assert payload["fileCount"] == 6
+    assert payload["symbolCount"] == 2
+    assert payload["financeSubfolderSymbolCounts"] == {
+        "balance_sheet": 1,
+        "income_statement": 1,
+        "cash_flow": 1,
+        "valuation": 1,
+    }
+    assert payload["blacklistedSymbolCount"] == 1
+

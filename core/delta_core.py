@@ -404,6 +404,20 @@ def get_delta_schema_columns(container: str, path: str) -> Optional[List[str]]:
         logger.warning(f"Failed to resolve Delta schema for {path}: {exc}")
         return None
 
+
+def _is_missing_delta_table_error(exc: Exception) -> bool:
+    text = str(exc).strip().lower()
+    markers = (
+        "no files in log segment",
+        "not a delta table",
+        "table not found",
+        "path not found",
+        "resource not found",
+        "blob not found",
+        "404",
+    )
+    return any(marker in text for marker in markers)
+
 def store_delta(
     df: pd.DataFrame, 
     container: str, 
@@ -461,9 +475,10 @@ def load_delta(
         dt = DeltaTable(uri, version=version, storage_options=opts)
         return dt.to_pandas(columns=columns, filters=filters)
     except Exception as e:
-        # Check for specific "Not a Delta table" or "Not found" errors if possible
-        # For now, log warning and return None to mimic load_parquet behavior
-        logger.warning(f"Failed to load Delta table {path}: {e}")
+        if _is_missing_delta_table_error(e):
+            logger.info(f"Delta table not found for {path}; returning empty.")
+        else:
+            logger.warning(f"Failed to load Delta table {path}: {e}")
         return None
 
 def get_delta_last_commit(container: str, path: str) -> Optional[float]:
@@ -491,7 +506,10 @@ def get_delta_last_commit(container: str, path: str) -> Optional[float]:
                 return ts / 1000.0 # Convert to seconds for standard unix time
         return None
     except Exception as e:
-        logger.warning(f"Failed to get Delta history for {path}: {e}")
+        if _is_missing_delta_table_error(e):
+            logger.info(f"Delta history not found for {path}; treating as missing source table.")
+        else:
+            logger.warning(f"Failed to get Delta history for {path}: {e}")
         return None
 
 

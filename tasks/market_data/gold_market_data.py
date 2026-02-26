@@ -177,6 +177,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = add_candlestick_patterns(out)
     out = add_heikin_ashi_and_ichimoku(out)
 
+    # Internal helper columns (prefixed with "_") are implementation detail only.
+    helper_cols = [col for col in out.columns if str(col).startswith("_")]
+    if helper_cols:
+        out = out.drop(columns=helper_cols, errors="ignore")
+
     out = out.replace([np.inf, -np.inf], np.nan)
     return out
 
@@ -225,7 +230,13 @@ def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict
     df_features = normalize_columns_to_snake_case(df_features)
 
     try:
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
+        delta_core.store_delta(
+            df_features,
+            gold_container,
+            gold_path,
+            mode="overwrite",
+            schema_mode="overwrite",
+        )
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
                 gold_container,
@@ -313,19 +324,22 @@ def main() -> int:
     watermarks_dirty = False
 
     tasks = []
-    commit_map: Dict[str, float | None] = {}
+    commit_map: Dict[str, float] = {}
     skipped_unchanged = 0
+    skipped_missing_source = 0
     for ticker in job_cfg.tickers:
         raw_path = DataPaths.get_market_data_path(ticker)
         gold_path = DataPaths.get_gold_features_path(ticker)
         silver_commit = delta_core.get_delta_last_commit(job_cfg.silver_container, raw_path)
+        if silver_commit is None:
+            skipped_missing_source += 1
+            continue
         commit_map[ticker] = silver_commit
 
-        if silver_commit is not None:
-            prior = watermarks.get(ticker, {})
-            if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
-                skipped_unchanged += 1
-                continue
+        prior = watermarks.get(ticker, {})
+        if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
+            skipped_unchanged += 1
+            continue
 
         tasks.append((ticker, raw_path, gold_path, job_cfg.silver_container, job_cfg.gold_container, backfill_start_iso))
 
@@ -347,6 +361,8 @@ def main() -> int:
             status = result.get("status")
             if status == "ok":
                 mdc.write_line(f"[OK] {ticker}: {result.get('rows')} rows -> {result.get('gold_path')}")
+            elif status == "skipped_no_data":
+                mdc.write_line(f"[{status}] {ticker}")
             else:
                 mdc.write_warning(f"[{status}] {ticker}: {result.get('error') or ''}".strip())
             results.append(result)
@@ -356,7 +372,7 @@ def main() -> int:
     failed = len(results) - ok - skipped
     mdc.write_line(
         f"Feature engineering complete: ok={ok}, skipped_no_data={skipped}, "
-        f"skipped_unchanged={skipped_unchanged}, failed={failed}"
+        f"skipped_unchanged={skipped_unchanged}, skipped_missing_source={skipped_missing_source}, failed={failed}"
     )
     for result in results:
         if result.get("status") != "ok":

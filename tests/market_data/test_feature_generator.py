@@ -87,6 +87,16 @@ def test_compute_features_basic_sanity_on_monotonic_series():
     assert float(last["volume_pct_rank_252d"]) > 0.99
 
 
+def test_compute_features_does_not_emit_internal_helper_columns():
+    df = _make_market_df(300)
+    out = compute_features(df)
+
+    assert "_eq_tol" not in out.columns
+    assert "_gap_tol" not in out.columns
+    assert "eq_tol" not in out.columns
+    assert "gap_tol" not in out.columns
+
+
 def test_compute_features_requires_expected_columns():
     with pytest.raises(ValueError, match="Missing required columns"):
         compute_features(pd.DataFrame({"Date": ["2020-01-01"], "Close": [1.0]}))

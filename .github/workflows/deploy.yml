@@ -483,22 +483,22 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Ensure Azure Container Apps CLI (prefer built-in)
+      - name: Ensure Azure Container Apps CLI (built-in only)
         run: |
           set -euo pipefail
 
-          # Prefer the built-in `az containerapp ...` commands when available. The `containerapp`
-          # extension can override built-in behavior (and has caused identity/YAML issues in the
-          # past), so remove it first. If this runner's Azure CLI is too old, fall back to
-          # installing the extension.
+          # Enforce deterministic toolchain behavior: prefer the built-in `az containerapp`
+          # commands from the pinned runner image and avoid dynamic extension upgrades.
           az extension remove --name containerapp --only-show-errors > /dev/null 2>&1 || true
 
           if ! az containerapp -h > /dev/null 2>&1; then
-            az extension add --name containerapp --upgrade --only-show-errors
+            echo "::error::Runner is missing built-in 'az containerapp' commands. Use ubuntu-22.04 with a compatible Azure CLI."
+            exit 1
           fi
 
-          az version --query '"azure-cli"' -o tsv
-          az extension show --name containerapp --query version -o tsv 2>/dev/null || echo "containerapp extension: not installed"
+          az_cli_version="$(az version --query '"azure-cli"' -o tsv | tr -d '\r')"
+          echo "azure-cli version: ${az_cli_version}"
+          echo "containerapp extension: not installed"
 
       - name: Ensure ACR Pull Identity Exists (User-Assigned MI)
         run: |

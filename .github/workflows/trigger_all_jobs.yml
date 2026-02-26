@@ -49,7 +49,7 @@ env:
 
 jobs:
   trigger-job:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Azure login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2

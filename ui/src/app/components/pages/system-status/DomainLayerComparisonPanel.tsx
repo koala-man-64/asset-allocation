@@ -1,8 +1,32 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, GitCompareArrows, Info, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  CirclePause,
+  CirclePlay,
+  EllipsisVertical,
+  ExternalLink,
+  Eye,
+  FolderOpen,
+  GitCompareArrows,
+  Loader2,
+  Play,
+  RefreshCw,
+  ScrollText,
+  Square,
+  Trash2
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/app/components/ui/dropdown-menu';
 import {
   Table,
   TableBody,
@@ -31,14 +55,26 @@ import {
   AlertDialogTitle
 } from '@/app/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import { DomainListViewerSheet, type DomainListViewerTarget } from './DomainListViewerSheet';
+import { JobKillSwitchInline, type ManagedContainerJob } from './JobKillSwitchPanel';
+import { useJobSuspend } from '@/hooks/useJobSuspend';
+import { useJobTrigger } from '@/hooks/useJobTrigger';
+import {
+  formatSchedule,
+  formatTimeAgo,
+  getStatusConfig,
+  getAzureJobExecutionsUrl,
+  normalizeAzureJobName,
+  normalizeAzurePortalUrl
+} from './SystemStatusHelpers';
+import type { DataDomain, JobRun } from '@/types/strategy';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
-const MATRIX_HEAD_CLASS =
-  'min-w-[190px] border-b border-mcm-walnut/25 bg-mcm-cream/55';
-const MATRIX_BODY_CELL_CLASS =
-  'align-top border-0 border-b border-mcm-walnut/20 first:rounded-none last:rounded-none first:border-l-0 last:border-r-0';
+const ACTION_LAYER_PRIORITY = ['gold', 'silver', 'bronze', 'platinum'] as const;
 const DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY = 'asset-allocation.domain-metadata-snapshot.v1';
+const PURGE_POLL_INTERVAL_MS = 1000;
+const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
 
 type LayerColumn = {
   key: LayerKey;
@@ -52,6 +88,25 @@ const FINANCE_SUBFOLDER_ITEMS = [
   { key: 'cash_flow', label: 'Cash Flow' },
   { key: 'valuation', label: 'Valuation' }
 ] as const;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const runStartEpoch = (raw?: string | null): number => {
+  const value = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+};
+
+function extractAzureJobName(jobUrl?: string | null): string | null {
+  const normalized = normalizeAzurePortalUrl(jobUrl);
+  if (!normalized) return null;
+  const match = normalized.match(/\/jobs\/([^/?#]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
 
 function toLayerKey(value: string): LayerKey | null {
   const normalized = normalizeLayerKey(value);
@@ -119,48 +174,10 @@ function formatInt(value: number | null | undefined): string {
   return numberFormatter.format(value);
 }
 
-function normalizeDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    const raw = String(value).trim();
-    return raw ? raw.slice(0, 10) : null;
-  }
-  return parsed.toISOString().slice(0, 10);
-}
-
-function formatDateRange(metadata: DomainMetadata | undefined): string {
-  if (!metadata?.dateRange) return 'N/A';
-  const min = normalizeDate(metadata.dateRange.min);
-  const max = normalizeDate(metadata.dateRange.max);
-  if (!min && !max) return 'N/A';
-  return `${min || 'N/A'} -> ${max || 'N/A'}`;
-}
-
-function dateRangeUnavailableReason(metadata: DomainMetadata | undefined): string | null {
-  if (!metadata) {
-    return null;
-  }
-
-  if (metadata.dateRange && (normalizeDate(metadata.dateRange.min) || normalizeDate(metadata.dateRange.max))) {
-    return null;
-  }
-
-  if (metadata.type === 'blob') {
-    return 'Date range is unavailable for blob-backed domains.';
-  }
-
-  if (metadata.type === 'delta') {
-    if ((metadata.warnings || []).some((warning) => warning.toLowerCase().includes('date range'))) {
-      return 'Date range is unavailable or could not be parsed for this delta domain.';
-    }
-    return 'Date range was not detected for this delta domain.';
-  }
-
-  return 'Date range is not available for this metadata source.';
-}
-
-function compareSymbols(current: DomainMetadata, previous: DomainMetadata): {
+function compareSymbols(
+  current: DomainMetadata,
+  previous: DomainMetadata
+): {
   text: string;
   className: string;
 } {
@@ -180,30 +197,68 @@ function compareSymbols(current: DomainMetadata, previous: DomainMetadata): {
   };
 }
 
-function compareDateRanges(current: DomainMetadata, previous: DomainMetadata): {
-  text: string;
-  className: string;
-} {
-  const currentMin = normalizeDate(current.dateRange?.min);
-  const currentMax = normalizeDate(current.dateRange?.max);
-  const previousMin = normalizeDate(previous.dateRange?.min);
-  const previousMax = normalizeDate(previous.dateRange?.max);
-
-  if (!currentMin || !currentMax || !previousMin || !previousMax) {
-    return { text: 'range n/a', className: 'text-mcm-walnut/50' };
+function summarizeBlacklistCount(metadata: DomainMetadata): { text: string; className: string } {
+  if (!hasFiniteNumber(metadata.blacklistedSymbolCount)) {
+    return { text: 'blacklist n/a', className: 'text-mcm-walnut/50' };
   }
-
-  const isSameRange = currentMin === previousMin && currentMax === previousMax;
+  if (metadata.blacklistedSymbolCount === 0) {
+    return { text: '0 blacklisted', className: 'text-mcm-teal' };
+  }
   return {
-    text: isSameRange ? 'range match' : 'range shifted',
-    className: isSameRange ? 'text-mcm-teal' : 'text-mcm-mustard'
+    text: `${numberFormatter.format(metadata.blacklistedSymbolCount)} blacklisted`,
+    className: 'text-mcm-walnut/70'
   };
 }
 
-export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLayer[] }) {
+function toDataStatusLabel(statusKey: string): string {
+  const key = String(statusKey || '')
+    .trim()
+    .toLowerCase();
+  if (key === 'healthy' || key === 'success') return 'OK';
+  if (key === 'stale' || key === 'warning' || key === 'degraded') return 'STALE';
+  if (key === 'error' || key === 'failed' || key === 'critical') return 'ERR';
+  if (key === 'pending') return 'PENDING';
+  return key.toUpperCase();
+}
+
+interface DomainLayerComparisonPanelProps {
+  overall?: string;
+  dataLayers: DataLayer[];
+  recentJobs?: JobRun[];
+  jobStates?: Record<string, string>;
+  managedContainerJobs?: ManagedContainerJob[];
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  isFetching?: boolean;
+}
+
+export function DomainLayerComparisonPanel({
+  overall = 'unknown',
+  dataLayers,
+  recentJobs = [],
+  jobStates,
+  managedContainerJobs = [],
+  onRefresh,
+  isRefreshing,
+  isFetching
+}: DomainLayerComparisonPanelProps) {
   const queryClient = useQueryClient();
+  const { triggeringJob, triggerJob } = useJobTrigger();
+  const { jobControl, setJobSuspended } = useJobSuspend();
   const [refreshingCells, setRefreshingCells] = useState<Set<string>>(new Set());
   const [isRefreshingPanelCounts, setIsRefreshingPanelCounts] = useState(false);
+  const [purgeTarget, setPurgeTarget] = useState<{
+    layerKey: LayerKey;
+    layerLabel: string;
+    domainKey: string;
+    domainLabel: string;
+  } | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
+  const [activePurgeTarget, setActivePurgeTarget] = useState<{
+    layerKey: LayerKey;
+    domainKey: string;
+  } | null>(null);
+  const [listViewerTarget, setListViewerTarget] = useState<DomainListViewerTarget | null>(null);
   const [listResetTarget, setListResetTarget] = useState<{
     layerKey: LayerKey;
     layerLabel: string;
@@ -214,6 +269,63 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
   const [isResettingLists, setIsResettingLists] = useState(false);
   const [isResettingAllLists, setIsResettingAllLists] = useState(false);
   const [resettingCellKey, setResettingCellKey] = useState<string | null>(null);
+  const [expandedRowKey, setExpandedRowKey] = useState<string | null>(null);
+  const [clockNow, setClockNow] = useState(() => new Date());
+  const overallStatusConfig = getStatusConfig(overall);
+  const overallAnim =
+    overallStatusConfig.animation === 'spin'
+      ? 'animate-spin'
+      : overallStatusConfig.animation === 'pulse'
+        ? 'animate-pulse'
+        : '';
+  const overallLabel = String(overall || '')
+    .trim()
+    .toUpperCase();
+
+  useEffect(() => {
+    const handle = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(handle);
+  }, []);
+
+  const centralClock = (() => {
+    const now = clockNow;
+
+    const time = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).format(now);
+
+    const tzRaw =
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Chicago',
+        timeZoneName: 'short'
+      })
+        .formatToParts(now)
+        .find((part) => part.type === 'timeZoneName')?.value ?? '';
+
+    const tz = (() => {
+      const value = String(tzRaw || '').trim();
+      if (!value) return 'CST';
+      if (value === 'CST' || value === 'CDT') return value;
+      if (/central.*daylight/i.test(value)) return 'CDT';
+      if (/central.*standard/i.test(value)) return 'CST';
+
+      const offsetMatch = value.match(/(?:GMT|UTC)([+-]\d{1,2})(?::?(\d{2}))?/i);
+      if (!offsetMatch) return 'CST';
+
+      const hours = Number.parseInt(offsetMatch[1] || '0', 10);
+      const minutes = Number.parseInt(offsetMatch[2] || '0', 10);
+      const total = hours * 60 + (hours < 0 ? -minutes : minutes);
+      if (total === -360) return 'CST';
+      if (total === -300) return 'CDT';
+      return 'CST';
+    })();
+
+    return { time, tz };
+  })();
 
   const layersByKey = useMemo(() => {
     const index = new Map<LayerKey, DataLayer>();
@@ -235,11 +347,27 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     return columns;
   }, [layersByKey]);
 
-  const { domainsByLayer, domainRows } = useMemo(() => {
+  const jobIndex = useMemo(() => {
+    const index = new Map<string, JobRun>();
+    for (const job of recentJobs) {
+      if (!job?.jobName) continue;
+      const key = normalizeAzureJobName(job.jobName);
+      if (!key) continue;
+      const existing = index.get(key);
+      if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
+        index.set(key, job);
+      }
+    }
+    return index;
+  }, [recentJobs]);
+
+  const { domainsByLayer, domainRows, domainConfigByLayer } = useMemo(() => {
     const matrix = new Map<string, Map<LayerKey, true>>();
+    const domainConfig = new Map<LayerKey, Map<string, DataDomain>>();
 
     for (const layerColumn of layerColumns) {
       const domains = layersByKey.get(layerColumn.key)?.domains || [];
+      const configForLayer = domainConfig.get(layerColumn.key) || new Map<string, DataDomain>();
       for (const domain of domains) {
         const domainName = String(domain?.name || '').trim();
         if (!domainName) continue;
@@ -249,14 +377,18 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
         const row = matrix.get(domainKey) || new Map<LayerKey, true>();
         row.set(layerColumn.key, true);
         matrix.set(domainKey, row);
+        if (!configForLayer.has(domainKey)) {
+          configForLayer.set(domainKey, domain);
+        }
       }
+      domainConfig.set(layerColumn.key, configForLayer);
     }
 
     const rows = getDomainOrderEntries(dataLayers).filter((entry) => {
       return matrix.has(entry.key);
     });
 
-    return { domainsByLayer: matrix, domainRows: rows };
+    return { domainsByLayer: matrix, domainRows: rows, domainConfigByLayer: domainConfig };
   }, [dataLayers, layerColumns, layersByKey]);
 
   const queryPairs = useMemo(() => {
@@ -345,6 +477,80 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     return { metadataByCell: metadata, errorByCell: errors, pendingByCell: pending };
   }, [metadataSnapshotQuery, queryClient, queryPairs, refreshingCells]);
 
+  const isAnyRefreshInProgress =
+    Boolean(isRefreshing) ||
+    Boolean(isFetching) ||
+    isRefreshingPanelCounts ||
+    metadataSnapshotQuery.isLoading ||
+    metadataSnapshotQuery.isFetching ||
+    refreshingCells.size > 0;
+
+  const filteredDomainRows = useMemo(() => {
+    return domainRows.filter((row) => Boolean(domainsByLayer.get(row.key)));
+  }, [domainRows, domainsByLayer]);
+
+  const layerAggregateStatus = useMemo(() => {
+    const byLayer = new Map<
+      LayerKey,
+      {
+        ok: number;
+        warn: number;
+        fail: number;
+      }
+    >();
+
+    for (const layerColumn of layerColumns) {
+      let ok = 0;
+      let warn = 0;
+      let fail = 0;
+
+      for (const row of filteredDomainRows) {
+        const domainsForRow = domainsByLayer.get(row.key);
+        if (!domainsForRow?.has(layerColumn.key)) continue;
+
+        const domainConfig = domainConfigByLayer.get(layerColumn.key)?.get(row.key);
+        const dataStatusKey =
+          String(domainConfig?.status || '')
+            .trim()
+            .toLowerCase() || 'pending';
+
+        const jobName =
+          String(domainConfig?.jobName || '').trim() ||
+          extractAzureJobName(domainConfig?.jobUrl) ||
+          '';
+        const jobKey = normalizeAzureJobName(jobName);
+        const run = jobKey ? jobIndex.get(jobKey) : null;
+        const runStatusKey = String(run?.status || '')
+          .trim()
+          .toLowerCase();
+        const jobStatusKey =
+          !jobName || !run
+            ? 'pending'
+            : ['running', 'failed', 'success', 'succeeded', 'error', 'pending'].includes(
+                  runStatusKey
+                )
+              ? runStatusKey
+              : 'pending';
+
+        const isCritical =
+          ['error', 'failed', 'critical'].includes(dataStatusKey) ||
+          ['error', 'failed'].includes(jobStatusKey);
+        const isWarning =
+          !isCritical &&
+          (['stale', 'warning', 'degraded', 'pending'].includes(dataStatusKey) ||
+            ['pending'].includes(jobStatusKey));
+
+        if (isCritical) fail += 1;
+        else if (isWarning) warn += 1;
+        else ok += 1;
+      }
+
+      byLayer.set(layerColumn.key, { ok, warn, fail });
+    }
+
+    return byLayer;
+  }, [domainConfigByLayer, domainsByLayer, filteredDomainRows, jobIndex, layerColumns]);
+
   const handleCellRefresh = useCallback(
     async (layerKey: LayerKey, domainKey: string) => {
       const cellKey = makeCellKey(layerKey, domainKey);
@@ -357,7 +563,9 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       });
 
       try {
-        const metadata = await DataService.getDomainMetadata(layerKey, domainKey, { refresh: true });
+        const metadata = await DataService.getDomainMetadata(layerKey, domainKey, {
+          refresh: true
+        });
         let snapshotToPersist: DomainMetadataSnapshotResponse | null = null;
         queryClient.setQueryData(queryKeys.domainMetadata(layerKey, domainKey), metadata);
         queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
@@ -401,6 +609,136 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
     [queryClient, refreshingCells, snapshotQueryKey]
   );
 
+  const clearDomainMetadataCache = useCallback(
+    async (pairs: Array<{ layerKey: LayerKey; domainKey: string }>) => {
+      if (pairs.length === 0) return;
+
+      for (const pair of pairs) {
+        queryClient.removeQueries({
+          queryKey: queryKeys.domainMetadata(pair.layerKey, pair.domainKey),
+          exact: true
+        });
+      }
+
+      let snapshotToPersist: DomainMetadataSnapshotResponse | null = null;
+      queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
+        snapshotQueryKey,
+        (previous) => {
+          const nextEntries = { ...(previous?.entries || {}) };
+          let changed = false;
+          for (const pair of pairs) {
+            const key = makeSnapshotKey(pair.layerKey, pair.domainKey);
+            if (key in nextEntries) {
+              delete nextEntries[key];
+              changed = true;
+            }
+          }
+
+          if (!changed && previous) {
+            return previous;
+          }
+
+          const nextPayload: DomainMetadataSnapshotResponse = {
+            version: previous?.version || 1,
+            updatedAt: new Date().toISOString(),
+            entries: nextEntries,
+            warnings: (previous?.warnings || []).filter(Boolean)
+          };
+          persistSnapshot(nextPayload);
+          snapshotToPersist = nextPayload;
+          return nextPayload;
+        }
+      );
+
+      if (snapshotToPersist) {
+        await DataService.savePersistedDomainMetadataSnapshotCache(snapshotToPersist).catch(() => {
+          // best-effort persistence to common container
+        });
+      }
+    },
+    [queryClient, snapshotQueryKey]
+  );
+
+  const waitForPurgeResult = useCallback(async (operationId: string) => {
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (true) {
+      let operation: unknown;
+      try {
+        operation = await DataService.getPurgeOperation(operationId);
+      } catch {
+        if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
+          throw new Error(
+            `Purge status polling failed after timeout. Check system status for progress. operationId=${operationId}`
+          );
+        }
+        const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
+        await sleep(delay);
+        attempt += 1;
+        continue;
+      }
+
+      const polledOperation = operation as {
+        status?: string;
+        result?: {
+          totalDeleted?: number;
+        };
+        error?: string;
+      };
+      if (polledOperation.status === 'succeeded') {
+        if (!polledOperation.result) {
+          throw new Error('Purge completed with no result payload.');
+        }
+        return polledOperation.result;
+      }
+      if (polledOperation.status === 'failed') {
+        throw new Error(polledOperation.error || 'Purge failed.');
+      }
+      if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
+        throw new Error(
+          `Purge is still running. Check system status for progress. operationId=${operationId}`
+        );
+      }
+      const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);
+      await sleep(delay);
+      attempt += 1;
+    }
+  }, []);
+
+  const confirmPurge = useCallback(async () => {
+    const target = purgeTarget;
+    if (!target) return;
+    setIsPurging(true);
+    setActivePurgeTarget({ layerKey: target.layerKey, domainKey: target.domainKey });
+    let operationId: string | null = null;
+    try {
+      const operation = await DataService.purgeData({
+        scope: 'layer-domain',
+        layer: target.layerKey,
+        domain: target.domainKey,
+        confirm: true
+      });
+      operationId = operation.operationId;
+      const result =
+        operation.status === 'succeeded'
+          ? operation.result
+          : await waitForPurgeResult(operation.operationId);
+      if (!result) {
+        throw new Error('Purge returned no completion result.');
+      }
+      toast.success(`Purged ${result.totalDeleted} blob(s).`);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const detail = operationId ? `operation ${operationId}: ${message}` : message;
+      toast.error(`Purge failed (${detail})`);
+    } finally {
+      setIsPurging(false);
+      setActivePurgeTarget(null);
+      setPurgeTarget(null);
+    }
+  }, [purgeTarget, queryClient, waitForPurgeResult]);
+
   const confirmDomainListReset = useCallback(async () => {
     const target = listResetTarget;
     if (!target) return;
@@ -416,6 +754,8 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       toast.success(
         `Reset ${result.resetCount} list file(s) for ${target.layerLabel} • ${target.domainLabel}.`
       );
+      await clearDomainMetadataCache([{ layerKey: target.layerKey, domainKey: target.domainKey }]);
+      await handleCellRefresh(target.layerKey, target.domainKey);
       void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
     } catch (error) {
       toast.error(`List reset failed (${formatSystemStatusText(error) || 'Unknown error'})`);
@@ -424,10 +764,15 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       setResettingCellKey(null);
       setListResetTarget(null);
     }
-  }, [listResetTarget, queryClient]);
+  }, [clearDomainMetadataCache, handleCellRefresh, listResetTarget, queryClient]);
 
   const refreshAllPanelCounts = useCallback(async () => {
-    if (queryPairs.length === 0 || isRefreshingPanelCounts || isResettingAllLists || isResettingLists) {
+    if (
+      queryPairs.length === 0 ||
+      isRefreshingPanelCounts ||
+      isResettingAllLists ||
+      isResettingLists
+    ) {
       return;
     }
 
@@ -483,7 +828,12 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
   ]);
 
   const confirmResetAllPanelLists = useCallback(async () => {
-    if (queryPairs.length === 0 || isRefreshingPanelCounts || isResettingAllLists || isResettingLists) {
+    if (
+      queryPairs.length === 0 ||
+      isRefreshingPanelCounts ||
+      isResettingAllLists ||
+      isResettingLists
+    ) {
       return;
     }
 
@@ -502,19 +852,25 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       let failedResets = 0;
       let totalFilesReset = 0;
       let firstFailureMessage = '';
-      for (const result of resetResults) {
+      const successfulPairs: Array<{ layerKey: LayerKey; domainKey: string }> = [];
+      resetResults.forEach((result, index) => {
         if (result.status === 'fulfilled') {
           successfulResets += 1;
           totalFilesReset += result.value.resetCount;
-          continue;
+          successfulPairs.push(queryPairs[index]);
+          return;
         }
         failedResets += 1;
         if (!firstFailureMessage) {
           firstFailureMessage = formatSystemStatusText(result.reason) || 'Unknown error';
         }
-      }
+      });
 
       if (successfulResets > 0) {
+        await clearDomainMetadataCache(successfulPairs);
+        await Promise.all(
+          successfulPairs.map((pair) => handleCellRefresh(pair.layerKey, pair.domainKey))
+        );
         toast.success(
           `Reset ${totalFilesReset} list file(s) across ${successfulResets}/${queryPairs.length} panel cells.`
         );
@@ -527,10 +883,68 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       setIsResettingAllLists(false);
       setIsResetAllDialogOpen(false);
     }
-  }, [isRefreshingPanelCounts, isResettingAllLists, isResettingLists, queryClient, queryPairs]);
+  }, [
+    clearDomainMetadataCache,
+    handleCellRefresh,
+    isRefreshingPanelCounts,
+    isResettingAllLists,
+    isResettingLists,
+    queryClient,
+    queryPairs
+  ]);
 
   return (
     <Card className="h-full">
+      <DomainListViewerSheet
+        target={listViewerTarget}
+        open={Boolean(listViewerTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setListViewerTarget(null);
+          }
+        }}
+      />
+
+      <AlertDialog
+        open={Boolean(purgeTarget)}
+        onOpenChange={(open) => (!open ? setPurgeTarget(null) : undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Confirm purge
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete all blobs for{' '}
+              <strong>
+                {purgeTarget
+                  ? `${purgeTarget.layerLabel} • ${purgeTarget.domainLabel}`
+                  : 'selected scope'}
+              </strong>
+              . Containers remain, but the data cannot be recovered.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPurging}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmPurge()}
+              disabled={isPurging}
+            >
+              {isPurging ? (
+                <span className="inline-flex items-center gap-2">
+                  <Trash2 className="h-4 w-4 animate-spin" />
+                  Purging...
+                </span>
+              ) : (
+                'Purge'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog
         open={Boolean(listResetTarget)}
         onOpenChange={(open) => (!open ? setListResetTarget(null) : undefined)}
@@ -609,69 +1023,123 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
       </AlertDialog>
 
       <CardHeader className="gap-3">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex min-w-0 items-start gap-2">
             <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-              <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                Compare symbol counts and date windows layer-to-layer for each domain.
-              </p>
+            <div className="flex min-w-0 flex-col gap-1">
+              <div className="inline-flex items-center gap-2">
+                <span
+                  className={`${StatusTypos.MONO} text-[10px] font-black uppercase tracking-widest text-mcm-walnut/70`}
+                >
+                  System status
+                </span>
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest"
+                  style={{
+                    backgroundColor: overallStatusConfig.bg,
+                    color: overallStatusConfig.text,
+                    borderColor: overallStatusConfig.border
+                  }}
+                >
+                  <overallStatusConfig.icon className={`h-3 w-3 ${overallAnim}`} />
+                  {overallLabel || 'UNKNOWN'}
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Layer-by-layer health, freshness, controls, and symbol coverage for each domain.
+                </p>
+              </div>
             </div>
           </div>
-          {queryPairs.length > 0 ? (
-            <div className="inline-flex items-center gap-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 rounded-full text-mcm-walnut/65 hover:text-mcm-walnut"
-                    onClick={() => void refreshAllPanelCounts()}
-                    disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
-                    aria-label="Refresh counts for the entire panel"
-                  >
-                    {isRefreshingPanelCounts ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {isRefreshingPanelCounts
-                    ? 'Refreshing counts for the entire panel...'
-                    : 'Refresh counts for the entire panel'}
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 rounded-full text-rose-700/70 hover:bg-rose-500/10 hover:text-rose-800"
-                    onClick={() => setIsResetAllDialogOpen(true)}
-                    disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
-                    aria-label="Reset lists for the entire panel"
-                  >
-                    {isResettingAllLists ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {isResettingAllLists
-                    ? 'Resetting lists for the entire panel...'
-                    : 'Reset lists for the entire panel'}
-                </TooltipContent>
-              </Tooltip>
+          <div className="flex w-full flex-wrap items-center gap-2 self-start xl:w-auto xl:justify-end">
+            <div className="inline-flex w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
+              <span className={`${StatusTypos.HEADER} text-[10px] text-mcm-olive`}>
+                UPTIME CLOCK
+              </span>
+              <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/70`}>
+                {centralClock.time} {centralClock.tz}
+              </span>
             </div>
-          ) : null}
+
+            {onRefresh ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                onClick={onRefresh}
+                disabled={!onRefresh || isAnyRefreshInProgress}
+              >
+                {isAnyRefreshInProgress ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Refreshing
+                  </span>
+                ) : (
+                  'Refresh'
+                )}
+              </Button>
+            ) : null}
+
+            {managedContainerJobs.length > 0 ? (
+              <JobKillSwitchInline jobs={managedContainerJobs} />
+            ) : null}
+
+            {queryPairs.length > 0 ? (
+              <div className="inline-flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 rounded-full text-mcm-walnut/65 hover:text-mcm-walnut"
+                      onClick={() => void refreshAllPanelCounts()}
+                      disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
+                      aria-label="Refresh counts for the entire panel"
+                    >
+                      {isRefreshingPanelCounts ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {isRefreshingPanelCounts
+                      ? 'Refreshing counts for the entire panel...'
+                      : 'Refresh counts for the entire panel'}
+                  </TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 rounded-full text-rose-700/70 hover:bg-rose-500/10 hover:text-rose-800"
+                      onClick={() => setIsResetAllDialogOpen(true)}
+                      disabled={isRefreshingPanelCounts || isResettingAllLists || isResettingLists}
+                      aria-label="Reset lists for the entire panel"
+                    >
+                      {isResettingAllLists ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {isResettingAllLists
+                      ? 'Resetting lists for the entire panel...'
+                      : 'Reset lists for the entire panel'}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
 
@@ -684,36 +1152,299 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
           <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/40 p-4 text-sm text-mcm-walnut/70">
             No domains found to compare.
           </div>
+        ) : filteredDomainRows.length === 0 ? (
+          <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/40 p-4 text-sm text-mcm-walnut/70">
+            No domains found to compare.
+          </div>
         ) : (
-          <div className="rounded-[1.2rem] border border-mcm-walnut/20 bg-mcm-cream/30 overflow-hidden">
-            <div className="overflow-x-auto">
-              <Table className="min-w-[960px] border-collapse border-spacing-y-0">
+          <div className="rounded-[1.2rem] border border-mcm-walnut/20 bg-mcm-cream/30">
+            <div className="overflow-x-auto overflow-y-visible rounded-[1.2rem] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <Table className="min-w-[1280px] border-collapse border-spacing-y-0">
                 <caption className="sr-only">
-                  Layer-by-layer domain comparison of symbol count and date ranges.
+                  Compact layer-by-layer domain coverage summary with expandable details.
                 </caption>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[180px] border-b border-mcm-walnut/25 bg-mcm-cream/55">
+                  <TableRow className="h-12">
+                    <TableHead className="sticky left-0 top-0 z-30 w-[210px] border-b border-mcm-walnut/25 bg-mcm-cream/90">
                       Domain
                     </TableHead>
-                    {layerColumns.map((layer) => (
-                      <TableHead key={layer.key} className={MATRIX_HEAD_CLASS}>
-                        <div className="flex flex-col gap-0.5">
-                          <span>{layer.label}</span>
-                          <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
-                            symbols + date range
-                          </span>
-                        </div>
-                      </TableHead>
-                    ))}
+                    {layerColumns.map((layer) => {
+                      const aggregate = layerAggregateStatus.get(layer.key);
+                      return (
+                        <TableHead
+                          key={`compact-head-${layer.key}`}
+                          className="sticky top-0 z-20 min-w-[190px] border-b border-mcm-walnut/25 bg-mcm-cream/90"
+                        >
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-[11px] font-black uppercase tracking-widest text-mcm-walnut">
+                              {layer.label}
+                            </span>
+                            {aggregate ? (
+                              <span
+                                className={`${StatusTypos.MONO} text-[9px] uppercase tracking-wider text-mcm-walnut/60`}
+                              >
+                                ok {aggregate.ok} • warn {aggregate.warn} • fail {aggregate.fail}
+                              </span>
+                            ) : null}
+                          </div>
+                        </TableHead>
+                      );
+                    })}
+                    <TableHead className="sticky top-0 z-20 min-w-[120px] border-b border-mcm-walnut/25 bg-mcm-cream/90">
+                      <span className="sr-only">Overall</span>
+                    </TableHead>
+                    <TableHead className="sticky top-0 z-20 min-w-[180px] border-b border-mcm-walnut/25 bg-mcm-cream/90 text-right">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {domainRows.map((row) => {
+                  {filteredDomainRows.map((row) => {
                     const domainsForRow = domainsByLayer.get(row.key);
-                    return (
-                      <TableRow key={row.key} className="even:[&>td]:bg-mcm-cream/20">
-                        <TableCell className={MATRIX_BODY_CELL_CLASS}>
+                    if (!domainsForRow) return null;
+                    const isExpanded = expandedRowKey === row.key;
+                    const expandedMaxHeightClass =
+                      row.key === 'finance' ? 'max-h-[320px]' : 'max-h-[240px]';
+
+                    const layerModels = layerColumns.map((layerColumn, layerIndex) => {
+                      const isConfigured = domainsForRow.has(layerColumn.key);
+                      const key = makeCellKey(layerColumn.key, row.key);
+                      const metadata = metadataByCell.get(key);
+                      const error = errorByCell.get(key);
+                      const isPending = pendingByCell.has(key);
+                      const isCellRefreshing = refreshingCells.has(key);
+                      const isCellBusy = isCellRefreshing || isPending;
+                      const isResettingThisCell = resettingCellKey === key && isResettingLists;
+
+                      const domainConfig = isConfigured
+                        ? domainConfigByLayer.get(layerColumn.key)?.get(row.key)
+                        : undefined;
+                      const baseFolderUrl = normalizeAzurePortalUrl(domainConfig?.portalUrl) || '';
+                      const jobName =
+                        String(domainConfig?.jobName || '').trim() ||
+                        extractAzureJobName(domainConfig?.jobUrl) ||
+                        '';
+                      const jobKey = normalizeAzureJobName(jobName);
+                      const run = jobKey ? jobIndex.get(jobKey) : null;
+                      const lastStartDisplay = (() => {
+                        if (!jobName) return 'N/A';
+                        if (!run?.startTime) return 'NO RUN';
+                        return formatTimeAgo(run.startTime);
+                      })();
+                      const scheduleRaw = String(
+                        domainConfig?.cron ||
+                          domainConfig?.frequency ||
+                          layersByKey.get(layerColumn.key)?.refreshFrequency ||
+                          ''
+                      ).trim();
+                      const scheduleDisplay = scheduleRaw ? formatSchedule(scheduleRaw) : '-';
+
+                      const dataStatusKey =
+                        String(domainConfig?.status || '')
+                          .trim()
+                          .toLowerCase() || 'pending';
+                      const dataConfig = getStatusConfig(dataStatusKey);
+                      const dataLabel = toDataStatusLabel(dataStatusKey);
+
+                      const jobStatusKey = (() => {
+                        const statusKey = String(run?.status || '')
+                          .trim()
+                          .toLowerCase();
+                        if (!jobName) return 'pending';
+                        if (!run) return 'pending';
+                        if (
+                          statusKey === 'running' ||
+                          statusKey === 'failed' ||
+                          statusKey === 'success' ||
+                          statusKey === 'succeeded' ||
+                          statusKey === 'error' ||
+                          statusKey === 'pending'
+                        ) {
+                          return statusKey;
+                        }
+                        return 'pending';
+                      })();
+                      const jobConfig = getStatusConfig(jobStatusKey);
+                      const jobLabel = (() => {
+                        if (!jobName) return 'N/A';
+                        if (!run) return 'NO RUN';
+                        const statusKey = String(jobStatusKey || '').toLowerCase();
+                        if (statusKey === 'success' || statusKey === 'succeeded') return 'OK';
+                        if (statusKey === 'failed' || statusKey === 'error') return 'FAIL';
+                        if (statusKey === 'running') return 'RUN';
+                        if (statusKey === 'pending') return 'PENDING';
+                        return statusKey.toUpperCase();
+                      })();
+
+                      const actionJobName = String(run?.jobName || jobName).trim();
+                      const runningState = jobKey ? jobStates?.[jobKey] : undefined;
+                      const isSuspended =
+                        String(runningState || '')
+                          .trim()
+                          .toLowerCase() === 'suspended';
+                      const isRunning =
+                        String(run?.status || '')
+                          .trim()
+                          .toLowerCase() === 'running' ||
+                        String(runningState || '')
+                          .trim()
+                          .toLowerCase()
+                          .includes('running');
+                      const isControlling =
+                        Boolean(actionJobName) && jobControl?.jobName === actionJobName;
+                      const isTriggeringThisJob =
+                        Boolean(actionJobName) && triggeringJob === actionJobName;
+                      const isJobControlBlocked =
+                        Boolean(triggeringJob) ||
+                        Boolean(jobControl) ||
+                        isCellBusy ||
+                        isResettingLists ||
+                        isResettingAllLists ||
+                        isRefreshingPanelCounts;
+
+                      const executionsUrl = getAzureJobExecutionsUrl(domainConfig?.jobUrl);
+                      const jobPortalUrl = normalizeAzurePortalUrl(domainConfig?.jobUrl);
+                      const updatedAgo = domainConfig?.lastUpdated
+                        ? formatTimeAgo(domainConfig.lastUpdated)
+                        : '--';
+                      const updatedLabel = domainConfig?.lastUpdated
+                        ? `${updatedAgo} ago`
+                        : 'unknown';
+                      const isPurgingThisTarget =
+                        isPurging &&
+                        activePurgeTarget?.layerKey === layerColumn.key &&
+                        activePurgeTarget?.domainKey === row.key;
+
+                      let previousMetadata: DomainMetadata | null = null;
+                      let previousLabel = '';
+                      for (let index = layerIndex - 1; index >= 0; index -= 1) {
+                        const previousLayer = layerColumns[index];
+                        const previousCellKey = makeCellKey(previousLayer.key, row.key);
+                        const candidate = metadataByCell.get(previousCellKey);
+                        if (!candidate) continue;
+                        previousMetadata = candidate;
+                        previousLabel = previousLayer.label;
+                        break;
+                      }
+
+                      const symbolComparison =
+                        metadata && previousMetadata
+                          ? compareSymbols(metadata, previousMetadata)
+                          : null;
+                      const blacklistSummary = metadata
+                        ? summarizeBlacklistCount(metadata)
+                        : { text: 'blacklist n/a', className: 'text-mcm-walnut/50' };
+                      const financeSubfolderCounts =
+                        row.key === 'finance' && metadata
+                          ? FINANCE_SUBFOLDER_ITEMS.map((item) => ({
+                              ...item,
+                              count: metadata.financeSubfolderSymbolCounts?.[item.key]
+                            }))
+                          : [];
+                      const showFinanceSubfolders =
+                        financeSubfolderCounts.length > 0 &&
+                        financeSubfolderCounts.some((item) => hasFiniteNumber(item.count));
+
+                      return {
+                        key,
+                        layerColumn,
+                        layerIndex,
+                        isConfigured,
+                        metadata,
+                        error,
+                        isPending,
+                        isCellRefreshing,
+                        isCellBusy,
+                        isResettingThisCell,
+                        domainConfig,
+                        baseFolderUrl,
+                        jobName,
+                        run,
+                        dataStatusKey,
+                        dataConfig,
+                        dataLabel,
+                        jobStatusKey,
+                        jobConfig,
+                        jobLabel,
+                        lastStartDisplay,
+                        scheduleRaw,
+                        scheduleDisplay,
+                        actionJobName,
+                        isSuspended,
+                        isRunning,
+                        isControlling,
+                        isTriggeringThisJob,
+                        isJobControlBlocked,
+                        executionsUrl,
+                        jobPortalUrl,
+                        updatedLabel,
+                        isPurgingThisTarget,
+                        symbolComparison,
+                        previousLabel,
+                        blacklistSummary,
+                        financeSubfolderCounts,
+                        showFinanceSubfolders
+                      };
+                    });
+
+                    const configuredModels = layerModels.filter((model) => model.isConfigured);
+                    const preferredModel =
+                      ACTION_LAYER_PRIORITY.reduce<(typeof configuredModels)[number] | null>(
+                        (current, layerKey) => {
+                          if (current) return current;
+                          return (
+                            configuredModels.find(
+                              (model) =>
+                                model.layerColumn.key === layerKey && Boolean(model.actionJobName)
+                            ) || null
+                          );
+                        },
+                        null
+                      ) ||
+                      configuredModels.find((model) => Boolean(model.actionJobName)) ||
+                      configuredModels[0] ||
+                      null;
+
+                    const hasCritical = configuredModels.some(
+                      (model) =>
+                        Boolean(model.error) ||
+                        ['error', 'failed', 'critical'].includes(model.dataStatusKey) ||
+                        ['error', 'failed'].includes(model.jobStatusKey)
+                    );
+                    const hasWarning =
+                      !hasCritical &&
+                      configuredModels.some(
+                        (model) =>
+                          ['stale', 'warning', 'degraded', 'pending'].includes(
+                            model.dataStatusKey
+                          ) ||
+                          ['pending'].includes(model.jobStatusKey) ||
+                          model.jobLabel === 'NO RUN'
+                      );
+                    const rowOverallKey = hasCritical
+                      ? 'critical'
+                      : hasWarning
+                        ? 'warning'
+                        : 'healthy';
+                    const rowOverallLabel = hasCritical ? 'FAIL' : hasWarning ? 'WARN' : 'OK';
+                    const rowOverallConfig = getStatusConfig(rowOverallKey);
+                    const RowOverallIcon = rowOverallConfig.icon;
+
+                    const refreshDomainRow = async () => {
+                      if (isRefreshingPanelCounts || isResettingAllLists || isResettingLists)
+                        return;
+                      const refreshTargets = configuredModels.map((model) =>
+                        handleCellRefresh(model.layerColumn.key, row.key)
+                      );
+                      await Promise.allSettled(refreshTargets);
+                    };
+
+                    return [
+                      <TableRow
+                        key={`summary-${row.key}`}
+                        className="h-[52px] even:[&>td]:bg-mcm-cream/20"
+                      >
+                        <TableCell className="sticky left-0 z-10 border-b border-mcm-walnut/20 bg-mcm-paper/95 py-1.5">
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold text-mcm-walnut">{row.label}</span>
                             <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
@@ -721,269 +1452,549 @@ export function DomainLayerComparisonPanel({ dataLayers }: { dataLayers: DataLay
                             </span>
                           </div>
                         </TableCell>
-                        {layerColumns.map((layerColumn, layerIndex) => {
-                          const isConfigured = Boolean(domainsForRow?.has(layerColumn.key));
-                          if (!isConfigured) {
+
+                        {layerModels.map((model) => {
+                          if (!model.isConfigured) {
                             return (
                               <TableCell
-                                key={`${row.key}-${layerColumn.key}`}
-                                className={`${StatusTypos.MONO} ${MATRIX_BODY_CELL_CLASS} text-[11px] text-mcm-walnut/45`}
+                                key={`summary-${row.key}-${model.layerColumn.key}`}
+                                className={`${StatusTypos.MONO} border-b border-mcm-walnut/20 py-1.5 text-center text-[12px] text-mcm-walnut/45`}
                               >
-                                Not configured
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex cursor-default items-center justify-center">
+                                      —
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    {model.layerColumn.label} is not configured for {row.label}
+                                  </TooltipContent>
+                                </Tooltip>
                               </TableCell>
                             );
                           }
 
-                          const key = makeCellKey(layerColumn.key, row.key);
-                          const metadata = metadataByCell.get(key);
-                          const error = errorByCell.get(key);
-                          const isPending = pendingByCell.has(key);
-                          const isCellRefreshing = refreshingCells.has(key);
-                          const isCellBusy = isCellRefreshing || isPending;
-                          const isResettingThisCell = resettingCellKey === key && isResettingLists;
-                          const refreshButton = (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 shrink-0 rounded-full text-mcm-walnut/60 hover:text-mcm-walnut"
-                                  onClick={() => void handleCellRefresh(layerColumn.key, row.key)}
-                                  disabled={
-                                    isCellBusy || isRefreshingPanelCounts || isResettingAllLists
-                                  }
-                                  aria-label={`Refresh ${layerColumn.label} ${row.label} lineage`}
-                                >
-                                  {isCellBusy ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="h-3.5 w-3.5" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                Refresh {layerColumn.label} • {row.label}
-                              </TooltipContent>
-                            </Tooltip>
-                          );
-                          const resetButton = (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 shrink-0 rounded-full text-rose-700/70 hover:bg-rose-500/10 hover:text-rose-800"
-                                  onClick={() =>
-                                    setListResetTarget({
-                                      layerKey: layerColumn.key,
-                                      layerLabel: layerColumn.label,
-                                      domainKey: row.key,
-                                      domainLabel: row.label
-                                    })
-                                  }
-                                  disabled={
-                                    isCellBusy ||
-                                    isResettingLists ||
-                                    isRefreshingPanelCounts ||
-                                    isResettingAllLists
-                                  }
-                                  aria-label={`Reset ${layerColumn.label} ${row.label} whitelist and blacklist`}
-                                >
-                                  {isResettingThisCell ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                {isResettingThisCell
-                                  ? `Resetting ${layerColumn.label} • ${row.label}`
-                                  : `Reset lists ${layerColumn.label} • ${row.label}`}
-                              </TooltipContent>
-                            </Tooltip>
-                          );
-                          const cellActions = (
-                            <div className="inline-flex items-center gap-1">
-                              {refreshButton}
-                              {resetButton}
-                            </div>
-                          );
-
-                          if (!metadata && isPending) {
-                            return (
-                              <TableCell
-                                key={`${row.key}-${layerColumn.key}`}
-                                className={`${StatusTypos.MONO} ${MATRIX_BODY_CELL_CLASS} text-[11px] text-mcm-walnut/60`}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    Loading metadata
-                                  </span>
-                                  {cellActions}
-                                </div>
-                              </TableCell>
-                            );
-                          }
-
-                          if (!metadata && error) {
-                            return (
-                              <TableCell
-                                key={`${row.key}-${layerColumn.key}`}
-                                className={MATRIX_BODY_CELL_CLASS}
-                              >
-                                <div className="space-y-1.5">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className={`${StatusTypos.MONO} text-[11px] text-destructive`}>
-                                      Metadata unavailable
-                                    </div>
-                                    {cellActions}
-                                  </div>
-                                  <div
-                                    className={`${StatusTypos.MONO} text-[10px] text-destructive/80 break-words`}
-                                  >
-                                    {error}
-                                  </div>
-                                </div>
-                              </TableCell>
-                            );
-                          }
-
-                          if (!metadata) {
-                            return (
-                              <TableCell
-                                key={`${row.key}-${layerColumn.key}`}
-                                className={`${StatusTypos.MONO} ${MATRIX_BODY_CELL_CLASS} text-[11px] text-mcm-walnut/55`}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <span>Awaiting metadata</span>
-                                  {cellActions}
-                                </div>
-                              </TableCell>
-                            );
-                          }
-
-                          let previousMetadata: DomainMetadata | null = null;
-                          let previousLabel = '';
-                          for (let index = layerIndex - 1; index >= 0; index -= 1) {
-                            const previousLayer = layerColumns[index];
-                            const previousCellKey = makeCellKey(previousLayer.key, row.key);
-                            const candidate = metadataByCell.get(previousCellKey);
-                            if (!candidate) continue;
-                            previousMetadata = candidate;
-                            previousLabel = previousLayer.label;
-                            break;
-                          }
-
-                          const symbolComparison = previousMetadata
-                            ? compareSymbols(metadata, previousMetadata)
-                            : null;
-                          const rangeComparison = previousMetadata
-                            ? compareDateRanges(metadata, previousMetadata)
-                            : null;
-                          const dateRangeReason = dateRangeUnavailableReason(metadata);
-                          const financeSubfolderCounts =
-                            row.key === 'finance'
-                              ? FINANCE_SUBFOLDER_ITEMS.map((item) => ({
-                                  ...item,
-                                  count: metadata.financeSubfolderSymbolCounts?.[item.key]
-                                }))
-                              : [];
-                          const showFinanceSubfolders =
-                            financeSubfolderCounts.length > 0 &&
-                            financeSubfolderCounts.some((item) => hasFiniteNumber(item.count));
-
+                          const DataIcon = model.dataConfig.icon;
+                          const JobIcon = model.jobConfig.icon;
                           return (
                             <TableCell
-                              key={`${row.key}-${layerColumn.key}`}
-                              className={MATRIX_BODY_CELL_CLASS}
+                              key={`summary-${row.key}-${model.layerColumn.key}`}
+                              className="border-b border-mcm-walnut/20 py-1.5"
                             >
-                              <div className="space-y-1.5">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className={`${StatusTypos.MONO} text-base font-black text-mcm-walnut`}>
-                                    {formatInt(metadata.symbolCount)}
-                                    <span className="ml-1 text-[10px] uppercase tracking-widest text-mcm-walnut/55">
-                                      symbols
-                                    </span>
-                                  </div>
-                                  {cellActions}
+                              <div className="flex items-center justify-between gap-2">
+                                <span
+                                  className={`${StatusTypos.MONO} tabular-nums text-right text-sm font-bold text-mcm-walnut`}
+                                >
+                                  {formatInt(model.metadata?.symbolCount)}
+                                </span>
+                                <div className="flex flex-col items-end gap-1">
+                                  <span
+                                    tabIndex={0}
+                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                    style={{
+                                      backgroundColor: model.dataConfig.bg,
+                                      color: model.dataConfig.text,
+                                      borderColor: model.dataConfig.border
+                                    }}
+                                  >
+                                    <DataIcon className="h-3 w-3" />
+                                    {model.dataLabel}
+                                  </span>
+                                  <span
+                                    tabIndex={0}
+                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                    style={{
+                                      backgroundColor: model.jobConfig.bg,
+                                      color: model.jobConfig.text,
+                                      borderColor: model.jobConfig.border
+                                    }}
+                                  >
+                                    <JobIcon className="h-3 w-3" />
+                                    {model.jobLabel}
+                                  </span>
                                 </div>
-                                {showFinanceSubfolders ? (
-                                  <div className="rounded-md border border-mcm-walnut/15 bg-mcm-cream/30 p-2">
-                                    <div className={`${StatusTypos.MONO} text-[9px] uppercase tracking-[0.16em] text-mcm-walnut/55`}>
-                                      finance subfolders
-                                    </div>
-                                    <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
-                                      {financeSubfolderCounts.map((item) => (
-                                        <div
-                                          key={`${row.key}-${layerColumn.key}-${item.key}`}
-                                          className="flex items-center justify-between gap-2 text-[10px]"
-                                        >
-                                          <span className="text-mcm-walnut/65">{item.label}</span>
-                                          <span className={`${StatusTypos.MONO} text-mcm-walnut/85`}>
-                                            {formatInt(item.count)}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ) : null}
-                                <div className={`${StatusTypos.MONO} text-[11px] font-semibold text-mcm-walnut/80`}>
-                                  {dateRangeReason ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="inline-flex items-center gap-1">
-                                          {formatDateRange(metadata)}
-                                          <Info className="h-3 w-3 opacity-60" />
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" className="max-w-xs">
-                                        {dateRangeReason}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ) : (
-                                    formatDateRange(metadata)
-                                  )}
-                                </div>
-                                {dateRangeReason ? (
-                                  <div className="text-[10px] text-mcm-walnut/55">{dateRangeReason}</div>
-                                ) : null}
-                                {metadata.dateRange?.source ? (
-                                  <div className="text-[10px] text-mcm-walnut/50">
-                                    date range source: <span className={StatusTypos.MONO}>{metadata.dateRange.source}</span>
-                                  </div>
-                                ) : null}
-                                {symbolComparison && rangeComparison ? (
-                                  <div className={`${StatusTypos.MONO} text-[10px]`}>
-                                    <span className="text-mcm-walnut/50">vs {previousLabel}: </span>
-                                    <span className={symbolComparison.className}>{symbolComparison.text}</span>
-                                    <span className="text-mcm-walnut/40">{' | '}</span>
-                                    <span className={rangeComparison.className}>{rangeComparison.text}</span>
-                                  </div>
-                                ) : (
-                                  <div className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/45`}>
-                                    Baseline layer
-                                  </div>
-                                )}
-                                {isPending ? (
-                                  <div className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/50`}>
-                                    refreshing...
-                                  </div>
-                                ) : null}
-                                {error ? (
-                                  <div className={`${StatusTypos.MONO} text-[10px] text-destructive/80`}>
-                                    metadata warning
-                                  </div>
-                                ) : null}
                               </div>
+                              {model.isPending ? (
+                                <div
+                                  className={`${StatusTypos.MONO} mt-1 text-[10px] text-mcm-walnut/50`}
+                                >
+                                  refreshing...
+                                </div>
+                              ) : null}
+                              {model.error ? (
+                                <div
+                                  className={`${StatusTypos.MONO} mt-1 text-[10px] text-destructive/80`}
+                                >
+                                  metadata warning
+                                </div>
+                              ) : null}
                             </TableCell>
                           );
                         })}
+
+                        <TableCell className="border-b border-mcm-walnut/20 py-1.5">
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest"
+                            style={{
+                              backgroundColor: rowOverallConfig.bg,
+                              color: rowOverallConfig.text,
+                              borderColor: rowOverallConfig.border
+                            }}
+                          >
+                            <RowOverallIcon className="h-3.5 w-3.5" />
+                            {rowOverallLabel}
+                          </span>
+                        </TableCell>
+
+                        <TableCell className="border-b border-mcm-walnut/20 py-1.5">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-[11px]"
+                              disabled={
+                                !preferredModel?.actionJobName || preferredModel.isJobControlBlocked
+                              }
+                              onClick={() => {
+                                if (!preferredModel?.actionJobName) return;
+                                if (preferredModel.isRunning) {
+                                  void setJobSuspended(preferredModel.actionJobName, true);
+                                } else {
+                                  void triggerJob(preferredModel.actionJobName);
+                                }
+                              }}
+                            >
+                              {preferredModel?.isControlling ||
+                              preferredModel?.isTriggeringThisJob ? (
+                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                              ) : preferredModel?.isRunning ? (
+                                <Square className="mr-1 h-3.5 w-3.5" />
+                              ) : (
+                                <Play className="mr-1 h-3.5 w-3.5" />
+                              )}
+                              {preferredModel?.isRunning ? 'Stop' : 'Run'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() =>
+                                setExpandedRowKey((previous) =>
+                                  previous === row.key ? null : row.key
+                                )
+                              }
+                              aria-expanded={isExpanded}
+                              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${row.label} details`}
+                            >
+                              <Eye className="mr-1 h-3.5 w-3.5" />
+                              View
+                              <ChevronDown
+                                className={`ml-1 h-3.5 w-3.5 transition-transform ${
+                                  isExpanded ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  aria-label={`More actions for ${row.label}`}
+                                >
+                                  <EllipsisVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuLabel>{row.label}</DropdownMenuLabel>
+                                <DropdownMenuItem
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    void refreshDomainRow();
+                                  }}
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                  Refresh domain counts
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    setExpandedRowKey((previous) =>
+                                      previous === row.key ? null : row.key
+                                    )
+                                  }
+                                >
+                                  <Eye className="h-4 w-4" />
+                                  {isExpanded ? 'Hide details' : 'Show details'}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                {preferredModel?.jobPortalUrl ? (
+                                  <DropdownMenuItem asChild>
+                                    <a
+                                      href={preferredModel.jobPortalUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <ExternalLink className="h-4 w-4" />
+                                      Open job in Azure
+                                    </a>
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {preferredModel?.executionsUrl ? (
+                                  <DropdownMenuItem asChild>
+                                    <a
+                                      href={preferredModel.executionsUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <ScrollText className="h-4 w-4" />
+                                      Open run history
+                                    </a>
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {preferredModel?.baseFolderUrl ? (
+                                  <DropdownMenuItem asChild>
+                                    <a
+                                      href={preferredModel.baseFolderUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <FolderOpen className="h-4 w-4" />
+                                      Open ADLS folder
+                                    </a>
+                                  </DropdownMenuItem>
+                                ) : null}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </TableCell>
+                      </TableRow>,
+
+                      <TableRow
+                        key={`details-${row.key}`}
+                        className="border-0 hover:bg-transparent"
+                      >
+                        <TableCell
+                          colSpan={layerColumns.length + 3}
+                          className="border-0 bg-transparent p-0"
+                        >
+                          <div
+                            className={`transition-[max-height,opacity,transform] duration-300 ${
+                              isExpanded
+                                ? `${expandedMaxHeightClass} opacity-100 translate-y-0 overflow-hidden`
+                                : 'max-h-0 opacity-0 -translate-y-1 overflow-hidden pointer-events-none'
+                            }`}
+                            aria-hidden={!isExpanded}
+                          >
+                            <div className="border-t border-mcm-walnut/20 bg-mcm-paper/50 p-3">
+                              <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-4">
+                                {configuredModels.map((model) => {
+                                  const DataIcon = model.dataConfig.icon;
+                                  const JobIcon = model.jobConfig.icon;
+                                  return (
+                                    <div
+                                      key={`detail-card-${row.key}-${model.layerColumn.key}`}
+                                      className="flex min-h-[132px] flex-col rounded-lg border border-mcm-walnut/20 bg-mcm-cream/35 p-2.5"
+                                    >
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                          <div className="text-[11px] font-black uppercase tracking-widest text-mcm-walnut">
+                                            {model.layerColumn.label}
+                                          </div>
+                                          <div
+                                            className={`${StatusTypos.MONO} tabular-nums text-lg font-black text-mcm-walnut`}
+                                          >
+                                            {formatInt(model.metadata?.symbolCount)}
+                                          </div>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                          <span
+                                            className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                            style={{
+                                              backgroundColor: model.dataConfig.bg,
+                                              color: model.dataConfig.text,
+                                              borderColor: model.dataConfig.border
+                                            }}
+                                          >
+                                            <DataIcon className="h-3 w-3" />
+                                            {model.dataLabel}
+                                          </span>
+                                          <span
+                                            className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest"
+                                            style={{
+                                              backgroundColor: model.jobConfig.bg,
+                                              color: model.jobConfig.text,
+                                              borderColor: model.jobConfig.border
+                                            }}
+                                          >
+                                            <JobIcon className="h-3 w-3" />
+                                            {model.jobLabel}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-2 space-y-1 text-[10px]">
+                                        {model.symbolComparison ? (
+                                          <div className={`${StatusTypos.MONO}`}>
+                                            <span className="text-mcm-walnut/50">
+                                              vs {model.previousLabel}:{' '}
+                                            </span>
+                                            <span className={model.symbolComparison.className}>
+                                              {model.symbolComparison.text}
+                                            </span>
+                                            <span className="text-mcm-walnut/40">{' | '}</span>
+                                            <span className={model.blacklistSummary.className}>
+                                              {model.blacklistSummary.text}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <div className={`${StatusTypos.MONO}`}>
+                                            <span className={model.blacklistSummary.className}>
+                                              {model.blacklistSummary.text}
+                                            </span>
+                                          </div>
+                                        )}
+                                        <div
+                                          className={`${StatusTypos.MONO} flex items-center gap-1`}
+                                        >
+                                          <span className="text-mcm-walnut/50">last start:</span>
+                                          <span
+                                            className="text-mcm-walnut/80"
+                                            title={model.run?.startTime || undefined}
+                                          >
+                                            {model.lastStartDisplay}
+                                          </span>
+                                        </div>
+                                        <div
+                                          className={`${StatusTypos.MONO} flex items-center gap-1`}
+                                        >
+                                          <span className="text-mcm-walnut/50">schedule:</span>
+                                          <span
+                                            className="truncate text-mcm-walnut/80"
+                                            title={model.scheduleRaw || undefined}
+                                          >
+                                            {model.scheduleDisplay}
+                                          </span>
+                                        </div>
+                                        {model.showFinanceSubfolders ? (
+                                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                                            {model.financeSubfolderCounts.map((item) => (
+                                              <div
+                                                key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
+                                                className="flex items-center justify-between"
+                                              >
+                                                <span className="text-mcm-walnut/65">
+                                                  {item.label}
+                                                </span>
+                                                <span
+                                                  className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/85`}
+                                                >
+                                                  {formatInt(item.count)}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : null}
+                                        {model.isCellRefreshing ? (
+                                          <div
+                                            className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-mcm-walnut/55`}
+                                          >
+                                            <RefreshCw className="h-3 w-3 animate-spin" />
+                                            refreshing...
+                                          </div>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="mt-auto flex items-center justify-end gap-1 pt-2">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 px-2 text-[11px]"
+                                          disabled={
+                                            !model.actionJobName || model.isJobControlBlocked
+                                          }
+                                          onClick={() => {
+                                            if (!model.actionJobName) return;
+                                            if (model.isRunning) {
+                                              void setJobSuspended(model.actionJobName, true);
+                                            } else {
+                                              void triggerJob(model.actionJobName);
+                                            }
+                                          }}
+                                        >
+                                          {model.isControlling || model.isTriggeringThisJob ? (
+                                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                          ) : model.isRunning ? (
+                                            <Square className="mr-1 h-3.5 w-3.5" />
+                                          ) : (
+                                            <Play className="mr-1 h-3.5 w-3.5" />
+                                          )}
+                                          {model.isRunning ? 'Stop' : 'Run'}
+                                        </Button>
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-7 w-7"
+                                              aria-label={`More ${model.layerColumn.label} actions for ${row.label}`}
+                                            >
+                                              <EllipsisVertical className="h-4 w-4" />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end" className="w-56">
+                                            <DropdownMenuLabel className="flex items-center justify-between gap-2">
+                                              <span>{model.layerColumn.label} • {row.label}</span>
+                                              {model.isCellRefreshing ? (
+                                                <span
+                                                  className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wide text-mcm-walnut/55`}
+                                                >
+                                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                                  refreshing
+                                                </span>
+                                              ) : null}
+                                            </DropdownMenuLabel>
+                                            <DropdownMenuItem
+                                              disabled={model.isCellBusy || isResettingAllLists}
+                                              onSelect={(event) => {
+                                                event.preventDefault();
+                                                void handleCellRefresh(
+                                                  model.layerColumn.key,
+                                                  row.key
+                                                );
+                                              }}
+                                            >
+                                              <RefreshCw
+                                                className={`h-4 w-4 ${model.isCellRefreshing ? 'animate-spin' : ''}`}
+                                              />
+                                              {model.isCellRefreshing
+                                                ? 'Refreshing...'
+                                                : model.isPending
+                                                  ? 'Loading metadata...'
+                                                  : 'Refresh'}
+                                            </DropdownMenuItem>
+                                            {model.baseFolderUrl ? (
+                                              <DropdownMenuItem asChild>
+                                                <a
+                                                  href={model.baseFolderUrl}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                >
+                                                  <FolderOpen className="h-4 w-4" />
+                                                  Open ADLS folder
+                                                </a>
+                                              </DropdownMenuItem>
+                                            ) : null}
+                                            {model.jobPortalUrl ? (
+                                              <DropdownMenuItem asChild>
+                                                <a
+                                                  href={model.jobPortalUrl}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                >
+                                                  <ExternalLink className="h-4 w-4" />
+                                                  Open job in Azure
+                                                </a>
+                                              </DropdownMenuItem>
+                                            ) : null}
+                                            {model.executionsUrl ? (
+                                              <DropdownMenuItem asChild>
+                                                <a
+                                                  href={model.executionsUrl}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                >
+                                                  <ScrollText className="h-4 w-4" />
+                                                  Execution history
+                                                </a>
+                                              </DropdownMenuItem>
+                                            ) : null}
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem
+                                              disabled={
+                                                !model.actionJobName || model.isJobControlBlocked
+                                              }
+                                              onSelect={(event) => {
+                                                event.preventDefault();
+                                                if (!model.actionJobName) return;
+                                                void setJobSuspended(
+                                                  model.actionJobName,
+                                                  !model.isSuspended
+                                                );
+                                              }}
+                                            >
+                                              {model.isSuspended ? (
+                                                <CirclePlay className="h-4 w-4" />
+                                              ) : (
+                                                <CirclePause className="h-4 w-4" />
+                                              )}
+                                              {model.isSuspended ? 'Resume job' : 'Suspend job'}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                model.isCellBusy ||
+                                                isResettingLists ||
+                                                isRefreshingPanelCounts ||
+                                                isResettingAllLists
+                                              }
+                                              onSelect={() =>
+                                                setListResetTarget({
+                                                  layerKey: model.layerColumn.key,
+                                                  layerLabel: model.layerColumn.label,
+                                                  domainKey: row.key,
+                                                  domainLabel: row.label
+                                                })
+                                              }
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                              {model.isResettingThisCell
+                                                ? 'Resetting lists...'
+                                                : 'Reset lists'}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={
+                                                isPurging ||
+                                                model.isCellBusy ||
+                                                isResettingLists ||
+                                                isResettingAllLists ||
+                                                isRefreshingPanelCounts
+                                              }
+                                              onSelect={() =>
+                                                setPurgeTarget({
+                                                  layerKey: model.layerColumn.key,
+                                                  layerLabel: model.layerColumn.label,
+                                                  domainKey: row.key,
+                                                  domainLabel: row.label
+                                                })
+                                              }
+                                            >
+                                              <Trash2
+                                                className={`h-4 w-4 ${
+                                                  model.isPurgingThisTarget
+                                                    ? 'animate-spin text-rose-600'
+                                                    : ''
+                                                }`}
+                                              />
+                                              {model.isPurgingThisTarget
+                                                ? 'Purging data...'
+                                                : 'Purge data'}
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </TableCell>
                       </TableRow>
-                    );
+                    ];
                   })}
                 </TableBody>
               </Table>

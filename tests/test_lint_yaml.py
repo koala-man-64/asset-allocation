@@ -222,3 +222,85 @@ def test_deploy_workflow_exports_acr_login_server_for_yaml_templates() -> None:
     assert ': "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER is required}"' in deploy_script, (
         "Unified app deploy step must fail fast when ACR_LOGIN_SERVER is missing."
     )
+
+
+def test_supply_chain_security_workflow_enforces_pinned_audits() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow_file = repo_root / ".github" / "workflows" / "supply_chain_security.yml"
+    assert workflow_file.exists(), "Supply-chain security workflow must exist."
+
+    text = workflow_file.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    assert isinstance(doc, dict), "supply_chain_security.yml must parse to a workflow document object."
+
+    assert doc.get("name") == "Supply Chain Security"
+
+    on_block = _workflow_on_block(doc)
+    assert "pull_request" in on_block, "Supply-chain workflow must run on pull_request."
+    push_block = on_block.get("push")
+    assert isinstance(push_block, dict), "Supply-chain workflow must define push trigger."
+    branches = push_block.get("branches")
+    assert isinstance(branches, list) and "main" in branches, (
+        "Supply-chain workflow push trigger must include main branch."
+    )
+    assert "workflow_dispatch" in on_block, "Supply-chain workflow must support manual dispatch."
+
+    permissions = doc.get("permissions")
+    assert permissions == {"contents": "read"}, (
+        "Supply-chain workflow permissions must be least privilege (contents: read)."
+    )
+
+    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in text, (
+        "Supply-chain workflow must pin actions/checkout to a commit SHA."
+    )
+    assert "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065" in text, (
+        "Supply-chain workflow must pin actions/setup-python to a commit SHA."
+    )
+    assert "node:20-bookworm-slim@sha256:" in text, (
+        "Supply-chain workflow must pin the Node container image by digest."
+    )
+    assert "pip-audit --strict -r requirements.lock.txt" in text
+    assert "pip-audit --strict -r requirements-dev.lock.txt" in text
+    assert "pnpm audit --audit-level=high" in text
+
+
+def test_dependabot_config_covers_actions_python_and_ui() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    dependabot_file = repo_root / ".github" / "dependabot.yml"
+    assert dependabot_file.exists(), ".github/dependabot.yml must exist."
+
+    doc = yaml.safe_load(dependabot_file.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), "dependabot.yml must parse to a mapping."
+    assert doc.get("version") == 2, "dependabot.yml must use schema version 2."
+
+    updates = doc.get("updates")
+    assert isinstance(updates, list) and updates, "dependabot.yml must define update entries."
+
+    by_ecosystem = {
+        str(item.get("package-ecosystem")): item
+        for item in updates
+        if isinstance(item, dict) and item.get("package-ecosystem")
+    }
+    assert {"github-actions", "pip", "npm"}.issubset(set(by_ecosystem.keys())), (
+        "dependabot.yml must cover GitHub Actions, Python, and UI npm dependencies."
+    )
+
+    assert by_ecosystem["github-actions"].get("directory") == "/"
+    assert by_ecosystem["pip"].get("directory") == "/"
+    assert by_ecosystem["npm"].get("directory") == "/ui"
+
+    for ecosystem in ("github-actions", "pip", "npm"):
+        schedule = by_ecosystem[ecosystem].get("schedule")
+        assert isinstance(schedule, dict), f"{ecosystem} entry must include a schedule."
+        assert schedule.get("interval") == "weekly", f"{ecosystem} updates must run weekly."
+
+
+def test_repo_level_agents_governance_file_exists() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    agents_file = repo_root / "AGENTS.md"
+    assert agents_file.exists(), "Repo root must contain AGENTS.md governance instructions."
+
+    text = agents_file.read_text(encoding="utf-8")
+    assert "Available skills" in text, "AGENTS.md must enumerate available skills."
+    assert "How to use skills" in text, "AGENTS.md must define usage instructions."
+    assert "Trigger rules" in text, "AGENTS.md must define skill trigger rules."

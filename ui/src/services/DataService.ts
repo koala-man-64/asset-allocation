@@ -15,6 +15,7 @@ import type {
   ContainerAppsStatusResponse,
   DomainListResetRequest,
   DomainListResetResponse,
+  DomainListsResponse,
   DomainMetadataSnapshotResponse,
   DomainColumnsResponse,
   DebugSymbolsResponse,
@@ -234,6 +235,14 @@ export const DataService = {
 
   resetDomainLists(payload: DomainListResetRequest): Promise<DomainListResetResponse> {
     return apiService.resetDomainLists(payload);
+  },
+
+  getDomainLists(
+    layer: string,
+    domain: string,
+    params: { limit?: number } = {}
+  ): Promise<DomainListsResponse> {
+    return apiService.getDomainLists(layer, domain, params);
   },
 
   getPurgeOperation(operationId: string): Promise<PurgeOperationResponse> {

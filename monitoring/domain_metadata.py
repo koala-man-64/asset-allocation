@@ -129,22 +129,26 @@ def _blob_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
     return None
 
 
-def _whitelist_path(domain: DomainKey) -> Optional[str]:
+def _list_path(layer: LayerKey, domain: DomainKey, *, list_type: str) -> Optional[str]:
+    layer_key = _normalize_key(layer)
     domain_key = _normalize_key(domain)
-    if domain_key in {"market", "finance", "earnings"}:
-        return f"{domain_key}-data/whitelist.csv"
-    if domain_key == "price-target":
-        return "price-target-data/whitelist.csv"
-    return None
+    prefix = _blob_prefix(layer_key, domain_key)
+    if not prefix:
+        return None
+    base = str(prefix).strip().strip("/")
+    if not base:
+        return None
+    if list_type not in {"whitelist", "blacklist"}:
+        return None
+    return f"{base}/{list_type}.csv"
 
 
-def _blacklist_path(domain: DomainKey) -> Optional[str]:
-    domain_key = _normalize_key(domain)
-    if domain_key in {"market", "finance", "earnings"}:
-        return f"{domain_key}-data/blacklist.csv"
-    if domain_key == "price-target":
-        return "price-target-data/blacklist.csv"
-    return None
+def _whitelist_path(layer: LayerKey, domain: DomainKey) -> Optional[str]:
+    return _list_path(layer, domain, list_type="whitelist")
+
+
+def _blacklist_path(layer: LayerKey, domain: DomainKey) -> Optional[str]:
+    return _list_path(layer, domain, list_type="blacklist")
 
 
 def _ticker_listing_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
@@ -760,20 +764,43 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         if symbol_truncated:
             warnings.append(f"Symbol discovery truncated after {max_scanned_blobs} blobs.")
 
-        whitelist_path = _whitelist_path(domain_key) if layer_key == "bronze" else None
+        whitelist_blob_bytes: Optional[bytes] = None
+        whitelist_path = _whitelist_path(layer_key, domain_key) if layer_key == "bronze" else None
         if whitelist_path:
             try:
-                symbol_count = _parse_list_size(client.download_data(whitelist_path))
+                whitelist_blob_bytes = client.download_data(whitelist_path)
+                whitelist_symbol_count = _parse_list_size(whitelist_blob_bytes)
+                if not (
+                    layer_key == "bronze"
+                    and domain_key in {"market", "price-target", "finance", "earnings"}
+                ):
+                    symbol_count = whitelist_symbol_count
             except Exception as exc:
                 warnings.append(f"Unable to read whitelist.csv: {exc}")
 
         blacklisted_symbol_count = None
-        blacklist_path = _blacklist_path(domain_key) if layer_key == "bronze" else None
+        blacklist_blob_bytes: Optional[bytes] = None
+        blacklist_path = _blacklist_path(layer_key, domain_key)
         if blacklist_path:
             try:
-                blacklisted_symbol_count = _parse_list_size(client.download_data(blacklist_path))
+                blacklist_blob_bytes = client.download_data(blacklist_path)
+                blacklisted_symbol_count = _parse_list_size(blacklist_blob_bytes)
             except Exception as exc:
                 warnings.append(f"Unable to read blacklist.csv: {exc}")
+
+        # Bronze market/earnings/price-target is one blob per symbol; whitelist can be intentionally empty.
+        # Use file count as symbol count and exclude list artifacts when they exist.
+        if (
+            layer_key == "bronze"
+            and domain_key in {"market", "earnings", "price-target"}
+            and isinstance(files, int)
+        ):
+            list_artifact_count = 0
+            if whitelist_blob_bytes is not None:
+                list_artifact_count += 1
+            if blacklist_blob_bytes is not None:
+                list_artifact_count += 1
+            symbol_count = max(files - list_artifact_count, 0)
 
         payload = {
             "layer": layer_key,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import React, { useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
@@ -8,21 +8,17 @@ import { PageLoader } from '@/app/components/common/PageLoader';
 import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
 
 // Lazy load components to reduce initial bundle size of the page
-const StatusOverview = lazy(() => import('./system-status/StatusOverview').then(m => ({ default: m.StatusOverview })));
 const DomainLayerComparisonPanel = lazy(() =>
   import('./system-status/DomainLayerComparisonPanel').then((m) => ({
     default: m.DomainLayerComparisonPanel
   }))
 );
-const ScheduledJobMonitor = lazy(() => import('./system-status/ScheduledJobMonitor').then(m => ({ default: m.ScheduledJobMonitor })));
 const ContainerAppsPanel = lazy(() =>
   import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
 );
 
 import {
-  getAzurePortalUrl,
   normalizeAzureJobName,
-  normalizeAzurePortalUrl
 } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
@@ -32,8 +28,6 @@ export function SystemStatusPage() {
   });
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_, setTick] = useState(0);
 
   const displayDataLayers = useMemo(() => {
     return (data?.dataLayers || []).map((layer) => ({
@@ -44,41 +38,6 @@ export function SystemStatusPage() {
       })
     }));
   }, [data]);
-
-  const jobLinks = useMemo(() => {
-    if (!data) {
-      return {};
-    }
-
-    const links: Record<string, string> = {};
-    for (const layer of displayDataLayers) {
-      for (const domain of layer.domains || []) {
-        if (domain.jobName && domain.jobUrl) {
-          const rawName = String(domain.jobName).trim();
-          const normalizedName = normalizeAzureJobName(rawName);
-          const url = normalizeAzurePortalUrl(domain.jobUrl);
-          links[rawName] = url;
-          if (normalizedName) {
-            links[normalizedName] = url;
-          }
-        }
-      }
-    }
-    for (const resource of data.resources || []) {
-      if (resource.resourceType === 'Microsoft.App/jobs' && resource.azureId) {
-        const rawName = String(resource.name || '').trim();
-        const normalizedName = normalizeAzureJobName(rawName);
-        const url = getAzurePortalUrl(resource.azureId);
-        if (rawName) {
-          links[rawName] = url;
-        }
-        if (normalizedName) {
-          links[normalizedName] = url;
-        }
-      }
-    }
-    return links;
-  }, [data, displayDataLayers]);
 
   const jobStates = useMemo(() => {
     const states: Record<string, string> = {};
@@ -112,12 +71,6 @@ export function SystemStatusPage() {
     return items;
   }, [data]);
 
-  // Force re-render for clock
-  useEffect(() => {
-    const h = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(h);
-  }, []);
-
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -147,10 +100,10 @@ export function SystemStatusPage() {
 
   return (
     <div className="page-shell">
-      {/* Status Matrix - The Hero Component */}
+      {/* Domain Layer Coverage Comparison */}
       <ErrorBoundary>
-        <Suspense fallback={<Skeleton className="h-[300px] w-full rounded-xl bg-muted/20" />}>
-          <StatusOverview
+        <Suspense fallback={<Skeleton className="h-[280px] w-full rounded-xl bg-muted/20" />}>
+          <DomainLayerComparisonPanel
             overall={overall}
             dataLayers={displayDataLayers}
             recentJobs={recentJobs}
@@ -159,24 +112,6 @@ export function SystemStatusPage() {
             onRefresh={handleRefresh}
             isRefreshing={isRefreshing}
             isFetching={isFetching}
-          />
-        </Suspense>
-      </ErrorBoundary>
-
-      {/* Domain Layer Coverage Comparison */}
-      <ErrorBoundary>
-        <Suspense fallback={<Skeleton className="h-[280px] w-full rounded-xl bg-muted/20" />}>
-          <DomainLayerComparisonPanel dataLayers={displayDataLayers} />
-        </Suspense>
-      </ErrorBoundary>
-
-      {/* Jobs */}
-      <ErrorBoundary>
-        <Suspense fallback={<Skeleton className="h-[400px] w-full rounded-xl bg-muted/20" />}>
-          <ScheduledJobMonitor
-            dataLayers={displayDataLayers}
-            recentJobs={recentJobs}
-            jobLinks={jobLinks}
           />
         </Suspense>
       </ErrorBoundary>

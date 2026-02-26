@@ -1626,6 +1626,25 @@ class DomainListResetRequest(BaseModel):
     confirm: bool = False
 
 
+class DomainListFileResponse(BaseModel):
+    listType: Literal["whitelist", "blacklist"]
+    path: str
+    exists: bool
+    symbolCount: int
+    symbols: List[str] = Field(default_factory=list)
+    truncated: bool = False
+    warning: Optional[str] = None
+
+
+class DomainListsResponse(BaseModel):
+    layer: str
+    domain: str
+    container: str
+    limit: int
+    files: List[DomainListFileResponse] = Field(default_factory=list)
+    loadedAt: str
+
+
 class PurgeCandidatesRequest(BaseModel):
     layer: str = Field(..., min_length=1, max_length=32)
     domain: str = Field(..., min_length=1, max_length=64)
@@ -2997,6 +3016,45 @@ def _resolve_domain_list_paths(layer: str, domain: str) -> List[Dict[str, str]]:
     return paths
 
 
+def _load_domain_list_file_preview(
+    client: BlobStorageClient,
+    *,
+    list_type: str,
+    path: str,
+    limit: int,
+) -> Dict[str, Any]:
+    exists = bool(client.file_exists(path))
+    warning: Optional[str] = None
+    symbols: List[str] = []
+
+    if exists:
+        try:
+            loaded_symbols = mdc.load_ticker_list(path, client=client) or []
+            symbols = _normalize_symbol_candidates(loaded_symbols)
+        except Exception as exc:
+            warning = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "Domain list load failed: container=%s path=%s error=%s",
+                client.container_name,
+                path,
+                warning,
+            )
+
+    truncated = len(symbols) > limit
+    preview_symbols = symbols[:limit]
+    result: Dict[str, Any] = {
+        "listType": list_type,
+        "path": path,
+        "exists": exists,
+        "symbolCount": len(symbols),
+        "symbols": preview_symbols,
+        "truncated": truncated,
+    }
+    if warning:
+        result["warning"] = warning
+    return result
+
+
 def _reset_domain_lists(client: BlobStorageClient, *, layer: str, domain: str) -> Dict[str, Any]:
     layer_norm = _normalize_layer(layer)
     domain_norm = _normalize_domain(domain)
@@ -4093,6 +4151,52 @@ def purge_data(payload: PurgeRequest, request: Request) -> JSONResponse:
         },
         status_code=202,
     )
+
+
+@router.get("/domain-lists", response_model=DomainListsResponse)
+def get_domain_lists(
+    request: Request,
+    layer: str = Query(..., description="Layer key (bronze|silver|gold|platinum)"),
+    domain: str = Query(..., description="Domain key (market|finance|earnings|price-target|platinum)"),
+    limit: int = Query(default=5000, ge=1, le=50000, description="Max symbols returned per list file."),
+) -> JSONResponse:
+    validate_auth(request)
+
+    layer_norm = _normalize_layer(layer)
+    domain_norm = _normalize_domain(domain)
+    if not layer_norm:
+        raise HTTPException(status_code=400, detail="layer is required.")
+    if not domain_norm:
+        raise HTTPException(status_code=400, detail="domain is required.")
+
+    container = _resolve_container(layer_norm)
+    client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+    list_paths = _resolve_domain_list_paths(layer_norm, domain_norm)
+
+    files: List[Dict[str, Any]] = []
+    for item in list_paths:
+        list_type = str(item.get("listType") or "").strip().lower()
+        path = str(item.get("path") or "").strip()
+        if list_type not in {"whitelist", "blacklist"} or not path:
+            continue
+        files.append(
+            _load_domain_list_file_preview(
+                client,
+                list_type=list_type,
+                path=path,
+                limit=limit,
+            )
+        )
+
+    payload = {
+        "layer": layer_norm,
+        "domain": domain_norm,
+        "container": container,
+        "limit": limit,
+        "files": files,
+        "loadedAt": _utc_timestamp(),
+    }
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/domain-lists/reset")

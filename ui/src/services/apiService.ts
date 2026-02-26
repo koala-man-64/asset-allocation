@@ -404,6 +404,25 @@ export interface DomainListResetResponse {
   updatedAt: string;
 }
 
+export interface DomainListFilePreview {
+  listType: 'whitelist' | 'blacklist';
+  path: string;
+  exists: boolean;
+  symbolCount: number;
+  symbols: string[];
+  truncated: boolean;
+  warning?: string | null;
+}
+
+export interface DomainListsResponse {
+  layer: string;
+  domain: string;
+  container: string;
+  limit: number;
+  files: DomainListFilePreview[];
+  loadedAt: string;
+}
+
 export interface DomainColumnsResponse {
   layer: 'bronze' | 'silver' | 'gold';
   domain: string;
@@ -929,6 +948,16 @@ export const apiService = {
     return request<DomainListResetResponse>('/system/domain-lists/reset', {
       method: 'POST',
       body: JSON.stringify(payload)
+    });
+  },
+
+  getDomainLists(
+    layer: string,
+    domain: string,
+    params: { limit?: number } = {}
+  ): Promise<DomainListsResponse> {
+    return request<DomainListsResponse>('/system/domain-lists', {
+      params: { layer, domain, ...params }
     });
   },
 

@@ -137,16 +137,7 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   };
 });
 
-const statusOverviewSpy = vi.fn();
 const domainLayerCoverageSpy = vi.fn();
-const jobMonitorSpy = vi.fn();
-
-vi.mock('@/app/components/pages/system-status/StatusOverview', () => ({
-  StatusOverview: (props: unknown) => {
-    statusOverviewSpy(props);
-    return <div data-testid="mock-status-overview">Mock Status Overview</div>;
-  }
-}));
 
 vi.mock('@/app/components/pages/system-status/DomainLayerComparisonPanel', () => ({
   DomainLayerComparisonPanel: (props: unknown) => {
@@ -157,22 +148,21 @@ vi.mock('@/app/components/pages/system-status/DomainLayerComparisonPanel', () =>
   }
 }));
 
-vi.mock('@/app/components/pages/system-status/ScheduledJobMonitor', () => ({
-  ScheduledJobMonitor: (props: unknown) => {
-    jobMonitorSpy(props);
-    return <div data-testid="mock-job-monitor">Mock Job Monitor</div>;
-  }
-}));
-
 vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
-  ContainerAppsPanel: () => <div data-testid="mock-container-apps-panel">Mock Container Apps Panel</div>
+  ContainerAppsPanel: () => (
+    <div data-testid="mock-container-apps-panel">Mock Container Apps Panel</div>
+  )
 }));
 
 describe('SystemStatusPage', () => {
   const expectNoPlatinumDomain = (layers: Array<{ domains?: Array<{ name?: string }> }>) => {
     for (const layer of layers) {
       for (const domain of layer.domains || []) {
-        expect(String(domain.name || '').trim().toLowerCase()).not.toBe('platinum');
+        expect(
+          String(domain.name || '')
+            .trim()
+            .toLowerCase()
+        ).not.toBe('platinum');
       }
     }
   };
@@ -185,11 +175,9 @@ describe('SystemStatusPage', () => {
 
     // Depending on test runner timing, lazy modules can remain in Suspense fallback.
     const lazyComponentsLoaded =
-      Boolean(screen.queryByTestId('mock-status-overview')) &&
       Boolean(screen.queryByTestId('mock-domain-layer-coverage-panel')) &&
-      Boolean(screen.queryByTestId('mock-job-monitor'));
-    const suspenseFallbackVisible =
-      document.querySelectorAll('[data-slot="skeleton"]').length >= 2;
+      Boolean(screen.queryByTestId('mock-container-apps-panel'));
+    const suspenseFallbackVisible = document.querySelectorAll('[data-slot="skeleton"]').length >= 2;
     expect(lazyComponentsLoaded || suspenseFallbackVisible).toBe(true);
 
     // Check loading state of footer
@@ -197,71 +185,47 @@ describe('SystemStatusPage', () => {
   });
 
   it('keeps platinum as a layer but removes it as a data domain', async () => {
-    statusOverviewSpy.mockClear();
     domainLayerCoverageSpy.mockClear();
-    jobMonitorSpy.mockClear();
 
     renderWithProviders(<SystemStatusPage />);
-    await screen.findByTestId('mock-status-overview');
+    await screen.findByTestId('mock-domain-layer-coverage-panel');
 
     await waitFor(() => {
-      expect(statusOverviewSpy).toHaveBeenCalled();
       expect(domainLayerCoverageSpy).toHaveBeenCalled();
-      expect(jobMonitorSpy).toHaveBeenCalled();
     });
 
-    const statusOverviewProps = statusOverviewSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
-    };
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
     };
-    const jobMonitorProps = jobMonitorSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
-    };
 
-    for (const props of [statusOverviewProps, coverageProps, jobMonitorProps]) {
-      expect(props.dataLayers.some((layer) => layer.name.toLowerCase() === 'platinum')).toBe(true);
-      expectNoPlatinumDomain(props.dataLayers);
-    }
+    expect(coverageProps.dataLayers.some((layer) => layer.name.toLowerCase() === 'platinum')).toBe(
+      true
+    );
+    expectNoPlatinumDomain(coverageProps.dataLayers);
 
-    const killSwitchProps = statusOverviewSpy.mock.calls.at(-1)?.[0] as {
+    const coveragePanelProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       managedContainerJobs: Array<{ name: string }>;
     };
-    expect(killSwitchProps.managedContainerJobs.map((job) => job.name)).toEqual([
+    expect(coveragePanelProps.managedContainerJobs.map((job) => job.name)).toEqual([
       'aca-job-market',
       'aca-job-zeta'
     ]);
   });
 
-  it('uses a consistent canonical domain ordering for all status panels', async () => {
-    statusOverviewSpy.mockClear();
+  it('uses canonical domain ordering in domain layer coverage panel', async () => {
     domainLayerCoverageSpy.mockClear();
-    jobMonitorSpy.mockClear();
 
     renderWithProviders(<SystemStatusPage />);
     await waitFor(() => {
-      expect(statusOverviewSpy).toHaveBeenCalled();
       expect(domainLayerCoverageSpy).toHaveBeenCalled();
-      expect(jobMonitorSpy).toHaveBeenCalled();
     });
 
-    const statusOverviewProps = statusOverviewSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
-    };
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
     };
-    const jobMonitorProps = jobMonitorSpy.mock.calls.at(-1)?.[0] as {
-      dataLayers: Array<{ name: string; domains?: Array<{ name?: string }> }>;
-    };
 
-    const statusOrder = getDomainOrderEntries(statusOverviewProps.dataLayers).map((entry) => entry.key);
     const coverageOrder = getDomainOrderEntries(coverageProps.dataLayers).map((entry) => entry.key);
-    const jobOrder = getDomainOrderEntries(jobMonitorProps.dataLayers).map((entry) => entry.key);
 
-    expect(statusOrder).toEqual(['alpha', 'market', 'zeta']);
-    expect(coverageOrder).toEqual(statusOrder);
-    expect(jobOrder).toEqual(statusOrder);
+    expect(coverageOrder).toEqual(['alpha', 'market', 'zeta']);
   });
 });
