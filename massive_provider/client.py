@@ -147,7 +147,12 @@ class MassiveClient:
 
         url = str(path_or_url)
         try:
-            resp = self._http.get(url, params=params or {})
+            request_kwargs: dict[str, Any] = {}
+            if params is not None:
+                # On absolute next_url pagination calls, passing params={} can
+                # strip existing query params under httpx 0.28+.
+                request_kwargs["params"] = params
+            resp = self._http.get(url, **request_kwargs)
         except httpx.TimeoutException as exc:
             raise MassiveError(f"Massive timeout calling {path_or_url}", payload={"path": path_or_url}) from exc
         except Exception as exc:

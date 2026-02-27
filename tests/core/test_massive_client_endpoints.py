@@ -189,6 +189,8 @@ def test_fundamentals_pagination_aggregates_all_pages() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.url.path, str(request.url)))
+        if len(seen) > 5:
+            raise AssertionError(f"Pagination loop detected: {seen}")
         page = request.url.params.get("page")
         if page == "2":
             return httpx.Response(200, json={"results": [{"settlement_date": "2025-01-31", "short_interest": 110}]})
