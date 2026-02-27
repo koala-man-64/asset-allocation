@@ -1159,15 +1159,14 @@ export function DomainLayerComparisonPanel({
 
       <CardHeader className="gap-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex min-w-0 items-start gap-2">
-            <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
-            <div className="flex min-w-0 flex-col gap-1">
-              <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+          <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
+            <div className="flex min-w-0 items-start gap-2">
+              <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="flex min-w-0 flex-col gap-1">
+                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
+              </div>
             </div>
-          </div>
-
-          <div className="flex w-full flex-col gap-2 xl:w-auto xl:items-end">
-            <div className="flex w-full flex-wrap items-start gap-2 self-start xl:w-auto xl:justify-end">
+            <div className="flex w-full flex-wrap items-start gap-2 lg:w-auto">
               <div
                 role="status"
                 aria-live="polite"
@@ -1197,80 +1196,80 @@ export function DomainLayerComparisonPanel({
                 </span>
               </div>
             </div>
+          </div>
 
-            <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
-              {managedContainerJobs.length > 0 ? (
-                <JobKillSwitchInline jobs={managedContainerJobs} />
-              ) : null}
+          <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
+            {managedContainerJobs.length > 0 ? (
+              <JobKillSwitchInline jobs={managedContainerJobs} />
+            ) : null}
 
-              {onRefresh ? (
+            {onRefresh ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-3.5 text-[11px]"
+                onClick={onRefresh}
+                disabled={!onRefresh || isAnyRefreshInProgress}
+              >
+                {isAnyRefreshInProgress ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Refreshing...
+                  </span>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4" />
+                    Refresh health
+                  </>
+                )}
+              </Button>
+            ) : null}
+
+            {queryPairs.length > 0 ? (
+              <>
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
                   className="h-9 px-3.5 text-[11px]"
-                  onClick={onRefresh}
-                  disabled={!onRefresh || isAnyRefreshInProgress}
+                  onClick={() => void refreshAllPanelCounts()}
+                  disabled={isPanelActionBusy}
                 >
-                  {isAnyRefreshInProgress ? (
+                  {isRefreshingPanelCounts ? (
                     <span className="inline-flex items-center gap-2">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Refreshing...
+                      Refreshing counts...
                     </span>
                   ) : (
                     <>
                       <RefreshCw className="h-4 w-4" />
-                      Refresh health
+                      Refresh counts
                     </>
                   )}
                 </Button>
-              ) : null}
 
-              {queryPairs.length > 0 ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-9 px-3.5 text-[11px]"
-                    onClick={() => void refreshAllPanelCounts()}
-                    disabled={isPanelActionBusy}
-                  >
-                    {isRefreshingPanelCounts ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Refreshing counts...
-                      </span>
-                    ) : (
-                      <>
-                        <RefreshCw className="h-4 w-4" />
-                        Refresh counts
-                      </>
-                    )}
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    className="h-9 px-3.5 text-[11px]"
-                    onClick={() => setIsResetAllDialogOpen(true)}
-                    disabled={isPanelActionBusy}
-                  >
-                    {isResettingAllLists ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Resetting lists...
-                      </span>
-                    ) : (
-                      <>
-                        <Trash2 className="h-4 w-4" />
-                        Reset lists
-                      </>
-                    )}
-                  </Button>
-                </>
-              ) : null}
-            </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-9 px-3.5 text-[11px]"
+                  onClick={() => setIsResetAllDialogOpen(true)}
+                  disabled={isPanelActionBusy}
+                >
+                  {isResettingAllLists ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Resetting lists...
+                    </span>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Reset lists
+                    </>
+                  )}
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
       </CardHeader>

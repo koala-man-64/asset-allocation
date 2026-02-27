@@ -69,6 +69,40 @@ def test_silver_finance_applies_backfill_start_cutoff():
         assert df["date"].min().date().isoformat() >= "2024-01-01"
 
 
+def test_silver_finance_repairs_legacy_symbol_suffix_columns_before_delta_write():
+    blob_name = "finance-data/Balance Sheet/TEST_quarterly_balance-sheet.json"
+    payload = {
+        "symbol": "TEST",
+        "quarterlyReports": [
+            {"fiscalDateEnding": "2024-01-01", "totalAssets": "1000"},
+        ],
+    }
+    raw_bytes = json.dumps(payload).encode("utf-8")
+
+    def _inject_legacy_symbol_column(df: pd.DataFrame, container: str, path: str) -> pd.DataFrame:
+        assert container == silver.cfg.AZURE_CONTAINER_SILVER
+        assert path == DataPaths.get_finance_path("Balance Sheet", "TEST", "quarterly_balance-sheet")
+        out = df.copy()
+        out["symbol_2"] = "TEST"
+        return out
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=raw_bytes),
+        patch("core.delta_core.store_delta") as mock_store,
+        patch(
+            "tasks.finance_data.silver_finance_data._align_to_existing_schema",
+            side_effect=_inject_legacy_symbol_column,
+        ),
+    ):
+        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-01"), watermarks={})
+        assert result.status == "ok"
+
+        df_saved = mock_store.call_args.args[0]
+        assert "symbol_2" not in df_saved.columns
+        assert "symbol" in df_saved.columns
+        assert set(df_saved["symbol"].dropna().astype(str).unique()) == {"TEST"}
+
+
 def test_silver_finance_builds_valuation_timeseries_from_overview_and_prices():
     blob_name = "finance-data/Valuation/TEST_quarterly_valuation_measures.json"
     payload = {

@@ -471,6 +471,44 @@ def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd
     return align_to_existing_schema(df, container=container, path=path)
 
 
+def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFrame:
+    out = df.copy()
+    legacy_symbol_cols = [
+        col
+        for col in out.columns
+        if isinstance(col, str) and col.startswith("symbol_") and col[7:].isdigit()
+    ]
+    if not legacy_symbol_cols:
+        return out
+
+    if "symbol" not in out.columns:
+        first_legacy = legacy_symbol_cols[0]
+        out = out.rename(columns={first_legacy: "symbol"})
+        legacy_symbol_cols = legacy_symbol_cols[1:]
+        mdc.write_warning(
+            f"Silver finance {ticker}: renamed legacy column {first_legacy} -> symbol."
+        )
+
+    for col in legacy_symbol_cols:
+        if col not in out.columns:
+            continue
+        primary = out["symbol"].astype("string")
+        fallback = out[col].astype("string")
+        conflicts = int((primary.notna() & fallback.notna() & (primary != fallback)).sum())
+        if conflicts > 0:
+            mdc.write_warning(
+                f"Silver finance {ticker}: symbol repair conflict in {col}; "
+                f"conflicting_rows={conflicts}; keeping existing symbol when both populated."
+            )
+        out["symbol"] = out["symbol"].combine_first(out[col])
+        out = out.drop(columns=[col])
+        mdc.write_warning(
+            f"Silver finance {ticker}: collapsed legacy column {col} into symbol."
+        )
+
+    return out
+
+
 def process_blob(
     blob,
     *,
@@ -606,6 +644,7 @@ def process_blob(
 
         df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
         df_clean = normalize_columns_to_snake_case(df_clean)
+        df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
         delta_core.store_delta(
             df_clean,
             cfg.AZURE_CONTAINER_SILVER,
