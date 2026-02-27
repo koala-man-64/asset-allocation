@@ -16,9 +16,7 @@ os.environ["TEST_MODE"] = "true"
 # Keep tests hermetic even when local shell has production-like env values.
 os.environ.pop("POSTGRES_DSN", None)
 os.environ.pop("BACKFILL_START_DATE", None)
-os.environ.pop("BACKFILL_END_DATE", None)
 os.environ.pop("MARKET_BACKFILL_START_DATE", None)
-os.environ.pop("MARKET_BACKFILL_END_DATE", None)
 os.environ["BACKGROUND_WORKERS_ENABLED"] = "false"
 os.environ.setdefault("SYSTEM_HEALTH_TTL_SECONDS", "10")
 os.environ.setdefault("SYSTEM_HEALTH_MAX_AGE_SECONDS", "129600")

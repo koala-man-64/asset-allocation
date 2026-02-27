@@ -61,18 +61,8 @@ def get_backfill_range() -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]
         )
         start = _DEFAULT_BACKFILL_START
 
-    end = _parse_env_timestamp("BACKFILL_END_DATE")
-    if end is None:
-        end = _parse_env_timestamp("MARKET_BACKFILL_END_DATE")
-        if end is not None:
-            mdc.write_warning("MARKET_BACKFILL_END_DATE is deprecated; use BACKFILL_END_DATE instead.")
-    if end is not None and end < start:
-        mdc.write_warning(
-            f"Ignoring BACKFILL_END_DATE ({end.date().isoformat()}) older than start cutoff ({start.date().isoformat()})."
-        )
-        end = None
-
-    return start, end
+    # End-date cutoffs were removed from runtime and deployment configuration.
+    return start, None
 
 
 def filter_by_date(df: pd.DataFrame, date_col: str, start: Optional[pd.Timestamp], end: Optional[pd.Timestamp]) -> pd.DataFrame:

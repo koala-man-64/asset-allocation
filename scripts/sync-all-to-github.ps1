@@ -67,8 +67,7 @@ function Should-SkipParityKey {
     # .env -> .env.web parity enforcement.
     $ignoredKeys = @(
         "RUNTIME_CONFIG_REFRESH_SECONDS",
-        "MARKET_BACKFILL_START_DATE",
-        "MARKET_BACKFILL_END_DATE"
+        "MARKET_BACKFILL_START_DATE"
     )
 
     return $ignoredKeys -contains $Key
@@ -133,7 +132,7 @@ $ConfigPatterns = @(
     "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
     "^DEBUG_SYMBOLS$",
     "^SYMBOLS_REFRESH_INTERVAL_HOURS$",
-    "^BACKFILL_(START|END)_DATE$",
+    "^BACKFILL_START_DATE$",
     "^FEATURE_ENGINEERING_MAX_WORKERS$",
     "^DOMAIN_METADATA_MAX_SCANNED_BLOBS$",
     "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
