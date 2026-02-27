@@ -95,6 +95,71 @@ def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
         assert float(df_saved.iloc[0]["float_shares"]) == pytest.approx(1_000_000.0)
 
 
+def test_silver_processing_merges_history_symbol_without_duplicate_symbol_columns(unique_ticker):
+    symbol = unique_ticker
+    blob_name = f"market-data/{symbol}.csv"
+    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,10.5,12,10,11.0,150\n"
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2024-01-02"),
+                "open": 10.0,
+                "high": 11.5,
+                "low": 9.8,
+                "close": 10.8,
+                "volume": 125.0,
+                "symbol": symbol,
+                "short_interest": 1000.0,
+                "short_volume": 500.0,
+                "float_shares": 1_000_000.0,
+            }
+        ]
+    )
+
+    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+        "core.delta_core.store_delta"
+    ) as mock_store, patch(
+        "core.delta_core.load_delta", return_value=history
+    ):
+        assert silver.process_file(blob_name) is True
+
+        df_saved = mock_store.call_args[0][0]
+        assert "symbol_2" not in df_saved.columns
+        assert "symbol" in df_saved.columns
+        assert set(df_saved["symbol"].dropna().astype(str).unique()) == {symbol}
+
+
+def test_silver_processing_repairs_legacy_symbol_suffix_columns(unique_ticker):
+    symbol = unique_ticker
+    blob_name = f"market-data/{symbol}.csv"
+    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,10.5,12,10,11.0,150\n"
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2024-01-02"),
+                "open": 10.0,
+                "high": 11.5,
+                "low": 9.8,
+                "close": 10.8,
+                "volume": 125.0,
+                "symbol_2": symbol,
+            }
+        ]
+    )
+
+    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+        "core.delta_core.store_delta"
+    ) as mock_store, patch(
+        "core.delta_core.load_delta", return_value=history
+    ):
+        assert silver.process_file(blob_name) is True
+
+        df_saved = mock_store.call_args[0][0]
+        assert "symbol_2" not in df_saved.columns
+        assert "symbol" in df_saved.columns
+        assert set(df_saved["symbol"].dropna().astype(str).unique()) == {symbol}
+
+
 def test_silver_processing_applies_backfill_start_cutoff(unique_ticker):
     symbol = unique_ticker
     blob_name = f"market-data/{symbol}.csv"

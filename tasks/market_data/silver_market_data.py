@@ -53,6 +53,7 @@ def _rename_market_columns(df: pd.DataFrame) -> pd.DataFrame:
         "low": "Low",
         "close": "Close",
         "volume": "Volume",
+        "symbol": "Symbol",
     }
     rename_map = {src: dest for src, dest in canonical_map.items() if src in out.columns and dest not in out.columns}
     if rename_map:
@@ -99,6 +100,44 @@ def _ensure_numeric_market_columns(df: pd.DataFrame) -> pd.DataFrame:
         if col not in out.columns:
             out[col] = pd.NA
         out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    return out
+
+
+def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFrame:
+    out = df.copy()
+    legacy_symbol_cols = [
+        col
+        for col in out.columns
+        if isinstance(col, str) and col.startswith("symbol_") and col[7:].isdigit()
+    ]
+    if not legacy_symbol_cols:
+        return out
+
+    if "symbol" not in out.columns:
+        first_legacy = legacy_symbol_cols[0]
+        out = out.rename(columns={first_legacy: "symbol"})
+        legacy_symbol_cols = legacy_symbol_cols[1:]
+        mdc.write_warning(
+            f"Silver market {ticker}: renamed legacy column {first_legacy} -> symbol."
+        )
+
+    for col in legacy_symbol_cols:
+        if col not in out.columns:
+            continue
+        primary = out["symbol"].astype("string")
+        fallback = out[col].astype("string")
+        conflicts = int((primary.notna() & fallback.notna() & (primary != fallback)).sum())
+        if conflicts > 0:
+            mdc.write_warning(
+                f"Silver market {ticker}: symbol repair conflict in {col}; "
+                f"conflicting_rows={conflicts}; keeping existing symbol when both populated."
+            )
+        out["symbol"] = out["symbol"].combine_first(out[col])
+        out = out.drop(columns=[col])
+        mdc.write_warning(
+            f"Silver market {ticker}: collapsed legacy column {col} into symbol."
+        )
 
     return out
 
@@ -229,6 +268,7 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
     # 7. Write to Silver
     try:
         df_merged = normalize_columns_to_snake_case(df_merged)
+        df_merged = _repair_symbol_column_aliases(df_merged, ticker=ticker)
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
