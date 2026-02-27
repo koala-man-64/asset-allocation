@@ -1,33 +1,30 @@
 version: 2
-updates:
-  - package-ecosystem: github-actions
-    directory: /
+
+multi-ecosystem-groups:
+  all-dependencies:
     schedule:
       interval: weekly
       day: monday
       time: "07:00"
       timezone: UTC
-    open-pull-requests-limit: 10
     commit-message:
-      prefix: deps(actions)
+      prefix: deps(all)
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    patterns:
+      - "*"
+    multi-ecosystem-group: all-dependencies
 
   - package-ecosystem: pip
     directory: /
-    schedule:
-      interval: daily
-      time: "07:15"
-      timezone: UTC
-    open-pull-requests-limit: 10
-    commit-message:
-      prefix: deps(py)
+    patterns:
+      - "*"
+    multi-ecosystem-group: all-dependencies
 
   - package-ecosystem: npm
     directory: /ui
-    schedule:
-      interval: weekly
-      day: monday
-      time: "07:30"
-      timezone: UTC
-    open-pull-requests-limit: 10
-    commit-message:
-      prefix: deps(ui)
+    patterns:
+      - "*"
+    multi-ecosystem-group: all-dependencies

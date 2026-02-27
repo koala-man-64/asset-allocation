@@ -289,10 +289,32 @@ def test_dependabot_config_covers_actions_python_and_ui() -> None:
     assert by_ecosystem["pip"].get("directory") == "/"
     assert by_ecosystem["npm"].get("directory") == "/ui"
 
+    groups = doc.get("multi-ecosystem-groups")
+    assert isinstance(groups, dict), "dependabot.yml must define multi-ecosystem-groups."
+    all_dependencies = groups.get("all-dependencies")
+    assert isinstance(all_dependencies, dict), (
+        "dependabot.yml must define an all-dependencies multi-ecosystem group."
+    )
+
+    group_schedule = all_dependencies.get("schedule")
+    assert isinstance(group_schedule, dict), "all-dependencies group must include a schedule."
+    assert group_schedule.get("interval") == "weekly", "all-dependencies updates must run weekly."
+
+    group_commit_message = all_dependencies.get("commit-message")
+    assert isinstance(group_commit_message, dict), (
+        "all-dependencies group must define a commit-message."
+    )
+    assert group_commit_message.get("prefix") == "deps(all)"
+
     for ecosystem in ("github-actions", "pip", "npm"):
-        schedule = by_ecosystem[ecosystem].get("schedule")
-        assert isinstance(schedule, dict), f"{ecosystem} entry must include a schedule."
-        assert schedule.get("interval") == "weekly", f"{ecosystem} updates must run weekly."
+        entry = by_ecosystem[ecosystem]
+        assert entry.get("multi-ecosystem-group") == "all-dependencies", (
+            f"{ecosystem} entry must be assigned to the all-dependencies group."
+        )
+        patterns = entry.get("patterns")
+        assert isinstance(patterns, list) and "*" in patterns, (
+            f"{ecosystem} entry must include wildcard patterns for grouped updates."
+        )
 
 
 def test_repo_level_agents_governance_file_exists() -> None:
