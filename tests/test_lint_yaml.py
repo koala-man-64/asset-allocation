@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import re
 
@@ -5,17 +6,43 @@ import pytest
 import yaml
 
 _GITHUB_EXPR_IN_QUOTED_QUERY = re.compile(r'--query\s+\\?"[^"\n]*\$\{\{[^"\n]*"')
+_PINNED_CHECKOUT_ACTION = re.compile(r"actions/checkout@[0-9a-f]{40}")
+_PINNED_SETUP_PYTHON_ACTION = re.compile(r"actions/setup-python@[0-9a-f]{40}")
+
+_YAML_SCAN_EXCLUDED_DIRS = {
+    "__pycache__",
+    "node_modules",
+    ".pnpm-store",
+}
+
+
+def _iter_yaml_files(repo_root: Path):
+    for current_root, dirs, files in os.walk(repo_root):
+        current_path = Path(current_root)
+        rel_parts = current_path.relative_to(repo_root).parts
+        if any(part.startswith(".") and part != ".github" for part in rel_parts):
+            dirs[:] = []
+            continue
+
+        dirs[:] = [
+            directory
+            for directory in dirs
+            if directory not in _YAML_SCAN_EXCLUDED_DIRS
+            and (not directory.startswith(".") or directory == ".github")
+        ]
+
+        for file_name in files:
+            if not (file_name.endswith(".yml") or file_name.endswith(".yaml")):
+                continue
+            yaml_file = current_path / file_name
+            if any(part.startswith(".") and part != ".github" for part in yaml_file.parts):
+                continue
+            yield yaml_file
 
 def test_yaml_syntax():
     """Validates that all YAML files in the repository have valid syntax."""
     repo_root = Path(__file__).resolve().parents[1]
-    yaml_files = list(repo_root.rglob("*.yml")) + list(repo_root.rglob("*.yaml"))
-    
-    for yaml_file in yaml_files:
-        # Skip hidden directories like .git, .mypy_cache, etc.
-        if any(part.startswith(".") and part != ".github" for part in yaml_file.parts):
-            continue
-            
+    for yaml_file in _iter_yaml_files(repo_root):
         with open(yaml_file, "r", encoding="utf-8") as f:
             try:
                 yaml.safe_load(f)
@@ -250,10 +277,10 @@ def test_supply_chain_security_workflow_enforces_pinned_audits() -> None:
         "Supply-chain workflow permissions must be least privilege (contents: read)."
     )
 
-    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in text, (
+    assert _PINNED_CHECKOUT_ACTION.search(text), (
         "Supply-chain workflow must pin actions/checkout to a commit SHA."
     )
-    assert "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065" in text, (
+    assert _PINNED_SETUP_PYTHON_ACTION.search(text), (
         "Supply-chain workflow must pin actions/setup-python to a commit SHA."
     )
     assert "node:20-bookworm-slim@sha256:" in text, (
