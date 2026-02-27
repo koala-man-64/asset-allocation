@@ -14,6 +14,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -91,7 +92,7 @@ jobs:
     - name: Run ruff
       run: |
         python -m ruff check .
-        
+
     - name: Run tests
       env:
         AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING || 'DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net' }}
@@ -116,7 +117,7 @@ jobs:
         SYSTEM_HEALTH_TTL_SECONDS: "30"
         SYSTEM_HEALTH_MAX_AGE_SECONDS: "129600"
       run: |
-        python -m pytest --cov=alpaca --cov=api --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing
+        python -m pytest --cov=alpaca --cov=api --cov=core --cov=monitoring --cov=tasks --cov-report=term-missing --durations=40 -vv -o faulthandler_timeout=300
         echo "::group::Coverage Summary"
         coverage report | grep TOTAL | awk '{print "Backend Total Coverage: " $NF}'
         echo "::endgroup::"
