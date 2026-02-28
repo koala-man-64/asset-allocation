@@ -38,11 +38,6 @@ def test_bronze_ingestion(unique_ticker):
             {"date": "2024-01-03", "short_volume": 500},
         ]
     }
-    mock_massive.get_float.return_value = {
-        "results": [
-            {"date": "2024-01-03", "float_shares": 1000000},
-        ]
-    }
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
         "core.core.read_raw_bytes",
@@ -71,14 +66,12 @@ def test_bronze_ingestion(unique_ticker):
             "Volume",
             "ShortInterest",
             "ShortVolume",
-            "FloatShares",
         ]
         assert float(df["ShortInterest"].iloc[-1]) == pytest.approx(1200.0)
         assert float(df["ShortVolume"].iloc[0]) == pytest.approx(500.0)
-        assert float(df["FloatShares"].iloc[0]) == pytest.approx(1_000_000.0)
 
 
-def test_download_populates_short_interest_short_volume_and_float_for_aapl():
+def test_download_populates_short_interest_short_volume_for_aapl():
     symbol = "AAPL"
     mock_massive = MagicMock()
     mock_massive.get_daily_time_series_csv.return_value = (
@@ -94,11 +87,6 @@ def test_download_populates_short_interest_short_volume_and_float_for_aapl():
     mock_massive.get_short_volume.return_value = {
         "results": [
             {"date": "2024-01-03", "short_volume": 5_200_000},
-        ]
-    }
-    mock_massive.get_float.return_value = {
-        "results": [
-            {"date": "2024-01-03", "float_shares": 15_400_000_000},
         ]
     }
 
@@ -118,7 +106,6 @@ def test_download_populates_short_interest_short_volume_and_float_for_aapl():
         mock_massive.get_daily_time_series_csv.assert_called_once()
         mock_massive.get_short_interest.assert_called_once()
         mock_massive.get_short_volume.assert_called_once()
-        mock_massive.get_float.assert_called_once_with(symbol=symbol)
 
         _, si_kwargs = mock_massive.get_short_interest.call_args
         assert si_kwargs["symbol"] == symbol
@@ -141,14 +128,11 @@ def test_download_populates_short_interest_short_volume_and_float_for_aapl():
             "Volume",
             "ShortInterest",
             "ShortVolume",
-            "FloatShares",
         ]
         assert df["ShortInterest"].notna().all()
         assert df["ShortVolume"].notna().all()
-        assert df["FloatShares"].notna().all()
         assert float(df.loc[df["Date"] == "2024-01-03", "ShortInterest"].iloc[0]) == pytest.approx(18_500_000.0)
         assert float(df.loc[df["Date"] == "2024-01-03", "ShortVolume"].iloc[0]) == pytest.approx(5_200_000.0)
-        assert float(df.loc[df["Date"] == "2024-01-03", "FloatShares"].iloc[0]) == pytest.approx(15_400_000_000.0)
 
 
 def test_header_only_csv_blacklists_symbol(unique_ticker):
@@ -176,8 +160,8 @@ def test_header_only_with_existing_data_does_not_blacklist(unique_ticker):
     mock_massive = MagicMock()
     mock_massive.get_daily_time_series_csv.return_value = "Date,Open,High,Low,Close,Volume\n"
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2024-01-03,10,11,9,10.5,100,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2024-01-03,10,11,9,10.5,100,1000,500\n"
     ).encode("utf-8")
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
@@ -204,12 +188,11 @@ def test_download_uses_existing_data_window_and_merges(unique_ticker):
     )
     mock_massive.get_short_interest.return_value = {"results": [{"date": "2024-01-04", "short_interest": 1500}]}
     mock_massive.get_short_volume.return_value = {"results": [{"date": "2024-01-04", "short_volume": 700}]}
-    mock_massive.get_float.return_value = {"results": [{"date": "2024-01-04", "float_shares": 1100000}]}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2024-01-02,10,11,9,10.5,100,1000,500,1000000\n"
-        "2024-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2024-01-02,10,11,9,10.5,100,1000,500\n"
+        "2024-01-03,11,12,10,11.5,120,1000,500\n"
     ).encode("utf-8")
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
@@ -246,12 +229,11 @@ def test_download_keeps_rows_without_configurable_backfill_cutoff(unique_ticker)
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2024-01-01,9,10,8,9.5,90,1000,500,1000000\n"
-        "2024-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2024-01-01,9,10,8,9.5,90,1000,500\n"
+        "2024-01-02,10,11,9,10.5,100,1000,500\n"
     ).encode("utf-8")
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
@@ -285,12 +267,11 @@ def test_download_does_not_delete_blob_without_backfill_cutoff(unique_ticker):
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2023-12-29,9,10,8,9.5,90,1000,500,1000000\n"
-        "2023-12-30,10,11,9,10.5,100,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2023-12-29,9,10,8,9.5,90,1000,500\n"
+        "2023-12-30,10,11,9,10.5,100,1000,500\n"
     ).encode("utf-8")
 
     mock_bronze_client = MagicMock()
@@ -435,11 +416,10 @@ def test_download_uses_snapshot_row_when_incremental_window_allows(unique_ticker
     mock_massive = MagicMock()
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2024-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2024-01-02,10,11,9,10.5,100,1000,500\n"
     ).encode("utf-8")
     snapshot_row = {
         "Date": "2024-01-03",
@@ -479,11 +459,10 @@ def test_download_skips_when_snapshot_is_not_newer(unique_ticker):
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2024-01-03,10,11,9,10.5,100,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2024-01-03,10,11,9,10.5,100,1000,500\n"
     ).encode("utf-8")
     snapshot_row = {
         "Date": "2024-01-02",
@@ -510,7 +489,6 @@ def test_download_skips_when_snapshot_is_not_newer(unique_ticker):
         mock_massive.get_daily_time_series_csv.assert_not_called()
         mock_massive.get_short_interest.assert_not_called()
         mock_massive.get_short_volume.assert_not_called()
-        mock_massive.get_float.assert_not_called()
         mock_store.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
 
@@ -524,11 +502,10 @@ def test_download_skips_when_no_new_daily_rows_and_supplementals_complete(unique
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2024-01-03,10,11,9,10.5,100,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2024-01-03,10,11,9,10.5,100,1000,500\n"
     ).encode("utf-8")
 
     with patch("core.core.store_raw_bytes") as mock_store, patch(
@@ -547,7 +524,6 @@ def test_download_skips_when_no_new_daily_rows_and_supplementals_complete(unique
         mock_massive.get_daily_time_series_csv.assert_called_once()
         mock_massive.get_short_interest.assert_not_called()
         mock_massive.get_short_volume.assert_not_called()
-        mock_massive.get_float.assert_not_called()
         mock_store.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
 
@@ -562,12 +538,11 @@ def test_download_forces_backfill_when_existing_min_after_backfill_start(unique_
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2025-01-02,10,11,9,10.5,100,1000,500,1000000\n"
-        "2025-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2025-01-02,10,11,9,10.5,100,1000,500\n"
+        "2025-01-03,11,12,10,11.5,120,1000,500\n"
     ).encode("utf-8")
 
     with patch("core.core.read_raw_bytes", return_value=existing_csv), patch(
@@ -608,12 +583,11 @@ def test_download_bypasses_snapshot_fast_path_when_repairing_coverage(unique_tic
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2025-01-02,10,11,9,10.5,100,1000,500,1000000\n"
-        "2025-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2025-01-02,10,11,9,10.5,100,1000,500\n"
+        "2025-01-03,11,12,10,11.5,120,1000,500\n"
     ).encode("utf-8")
     snapshot_row = {
         "Date": "2025-01-04",
@@ -658,12 +632,11 @@ def test_download_skips_force_backfill_when_limited_marker_present(unique_ticker
     )
     mock_massive.get_short_interest.return_value = {}
     mock_massive.get_short_volume.return_value = {}
-    mock_massive.get_float.return_value = {}
 
     existing_csv = (
-        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
-        "2025-01-02,10,11,9,10.5,100,1000,500,1000000\n"
-        "2025-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume\n"
+        "2025-01-02,10,11,9,10.5,100,1000,500\n"
+        "2025-01-03,11,12,10,11.5,120,1000,500\n"
     ).encode("utf-8")
 
     with patch("core.core.read_raw_bytes", return_value=existing_csv), patch(

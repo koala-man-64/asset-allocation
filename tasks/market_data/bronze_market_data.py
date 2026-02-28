@@ -34,7 +34,7 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
 list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
 
-_SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
+_SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume")
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
 _FULL_HISTORY_START_DATE = "1970-01-01"
@@ -468,7 +468,6 @@ def _merge_market_fundamentals(
     *,
     short_interest_payload: Any,
     short_volume_payload: Any,
-    float_payload: Any,
 ) -> pd.DataFrame:
     out = df_daily.copy()
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -500,20 +499,6 @@ def _merge_market_fundamentals(
                 "shortvolumeshares",
                 "short_volume_shares",
                 "volumeshort",
-                "value",
-            ),
-        ),
-        (
-            "FloatShares",
-            float_payload,
-            (
-                "float_shares",
-                "shares_float",
-                "sharesfloat",
-                "floatshares",
-                "floatshares",
-                "float",
-                "free_float",
                 "value",
             ),
         ),
@@ -947,16 +932,10 @@ def download_and_save_raw(
         except MassiveGatewayNotFoundError:
             short_volume_payload = {}
 
-        try:
-            float_payload = massive_client.get_float(symbol=symbol)
-        except MassiveGatewayNotFoundError:
-            float_payload = {}
-
         df_daily = _merge_market_fundamentals(
             df_daily,
             short_interest_payload=short_interest_payload,
             short_volume_payload=short_volume_payload,
-            float_payload=float_payload,
         )
         df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
         if backfill_start is not None and force_backfill:

@@ -34,7 +34,8 @@ from tasks.common.market_reconciliation import (
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
-_SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
+_SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume")
+_REMOVED_MARKET_COLUMNS = ("FloatShares", "float_shares", "shares_float", "free_float", "float")
 
 
 def _normalize_col_name(name: str) -> str:
@@ -67,10 +68,6 @@ def _rename_market_columns(df: pd.DataFrame) -> pd.DataFrame:
         "shortvolume": "ShortVolume",
         "shortvolumeshares": "ShortVolume",
         "volumeshort": "ShortVolume",
-        "floatshares": "FloatShares",
-        "sharesfloat": "FloatShares",
-        "freefloat": "FloatShares",
-        "float": "FloatShares",
     }
     normalized_cols = {_normalize_col_name(col): col for col in out.columns}
     alias_renames: dict[str, str] = {}
@@ -81,6 +78,14 @@ def _rename_market_columns(df: pd.DataFrame) -> pd.DataFrame:
     if alias_renames:
         out = out.rename(columns=alias_renames)
 
+    return out
+
+
+def _drop_removed_market_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    to_drop = [col for col in _REMOVED_MARKET_COLUMNS if col in out.columns]
+    if to_drop:
+        out = out.drop(columns=to_drop)
     return out
 
 
@@ -195,6 +200,7 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         mdc.write_error(f"Missing required columns in {blob_name}: {missing_cols}")
         return "failed"
 
+    df_new = _drop_removed_market_columns(df_new)
     df_new = _ensure_numeric_market_columns(df_new)
 
     backfill_start, backfill_end = get_backfill_range()
@@ -219,6 +225,7 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         df_merged = df_new
     else:
         df_history = _rename_market_columns(df_history)
+        df_history = _drop_removed_market_columns(df_history)
         df_history = _ensure_numeric_market_columns(df_history)
         # Ensure types match before concat
         if 'Date' in df_history.columns:
@@ -239,6 +246,7 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
     )
     
     # 6. Type Casting & Formatting
+    df_merged = _drop_removed_market_columns(df_merged)
     df_merged = _ensure_numeric_market_columns(df_merged)
     
     cols_to_round = ['Open', 'High', 'Low', 'Close']

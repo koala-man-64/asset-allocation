@@ -40,7 +40,7 @@ Cross-reference external data providers to:
 ## Bronze Ingestion XRef
 | Domain | Primary Provider | Bronze Task | Job Name | Bronze Output Path | Notes |
 |---|---|---|---|---|---|
-| Market data | Massive | `tasks/market_data/bronze_market_data.py` | `bronze-market-job` | `market-data/{symbol}.csv` | Enriches OHLCV with short-interest, short-volume, float where available. |
+| Market data | Massive | `tasks/market_data/bronze_market_data.py` | `bronze-market-job` | `market-data/{symbol}.csv` | Enriches OHLCV with short-interest and short-volume where available. |
 | Earnings data | Alpha Vantage | `tasks/earnings_data/bronze_earnings_data.py` | `bronze-earnings-job` | `{EARNINGS_DATA_PREFIX}/{symbol}.json` (default `earnings-data/{symbol}.json`) | Quarterly earnings payload normalized to JSON records. |
 | Finance data | Alpha Vantage | `tasks/finance_data/bronze_finance_data.py` | `bronze-finance-job` | `finance-data/{folder}/{symbol}_{suffix}.json` | Pulls balance sheet, cash flow, income statement, overview. |
 | Price target data | Nasdaq Data Link | `tasks/price_target_data/bronze_price_target_data.py` | `bronze-price-target-job` | `price-target-data/{symbol}.parquet` | Reads `ZACKS/TP` by ticker batch. |
