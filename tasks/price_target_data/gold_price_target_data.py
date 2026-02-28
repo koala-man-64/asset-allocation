@@ -239,7 +239,7 @@ def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict
     df_features = normalize_columns_to_snake_case(df_features)
 
     try:
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite", schema_mode="overwrite")
+        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
                 gold_container,

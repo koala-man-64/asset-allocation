@@ -320,10 +320,8 @@ def materialize_market_by_date(
             predicate = f"year_month >= '{config.year_month}' AND year_month <= '{config.year_month_end}'"
         else:
             predicate = f"year_month = '{config.year_month}'"
-        schema_mode = "merge"
     else:
         predicate = None
-        schema_mode = "overwrite"
 
     delta_core.store_delta(
         merged,
@@ -331,7 +329,6 @@ def materialize_market_by_date(
         config.target_path,
         mode="overwrite",
         partition_by=partition_by,
-        schema_mode=schema_mode,
         predicate=predicate,
     )
 

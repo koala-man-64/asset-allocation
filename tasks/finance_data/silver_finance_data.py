@@ -650,7 +650,6 @@ def process_blob(
             cfg.AZURE_CONTAINER_SILVER,
             silver_path,
             mode="overwrite",
-            schema_mode="merge",
         )
         if backfill_start is not None:
             delta_core.vacuum_delta_table(

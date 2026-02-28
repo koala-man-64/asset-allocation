@@ -102,6 +102,8 @@ def _get_existing_delta_schema_columns(uri: str, storage_options: Dict[str, str]
         dt = DeltaTable(uri, storage_options=storage_options)
         return [field.name for field in dt.schema().fields]
     except Exception as exc:
+        if _is_missing_delta_table_error(exc):
+            return None
         logger.warning(f"Failed to read Delta schema for {uri}: {exc}")
         return None
 
@@ -144,6 +146,52 @@ def _log_delta_schema_mismatch(df: pd.DataFrame, container: str, path: str) -> N
             )
     except Exception as exc:
         logger.warning(f"Failed to compute schema mismatch diagnostics for {path}: {exc}")
+
+
+def _compare_columns(df_columns: List[str], table_columns: List[str]) -> Dict[str, Any]:
+    missing_in_df = [c for c in table_columns if c not in df_columns]
+    extra_in_df = [c for c in df_columns if c not in table_columns]
+    order_matches = df_columns == table_columns
+    same_set = not missing_in_df and not extra_in_df
+    return {
+        "missing_in_df": missing_in_df,
+        "extra_in_df": extra_in_df,
+        "order_matches": order_matches,
+        "same_set": same_set,
+    }
+
+
+def _log_store_delta_column_comparison(
+    *,
+    path: str,
+    df_columns: List[str],
+    table_columns: List[str],
+    schema_mode: Optional[str],
+) -> None:
+    comparison = _compare_columns(df_columns, table_columns)
+    if comparison["same_set"] and comparison["order_matches"]:
+        return
+
+    merge_enabled = str(schema_mode or "").strip().lower() in {"merge", "overwrite"}
+    level = logging.INFO if merge_enabled else logging.WARNING
+    logger.log(
+        level,
+        "Pre-write Delta column check for %s: df_cols=%d table_cols=%d missing_in_df=%s extra_in_df=%s order_matches=%s schema_mode=%s",
+        path,
+        len(df_columns),
+        len(table_columns),
+        comparison["missing_in_df"],
+        comparison["extra_in_df"],
+        comparison["order_matches"],
+        schema_mode,
+    )
+    if "drawdown_1y" in df_columns and "drawdown" in table_columns and "drawdown" not in df_columns:
+        logger.log(
+            level,
+            "Pre-write Delta schema hint for %s: existing table has 'drawdown' but DataFrame has 'drawdown_1y'.",
+            path,
+        )
+
 
 def _parse_connection_string(conn_str: str) -> Dict[str, str]:
     """Parses Azure Storage Connection String into a dictionary."""
@@ -436,7 +484,24 @@ def store_delta(
         uri = get_delta_table_uri(container, path)
         opts = get_delta_storage_options(container)
         
-        effective_schema_mode = schema_mode or ("merge" if merge_schema else None)
+        requested_schema_mode = schema_mode or ("merge" if merge_schema else None)
+        effective_schema_mode = None
+        if requested_schema_mode is not None:
+            logger.info(
+                "Ignoring requested schema_mode for %s; forcing schema_mode=None (requested=%s, merge_schema=%s).",
+                path,
+                requested_schema_mode,
+                merge_schema,
+            )
+        table_cols = _get_existing_delta_schema_columns(uri, opts)
+        if table_cols:
+            df_cols = [str(c) for c in df.columns.tolist()]
+            _log_store_delta_column_comparison(
+                path=path,
+                df_columns=df_cols,
+                table_columns=table_cols,
+                schema_mode=effective_schema_mode,
+            )
 
         write_deltalake(
             uri,

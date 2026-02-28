@@ -240,7 +240,6 @@ def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict
             gold_container,
             gold_path,
             mode="overwrite",
-            schema_mode="overwrite",
         )
         if backfill_start is not None:
             delta_core.vacuum_delta_table(

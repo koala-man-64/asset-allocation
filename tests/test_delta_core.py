@@ -12,7 +12,7 @@ def _patch_delta_core_for_unit(monkeypatch, tmp_path):
     monkeypatch.setattr(delta_core, "get_delta_storage_options", lambda _container=None: {})
 
 
-def test_store_delta_defaults_merge_schema_to_merge(monkeypatch, tmp_path):
+def test_store_delta_forces_schema_mode_none_when_merge_schema_true(monkeypatch, tmp_path):
     _patch_delta_core_for_unit(monkeypatch, tmp_path)
     captured = {}
 
@@ -29,10 +29,10 @@ def test_store_delta_defaults_merge_schema_to_merge(monkeypatch, tmp_path):
         merge_schema=True,
     )
 
-    assert captured["schema_mode"] == "merge"
+    assert captured["schema_mode"] is None
 
 
-def test_store_delta_schema_mode_overrides_merge_schema(monkeypatch, tmp_path):
+def test_store_delta_ignores_explicit_schema_mode_override(monkeypatch, tmp_path):
     _patch_delta_core_for_unit(monkeypatch, tmp_path)
     captured = {}
 
@@ -50,7 +50,7 @@ def test_store_delta_schema_mode_overrides_merge_schema(monkeypatch, tmp_path):
         schema_mode="overwrite",
     )
 
-    assert captured["schema_mode"] == "overwrite"
+    assert captured["schema_mode"] is None
 
 
 def test_store_delta_triggers_schema_mismatch_diagnostics(monkeypatch, tmp_path):
@@ -97,7 +97,64 @@ def test_log_delta_schema_mismatch_emits_missing_extra_and_hint(monkeypatch, cap
     assert "existing table has 'drawdown' but DataFrame has 'drawdown_1y'" in caplog.text
 
 
-def test_store_delta_schema_overwrite_migrates_local_table(monkeypatch, tmp_path):
+def test_store_delta_logs_prewrite_column_comparison_warning(monkeypatch, tmp_path, caplog):
+    _patch_delta_core_for_unit(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        delta_core,
+        "_get_existing_delta_schema_columns",
+        lambda _uri, _storage_options: ["a", "b"],
+    )
+    monkeypatch.setattr(delta_core, "write_deltalake", lambda *_args, **_kwargs: None)
+
+    logger_name = delta_core.logger.name
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        delta_core.store_delta(
+            pd.DataFrame({"a": [1], "c": [2]}),
+            container="container",
+            path="gold/test",
+            mode="overwrite",
+        )
+
+    matching = [
+        record
+        for record in caplog.records
+        if "Pre-write Delta column check for gold/test" in record.getMessage()
+    ]
+    assert matching
+    assert any(record.levelno == logging.WARNING for record in matching)
+
+
+def test_store_delta_logs_prewrite_column_comparison_warning_when_schema_merge_requested(
+    monkeypatch, tmp_path, caplog
+):
+    _patch_delta_core_for_unit(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        delta_core,
+        "_get_existing_delta_schema_columns",
+        lambda _uri, _storage_options: ["a", "b"],
+    )
+    monkeypatch.setattr(delta_core, "write_deltalake", lambda *_args, **_kwargs: None)
+
+    logger_name = delta_core.logger.name
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        delta_core.store_delta(
+            pd.DataFrame({"a": [1], "c": [2]}),
+            container="container",
+            path="gold/test",
+            mode="overwrite",
+            merge_schema=True,
+        )
+
+    matching = [
+        record
+        for record in caplog.records
+        if "Pre-write Delta column check for gold/test" in record.getMessage()
+    ]
+    assert matching
+    assert any(record.levelno == logging.WARNING for record in matching)
+
+
+def test_store_delta_schema_override_is_ignored_for_incompatible_rename(monkeypatch, tmp_path):
     table_dir = tmp_path / "price_targets_gold"
     monkeypatch.setattr(delta_core, "_ensure_container_exists", lambda _container: None)
     monkeypatch.setattr(delta_core, "get_delta_table_uri", lambda _container, _path: str(table_dir))
@@ -119,7 +176,15 @@ def test_store_delta_schema_overwrite_migrates_local_table(monkeypatch, tmp_path
     assert "symbol" not in old_cols
 
     df_new = df_old.rename(columns={"ticker": "symbol"})
-    delta_core.store_delta(df_new, container="price-target-data", path="gold/AAPL", mode="overwrite", schema_mode="overwrite")
-    new_cols = [f.name for f in DeltaTable(str(table_dir)).schema().fields]
-    assert "symbol" in new_cols
-    assert "ticker" not in new_cols
+    with pytest.raises(Exception):
+        delta_core.store_delta(
+            df_new,
+            container="price-target-data",
+            path="gold/AAPL",
+            mode="overwrite",
+            schema_mode="overwrite",
+        )
+
+    persisted_cols = [f.name for f in DeltaTable(str(table_dir)).schema().fields]
+    assert "ticker" in persisted_cols
+    assert "symbol" not in persisted_cols

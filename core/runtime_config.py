@@ -11,6 +11,31 @@ from core.postgres import PostgresError, connect
 
 logger = logging.getLogger(__name__)
 
+_LOCAL_RUNTIME_MARKER_ENV_VARS = (
+    # Set by Azure Container Apps at runtime.
+    "CONTAINER_APP_ENV_DNS_SUFFIX",
+    "CONTAINER_APP_JOB_EXECUTION_NAME",
+    "CONTAINER_APP_REPLICA_NAME",
+    # Set inside Kubernetes pods.
+    "KUBERNETES_SERVICE_HOST",
+)
+
+_DB_CONNECTIVITY_ERROR_SNIPPETS = (
+    "connection failed",
+    "could not connect to server",
+    "connection refused",
+    "could not receive data from server",
+    "could not send ssl negotiation packet",
+    "network is unreachable",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "no route to host",
+    "timeout expired",
+    "timed out",
+    "socket is not connected",
+    "connection reset by peer",
+)
+
 
 @dataclass(frozen=True)
 class RuntimeConfigItem:
@@ -223,6 +248,17 @@ def _resolve_dsn(dsn: Optional[str]) -> Optional[str]:
     return value or None
 
 
+def _is_local_runtime() -> bool:
+    return not any((os.environ.get(key) or "").strip() for key in _LOCAL_RUNTIME_MARKER_ENV_VARS)
+
+
+def _looks_like_db_connectivity_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    return any(snippet in text for snippet in _DB_CONNECTIVITY_ERROR_SNIPPETS)
+
+
 def list_runtime_config(
     dsn: Optional[str] = None,
     *,
@@ -394,7 +430,10 @@ def apply_runtime_config_to_env(
     try:
         effective = get_effective_runtime_config(dsn, scopes_by_precedence=scopes, keys=requested_keys)
     except Exception as exc:
-        logger.warning("Runtime config load skipped (db unavailable?): %s", exc)
+        if _is_local_runtime() and _looks_like_db_connectivity_error(exc):
+            logger.info("Runtime config load skipped (db unavailable?): %s", exc)
+        else:
+            logger.warning("Runtime config load skipped (db unavailable?): %s", exc)
         if raise_on_error:
             raise
         return {}

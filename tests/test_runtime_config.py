@@ -1,3 +1,6 @@
+import logging
+
+from core import runtime_config
 from core.runtime_config import normalize_env_override
 
 
@@ -41,5 +44,55 @@ def test_normalize_env_override_required_nonempty_rejects_blank():
 
 def test_normalize_env_override_unknown_key_passthrough():
     assert normalize_env_override("UNMANAGED_KEY", "  any-value  ") == "any-value"
+
+
+def test_apply_runtime_config_logs_info_for_local_db_connectivity_error(monkeypatch, caplog):
+    def _raise_connectivity_error(*args, **kwargs):
+        raise RuntimeError(
+            "connection failed: could not send SSL negotiation packet: Socket is not connected"
+        )
+
+    for key in (
+        "CONTAINER_APP_ENV_DNS_SUFFIX",
+        "CONTAINER_APP_JOB_EXECUTION_NAME",
+        "CONTAINER_APP_REPLICA_NAME",
+        "KUBERNETES_SERVICE_HOST",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(runtime_config, "get_effective_runtime_config", _raise_connectivity_error)
+
+    with caplog.at_level(logging.INFO, logger=runtime_config.logger.name):
+        applied = runtime_config.apply_runtime_config_to_env()
+
+    assert applied == {}
+    matching = [
+        record
+        for record in caplog.records
+        if "Runtime config load skipped (db unavailable?)" in record.getMessage()
+    ]
+    assert matching
+    assert all(record.levelno == logging.INFO for record in matching)
+
+
+def test_apply_runtime_config_logs_warning_for_cloud_runtime_db_connectivity_error(
+    monkeypatch, caplog
+):
+    def _raise_connectivity_error(*args, **kwargs):
+        raise RuntimeError("connection failed: timeout expired")
+
+    monkeypatch.setenv("CONTAINER_APP_ENV_DNS_SUFFIX", "azurecontainerapps.io")
+    monkeypatch.setattr(runtime_config, "get_effective_runtime_config", _raise_connectivity_error)
+
+    with caplog.at_level(logging.INFO, logger=runtime_config.logger.name):
+        applied = runtime_config.apply_runtime_config_to_env()
+
+    assert applied == {}
+    matching = [
+        record
+        for record in caplog.records
+        if "Runtime config load skipped (db unavailable?)" in record.getMessage()
+    ]
+    assert matching
+    assert any(record.levelno == logging.WARNING for record in matching)
 
 
