@@ -45,8 +45,6 @@ properties:
         value: INFO
       - name: DISABLE_DOTENV
         value: "true"
-      - name: BACKFILL_START_DATE
-        value: ${BACKFILL_START_DATE}
       - name: DEBUG_SYMBOLS
         value: "${DEBUG_SYMBOLS}"
       - name: SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID
