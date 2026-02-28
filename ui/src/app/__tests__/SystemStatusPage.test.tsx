@@ -115,14 +115,16 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
             resourceType: 'Microsoft.App/jobs',
             status: 'healthy',
             lastChecked: now,
-            runningState: 'Running'
+            runningState: 'Running',
+            lastModifiedAt: now
           },
           {
             name: 'aca-job-zeta',
             resourceType: 'Microsoft.App/jobs',
             status: 'warning',
             lastChecked: now,
-            runningState: 'Suspended'
+            runningState: 'Suspended',
+            lastModifiedAt: now
           }
         ]
       },
@@ -204,12 +206,13 @@ describe('SystemStatusPage', () => {
     expectNoPlatinumDomain(coverageProps.dataLayers);
 
     const coveragePanelProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
-      managedContainerJobs: Array<{ name: string }>;
+      managedContainerJobs: Array<{ name: string; lastModifiedAt?: string | null }>;
     };
     expect(coveragePanelProps.managedContainerJobs.map((job) => job.name)).toEqual([
       'aca-job-market',
       'aca-job-zeta'
     ]);
+    expect(coveragePanelProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))).toBe(true);
   });
 
   it('uses canonical domain ordering in domain layer coverage panel', async () => {

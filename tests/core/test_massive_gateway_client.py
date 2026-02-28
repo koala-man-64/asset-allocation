@@ -221,3 +221,79 @@ def test_unified_snapshot_uses_batch_api_route() -> None:
     assert seen[0][0] == "/api/providers/massive/snapshot"
     assert seen[0][1].get("symbols") == "AAPL,MSFT"
     assert seen[0][1].get("type") == "stocks"
+
+
+def test_short_interest_uses_underscore_date_filters() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/providers/massive/fundamentals/short-interest":
+            return httpx.Response(200, json={"results": []})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        client.get_short_interest(
+            symbol="AAPL",
+            settlement_date_gte="2024-01-01",
+            settlement_date_lte="2024-01-31",
+        )
+    finally:
+        http_client.close()
+
+    assert seen[0][0] == "/api/providers/massive/fundamentals/short-interest"
+    assert seen[0][1].get("symbol") == "AAPL"
+    assert seen[0][1].get("settlement_date_gte") == "2024-01-01"
+    assert seen[0][1].get("settlement_date_lte") == "2024-01-31"
+    assert "settlement_date.gte" not in seen[0][1]
+    assert "settlement_date.lte" not in seen[0][1]
+
+
+def test_short_volume_uses_underscore_date_filters() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/providers/massive/fundamentals/short-volume":
+            return httpx.Response(200, json={"results": []})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        client.get_short_volume(
+            symbol="AAPL",
+            date_gte="2024-01-01",
+            date_lte="2024-01-31",
+        )
+    finally:
+        http_client.close()
+
+    assert seen[0][0] == "/api/providers/massive/fundamentals/short-volume"
+    assert seen[0][1].get("symbol") == "AAPL"
+    assert seen[0][1].get("date_gte") == "2024-01-01"
+    assert seen[0][1].get("date_lte") == "2024-01-31"
+    assert "date.gte" not in seen[0][1]
+    assert "date.lte" not in seen[0][1]

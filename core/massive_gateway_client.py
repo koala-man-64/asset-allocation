@@ -497,9 +497,9 @@ class MassiveGatewayClient:
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"symbol": symbol}
         if settlement_date_gte:
-            params["settlement_date.gte"] = settlement_date_gte
+            params["settlement_date_gte"] = settlement_date_gte
         if settlement_date_lte:
-            params["settlement_date.lte"] = settlement_date_lte
+            params["settlement_date_lte"] = settlement_date_lte
         resp = self._request("/api/providers/massive/fundamentals/short-interest", params=params)
         return resp.json()
 
@@ -512,9 +512,9 @@ class MassiveGatewayClient:
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"symbol": symbol}
         if date_gte:
-            params["date.gte"] = date_gte
+            params["date_gte"] = date_gte
         if date_lte:
-            params["date.lte"] = date_lte
+            params["date_lte"] = date_lte
         resp = self._request("/api/providers/massive/fundamentals/short-volume", params=params)
         return resp.json()
 

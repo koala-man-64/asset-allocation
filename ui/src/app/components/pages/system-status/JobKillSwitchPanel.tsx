@@ -12,6 +12,7 @@ import { formatSystemStatusText } from './systemStatusText';
 export interface ManagedContainerJob {
   name: string;
   runningState?: string | null;
+  lastModifiedAt?: string | null;
 }
 
 type KillSwitchVariant = 'panel' | 'inline';

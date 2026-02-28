@@ -10,59 +10,53 @@
   },
   "category_counts": {
     "config_infra": 1,
-    "docs": 1,
-    "test": 1
+    "docs": 1
   },
   "category_scores": {
     "config_infra": 15.0,
-    "docs": 1.5,
-    "test": 25.0
+    "docs": 1.5
   },
   "changed_files": [
-    "tasks/earnings_data/bronze_earnings_data.py",
-    "tasks/finance_data/bronze_finance_data.py",
-    "tasks/market_data/bronze_market_data.py",
-    "tasks/price_target_data/bronze_price_target_data.py",
-    "tests/earnings_data/test_bronze_earnings_data.py",
-    "tests/finance_data/test_bronze_finance_data.py",
-    "tests/market_data/test_bronze_market_data.py",
-    "tests/price_target_data/test_bronze_price_target_data.py",
+    "monitoring/control_plane.py",
+    "monitoring/system_health.py",
+    "tests/monitoring/test_control_plane.py",
+    "tests/monitoring/test_system_health.py",
+    "ui/src/app/__tests__/SystemStatusPage.test.tsx",
+    "ui/src/app/components/pages/SystemStatusPage.tsx",
     "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-    "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx"
+    "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx",
+    "ui/src/types/strategy.ts"
   ],
-  "drift_score": 41.5,
+  "drift_score": 16.5,
   "findings": [
     {
       "attribution": {
-        "tasks/earnings_data/bronze_earnings_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        "monitoring/control_plane.py": [
+          "6e868ba|rdprokes|2026-02-14|fuxed test"
         ],
-        "tasks/finance_data/bronze_finance_data.py": [
-          "b61bf5b|rdprokes|2026-02-26|purge parity"
+        "monitoring/system_health.py": [
+          "fb8bba3|rdprokes|2026-02-23|dont even know"
         ],
-        "tasks/market_data/bronze_market_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        "tests/monitoring/test_control_plane.py": [
+          "7786ef9|rdprokes|2026-01-31|g"
         ],
-        "tasks/price_target_data/bronze_price_target_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
+        "tests/monitoring/test_system_health.py": [
+          "42d2729|rdprokes|2026-02-19|hjgf"
         ],
-        "tests/earnings_data/test_bronze_earnings_data.py": [
-          "496c82f|rdprokes|2026-02-22|updated jobs for incremental refresh"
+        "ui/src/app/__tests__/SystemStatusPage.test.tsx": [
+          "8ce79b6|rdprokes|2026-02-26|done"
         ],
-        "tests/finance_data/test_bronze_finance_data.py": [
-          "98b6921|rdprokes|2026-02-25|fixed purging"
-        ],
-        "tests/market_data/test_bronze_market_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
-        ],
-        "tests/price_target_data/test_bronze_price_target_data.py": [
-          "496c82f|rdprokes|2026-02-22|updated jobs for incremental refresh"
+        "ui/src/app/components/pages/SystemStatusPage.tsx": [
+          "8ce79b6|rdprokes|2026-02-26|done"
         ],
         "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx": [
-          "0dbe2ab|rdprokes|2026-02-27|schema fix"
+          "0fde5aa|rdprokes|2026-02-28|backfill fix"
         ],
         "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx": [
-          "1691099|rdprokes|2026-02-26|gold purge"
+          "0fde5aa|rdprokes|2026-02-28|backfill fix"
+        ],
+        "ui/src/types/strategy.ts": [
+          "b61bf5b|rdprokes|2026-02-26|purge parity"
         ]
       },
       "category": "docs",
@@ -72,16 +66,15 @@
       ],
       "expected": "Docs/examples/changelog should stay aligned with behavior and API changes.",
       "files": [
-        "tasks/earnings_data/bronze_earnings_data.py",
-        "tasks/finance_data/bronze_finance_data.py",
-        "tasks/market_data/bronze_market_data.py",
-        "tasks/price_target_data/bronze_price_target_data.py",
-        "tests/earnings_data/test_bronze_earnings_data.py",
-        "tests/finance_data/test_bronze_finance_data.py",
-        "tests/market_data/test_bronze_market_data.py",
-        "tests/price_target_data/test_bronze_price_target_data.py",
+        "monitoring/control_plane.py",
+        "monitoring/system_health.py",
+        "tests/monitoring/test_control_plane.py",
+        "tests/monitoring/test_system_health.py",
+        "ui/src/app/__tests__/SystemStatusPage.test.tsx",
+        "ui/src/app/components/pages/SystemStatusPage.tsx",
         "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-        "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx"
+        "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx",
+        "ui/src/types/strategy.ts"
       ],
       "observed": "No documentation files changed alongside code updates.",
       "remediation": "Update README/docs/changelog to reflect behavior, API, and configuration changes.",
@@ -113,48 +106,10 @@
         "Inspect recent config PRs",
         "Audit gate consistency across workflows"
       ]
-    },
-    {
-      "attribution": {
-        "tests/earnings_data/test_bronze_earnings_data.py": [
-          "496c82f|rdprokes|2026-02-22|updated jobs for incremental refresh"
-        ],
-        "tests/finance_data/test_bronze_finance_data.py": [
-          "98b6921|rdprokes|2026-02-25|fixed purging"
-        ],
-        "tests/market_data/test_bronze_market_data.py": [
-          "4b8c4fd|rdprokes|2026-02-25|removed backfill"
-        ],
-        "tests/price_target_data/test_bronze_price_target_data.py": [
-          "496c82f|rdprokes|2026-02-22|updated jobs for incremental refresh"
-        ]
-      },
-      "category": "test",
-      "confidence": 0.63,
-      "evidence": [
-        "Test style counts: {'snapshot': 1, 'integration-heavy': 1}"
-      ],
-      "expected": "A single dominant testing style should be applied within a module area.",
-      "files": [
-        "tests/earnings_data/test_bronze_earnings_data.py",
-        "tests/finance_data/test_bronze_finance_data.py",
-        "tests/market_data/test_bronze_market_data.py",
-        "tests/price_target_data/test_bronze_price_target_data.py"
-      ],
-      "observed": "Competing test styles detected: {'snapshot': 1, 'integration-heavy': 1}.",
-      "remediation": "Define module-level test style guidance (snapshot vs mocks vs integration) and align suites.",
-      "risk": "low",
-      "score": 25.0,
-      "severity": "medium",
-      "title": "Test philosophy drift",
-      "verification": [
-        "Run full test suite",
-        "Review flaky test rates"
-      ]
     }
   ],
-  "gate_result": "fail",
-  "generated_at": "2026-02-28T14:15:15.167642+00:00",
+  "gate_result": "pass",
+  "generated_at": "2026-02-28T15:02:51.689697+00:00",
   "hotspots": [
     {
       "findings": 1,
@@ -162,49 +117,49 @@
       "score": 15.0
     },
     {
-      "findings": 2,
-      "path": "tests/market_data/test_bronze_market_data.py",
-      "score": 6.4
-    },
-    {
-      "findings": 2,
-      "path": "tests/price_target_data/test_bronze_price_target_data.py",
-      "score": 6.4
-    },
-    {
-      "findings": 2,
-      "path": "tests/earnings_data/test_bronze_earnings_data.py",
-      "score": 6.4
-    },
-    {
-      "findings": 2,
-      "path": "tests/finance_data/test_bronze_finance_data.py",
-      "score": 6.4
-    },
-    {
       "findings": 1,
-      "path": "tasks/market_data/bronze_market_data.py",
-      "score": 0.15
-    },
-    {
-      "findings": 1,
-      "path": "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx",
-      "score": 0.15
-    },
-    {
-      "findings": 1,
-      "path": "tasks/price_target_data/bronze_price_target_data.py",
-      "score": 0.15
-    },
-    {
-      "findings": 1,
-      "path": "tasks/finance_data/bronze_finance_data.py",
-      "score": 0.15
+      "path": "tests/monitoring/test_control_plane.py",
+      "score": 0.17
     },
     {
       "findings": 1,
       "path": "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-      "score": 0.15
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "monitoring/system_health.py",
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "ui/src/types/strategy.ts",
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "monitoring/control_plane.py",
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx",
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "ui/src/app/components/pages/SystemStatusPage.tsx",
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "tests/monitoring/test_system_health.py",
+      "score": 0.17
+    },
+    {
+      "findings": 1,
+      "path": "ui/src/app/__tests__/SystemStatusPage.test.tsx",
+      "score": 0.17
     }
   ],
   "mode": "audit",
@@ -225,37 +180,17 @@
       "why_it_is_drift": "Expected: Configuration should remain stable and coordinated across contributors. Observed: 36 recent commits touched config/infra files in lookback window."
     },
     {
-      "category": "test",
-      "files": [
-        "tests/earnings_data/test_bronze_earnings_data.py",
-        "tests/finance_data/test_bronze_finance_data.py",
-        "tests/market_data/test_bronze_market_data.py",
-        "tests/price_target_data/test_bronze_price_target_data.py"
-      ],
-      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
-      "risk_level": "low",
-      "severity": "medium",
-      "title": "Test philosophy drift",
-      "verification_steps": [
-        "Run full test suite",
-        "Review flaky test rates"
-      ],
-      "what_to_change": "Define module-level test style guidance (snapshot vs mocks vs integration) and align suites.",
-      "why_it_is_drift": "Expected: A single dominant testing style should be applied within a module area. Observed: Competing test styles detected: {'snapshot': 1, 'integration-heavy': 1}."
-    },
-    {
       "category": "docs",
       "files": [
-        "tasks/earnings_data/bronze_earnings_data.py",
-        "tasks/finance_data/bronze_finance_data.py",
-        "tasks/market_data/bronze_market_data.py",
-        "tasks/price_target_data/bronze_price_target_data.py",
-        "tests/earnings_data/test_bronze_earnings_data.py",
-        "tests/finance_data/test_bronze_finance_data.py",
-        "tests/market_data/test_bronze_market_data.py",
-        "tests/price_target_data/test_bronze_price_target_data.py",
+        "monitoring/control_plane.py",
+        "monitoring/system_health.py",
+        "tests/monitoring/test_control_plane.py",
+        "tests/monitoring/test_system_health.py",
+        "ui/src/app/__tests__/SystemStatusPage.test.tsx",
+        "ui/src/app/components/pages/SystemStatusPage.tsx",
         "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
-        "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx"
+        "ui/src/app/components/pages/system-status/JobKillSwitchPanel.tsx",
+        "ui/src/types/strategy.ts"
       ],
       "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
       "risk_level": "low",
@@ -275,7 +210,7 @@
   "tool_run_status": [
     {
       "command": "python3 -m ruff check .",
-      "duration_sec": 0.57,
+      "duration_sec": 0.38,
       "exit_code": 0,
       "name": "lint",
       "output_excerpt": "All checks passed!",
@@ -283,10 +218,10 @@
     },
     {
       "command": "python3 -m pytest -q tests/tasks tests/market_data tests/finance_data tests/earnings_data tests/price_target_data",
-      "duration_sec": 13.2,
+      "duration_sec": 10.79,
       "exit_code": 0,
       "name": "test_fast",
-      "output_excerpt": "...............................................................................................................................................\n=============================== warnings summary ===============================\ntests/earnings_data/test_feature_generator.py::test_compute_features_adds_expected_columns\ntests/earnings_data/test_feature_generator.py::test_compute_features_rolls_over_quarters\ntests/earnings_data/test_feature_generator.py::test_compute_features_handles_divide_by_zero\ntests/earnings_data/test_gold_earnings_data.py::test_compute_features\n  /mnt/c/Users/rdpro/Projects/AssetAllocation/tasks/earnings_data/gold_earnings_data.py:142: DeprecationWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.\n    out = out.groupby(\"symbol\", sort=False, group_keys=False).apply(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n143 passed, 4 warnings in 9.18s",
+      "output_excerpt": "...............................................................................................................................................\n=============================== warnings summary ===============================\ntests/earnings_data/test_feature_generator.py::test_compute_features_adds_expected_columns\ntests/earnings_data/test_feature_generator.py::test_compute_features_rolls_over_quarters\ntests/earnings_data/test_feature_generator.py::test_compute_features_handles_divide_by_zero\ntests/earnings_data/test_gold_earnings_data.py::test_compute_features\n  /mnt/c/Users/rdpro/Projects/AssetAllocation/tasks/earnings_data/gold_earnings_data.py:142: DeprecationWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.\n    out = out.groupby(\"symbol\", sort=False, group_keys=False).apply(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n143 passed, 4 warnings in 8.16s",
       "status": "passed"
     }
   ]

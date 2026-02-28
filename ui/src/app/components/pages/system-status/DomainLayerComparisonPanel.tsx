@@ -415,6 +415,16 @@ export function DomainLayerComparisonPanel({
     return index;
   }, [recentJobs]);
 
+  const managedJobIndex = useMemo(() => {
+    const index = new Map<string, ManagedContainerJob>();
+    for (const job of managedContainerJobs) {
+      const key = normalizeAzureJobName(String(job?.name || ''));
+      if (!key || index.has(key)) continue;
+      index.set(key, job);
+    }
+    return index;
+  }, [managedContainerJobs]);
+
   const { domainsByLayer, domainRows, domainConfigByLayer } = useMemo(() => {
     const matrix = new Map<string, Map<LayerKey, true>>();
     const domainConfig = new Map<LayerKey, Map<string, DataDomain>>();
@@ -1364,11 +1374,14 @@ export function DomainLayerComparisonPanel({
                         '';
                       const jobKey = normalizeAzureJobName(jobName);
                       const run = jobKey ? jobIndex.get(jobKey) : null;
+                      const managedJob = jobKey ? managedJobIndex.get(jobKey) : null;
                       const lastStartDisplay = (() => {
                         if (!jobName) return 'N/A';
                         if (!run?.startTime) return 'NO RUN';
                         return formatTimeAgo(run.startTime);
                       })();
+                      const jobUpdatedAt = managedJob?.lastModifiedAt || null;
+                      const jobUpdatedDisplay = jobUpdatedAt ? formatTimeAgo(jobUpdatedAt) : 'N/A';
                       const scheduleRaw = String(
                         domainConfig?.cron ||
                           domainConfig?.frequency ||
@@ -1513,6 +1526,8 @@ export function DomainLayerComparisonPanel({
                         jobConfig,
                         jobLabel,
                         lastStartDisplay,
+                        jobUpdatedAt,
+                        jobUpdatedDisplay,
                         scheduleRaw,
                         scheduleDisplay,
                         actionJobName,
@@ -1879,6 +1894,17 @@ export function DomainLayerComparisonPanel({
                                             title={model.run?.startTime || undefined}
                                           >
                                             {model.lastStartDisplay}
+                                          </span>
+                                        </div>
+                                        <div
+                                          className={`${StatusTypos.MONO} flex items-center gap-1`}
+                                        >
+                                          <span className="text-mcm-walnut/70">job updated:</span>
+                                          <span
+                                            className="text-mcm-walnut/90"
+                                            title={model.jobUpdatedAt || undefined}
+                                          >
+                                            {model.jobUpdatedDisplay}
                                           </span>
                                         </div>
                                         <div

@@ -179,6 +179,7 @@ def test_system_health_control_plane_redacts_resource_ids(monkeypatch: pytest.Mo
         },
         job_url: {
             "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob",
+            "systemData": {"lastModifiedAt": "2024-01-01T00:00:10Z"},
             "properties": {"provisioningState": "Succeeded"},
         },
         f"{job_url}/executions": {
@@ -222,6 +223,8 @@ def test_system_health_control_plane_redacts_resource_ids(monkeypatch: pytest.Mo
     assert payload["overall"] == "healthy"
     assert len(payload["resources"]) == 2
     assert all("azureId" not in item for item in payload["resources"])
+    job_resource = next((item for item in payload["resources"] if item.get("resourceType") == "Microsoft.App/jobs"), {})
+    assert job_resource.get("lastModifiedAt") == "2024-01-01T00:00:10Z"
     assert len(payload["recentJobs"]) == 1
     assert payload["recentJobs"][0]["status"] == "success"
     assert payload["recentJobs"][0]["triggeredBy"] == "azure"
@@ -411,6 +414,7 @@ def test_system_health_healthy_when_latest_job_execution_succeeds(monkeypatch: p
     responses: Dict[str, Dict[str, Any]] = {
         job_url: {
             "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob",
+            "systemData": {"lastModifiedAt": "2024-01-01T00:00:10Z"},
             "properties": {"provisioningState": "Succeeded"},
         },
         f"{job_url}/executions": {

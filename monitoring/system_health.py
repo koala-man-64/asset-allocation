@@ -1495,6 +1495,7 @@ def collect_system_health_snapshot(
                         details=details,
                         azure_id=item.azure_id,
                         running_state=item.running_state,
+                        last_modified_at=item.last_modified_at,
                         signals=tuple(signals),
                     )
 

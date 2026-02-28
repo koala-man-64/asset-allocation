@@ -81,6 +81,12 @@ def _combine_status(primary: str, secondary: str) -> str:
     return secondary if status_order.get(secondary, 0) > status_order.get(primary, 0) else primary
 
 
+def _extract_resource_last_modified_at(payload: Dict[str, Any]) -> Optional[str]:
+    system_data = payload.get("systemData") if isinstance(payload.get("systemData"), dict) else {}
+    last_modified = str(system_data.get("lastModifiedAt") or "").strip()
+    return last_modified or None
+
+
 @dataclass(frozen=True)
 class ResourceHealthItem:
     name: str
@@ -90,6 +96,7 @@ class ResourceHealthItem:
     details: str
     azure_id: Optional[str] = None
     running_state: Optional[str] = None
+    last_modified_at: Optional[str] = None
     signals: Tuple[Dict[str, Any], ...] = ()
 
     def to_dict(self, *, include_ids: bool) -> Dict[str, Any]:
@@ -104,6 +111,8 @@ class ResourceHealthItem:
             payload["azureId"] = self.azure_id
         if self.running_state:
             payload["runningState"] = self.running_state
+        if self.last_modified_at:
+            payload["lastModifiedAt"] = self.last_modified_at
         if self.signals:
             payload["signals"] = list(self.signals)
         return payload
@@ -130,6 +139,7 @@ def collect_container_apps(
                 provisioning_state, has_ready_signal=bool(latest_ready)
             )
             resource_id = str(payload.get("id") or "") or None
+            last_modified_at = _extract_resource_last_modified_at(payload if isinstance(payload, dict) else {})
             details = f"provisioningState={state_text}"
             if latest_ready:
                 details += f", latestReadyRevision={latest_ready}"
@@ -149,6 +159,7 @@ def collect_container_apps(
                     last_checked=last_checked_iso,
                     details=details,
                     azure_id=resource_id,
+                    last_modified_at=last_modified_at,
                 )
             )
         except Exception as exc:
@@ -187,6 +198,9 @@ def collect_jobs_and_executions(
             status, state_text = _resource_status_from_provisioning_state(provisioning_state, has_ready_signal=True)
 
             resource_id = str(job_payload.get("id") or "") or None
+            last_modified_at = _extract_resource_last_modified_at(
+                job_payload if isinstance(job_payload, dict) else {}
+            )
             details = f"provisioningState={state_text}"
             running_state_raw = str(job_props.get("runningState") or "").strip()
             running_state = running_state_raw or None
@@ -208,6 +222,7 @@ def collect_jobs_and_executions(
                     details=details,
                     azure_id=resource_id,
                     running_state=running_state,
+                    last_modified_at=last_modified_at,
                 )
             )
         except Exception as exc:

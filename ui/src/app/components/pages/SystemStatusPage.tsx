@@ -65,7 +65,8 @@ export function SystemStatusPage() {
       seen.add(dedupeKey);
       items.push({
         name: rawName,
-        runningState: resource.runningState || null
+        runningState: resource.runningState || null,
+        lastModifiedAt: resource.lastModifiedAt || null
       });
     }
     return items;

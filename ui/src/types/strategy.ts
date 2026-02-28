@@ -225,6 +225,7 @@ export interface ResourceHealth {
   details?: string;
   azureId?: string;
   runningState?: string;
+  lastModifiedAt?: string | null;
   signals?: ResourceSignal[];
 }
 

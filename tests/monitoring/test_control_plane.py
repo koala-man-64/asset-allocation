@@ -21,6 +21,7 @@ def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
         responses={
             "https://example.test/Microsoft.App/jobs/my-backtest-job": {
                 "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/my-backtest-job",
+                "systemData": {"lastModifiedAt": "2024-01-05T00:00:00Z"},
                 "properties": {"provisioningState": "Succeeded"},
             },
             "https://example.test/Microsoft.App/jobs/my-backtest-job/executions": {
@@ -67,6 +68,8 @@ def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
     assert len(resources) == 1
     assert resources[0].name == "my-backtest-job"
     assert resources[0].status == "healthy"
+    assert resources[0].last_modified_at == "2024-01-05T00:00:00Z"
+    assert resources[0].to_dict(include_ids=False)["lastModifiedAt"] == "2024-01-05T00:00:00Z"
 
     # Limit applies after sorting (most recent executions).
     assert len(runs) == 3
