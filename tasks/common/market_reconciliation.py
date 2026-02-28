@@ -290,6 +290,7 @@ def enforce_backfill_cutoff_on_tables(
                 continue
 
             try:
+                filtered = filtered.reset_index(drop=True)
                 store_table(filtered, table_path)
                 tables_rewritten += 1
                 if vacuum_table is not None:

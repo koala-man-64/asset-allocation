@@ -74,7 +74,7 @@ def filter_by_date(df: pd.DataFrame, date_col: str, start: Optional[pd.Timestamp
         mask &= series >= start
     if end is not None:
         mask &= series <= end
-    return df.loc[mask].copy()
+    return df.loc[mask].copy().reset_index(drop=True)
 
 
 def apply_backfill_start_cutoff(

@@ -2,6 +2,7 @@ import os
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
+import re
 
 import pandas as pd
 from azure.core.exceptions import AzureError, ResourceExistsError
@@ -12,6 +13,70 @@ from deltalake import DeltaTable, write_deltalake
 # Configure logger
 logger = logging.getLogger(__name__)
 _checked_containers = set()
+_INDEX_ARTIFACT_EXACT_NAMES = {
+    "index",
+    "level_0",
+    "index_level_0",
+}
+_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
+
+
+def _normalize_index_artifact_name(name: Any) -> str:
+    normalized = _NON_ALNUM_RE.sub("_", str(name).strip().lower())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    return normalized
+
+
+def _is_index_artifact_column(name: Any) -> bool:
+    normalized = _normalize_index_artifact_name(name)
+    if not normalized:
+        return False
+    if normalized in _INDEX_ARTIFACT_EXACT_NAMES:
+        return True
+    if normalized.startswith("unnamed_"):
+        suffix = normalized[len("unnamed_") :]
+        if suffix.replace("_", "").isdigit():
+            return True
+    if normalized.startswith("index_level_"):
+        suffix = normalized[len("index_level_") :]
+        if suffix.replace("_", "").isdigit():
+            return True
+    return False
+
+
+def _has_canonical_range_index(df: pd.DataFrame) -> bool:
+    if not isinstance(df.index, pd.RangeIndex):
+        return False
+    return bool(df.index.start == 0 and df.index.step == 1 and df.index.name is None)
+
+
+def _sanitize_df_for_delta_write(df: pd.DataFrame) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    out = df
+    index_was_reset = False
+
+    if not _has_canonical_range_index(out):
+        out = out.reset_index(drop=True)
+        index_was_reset = True
+
+    dropped_artifact_columns = [str(col) for col in out.columns if _is_index_artifact_column(col)]
+    if dropped_artifact_columns:
+        out = out.drop(columns=dropped_artifact_columns)
+
+    return out, {
+        "index_was_reset": index_was_reset,
+        "dropped_artifact_columns": dropped_artifact_columns,
+    }
+
+
+def _split_artifact_and_non_artifact_columns(columns: List[str]) -> tuple[List[str], List[str]]:
+    artifact_columns: List[str] = []
+    non_artifact_columns: List[str] = []
+    for col in columns:
+        if _is_index_artifact_column(col):
+            artifact_columns.append(col)
+        else:
+            non_artifact_columns.append(col)
+    return artifact_columns, non_artifact_columns
 
 def _looks_float_type(schema_type: str) -> bool:
     """
@@ -479,11 +544,16 @@ def store_delta(
     """
     Writes a pandas DataFrame to a Delta table in Azure.
     """
+    df_to_write = df
     try:
         _ensure_container_exists(container)
         uri = get_delta_table_uri(container, path)
         opts = get_delta_storage_options(container)
-        
+
+        df_to_write, sanitize_meta = _sanitize_df_for_delta_write(df)
+        index_was_reset = bool(sanitize_meta.get("index_was_reset", False))
+        dropped_artifact_columns = [str(col) for col in (sanitize_meta.get("dropped_artifact_columns") or [])]
+
         requested_schema_mode = schema_mode or ("merge" if merge_schema else None)
         effective_schema_mode = None
         if requested_schema_mode is not None:
@@ -494,18 +564,47 @@ def store_delta(
                 merge_schema,
             )
         table_cols = _get_existing_delta_schema_columns(uri, opts)
+        schema_overwrite_for_artifact_cleanup = False
+        artifact_columns_in_table: List[str] = []
         if table_cols:
-            df_cols = [str(c) for c in df.columns.tolist()]
+            artifact_columns_in_table, non_artifact_table_cols = _split_artifact_and_non_artifact_columns(
+                [str(col) for col in table_cols]
+            )
+            sanitized_df_cols = [str(c) for c in df_to_write.columns.tolist()]
             _log_store_delta_column_comparison(
                 path=path,
-                df_columns=df_cols,
+                df_columns=sanitized_df_cols,
                 table_columns=table_cols,
                 schema_mode=effective_schema_mode,
             )
 
+            dropped_from_table = [col for col in artifact_columns_in_table if col in dropped_artifact_columns]
+            comparison_against_non_artifact = _compare_columns(sanitized_df_cols, non_artifact_table_cols)
+            if (
+                str(mode).strip().lower() == "overwrite"
+                and dropped_from_table
+                and comparison_against_non_artifact["same_set"]
+            ):
+                effective_schema_mode = "overwrite"
+                schema_overwrite_for_artifact_cleanup = True
+                logger.info(
+                    "Enabling targeted schema overwrite for %s to remove index artifact columns: dropped=%s",
+                    path,
+                    dropped_from_table,
+                )
+
+        logger.info(
+            "Delta write prep for %s: rows=%d index_was_reset=%s dropped_artifact_columns=%s schema_overwrite_for_artifact_cleanup=%s",
+            path,
+            int(len(df_to_write)),
+            index_was_reset,
+            dropped_artifact_columns,
+            schema_overwrite_for_artifact_cleanup,
+        )
+
         write_deltalake(
             uri,
-            df,
+            df_to_write,
             mode=mode,
             partition_by=partition_by,
             schema_mode=effective_schema_mode,
@@ -517,9 +616,9 @@ def store_delta(
         logger.error(f"Failed to write Delta table {path}: {e}")
         error_text = str(e)
         if "Cannot cast" in error_text:
-            _log_delta_cast_candidates(df, container, path, error_text)
+            _log_delta_cast_candidates(df_to_write, container, path, error_text)
         if "Cannot cast schema" in error_text or "number of fields does not match" in error_text:
-            _log_delta_schema_mismatch(df, container, path)
+            _log_delta_schema_mismatch(df_to_write, container, path)
         raise
 
 def load_delta(

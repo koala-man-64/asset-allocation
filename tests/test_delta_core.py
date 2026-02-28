@@ -53,6 +53,58 @@ def test_store_delta_ignores_explicit_schema_mode_override(monkeypatch, tmp_path
     assert captured["schema_mode"] is None
 
 
+def test_store_delta_enables_schema_overwrite_for_index_artifact_cleanup(monkeypatch, tmp_path):
+    _patch_delta_core_for_unit(monkeypatch, tmp_path)
+    captured = {}
+
+    monkeypatch.setattr(
+        delta_core,
+        "_get_existing_delta_schema_columns",
+        lambda _uri, _storage_options: ["a", "index_level_0"],
+    )
+
+    def fake_write_deltalake(_uri, df, **kwargs):
+        captured["df"] = df.copy()
+        captured.update(kwargs)
+
+    monkeypatch.setattr(delta_core, "write_deltalake", fake_write_deltalake)
+
+    delta_core.store_delta(
+        pd.DataFrame({"a": [1], "index_level_0": [5]}),
+        container="container",
+        path="silver/test",
+        mode="overwrite",
+    )
+
+    assert captured["schema_mode"] == "overwrite"
+    assert list(captured["df"].columns) == ["a"]
+
+
+def test_store_delta_resets_non_range_index_before_write(monkeypatch, tmp_path):
+    _patch_delta_core_for_unit(monkeypatch, tmp_path)
+    captured = {}
+
+    def fake_write_deltalake(_uri, df, **kwargs):
+        captured["df"] = df.copy()
+        captured.update(kwargs)
+
+    monkeypatch.setattr(delta_core, "write_deltalake", fake_write_deltalake)
+
+    df = pd.DataFrame({"a": [10, 20]})
+    df.index = pd.Index([3, 4])
+
+    delta_core.store_delta(
+        df,
+        container="container",
+        path="silver/test",
+        mode="overwrite",
+    )
+
+    assert isinstance(captured["df"].index, pd.RangeIndex)
+    assert captured["df"].index.start == 0
+    assert captured["df"].index.step == 1
+
+
 def test_store_delta_triggers_schema_mismatch_diagnostics(monkeypatch, tmp_path):
     _patch_delta_core_for_unit(monkeypatch, tmp_path)
     called = {"count": 0}

@@ -59,3 +59,25 @@ def test_get_backfill_range_always_returns_none_for_end(monkeypatch) -> None:
 
     assert start == pd.Timestamp("2022-01-01")
     assert end is None
+
+
+def test_filter_by_date_resets_index_after_filter() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-03"]),
+            "value": [1, 2, 3],
+        }
+    )
+    df.index = pd.Index([10, 11, 12])
+
+    filtered = backfill.filter_by_date(
+        df,
+        date_col="date",
+        start=pd.Timestamp("2020-01-02"),
+        end=None,
+    )
+
+    assert isinstance(filtered.index, pd.RangeIndex)
+    assert filtered.index.start == 0
+    assert filtered.index.step == 1
+    assert filtered["value"].tolist() == [2, 3]

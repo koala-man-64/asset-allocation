@@ -69,6 +69,54 @@ def test_silver_finance_applies_backfill_start_cutoff():
         assert df["date"].min().date().isoformat() >= "2024-01-01"
 
 
+def test_silver_finance_process_path_sanitizes_index_artifacts_before_delta_write(monkeypatch, tmp_path):
+    blob_name = "finance-data/Balance Sheet/TEST_quarterly_balance-sheet.json"
+    payload = {
+        "symbol": "TEST",
+        "quarterlyReports": [
+            {
+                "fiscalDateEnding": "2024-01-01",
+                "totalAssets": "1000",
+                "totalLiabilities": "500",
+            }
+        ],
+    }
+    raw_bytes = json.dumps(payload).encode("utf-8")
+
+    def _inject_artifacts(df: pd.DataFrame, *_args, **_kwargs) -> pd.DataFrame:
+        out = df.copy()
+        out["__index_level_0__"] = 42
+        out.index = pd.Index([7] * len(out))
+        return out
+
+    captured: dict[str, object] = {}
+
+    def fake_write_deltalake(_uri, df, **kwargs):
+        captured["df"] = df.copy()
+        captured["kwargs"] = dict(kwargs)
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=raw_bytes),
+        patch(
+            "tasks.finance_data.silver_finance_data._align_to_existing_schema",
+            side_effect=_inject_artifacts,
+        ),
+        patch("core.delta_core._ensure_container_exists", return_value=None),
+        patch("core.delta_core.get_delta_table_uri", return_value=str(tmp_path / "silver_finance")),
+        patch("core.delta_core.get_delta_storage_options", return_value={}),
+        patch("core.delta_core._get_existing_delta_schema_columns", return_value=None),
+        patch("core.delta_core.write_deltalake", side_effect=fake_write_deltalake),
+    ):
+        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-01"), watermarks={})
+        assert result.status == "ok"
+
+    df_written = captured["df"]
+    assert "__index_level_0__" not in df_written.columns
+    assert isinstance(df_written.index, pd.RangeIndex)
+    assert df_written.index.start == 0
+    assert df_written.index.step == 1
+
+
 def test_silver_finance_repairs_legacy_symbol_suffix_columns_before_delta_write():
     blob_name = "finance-data/Balance Sheet/TEST_quarterly_balance-sheet.json"
     payload = {

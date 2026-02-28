@@ -112,6 +112,67 @@ def test_gold_finance_process_ticker_applies_backfill_start(monkeypatch):
     assert vacuum_calls["count"] == 1
 
 
+def test_gold_finance_process_ticker_sanitizes_index_artifacts_before_delta_write(monkeypatch, tmp_path):
+    base_df = pd.DataFrame(
+        {
+            "Date": ["01/01/2020"],
+            "Symbol": ["AAPL"],
+            "Total Revenue": ["10M"],
+            "Net Income": [1.0],
+            "Operating Cash Flow": [2.0],
+            "Total Assets": [100.0],
+        }
+    )
+
+    monkeypatch.setattr(delta_core, "load_delta", lambda *args, **kwargs: base_df)
+
+    def fake_compute_features(_merged: pd.DataFrame) -> pd.DataFrame:
+        out = pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2024-01-10")],
+                "symbol": ["AAPL"],
+                "feature_x": [2.0],
+                "__index_level_0__": [9],
+            }
+        )
+        out.index = pd.Index([5])
+        return out
+
+    monkeypatch.setattr(gold_finance_data, "compute_features", fake_compute_features)
+    monkeypatch.setattr(delta_core, "_ensure_container_exists", lambda _container: None)
+    monkeypatch.setattr(delta_core, "get_delta_table_uri", lambda _container, _path: str(tmp_path / "gold_finance"))
+    monkeypatch.setattr(delta_core, "get_delta_storage_options", lambda _container=None: {})
+    monkeypatch.setattr(delta_core, "_get_existing_delta_schema_columns", lambda _uri, _opts: None)
+
+    captured: dict[str, object] = {}
+
+    def fake_write_deltalake(_uri, df: pd.DataFrame, **kwargs) -> None:
+        captured["df"] = df.copy()
+        captured["kwargs"] = dict(kwargs)
+
+    monkeypatch.setattr(delta_core, "write_deltalake", fake_write_deltalake)
+
+    result = gold_finance_data._process_ticker(
+        (
+            "AAPL",
+            "finance/income",
+            "finance/balance",
+            "finance/cashflow",
+            "finance/valuation",
+            "finance/AAPL",
+            "silver",
+            "gold",
+            None,
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert "__index_level_0__" not in captured["df"].columns
+    assert isinstance(captured["df"].index, pd.RangeIndex)
+    assert captured["df"].index.start == 0
+    assert captured["df"].index.step == 1
+
+
 def test_gold_finance_process_ticker_fails_when_required_source_missing(monkeypatch):
     base_df = pd.DataFrame(
         {

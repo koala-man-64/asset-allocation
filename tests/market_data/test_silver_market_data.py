@@ -4,6 +4,7 @@ import pandas as pd
 from unittest.mock import patch
 
 from tasks.market_data import silver_market_data as silver
+from core import delta_core
 from core import config as cfg
 from core.pipeline import DataPaths
 
@@ -281,3 +282,53 @@ def test_run_market_reconciliation_applies_cutoff_sweep(monkeypatch):
 
     assert captured["symbols"] == {"AAPL"}
     assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
+
+
+def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(monkeypatch, tmp_path):
+    class _FakeSilverClient:
+        def delete_prefix(self, _path: str) -> int:
+            return 0
+
+    fake_client = _FakeSilverClient()
+    monkeypatch.setattr(silver, "silver_client", fake_client)
+    monkeypatch.setattr(silver, "collect_delta_market_symbols", lambda *, client, root_prefix: {"AAPL"})
+    monkeypatch.setattr(silver, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
+
+    monkeypatch.setattr(delta_core, "_ensure_container_exists", lambda _container: None)
+    monkeypatch.setattr(delta_core, "get_delta_table_uri", lambda _container, _path: str(tmp_path / "silver_market"))
+    monkeypatch.setattr(delta_core, "get_delta_storage_options", lambda _container=None: {})
+    monkeypatch.setattr(delta_core, "_get_existing_delta_schema_columns", lambda _uri, _opts: None)
+
+    captured: dict = {}
+
+    def fake_write_deltalake(_uri, df: pd.DataFrame, **kwargs):
+        captured["df"] = df.copy()
+        captured["kwargs"] = dict(kwargs)
+
+    monkeypatch.setattr(delta_core, "write_deltalake", fake_write_deltalake)
+
+    def _fake_enforce_backfill_cutoff_on_tables(**kwargs):
+        dirty = pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2024-01-10")],
+                "symbol": ["AAPL"],
+                "close": [101.0],
+                "__index_level_0__": [8],
+            }
+        )
+        dirty.index = pd.Index([12])
+        kwargs["store_table"](dirty, DataPaths.get_market_data_path("AAPL"))
+        return type(
+            "_Stats",
+            (),
+            {"tables_scanned": 1, "tables_rewritten": 1, "deleted_blobs": 0, "rows_dropped": 1, "errors": 0},
+        )()
+
+    monkeypatch.setattr(silver, "enforce_backfill_cutoff_on_tables", _fake_enforce_backfill_cutoff_on_tables)
+
+    silver._run_market_reconciliation(bronze_blob_list=[{"name": "market-data/AAPL.csv"}])
+
+    assert "__index_level_0__" not in captured["df"].columns
+    assert isinstance(captured["df"].index, pd.RangeIndex)
+    assert captured["df"].index.start == 0
+    assert captured["df"].index.step == 1
