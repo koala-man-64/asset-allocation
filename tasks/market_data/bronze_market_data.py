@@ -508,7 +508,9 @@ def _merge_market_fundamentals(
         else:
             out = out.merge(df_metric, on="Date", how="left")
             out[column_name] = pd.to_numeric(out[column_name], errors="coerce")
-        out[column_name] = out[column_name].ffill().bfill()
+        # Preserve temporal direction: allow carrying known values forward only.
+        out = out.sort_values("Date").reset_index(drop=True)
+        out[column_name] = out[column_name].ffill()
 
     for column_name in _SUPPLEMENTAL_MARKET_COLUMNS:
         if column_name not in out.columns:

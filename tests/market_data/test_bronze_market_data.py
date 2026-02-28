@@ -68,7 +68,8 @@ def test_bronze_ingestion(unique_ticker):
             "ShortVolume",
         ]
         assert float(df["ShortInterest"].iloc[-1]) == pytest.approx(1200.0)
-        assert float(df["ShortVolume"].iloc[0]) == pytest.approx(500.0)
+        assert pd.isna(df["ShortVolume"].iloc[0])
+        assert float(df["ShortVolume"].iloc[-1]) == pytest.approx(500.0)
 
 
 def test_download_populates_short_interest_short_volume_for_aapl():
@@ -129,8 +130,8 @@ def test_download_populates_short_interest_short_volume_for_aapl():
             "ShortInterest",
             "ShortVolume",
         ]
-        assert df["ShortInterest"].notna().all()
-        assert df["ShortVolume"].notna().all()
+        assert pd.isna(df.loc[df["Date"] == "2024-01-02", "ShortInterest"].iloc[0])
+        assert pd.isna(df.loc[df["Date"] == "2024-01-02", "ShortVolume"].iloc[0])
         assert float(df.loc[df["Date"] == "2024-01-03", "ShortInterest"].iloc[0]) == pytest.approx(18_500_000.0)
         assert float(df.loc[df["Date"] == "2024-01-03", "ShortVolume"].iloc[0]) == pytest.approx(5_200_000.0)
 
