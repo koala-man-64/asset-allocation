@@ -198,6 +198,40 @@ def test_silver_finance_builds_valuation_timeseries_from_overview_and_prices():
         assert df.loc[1, "shares_outstanding"] == pytest.approx(10.0)
 
 
+def test_silver_finance_rounds_valuation_calculated_columns_to_four_decimals():
+    blob_name = "finance-data/Valuation/TEST_quarterly_valuation_measures.json"
+    valuation_frame = pd.DataFrame(
+        {
+            "Date": [pd.Timestamp("2024-01-01")],
+            "Symbol": ["TEST"],
+            "market_cap": [100.12345],
+            "pe_ratio": [1.23445],
+            "forward_pe": [2.34555],
+            "ev_ebitda": [3.45665],
+            "ev_revenue": [4.56775],
+            "shares_outstanding": [5.67885],
+        }
+    )
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=b"{}"),
+        patch("tasks.finance_data.silver_finance_data._read_finance_json", return_value=valuation_frame),
+        patch("core.delta_core.store_delta") as mock_store,
+        patch("core.delta_core.get_delta_schema_columns", return_value=None),
+    ):
+        result = silver.process_blob({"name": blob_name}, desired_end=pd.Timestamp("2024-01-02"), watermarks={})
+        assert result.status == "ok"
+
+    df = mock_store.call_args.args[0]
+    row = df.iloc[0]
+    assert row["market_cap"] == pytest.approx(100.1235)
+    assert row["pe_ratio"] == pytest.approx(1.2345)
+    assert row["forward_pe"] == pytest.approx(2.3456)
+    assert row["ev_ebitda"] == pytest.approx(3.4567)
+    assert row["ev_revenue"] == pytest.approx(4.5678)
+    assert row["shares_outstanding"] == pytest.approx(5.6789)
+
+
 def test_silver_finance_filters_to_supported_json_report_blobs():
     blobs = [
         {"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.csv"},

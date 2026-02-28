@@ -21,6 +21,7 @@ from tasks.common.watermarks import (
     should_process_blob_since_last_success,
 )
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
     collect_bronze_market_symbols_from_blob_infos,
     collect_delta_market_symbols,
@@ -41,6 +42,7 @@ _INDEX_ARTIFACT_COLUMN_NAMES = {
     "level_0",
     "index_level_0",
 }
+_MARKET_PRICE_COLUMNS = {"open", "high", "low", "close"}
 
 
 def _normalize_col_name(name: str) -> str:
@@ -277,11 +279,6 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
     df_merged = _drop_removed_market_columns(df_merged)
     df_merged = _ensure_numeric_market_columns(df_merged)
     
-    cols_to_round = ['Open', 'High', 'Low', 'Close']
-    for col in cols_to_round:
-        if col in df_merged.columns:
-            df_merged[col] = df_merged[col].round(2)
-
     cols_to_drop = ['index', 'Beta (5Y Monthly)', 'PE Ratio (TTM)', '1y Target Est', 'EPS (TTM)', 'Earnings Date', 'Forward Dividend & Yield', 'Market Cap']
     df_merged = df_merged.drop(columns=[c for c in cols_to_drop if c in df_merged.columns])
 
@@ -306,6 +303,13 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         df_merged = normalize_columns_to_snake_case(df_merged)
         df_merged = _repair_symbol_column_aliases(df_merged, ticker=ticker)
         df_merged = _drop_index_artifact_columns(df_merged)
+        df_merged = apply_precision_policy(
+            df_merged,
+            price_columns=_MARKET_PRICE_COLUMNS,
+            calculated_columns=set(),
+            price_scale=2,
+            calculated_scale=4,
+        )
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
@@ -316,6 +320,12 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
                 enforce_retention_duration=False,
                 full=True,
             )
+        applied_price_cols = sorted(col for col in _MARKET_PRICE_COLUMNS if col in df_merged.columns)
+        price_cols_str = ",".join(applied_price_cols) if applied_price_cols else "none"
+        mdc.write_line(
+            "precision_policy_applied domain=market "
+            f"ticker={ticker} price_cols={price_cols_str} calc_cols=none rows={len(df_merged)}"
+        )
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
         return "failed"

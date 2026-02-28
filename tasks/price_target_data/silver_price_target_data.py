@@ -24,6 +24,7 @@ from tasks.common.silver_contracts import (
     normalize_date_column,
     normalize_columns_to_snake_case,
 )
+from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
     collect_bronze_price_target_symbols_from_blob_infos,
     collect_delta_market_symbols,
@@ -34,6 +35,8 @@ from tasks.common.market_reconciliation import (
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
+_PRICE_TARGET_PRICE_COLUMNS = {"tp_mean_est", "tp_high_est", "tp_low_est"}
+_PRICE_TARGET_CALCULATED_COLUMNS = {"tp_std_dev_est"}
 
 
 def _needs_obs_date_migration(silver_path: str) -> bool:
@@ -215,6 +218,13 @@ def process_blob(blob, *, watermarks: dict) -> str:
             return "failed"
 
         df_merged = normalize_columns_to_snake_case(df_merged)
+        df_merged = apply_precision_policy(
+            df_merged,
+            price_columns=_PRICE_TARGET_PRICE_COLUMNS,
+            calculated_columns=_PRICE_TARGET_CALCULATED_COLUMNS,
+            price_scale=2,
+            calculated_scale=4,
+        )
 
         # Write
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
@@ -227,6 +237,14 @@ def process_blob(blob, *, watermarks: dict) -> str:
                 enforce_retention_duration=False,
                 full=True,
             )
+        applied_price_cols = sorted(col for col in _PRICE_TARGET_PRICE_COLUMNS if col in df_merged.columns)
+        applied_calc_cols = sorted(col for col in _PRICE_TARGET_CALCULATED_COLUMNS if col in df_merged.columns)
+        price_cols_str = ",".join(applied_price_cols) if applied_price_cols else "none"
+        calc_cols_str = ",".join(applied_calc_cols) if applied_calc_cols else "none"
+        mdc.write_line(
+            "precision_policy_applied domain=price-target "
+            f"ticker={ticker} price_cols={price_cols_str} calc_cols={calc_cols_str} rows={len(df_merged)}"
+        )
         mdc.write_line(f"Updated Silver {ticker}")
         if signature:
             signature["updated_at"] = datetime.utcnow().isoformat()

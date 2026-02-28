@@ -64,6 +64,20 @@ def test_process_file_applies_backfill_start_cutoff():
         assert pd.to_datetime(df_saved["date"]).min().date().isoformat() >= "2024-01-01"
 
 
+def test_process_file_preserves_earnings_numeric_precision():
+    blob_name = "earnings-data/TEST.json"
+    bronze_json = '[{"Date":"2024-01-10","Reported EPS":1.234567}]'
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=bronze_json.encode("utf-8")),
+        patch("core.delta_core.load_delta", return_value=None),
+        patch("core.delta_core.store_delta") as mock_store,
+    ):
+        assert silver.process_file(blob_name) is True
+        df_saved = mock_store.call_args[0][0]
+        assert df_saved.iloc[0]["reported_eps"] == pytest.approx(1.234567)
+
+
 def test_run_earnings_reconciliation_purges_silver_orphans(monkeypatch):
     class _FakeSilverClient:
         def __init__(self) -> None:

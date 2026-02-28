@@ -68,6 +68,24 @@ def test_silver_processing_accepts_alpha_vantage_timestamp(unique_ticker):
         mock_store_delta.assert_called_once()
 
 
+def test_silver_processing_rounds_price_columns_with_half_up(unique_ticker):
+    symbol = unique_ticker
+    blob_name = f"market-data/{symbol}.csv"
+    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,1.005,2.115,0.995,1.115,100\n"
+
+    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+        "core.delta_core.store_delta"
+    ) as mock_store_delta, patch("core.delta_core.load_delta", return_value=None):
+        silver.process_file(blob_name)
+
+        df_saved = mock_store_delta.call_args.args[0]
+        row = df_saved.iloc[0]
+        assert row["open"] == pytest.approx(1.01)
+        assert row["high"] == pytest.approx(2.12)
+        assert row["low"] == pytest.approx(1.00)
+        assert row["close"] == pytest.approx(1.12)
+
+
 def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
     symbol = unique_ticker
     blob_name = f"market-data/{symbol}.csv"

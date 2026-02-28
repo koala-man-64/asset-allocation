@@ -38,6 +38,7 @@ from tasks.common.silver_contracts import (
     require_non_empty_frame,
     normalize_columns_to_snake_case,
 )
+from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
     collect_bronze_finance_symbols_from_blob_infos,
     collect_delta_silver_finance_symbols,
@@ -77,6 +78,14 @@ _FINANCE_RECONCILIATION_TABLES: Tuple[Tuple[str, str], ...] = (
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
 _DEFAULT_CATCHUP_MAX_PASSES = 3
+_FINANCE_VALUATION_CALCULATED_COLUMNS = {
+    "market_cap",
+    "pe_ratio",
+    "forward_pe",
+    "ev_ebitda",
+    "ev_revenue",
+    "shares_outstanding",
+}
 
 
 def _get_available_cpus() -> int:
@@ -645,6 +654,18 @@ def process_blob(
         df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
         df_clean = normalize_columns_to_snake_case(df_clean)
         df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
+        applied_calculated_columns: set[str] = set()
+        if suffix == "quarterly_valuation_measures":
+            applied_calculated_columns = {
+                col for col in _FINANCE_VALUATION_CALCULATED_COLUMNS if col in df_clean.columns
+            }
+        df_clean = apply_precision_policy(
+            df_clean,
+            price_columns=set(),
+            calculated_columns=applied_calculated_columns,
+            price_scale=2,
+            calculated_scale=4,
+        )
         delta_core.store_delta(
             df_clean,
             cfg.AZURE_CONTAINER_SILVER,
@@ -660,6 +681,11 @@ def process_blob(
                 enforce_retention_duration=False,
                 full=True,
             )
+        calc_cols_str = ",".join(sorted(applied_calculated_columns)) if applied_calculated_columns else "none"
+        mdc.write_line(
+            "precision_policy_applied domain=finance "
+            f"ticker={ticker} report_suffix={suffix} price_cols=none calc_cols={calc_cols_str} rows={len(df_clean)}"
+        )
         mdc.write_line(f"Updated Silver {silver_path}")
         watermark_signature = None
         if signature:

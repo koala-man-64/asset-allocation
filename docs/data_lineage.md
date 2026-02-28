@@ -61,6 +61,15 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 - Market/Earnings default to **latest-only** ingestion:
   - `SILVER_LATEST_ONLY` (global)
   - `SILVER_MARKET_LATEST_ONLY`, `SILVER_EARNINGS_LATEST_ONLY` (domain overrides)
+- Silver precision policy (future writes only):
+  - Rounding mode: `ROUND_HALF_UP`.
+  - Price-valued fields are rounded to 2 decimals.
+  - Explicitly derived silver fields are rounded to 4 decimals.
+  - Domain policy:
+    - Market: `open`, `high`, `low`, `close` at 2 decimals.
+    - Finance valuation table (`quarterly_valuation_measures`): `market_cap`, `pe_ratio`, `forward_pe`, `ev_ebitda`, `ev_revenue`, `shares_outstanding` at 4 decimals.
+    - Earnings: no explicit precision targets in current policy.
+    - Price target: `tp_mean_est`, `tp_high_est`, `tp_low_est` at 2 decimals; `tp_std_dev_est` at 4 decimals.
 
 ### Gold feature engineering
 - Gold jobs skip unchanged tickers using Silver commit watermarks:

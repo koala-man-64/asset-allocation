@@ -27,6 +27,7 @@ from tasks.common.silver_contracts import (
     normalize_date_column,
     normalize_columns_to_snake_case,
 )
+from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
     collect_bronze_earnings_symbols_from_blob_infos,
     collect_delta_market_symbols,
@@ -153,6 +154,13 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         return "failed"
 
     df_merged = normalize_columns_to_snake_case(df_merged)
+    df_merged = apply_precision_policy(
+        df_merged,
+        price_columns=set(),
+        calculated_columns=set(),
+        price_scale=2,
+        calculated_scale=4,
+    )
 
     # 5. Write to Silver
     try:
@@ -166,6 +174,10 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
                 enforce_retention_duration=False,
                 full=True,
             )
+        mdc.write_line(
+            "precision_policy_applied domain=earnings "
+            f"ticker={ticker} price_cols=none calc_cols=none rows={len(df_merged)}"
+        )
     except Exception as e:
         mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
         return "failed"

@@ -128,6 +128,46 @@ def test_process_blob_applies_backfill_start_cutoff(monkeypatch):
     assert pd.to_datetime(captured["df"]["obs_date"]).min().date().isoformat() >= "2024-01-01"
 
 
+def test_process_blob_applies_price_target_precision_policy(monkeypatch):
+    blob_name = "price-target-data/AAPL.parquet"
+    blob = {"name": blob_name}
+    today = pd.Timestamp.today().normalize()
+    source = pd.DataFrame(
+        {
+            "obs_date": [today],
+            "tp_mean_est": [100.005],
+            "tp_std_dev_est": [1.23445],
+            "tp_high_est": [120.005],
+            "tp_low_est": [80.005],
+            "tp_cnt_est": [10.125],
+            "tp_cnt_est_rev_up": [2.0],
+            "tp_cnt_est_rev_down": [1.0],
+        }
+    )
+
+    captured: dict = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: source.copy())
+    monkeypatch.setattr(silver.delta_core, "load_delta", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        silver.delta_core,
+        "store_delta",
+        lambda df, *_args, **_kwargs: captured.setdefault("df", df.copy()),
+    )
+
+    status = silver.process_blob(blob, watermarks={})
+
+    assert status == "ok"
+    row = captured["df"].iloc[0]
+    assert row["tp_mean_est"] == pytest.approx(100.01)
+    assert row["tp_high_est"] == pytest.approx(120.01)
+    assert row["tp_low_est"] == pytest.approx(80.01)
+    assert row["tp_std_dev_est"] == pytest.approx(1.2345)
+    assert row["tp_cnt_est"] == pytest.approx(10.125)
+
+
 def test_run_price_target_reconciliation_purges_silver_orphans(monkeypatch):
     class _FakeSilverClient:
         def __init__(self) -> None:
