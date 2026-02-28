@@ -335,7 +335,7 @@ def test_download_with_recovery_retries_three_attempts(monkeypatch):
     call_count = {"count": 0}
     sleep_calls: list[float] = []
 
-    def _fake_download(sym, _client, *, snapshot_row=None):
+    def _fake_download(sym, _client, *, snapshot_row=None, backfill_start=None):
         assert sym == symbol
         call_count["count"] += 1
         if call_count["count"] < 3:
@@ -356,7 +356,7 @@ def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
     manager = _FakeClientManager()
     sleep_calls: list[float] = []
 
-    def _fake_download(_sym, _client, *, snapshot_row=None):
+    def _fake_download(_sym, _client, *, snapshot_row=None, backfill_start=None):
         raise bronze.MassiveGatewayNotFoundError("No data")
 
     monkeypatch.setattr(bronze, "download_and_save_raw", _fake_download)
@@ -375,7 +375,7 @@ def test_download_with_recovery_does_not_retry_non_recoverable_gateway_error(mon
     sleep_calls: list[float] = []
     call_count = {"count": 0}
 
-    def _fake_download(_sym, _client, *, snapshot_row=None):
+    def _fake_download(_sym, _client, *, snapshot_row=None, backfill_start=None):
         call_count["count"] += 1
         raise bronze.MassiveGatewayError(
             "API gateway error (status=400).",
@@ -550,3 +550,144 @@ def test_download_skips_when_no_new_daily_rows_and_supplementals_complete(unique
         mock_massive.get_float.assert_not_called()
         mock_store.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
+
+
+def test_download_forces_backfill_when_existing_min_after_backfill_start(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-02,20,21,19,20.5,200\n"
+        "2024-01-03,21,22,20,21.5,250\n"
+    )
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+    mock_massive.get_float.return_value = {}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2025-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+        "2025-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+    ).encode("utf-8")
+
+    with patch("core.core.read_raw_bytes", return_value=existing_csv), patch(
+        "core.core.store_raw_bytes"
+    ) as mock_store, patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.load_coverage_marker",
+        return_value=None,
+    ), patch(
+        "tasks.market_data.bronze_market_data.write_coverage_marker"
+    ) as mock_write_marker, patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2025, 1, 4),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        coverage_summary = bronze.download_and_save_raw(
+            symbol,
+            mock_massive,
+            backfill_start=date(2024, 1, 1),
+        )
+
+        _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
+        assert fetch_kwargs["from_date"] == "2024-01-01"
+        assert coverage_summary["coverage_forced_refetch"] == 1
+        assert mock_write_marker.call_count == 1
+        mock_store.assert_called_once()
+
+
+def test_download_bypasses_snapshot_fast_path_when_repairing_coverage(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-02,20,21,19,20.5,200\n"
+        "2025-01-04,21,22,20,21.5,250\n"
+    )
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+    mock_massive.get_float.return_value = {}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2025-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+        "2025-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+    ).encode("utf-8")
+    snapshot_row = {
+        "Date": "2025-01-04",
+        "Open": 11.0,
+        "High": 12.0,
+        "Low": 10.0,
+        "Close": 11.5,
+        "Volume": 150.0,
+    }
+
+    with patch("core.core.read_raw_bytes", return_value=existing_csv), patch(
+        "core.core.store_raw_bytes"
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.load_coverage_marker",
+        return_value=None,
+    ), patch(
+        "tasks.market_data.bronze_market_data.write_coverage_marker"
+    ), patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2025, 1, 4),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        bronze.download_and_save_raw(
+            symbol,
+            mock_massive,
+            snapshot_row=snapshot_row,
+            backfill_start=date(2024, 1, 1),
+        )
+
+        mock_massive.get_daily_time_series_csv.assert_called_once()
+
+
+def test_download_skips_force_backfill_when_limited_marker_present(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2025-01-04,20,21,19,20.5,200\n"
+    )
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+    mock_massive.get_float.return_value = {}
+
+    existing_csv = (
+        "Date,Open,High,Low,Close,Volume,ShortInterest,ShortVolume,FloatShares\n"
+        "2025-01-02,10,11,9,10.5,100,1000,500,1000000\n"
+        "2025-01-03,11,12,10,11.5,120,1000,500,1000000\n"
+    ).encode("utf-8")
+
+    with patch("core.core.read_raw_bytes", return_value=existing_csv), patch(
+        "core.core.store_raw_bytes"
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data.load_coverage_marker",
+        return_value={"coverageStatus": "limited", "backfillStart": "2024-01-01"},
+    ), patch(
+        "tasks.market_data.bronze_market_data.write_coverage_marker"
+    ), patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2025, 1, 4),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        coverage_summary = bronze.download_and_save_raw(
+            symbol,
+            mock_massive,
+            backfill_start=date(2024, 1, 1),
+        )
+
+        _, fetch_kwargs = mock_massive.get_daily_time_series_csv.call_args
+        assert fetch_kwargs["from_date"] == "2025-01-03"
+        assert coverage_summary["coverage_forced_refetch"] == 0
+        assert coverage_summary["coverage_skipped_limited_marker"] == 1

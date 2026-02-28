@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any, Optional
 
@@ -18,14 +18,62 @@ from core.alpha_vantage_gateway_client import (
 from core import config as cfg
 from core import core as mdc
 from core.pipeline import ListManager
-from tasks.common.backfill import filter_by_date, get_backfill_range
+from tasks.common.bronze_backfill_coverage import (
+    extract_min_date_from_dataframe,
+    extract_min_date_from_rows,
+    load_coverage_marker,
+    normalize_date,
+    resolve_backfill_start_date,
+    should_force_backfill,
+    write_coverage_marker,
+)
+from tasks.common.backfill import filter_by_date
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
 list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX, auto_flush=False)
 
 
 EARNINGS_STALE_DAYS = 7
+_COVERAGE_DOMAIN = "earnings"
+_COVERAGE_PROVIDER = "alpha-vantage"
+
+
+def _empty_coverage_summary() -> dict[str, int]:
+    return {
+        "coverage_checked": 0,
+        "coverage_forced_refetch": 0,
+        "coverage_marked_covered": 0,
+        "coverage_marked_limited": 0,
+        "coverage_skipped_limited_marker": 0,
+    }
+
+
+def _mark_coverage(
+    *,
+    symbol: str,
+    backfill_start: date,
+    status: str,
+    earliest_available: Optional[date],
+    coverage_summary: dict[str, int],
+) -> None:
+    try:
+        write_coverage_marker(
+            common_client=common_client,
+            domain=_COVERAGE_DOMAIN,
+            symbol=symbol,
+            backfill_start=backfill_start,
+            coverage_status=status,
+            earliest_available=earliest_available,
+            provider=_COVERAGE_PROVIDER,
+        )
+        if status == "covered":
+            coverage_summary["coverage_marked_covered"] += 1
+        elif status == "limited":
+            coverage_summary["coverage_marked_limited"] += 1
+    except Exception as exc:
+        mdc.write_warning(f"Failed to write earnings coverage marker for {symbol}: {exc}")
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -88,7 +136,7 @@ def _parse_earnings_records(
     symbol: str,
     payload: dict[str, Any],
     *,
-    backfill_start: Optional[pd.Timestamp] = None,
+    backfill_start: Optional[date] = None,
 ) -> pd.DataFrame:
     rows = []
     for item in payload.get("quarterlyEarnings") or []:
@@ -113,9 +161,17 @@ def _parse_earnings_records(
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
     df = df.dropna(subset=["Date"]).copy()
-    df = filter_by_date(df, "Date", backfill_start, None)
+    backfill_start_ts = pd.Timestamp(backfill_start) if backfill_start is not None else None
+    df = filter_by_date(df, "Date", backfill_start_ts, None)
     df = df.sort_values(["Date"]).drop_duplicates(subset=["Date", "Symbol"], keep="last").reset_index(drop=True)
     return df
+
+
+def _extract_source_earliest_earnings_date(payload: dict[str, Any]) -> Optional[date]:
+    rows = payload.get("quarterlyEarnings")
+    if not isinstance(rows, list):
+        return None
+    return extract_min_date_from_rows(rows, date_keys=("fiscalDateEnding", "reportedDate", "date"))
 
 
 def _load_existing_earnings_df(blob_path: str) -> pd.DataFrame:
@@ -149,18 +205,24 @@ def fetch_and_save_raw(
     symbol: str,
     av: AlphaVantageGatewayClient,
     *,
-    backfill_start: Optional[pd.Timestamp] = None,
+    backfill_start: Optional[date] = None,
+    coverage_summary: Optional[dict[str, int]] = None,
 ) -> bool:
     """
     Fetch earnings for a single symbol via the API-hosted Alpha Vantage gateway and store as Bronze JSON records.
 
     Returns True when a Bronze write occurred, False when skipped/no-op.
     """
+    coverage_summary = coverage_summary if coverage_summary is not None else _empty_coverage_summary()
     if list_manager.is_blacklisted(symbol):
         return False
 
     blob_path = f"{cfg.EARNINGS_DATA_PREFIX}/{symbol}.json"
     blob_exists: Optional[bool] = None
+    resolved_backfill_start = normalize_date(backfill_start)
+    existing_df = pd.DataFrame()
+    existing_min_date: Optional[date] = None
+    force_backfill = False
 
     # Freshness gate (quarterly data); avoid re-fetching too frequently.
     try:
@@ -168,7 +230,33 @@ def fetch_and_save_raw(
         blob_exists = bool(blob.exists())
         if blob_exists:
             props = blob.get_blob_properties()
-            if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS):
+            if resolved_backfill_start is not None:
+                coverage_summary["coverage_checked"] += 1
+                existing_df = _load_existing_earnings_df(blob_path)
+                existing_min_date = extract_min_date_from_dataframe(existing_df, date_col="Date")
+                marker = load_coverage_marker(
+                    common_client=common_client,
+                    domain=_COVERAGE_DOMAIN,
+                    symbol=symbol,
+                )
+                force_backfill, skipped_limited_marker = should_force_backfill(
+                    existing_min_date=existing_min_date,
+                    backfill_start=resolved_backfill_start,
+                    marker=marker,
+                )
+                if skipped_limited_marker:
+                    coverage_summary["coverage_skipped_limited_marker"] += 1
+                if force_backfill:
+                    coverage_summary["coverage_forced_refetch"] += 1
+                elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
+                    _mark_coverage(
+                        symbol=symbol,
+                        backfill_start=resolved_backfill_start,
+                        status="covered",
+                        earliest_available=existing_min_date,
+                        coverage_summary=coverage_summary,
+                    )
+            if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS) and not force_backfill:
                 list_manager.add_to_whitelist(symbol)
                 return False
     except Exception:
@@ -183,13 +271,22 @@ def fetch_and_save_raw(
         isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
         for item in source_records
     )
-    df = _parse_earnings_records(symbol, payload, backfill_start=backfill_start)
+    source_earliest = _extract_source_earliest_earnings_date(payload)
+    df = _parse_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
     if df is None or df.empty:
         if not has_source_records:
             raise AlphaVantageGatewayInvalidSymbolError("No quarterly earnings records found.")
-        if backfill_start is not None:
+        if resolved_backfill_start is not None:
+            if force_backfill:
+                _mark_coverage(
+                    symbol=symbol,
+                    backfill_start=resolved_backfill_start,
+                    status="limited",
+                    earliest_available=source_earliest,
+                    coverage_summary=coverage_summary,
+                )
             if blob_exists is not False:
-                cutoff_iso = pd.Timestamp(backfill_start).date().isoformat()
+                cutoff_iso = pd.Timestamp(resolved_backfill_start).date().isoformat()
                 bronze_client.delete_file(blob_path)
                 mdc.write_line(
                     f"No earnings rows on/after {cutoff_iso} for {symbol}; "
@@ -201,7 +298,7 @@ def fetch_and_save_raw(
             return False
         raw_json = b"[]"
     else:
-        if blob_exists and backfill_start is None:
+        if blob_exists and resolved_backfill_start is None:
             existing_df = _load_existing_earnings_df(blob_path)
             incoming_latest = _extract_latest_earnings_date(df)
             existing_latest = _extract_latest_earnings_date(existing_df)
@@ -213,6 +310,20 @@ def fetch_and_save_raw(
                 list_manager.add_to_whitelist(symbol)
                 return False
         raw_json = df.to_json(orient="records").encode("utf-8")
+
+    if resolved_backfill_start is not None and force_backfill:
+        marker_status = (
+            "covered"
+            if source_earliest is not None and source_earliest <= resolved_backfill_start
+            else "limited"
+        )
+        _mark_coverage(
+            symbol=symbol,
+            backfill_start=resolved_backfill_start,
+            status=marker_status,
+            earliest_available=source_earliest,
+            coverage_summary=coverage_summary,
+        )
 
     if blob_exists:
         try:
@@ -271,9 +382,9 @@ async def main_async() -> int:
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
     av = AlphaVantageGatewayClient.from_env()
-    backfill_start, _ = get_backfill_range()
+    backfill_start = resolve_backfill_start_date()
     if backfill_start is not None:
-        mdc.write_line(f"Applying historical cutoff to bronze earnings data: {backfill_start.date().isoformat()}")
+        mdc.write_line(f"Applying historical cutoff to bronze earnings data: {backfill_start.isoformat()}")
 
     max_workers = max(1, int(cfg.ALPHA_VANTAGE_MAX_WORKERS))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-earnings")
@@ -281,12 +392,20 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
 
     progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    coverage_progress = _empty_coverage_summary()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
-    def worker(symbol: str) -> bool:
-        return fetch_and_save_raw(symbol, av, backfill_start=backfill_start)
+    def worker(symbol: str) -> tuple[bool, dict[str, int]]:
+        coverage_summary = _empty_coverage_summary()
+        wrote = fetch_and_save_raw(
+            symbol,
+            av,
+            backfill_start=backfill_start,
+            coverage_summary=coverage_summary,
+        )
+        return wrote, coverage_summary
 
     async def record_failure(symbol: str, exc: BaseException) -> None:
         failure_type = type(exc).__name__
@@ -313,12 +432,14 @@ async def main_async() -> int:
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
-                wrote = await loop.run_in_executor(executor, worker, symbol)
+                wrote, coverage_summary = await loop.run_in_executor(executor, worker, symbol)
                 async with progress_lock:
                     if wrote:
                         progress["written"] += 1
                     else:
                         progress["skipped"] += 1
+                    for key in coverage_progress:
+                        coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
             except AlphaVantageGatewayInvalidSymbolError:
                 list_manager.add_to_blacklist(symbol)
                 async with progress_lock:
@@ -365,7 +486,12 @@ async def main_async() -> int:
 
     mdc.write_line(
         "Bronze AV earnings ingest complete: processed={processed} written={written} skipped={skipped} "
-        "blacklisted={blacklisted} failed={failed}".format(**progress)
+        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
+        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker}".format(
+            **progress,
+            **coverage_progress,
+        )
     )
     return 0 if progress["failed"] == 0 else 1
 

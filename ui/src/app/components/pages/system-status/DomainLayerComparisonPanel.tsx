@@ -1158,15 +1158,13 @@ export function DomainLayerComparisonPanel({
       </AlertDialog>
 
       <CardHeader className="gap-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex min-w-0 flex-col gap-2">
-            <div className="flex min-w-0 items-start gap-2">
-              <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0" />
-              <div className="flex min-w-0 flex-col gap-1">
-                <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
-              </div>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <GitCompareArrows className="h-5 w-5 shrink-0" />
+              <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
             </div>
-            <div className="flex w-full max-w-full flex-nowrap items-center gap-2 overflow-x-auto sm:w-auto">
+            <div className="flex min-w-0 max-w-full flex-nowrap items-center gap-2 overflow-x-auto">
               <div
                 role="status"
                 aria-live="polite"

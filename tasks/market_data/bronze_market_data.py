@@ -20,10 +20,18 @@ from core.massive_gateway_client import (
 )
 from core import core as mdc
 from core.pipeline import ListManager
+from tasks.common.bronze_backfill_coverage import (
+    extract_min_date_from_dataframe,
+    load_coverage_marker,
+    resolve_backfill_start_date,
+    should_force_backfill,
+    write_coverage_marker,
+)
 from tasks.market_data import config as cfg
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
 list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
 
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume", "FloatShares")
@@ -32,6 +40,8 @@ _RECOVERY_SLEEP_SECONDS = 5.0
 _FULL_HISTORY_START_DATE = "1970-01-01"
 _SNAPSHOT_BATCH_SIZE = 250
 _SNAPSHOT_ASSET_TYPE = "stocks"
+_COVERAGE_DOMAIN = "market"
+_COVERAGE_PROVIDER = "massive"
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -624,13 +634,33 @@ def _extract_latest_market_date(existing_df: pd.DataFrame) -> date | None:
         return None
 
 
-def _resolve_fetch_window(*, existing_latest_date: date | None) -> tuple[str, str]:
+def _extract_earliest_market_date(existing_df: pd.DataFrame) -> date | None:
+    return extract_min_date_from_dataframe(existing_df, date_col="Date")
+
+
+def _resolve_fetch_window(
+    *,
+    existing_latest_date: date | None,
+    force_from_date: date | None = None,
+) -> tuple[str, str]:
     today = _utc_today()
-    if existing_latest_date is None:
+    if force_from_date is not None:
+        from_date = min(force_from_date, today).isoformat()
+    elif existing_latest_date is None:
         from_date = _FULL_HISTORY_START_DATE
     else:
         from_date = min(existing_latest_date, today).isoformat()
     return from_date, today.isoformat()
+
+
+def _empty_coverage_summary() -> dict[str, int]:
+    return {
+        "coverage_checked": 0,
+        "coverage_forced_refetch": 0,
+        "coverage_marked_covered": 0,
+        "coverage_marked_limited": 0,
+        "coverage_skipped_limited_marker": 0,
+    }
 
 
 def _merge_existing_and_new_market_data(existing_df: pd.DataFrame, incoming_df: pd.DataFrame) -> pd.DataFrame:
@@ -736,17 +766,24 @@ def _download_and_save_raw_with_recovery(
     client_manager: _ThreadLocalMassiveClientManager,
     *,
     snapshot_row: dict[str, float | str] | None = None,
+    backfill_start: date | None = None,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
-) -> None:
+) -> dict[str, int]:
     attempts = max(1, int(max_attempts))
     sleep_seconds = max(0.0, float(sleep_seconds))
+    coverage_summary = _empty_coverage_summary()
 
     for attempt in range(1, attempts + 1):
         client = client_manager.get_client()
         try:
-            download_and_save_raw(symbol, client, snapshot_row=snapshot_row)
-            return
+            coverage_summary = download_and_save_raw(
+                symbol,
+                client,
+                snapshot_row=snapshot_row,
+                backfill_start=backfill_start,
+            )
+            return coverage_summary
         except MassiveGatewayNotFoundError:
             raise
         except Exception as exc:
@@ -760,6 +797,7 @@ def _download_and_save_raw_with_recovery(
             )
             time.sleep(sleep_seconds)
             client_manager.reset_current()
+    return coverage_summary
 
 
 def download_and_save_raw(
@@ -767,27 +805,68 @@ def download_and_save_raw(
     massive_client: MassiveGatewayClient,
     *,
     snapshot_row: dict[str, float | str] | None = None,
-) -> None:
+    backfill_start: date | None = None,
+) -> dict[str, int]:
     """
     Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
     from the API-hosted Massive gateway and stores it in Bronze.
     """
+    coverage_summary = _empty_coverage_summary()
     if list_manager.is_blacklisted(symbol):
-        return
+        return coverage_summary
 
     existing_df = _load_existing_market_df(symbol)
+    existing_min_date = _extract_earliest_market_date(existing_df)
     existing_latest_date = _extract_latest_market_date(existing_df)
-    from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
+    marker: dict[str, Any] | None = None
+    force_backfill = False
+    if backfill_start is not None:
+        coverage_summary["coverage_checked"] += 1
+        try:
+            marker = load_coverage_marker(
+                common_client=common_client,
+                domain=_COVERAGE_DOMAIN,
+                symbol=symbol,
+            )
+        except Exception:
+            marker = None
+        force_backfill, skipped_limited_marker = should_force_backfill(
+            existing_min_date=existing_min_date,
+            backfill_start=backfill_start,
+            marker=marker,
+        )
+        if skipped_limited_marker:
+            coverage_summary["coverage_skipped_limited_marker"] += 1
+        if force_backfill:
+            coverage_summary["coverage_forced_refetch"] += 1
+        elif existing_min_date is not None and existing_min_date <= backfill_start:
+            try:
+                write_coverage_marker(
+                    common_client=common_client,
+                    domain=_COVERAGE_DOMAIN,
+                    symbol=symbol,
+                    backfill_start=backfill_start,
+                    coverage_status="covered",
+                    earliest_available=existing_min_date,
+                    provider=_COVERAGE_PROVIDER,
+                )
+                coverage_summary["coverage_marked_covered"] += 1
+            except Exception as exc:
+                mdc.write_warning(f"Failed to write market coverage marker for {symbol}: {exc}")
+    from_date, to_date = _resolve_fetch_window(
+        existing_latest_date=existing_latest_date,
+        force_from_date=backfill_start if force_backfill else None,
+    )
     raw_text = ""
     df_daily = None
     snapshot_date = _extract_snapshot_date(snapshot_row)
-    if _can_use_snapshot_for_incremental(
+    if not force_backfill and _can_use_snapshot_for_incremental(
         existing_latest_date=existing_latest_date,
     ):
         if snapshot_date is not None and existing_latest_date is not None and snapshot_date <= existing_latest_date:
             # Snapshot confirms we are already at the latest obtainable daily bar.
             list_manager.add_to_whitelist(symbol)
-            return
+            return coverage_summary
         df_daily = _snapshot_row_to_daily_df(snapshot_row)
         if df_daily is not None and existing_latest_date is not None:
             snapshot_dates = pd.to_datetime(df_daily["Date"], errors="coerce").dropna()
@@ -795,7 +874,7 @@ def download_and_save_raw(
                 # Snapshot can lag around weekends/market close windows.
                 # If the local bronze blob is newer, keep local data and skip work.
                 list_manager.add_to_whitelist(symbol)
-                return
+                return coverage_summary
 
     if df_daily is None:
         raw_text = massive_client.get_daily_time_series_csv(
@@ -811,8 +890,22 @@ def download_and_save_raw(
                     f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
                     "keeping existing bronze data."
                 )
+                if force_backfill and backfill_start is not None:
+                    try:
+                        write_coverage_marker(
+                            common_client=common_client,
+                            domain=_COVERAGE_DOMAIN,
+                            symbol=symbol,
+                            backfill_start=backfill_start,
+                            coverage_status="limited",
+                            earliest_available=existing_min_date,
+                            provider=_COVERAGE_PROVIDER,
+                        )
+                        coverage_summary["coverage_marked_limited"] += 1
+                    except Exception as exc:
+                        mdc.write_warning(f"Failed to write market coverage marker for {symbol}: {exc}")
                 list_manager.add_to_whitelist(symbol)
-                return
+                return coverage_summary
             list_manager.add_to_blacklist(symbol)
             raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
 
@@ -829,11 +922,12 @@ def download_and_save_raw(
         if (
             existing_latest_date is not None
             and not has_new_daily_rows
+            and not force_backfill
             and _existing_has_complete_supplementals(existing_df, as_of_date=existing_latest_date)
         ):
             # No new market rows and supplemental metrics already populated.
             list_manager.add_to_whitelist(symbol)
-            return
+            return coverage_summary
 
         try:
             short_interest_payload = massive_client.get_short_interest(
@@ -865,9 +959,28 @@ def download_and_save_raw(
             float_payload=float_payload,
         )
         df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
+        if backfill_start is not None and force_backfill:
+            earliest_available = _extract_earliest_market_date(df_daily)
+            marker_status = "covered" if earliest_available is not None and earliest_available <= backfill_start else "limited"
+            try:
+                write_coverage_marker(
+                    common_client=common_client,
+                    domain=_COVERAGE_DOMAIN,
+                    symbol=symbol,
+                    backfill_start=backfill_start,
+                    coverage_status=marker_status,
+                    earliest_available=earliest_available,
+                    provider=_COVERAGE_PROVIDER,
+                )
+                if marker_status == "covered":
+                    coverage_summary["coverage_marked_covered"] += 1
+                else:
+                    coverage_summary["coverage_marked_limited"] += 1
+            except Exception as exc:
+                mdc.write_warning(f"Failed to write market coverage marker for {symbol}: {exc}")
         if not existing_df.empty and _market_frames_equal(existing_df, df_daily):
             list_manager.add_to_whitelist(symbol)
-            return
+            return coverage_summary
         raw_bytes = _serialize_market_csv(df_daily)
     except (MassiveGatewayRateLimitError, MassiveGatewayError):
         raise
@@ -885,6 +998,7 @@ def download_and_save_raw(
     except Exception as exc:
         raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
     list_manager.add_to_whitelist(symbol)
+    return coverage_summary
 
 
 def _get_max_workers() -> int:
@@ -907,11 +1021,14 @@ _normalize_alpha_vantage_daily_csv = _normalize_provider_daily_csv
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
+    backfill_start = resolve_backfill_start_date()
 
     list_manager.load()
     mdc.write_line(
         f"Bronze market blacklist loaded with {len(list_manager.blacklist)} symbols (excluded from scheduling)."
     )
+    if backfill_start is not None:
+        mdc.write_line(f"Bronze market backfill coverage floor: {backfill_start.isoformat()}")
 
     mdc.write_line("Fetching symbol universe...")
     df_symbols = mdc.get_symbols()
@@ -952,17 +1069,19 @@ async def main_async() -> int:
     client_manager = _ThreadLocalMassiveClientManager()
 
     progress = {"processed": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
+    coverage_progress = _empty_coverage_summary()
     retry_next_run: set[str] = set()
     progress_lock = asyncio.Lock()
 
-    def worker(symbol: str) -> None:
+    def worker(symbol: str) -> dict[str, int]:
         if list_manager.is_blacklisted(symbol):
             raise MassiveGatewayNotFoundError("Symbol is blacklisted.")
 
-        _download_and_save_raw_with_recovery(
+        return _download_and_save_raw_with_recovery(
             symbol,
             client_manager,
             snapshot_row=snapshot_rows_by_symbol.get(symbol),
+            backfill_start=backfill_start,
         )
 
     max_workers = _get_max_workers()
@@ -975,9 +1094,11 @@ async def main_async() -> int:
             try:
                 if debug_mode:
                     mdc.write_line(f"Downloading OHLCV+fundamentals for {symbol}...")
-                await loop.run_in_executor(executor, worker, symbol)
+                coverage_summary = await loop.run_in_executor(executor, worker, symbol)
                 async with progress_lock:
                     progress["downloaded"] += 1
+                    for key in coverage_progress:
+                        coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
             except MassiveGatewayNotFoundError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = debug_mode
@@ -1046,7 +1167,12 @@ async def main_async() -> int:
 
     mdc.write_line(
         "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} "
-        "blacklisted={blacklisted} failed={failed}".format(**progress)
+        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
+        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker}".format(
+            **progress,
+            **coverage_progress,
+        )
     )
     if retry_next_run:
         preview = ", ".join(sorted(retry_next_run)[:50])

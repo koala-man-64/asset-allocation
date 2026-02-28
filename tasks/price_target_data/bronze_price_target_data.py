@@ -10,14 +10,23 @@ from typing import Dict, List, Optional
 from core import core as mdc
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
-from tasks.common.backfill import get_backfill_range
+from tasks.common.bronze_backfill_coverage import (
+    extract_min_date_from_dataframe,
+    load_coverage_marker,
+    resolve_backfill_start_date,
+    should_force_backfill,
+    write_coverage_marker,
+)
 
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
 list_manager = ListManager(bronze_client, "price-target-data", auto_flush=False)
 
 BATCH_SIZE = 50
 PRICE_TARGET_FULL_HISTORY_START_DATE = date(2020, 1, 1)
+_COVERAGE_DOMAIN = "price-target"
+_COVERAGE_PROVIDER = "nasdaq"
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -35,14 +44,38 @@ def _validate_environment() -> None:
     
     nasdaqdatalink.ApiConfig.api_key = os.environ.get('NASDAQ_API_KEY')
 
-def _resolve_price_target_backfill_start() -> Optional[date]:
-    backfill_start, _ = get_backfill_range()
-    if backfill_start is None:
-        return None
+def _empty_coverage_summary() -> dict[str, int]:
+    return {
+        "coverage_checked": 0,
+        "coverage_forced_refetch": 0,
+        "coverage_marked_covered": 0,
+        "coverage_marked_limited": 0,
+        "coverage_skipped_limited_marker": 0,
+    }
+
+
+def _mark_coverage(
+    *,
+    symbol: str,
+    backfill_start: date,
+    status: str,
+    earliest_available: Optional[date],
+    summary: dict,
+) -> None:
     try:
-        return backfill_start.to_pydatetime().date()
-    except Exception:
-        return None
+        write_coverage_marker(
+            common_client=common_client,
+            domain=_COVERAGE_DOMAIN,
+            symbol=symbol,
+            backfill_start=backfill_start,
+            coverage_status=status,
+            earliest_available=earliest_available,
+            provider=_COVERAGE_PROVIDER,
+        )
+        key = "coverage_marked_covered" if status == "covered" else "coverage_marked_limited"
+        summary[key] = int(summary.get(key, 0) or 0) + 1
+    except Exception as exc:
+        mdc.write_warning(f"Failed to write price-target coverage marker for {symbol}: {exc}")
 
 
 def _load_existing_price_target_df(symbol: str) -> pd.DataFrame:
@@ -69,6 +102,10 @@ def _extract_max_obs_date(df: pd.DataFrame) -> Optional[date]:
         return parsed.max().date()
     except Exception:
         return None
+
+
+def _extract_min_obs_date(df: pd.DataFrame) -> Optional[date]:
+    return extract_min_date_from_dataframe(df, date_col="obs_date")
 
 
 def _delete_price_target_blob_for_cutoff(
@@ -109,35 +146,67 @@ async def process_batch_bronze(
         "filtered_missing": 0,
         "api_error": False,
     }
+    batch_summary.update(_empty_coverage_summary())
     async with semaphore:
         # Determine stale symbols and per-symbol incremental start windows.
         stale_symbols: List[str] = []
         symbol_start_dates: Dict[str, date] = {}
         symbol_has_existing_blob: Dict[str, bool] = {}
         existing_frames: Dict[str, pd.DataFrame] = {}
+        symbol_force_backfill: Dict[str, bool] = {}
+        symbol_existing_min: Dict[str, Optional[date]] = {}
         default_start_date = backfill_start or PRICE_TARGET_FULL_HISTORY_START_DATE
 
         for sym in symbols:
             blob_path = f"price-target-data/{sym}.parquet"
+            force_backfill = False
             try:
                 blob = bronze_client.get_blob_client(blob_path)
                 exists = bool(blob.exists())
                 symbol_has_existing_blob[sym] = exists
                 if exists:
                     props = blob.get_blob_properties()
+                    existing_df = _load_existing_price_target_df(sym)
+                    existing_frames[sym] = existing_df
+                    if backfill_start is not None:
+                        batch_summary["coverage_checked"] += 1
+                        existing_min = _extract_min_obs_date(existing_df)
+                        symbol_existing_min[sym] = existing_min
+                        marker = load_coverage_marker(
+                            common_client=common_client,
+                            domain=_COVERAGE_DOMAIN,
+                            symbol=sym,
+                        )
+                        force_backfill, skipped_limited_marker = should_force_backfill(
+                            existing_min_date=existing_min,
+                            backfill_start=backfill_start,
+                            marker=marker,
+                        )
+                        if skipped_limited_marker:
+                            batch_summary["coverage_skipped_limited_marker"] += 1
+                        if force_backfill:
+                            batch_summary["coverage_forced_refetch"] += 1
+                        elif existing_min is not None and existing_min <= backfill_start:
+                            _mark_coverage(
+                                symbol=sym,
+                                backfill_start=backfill_start,
+                                status="covered",
+                                earliest_available=existing_min,
+                                summary=batch_summary,
+                            )
                     age = datetime.now(timezone.utc) - props.last_modified
-                    if age.total_seconds() < 24 * 3600:
+                    if age.total_seconds() < 24 * 3600 and not force_backfill:
                         continue
-                    if backfill_start is None:
-                        existing_df = _load_existing_price_target_df(sym)
-                        existing_frames[sym] = existing_df
-                        existing_max = _extract_max_obs_date(existing_df)
-                        if existing_max is not None:
-                            symbol_start_dates[sym] = existing_max + timedelta(days=1)
+                    existing_max = _extract_max_obs_date(existing_df)
+                    if existing_max is not None and not force_backfill:
+                        symbol_start_dates[sym] = existing_max + timedelta(days=1)
             except Exception:
                 pass
 
-            if sym not in symbol_start_dates:
+            symbol_force_backfill[sym] = force_backfill
+            if force_backfill and backfill_start is not None:
+                symbol_start_dates[sym] = backfill_start
+            elif sym not in symbol_start_dates:
                 symbol_start_dates[sym] = default_start_date
             stale_symbols.append(sym)
 
@@ -194,11 +263,23 @@ async def process_batch_bronze(
 
         for sym in stale_symbols:
             symbol_min = symbol_start_dates.get(sym, default_start_date)
+            force_backfill = bool(symbol_force_backfill.get(sym))
             symbol_df = grouped.get(sym, pd.DataFrame()).copy()
             if not symbol_df.empty and "obs_date" in symbol_df.columns:
                 symbol_df = symbol_df.loc[symbol_df["obs_date"] >= pd.Timestamp(symbol_min)].copy()
 
             if symbol_df.empty:
+                if backfill_start is not None and force_backfill:
+                    _mark_coverage(
+                        symbol=sym,
+                        backfill_start=backfill_start,
+                        status="limited",
+                        earliest_available=symbol_existing_min.get(sym),
+                        summary=batch_summary,
+                    )
+                    batch_summary["filtered_missing"] += 1
+                    list_manager.add_to_whitelist(sym)
+                    continue
                 if backfill_start is not None:
                     _delete_price_target_blob_for_cutoff(sym, min_date=symbol_min, summary=batch_summary)
                     continue
@@ -213,15 +294,29 @@ async def process_batch_bronze(
                 continue
 
             try:
-                if backfill_start is None:
-                    existing_df = existing_frames.get(sym)
-                    if existing_df is None:
-                        existing_df = _load_existing_price_target_df(sym)
-                    if existing_df is not None and not existing_df.empty:
-                        symbol_df = pd.concat([existing_df, symbol_df], ignore_index=True, sort=False)
-                        symbol_df = symbol_df.drop_duplicates().reset_index(drop=True)
+                existing_df = existing_frames.get(sym)
+                if existing_df is None and bool(symbol_has_existing_blob.get(sym)):
+                    existing_df = _load_existing_price_target_df(sym)
+                if existing_df is not None and not existing_df.empty:
+                    symbol_df = pd.concat([existing_df, symbol_df], ignore_index=True, sort=False)
+                    symbol_df = symbol_df.drop_duplicates().reset_index(drop=True)
                 if "obs_date" in symbol_df.columns:
                     symbol_df = symbol_df.sort_values("obs_date").reset_index(drop=True)
+
+                if backfill_start is not None and (force_backfill or symbol_min <= backfill_start):
+                    earliest_available = _extract_min_obs_date(symbol_df)
+                    marker_status = (
+                        "covered"
+                        if earliest_available is not None and earliest_available <= backfill_start
+                        else "limited"
+                    )
+                    _mark_coverage(
+                        symbol=sym,
+                        backfill_start=backfill_start,
+                        status=marker_status,
+                        earliest_available=earliest_available,
+                        summary=batch_summary,
+                    )
 
                 raw_parquet = symbol_df.to_parquet(index=False)
                 mdc.store_raw_bytes(raw_parquet, f"price-target-data/{sym}.parquet", client=bronze_client)
@@ -244,7 +339,7 @@ async def main_async() -> int:
     _validate_environment()
     
     list_manager.load()
-    backfill_start = _resolve_price_target_backfill_start()
+    backfill_start = resolve_backfill_start_date()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to bronze price-target data: {backfill_start.isoformat()}")
     
@@ -283,6 +378,11 @@ async def main_async() -> int:
         "blacklisted": 0,
         "filtered_missing": 0,
         "api_error_batches": 0,
+        "coverage_checked": 0,
+        "coverage_forced_refetch": 0,
+        "coverage_marked_covered": 0,
+        "coverage_marked_limited": 0,
+        "coverage_skipped_limited_marker": 0,
     }
     try:
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -303,6 +403,13 @@ async def main_async() -> int:
             aggregate["save_failed"] += int(result.get("save_failed", 0) or 0)
             aggregate["blacklisted"] += int(result.get("blacklisted", 0) or 0)
             aggregate["filtered_missing"] += int(result.get("filtered_missing", 0) or 0)
+            aggregate["coverage_checked"] += int(result.get("coverage_checked", 0) or 0)
+            aggregate["coverage_forced_refetch"] += int(result.get("coverage_forced_refetch", 0) or 0)
+            aggregate["coverage_marked_covered"] += int(result.get("coverage_marked_covered", 0) or 0)
+            aggregate["coverage_marked_limited"] += int(result.get("coverage_marked_limited", 0) or 0)
+            aggregate["coverage_skipped_limited_marker"] += int(
+                result.get("coverage_skipped_limited_marker", 0) or 0
+            )
             if bool(result.get("api_error", False)):
                 aggregate["api_error_batches"] += 1
     finally:
@@ -314,6 +421,9 @@ async def main_async() -> int:
             "Bronze price target overall summary: requested={requested} stale={stale} api_rows={api_rows} "
             "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} "
             "filtered_missing={filtered_missing} "
+            "coverage_checked={coverage_checked} coverage_forced_refetch={coverage_forced_refetch} "
+            "coverage_marked_covered={coverage_marked_covered} coverage_marked_limited={coverage_marked_limited} "
+            "coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
             "api_error_batches={api_error_batches} "
             "batch_exceptions={batch_exception_count}".format(
                 batch_exception_count=batch_exception_count,

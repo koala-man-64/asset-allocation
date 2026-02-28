@@ -124,15 +124,11 @@ function KillSwitchControl({
   const inferredChecked = jobNames.length > 0 && suspendedCount === jobNames.length;
   const checked = optimisticChecked ?? inferredChecked;
   const statusText = checked ? 'Kill switch is ON (jobs disabled)' : 'Kill switch is OFF (jobs enabled)';
+  const inlineStatusText = checked ? 'Kill switch ON' : 'Kill switch OFF';
   const helperText =
     jobNames.length > 0
       ? 'Use only for emergency stop or maintenance windows.'
       : 'No Azure jobs were detected in the latest system-health payload.';
-  const scopeText =
-    jobNames.length > 0
-      ? `${jobNames.length} job(s) in scope • ${runningJobNames.length} running`
-      : 'No jobs in scope';
-
   useEffect(() => {
     if (optimisticChecked === null) return;
     if (optimisticChecked === inferredChecked) {
@@ -198,13 +194,15 @@ function KillSwitchControl({
             : 'border-mcm-walnut/15 bg-mcm-cream/55'
         }`}
       >
-        <div className="min-w-0 space-y-0.5">
-          <p className="text-sm font-semibold text-mcm-walnut">{statusText}</p>
-          <p className="text-xs text-mcm-walnut/70">{scopeText}</p>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-mcm-walnut">{inlineStatusText}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Badge variant="outline" className="h-6 text-[9px]">
             {jobNames.length} job(s)
+          </Badge>
+          <Badge variant="outline" className="h-6 text-[9px]">
+            {runningJobNames.length} running
           </Badge>
           {isApplying ? <Loader2 className="h-4 w-4 animate-spin text-mcm-walnut/65" /> : null}
           <Switch

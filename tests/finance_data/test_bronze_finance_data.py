@@ -232,7 +232,7 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     manager.get_client.return_value = mock_av
     attempts: dict[str, int] = {"balance_sheet": 0}
 
-    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None):
+    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None, coverage_summary=None):
         assert symbol_arg == symbol
         assert av_client is mock_av
         report_name = report["report"]
@@ -246,7 +246,7 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
         "tasks.finance_data.bronze_finance_data.time.sleep"
     ) as mock_sleep:
-        wrote, blacklisted, failures = bronze._process_symbol_with_recovery(
+        wrote, blacklisted, failures, coverage_summary = bronze._process_symbol_with_recovery(
             symbol,
             manager,
             max_attempts=3,
@@ -257,6 +257,7 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     assert blacklisted is False
     assert failures == []
     assert attempts["balance_sheet"] == 2
+    assert coverage_summary["coverage_checked"] == 0
     manager.reset_current.assert_called_once()
     mock_sleep.assert_called_once_with(0.5)
 
@@ -268,7 +269,7 @@ def test_process_symbol_with_recovery_continues_after_nonrecoverable_report_fail
     manager.get_client.return_value = mock_av
     seen_reports: list[str] = []
 
-    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None):
+    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None, coverage_summary=None):
         assert symbol_arg == symbol
         assert av_client is mock_av
         report_name = report["report"]
@@ -278,7 +279,7 @@ def test_process_symbol_with_recovery_continues_after_nonrecoverable_report_fail
         return True
 
     with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
-        wrote, blacklisted, failures = bronze._process_symbol_with_recovery(
+        wrote, blacklisted, failures, coverage_summary = bronze._process_symbol_with_recovery(
             symbol,
             manager,
             max_attempts=3,
@@ -289,6 +290,7 @@ def test_process_symbol_with_recovery_continues_after_nonrecoverable_report_fail
     assert wrote == 3
     assert len(failures) == 1
     assert failures[0][0] == "cash_flow"
+    assert coverage_summary["coverage_checked"] == 0
     manager.reset_current.assert_not_called()
     assert seen_reports == [report["report"] for report in bronze.REPORTS]
 
@@ -300,7 +302,7 @@ def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
     manager.get_client.return_value = mock_av
     seen_reports: list[str] = []
 
-    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None):
+    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None, coverage_summary=None):
         assert symbol_arg == symbol
         assert av_client is mock_av
         report_name = report["report"]
@@ -310,7 +312,7 @@ def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
         return True
 
     with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
-        wrote, blacklisted, failures = bronze._process_symbol_with_recovery(
+        wrote, blacklisted, failures, coverage_summary = bronze._process_symbol_with_recovery(
             symbol,
             manager,
             max_attempts=3,
@@ -321,5 +323,129 @@ def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
     assert blacklisted is True
     assert len(failures) == 1
     assert failures[0][0] == "balance_sheet"
+    assert coverage_summary["coverage_checked"] == 0
     manager.reset_current.assert_not_called()
     assert seen_reports == ["balance_sheet"]
+
+
+def test_fetch_and_save_raw_coverage_gap_overrides_freshness(unique_ticker):
+    symbol = unique_ticker
+    existing_payload = {
+        "symbol": symbol,
+        "quarterlyReports": [{"fiscalDateEnding": "2025-01-01", "reportedCurrency": "USD"}],
+        "annualReports": [],
+    }
+    incoming_payload = {
+        "symbol": symbol,
+        "quarterlyReports": [{"fiscalDateEnding": "2024-03-31", "reportedCurrency": "USD"}],
+        "annualReports": [],
+    }
+    mock_av = MagicMock()
+    mock_av.get_finance_report.return_value = incoming_payload
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = True
+    mock_blob_client.get_blob_properties.return_value = MagicMock(last_modified=datetime.now(timezone.utc))
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+
+    report = {
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "report": "balance_sheet",
+    }
+    coverage_summary = bronze._empty_coverage_summary()
+
+    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
+        "tasks.finance_data.bronze_finance_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=json.dumps(existing_payload).encode("utf-8"),
+    ), patch(
+        "tasks.finance_data.bronze_finance_data.load_coverage_marker",
+        return_value=None,
+    ), patch(
+        "tasks.finance_data.bronze_finance_data._mark_coverage"
+    ) as mock_mark_coverage, patch(
+        "core.core.store_raw_bytes"
+    ) as mock_store:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_av,
+            backfill_start=date(2024, 1, 1),
+            coverage_summary=coverage_summary,
+        )
+
+    assert wrote is True
+    assert coverage_summary["coverage_checked"] == 1
+    assert coverage_summary["coverage_forced_refetch"] == 1
+    mock_av.get_finance_report.assert_called_once()
+    mock_store.assert_called_once()
+    mock_mark_coverage.assert_called_once()
+
+
+def test_fetch_and_save_raw_coverage_uses_unfiltered_payload_earliest(unique_ticker):
+    symbol = unique_ticker
+    existing_payload = {
+        "symbol": symbol,
+        "quarterlyReports": [{"fiscalDateEnding": "2025-01-01", "reportedCurrency": "USD"}],
+        "annualReports": [],
+    }
+    incoming_payload = {
+        "symbol": symbol,
+        "quarterlyReports": [
+            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
+            {"fiscalDateEnding": "2025-03-31", "reportedCurrency": "USD"},
+        ],
+        "annualReports": [],
+    }
+    mock_av = MagicMock()
+    mock_av.get_finance_report.return_value = incoming_payload
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = True
+    mock_blob_client.get_blob_properties.return_value = MagicMock(
+        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    )
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+
+    report = {
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "report": "balance_sheet",
+    }
+    coverage_summary = bronze._empty_coverage_summary()
+
+    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
+        "tasks.finance_data.bronze_finance_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=json.dumps(existing_payload).encode("utf-8"),
+    ), patch(
+        "tasks.finance_data.bronze_finance_data.load_coverage_marker",
+        return_value=None,
+    ), patch(
+        "tasks.finance_data.bronze_finance_data._mark_coverage"
+    ) as mock_mark_coverage, patch(
+        "core.core.store_raw_bytes"
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_av,
+            backfill_start=date(2024, 1, 1),
+            coverage_summary=coverage_summary,
+        )
+
+    assert wrote is True
+    assert coverage_summary["coverage_forced_refetch"] == 1
+    assert mock_mark_coverage.call_count == 1
+    _, kwargs = mock_mark_coverage.call_args
+    assert kwargs["status"] == "covered"
+    assert kwargs["earliest_available"] == date(2023, 12, 31)

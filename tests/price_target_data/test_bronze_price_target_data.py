@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -103,7 +103,9 @@ def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
             assert summary["filtered_missing"] == 1
             assert summary["deleted"] == 1
             mock_list_manager.add_to_blacklist.assert_not_called()
-            assert mock_store.call_count == 1
+            assert mock_store.call_count >= 1
+            stored_paths = [call.args[1] for call in mock_store.call_args_list if len(call.args) >= 2]
+            assert f"price-target-data/{symbol_with_data}.parquet" in stored_paths
             mock_client.delete_file.assert_called_once_with(f"price-target-data/{symbol_missing}.parquet")
 
     asyncio.run(run_test())
@@ -239,5 +241,108 @@ def test_process_batch_bronze_missing_after_watermark_keeps_existing(
             mock_client.delete_file.assert_not_called()
             mock_list_manager.add_to_blacklist.assert_not_called()
             mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+
+    asyncio.run(run_test())
+
+
+@patch("tasks.price_target_data.bronze_price_target_data.nasdaqdatalink")
+@patch("tasks.price_target_data.bronze_price_target_data.bronze_client")
+@patch("tasks.price_target_data.bronze_price_target_data.list_manager")
+def test_process_batch_bronze_forces_backfill_when_coverage_gap_exists(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol = "AAA"
+    existing_df = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2025-01-01")],
+            "tp_mean_est": [50.0],
+        }
+    )
+    existing_parquet = existing_df.to_parquet(index=False)
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = True
+    mock_blob_client.get_blob_properties.return_value = MagicMock(last_modified=datetime.now(timezone.utc))
+    mock_client.get_blob_client.return_value = mock_blob_client
+
+    mock_nasdaq.get_table.return_value = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2024-02-01")],
+            "tp_mean_est": [55.0],
+        }
+    )
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch("core.core.read_raw_bytes", return_value=existing_parquet), patch(
+            "tasks.price_target_data.bronze_price_target_data.load_coverage_marker",
+            return_value=None,
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data._mark_coverage"
+        ) as mock_mark_coverage, patch(
+            "core.core.store_raw_bytes"
+        ) as mock_store:
+            summary = await bronze.process_batch_bronze(
+                [symbol],
+                semaphore,
+                backfill_start=date(2024, 1, 1),
+            )
+            assert summary["coverage_checked"] == 1
+            assert summary["coverage_forced_refetch"] == 1
+            assert summary["stale"] == 1
+            _, kwargs = mock_nasdaq.get_table.call_args
+            assert kwargs["obs_date"]["gte"] == "2024-01-01"
+            mock_store.assert_called_once()
+            mock_mark_coverage.assert_called_once()
+
+    asyncio.run(run_test())
+
+
+@patch("tasks.price_target_data.bronze_price_target_data.nasdaqdatalink")
+@patch("tasks.price_target_data.bronze_price_target_data.bronze_client")
+@patch("tasks.price_target_data.bronze_price_target_data.list_manager")
+def test_process_batch_bronze_skips_force_when_limited_marker_present(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol = "AAA"
+    existing_df = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2025-01-01")],
+            "tp_mean_est": [50.0],
+        }
+    )
+    existing_parquet = existing_df.to_parquet(index=False)
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = True
+    mock_blob_client.get_blob_properties.return_value = MagicMock(last_modified=datetime.now(timezone.utc))
+    mock_client.get_blob_client.return_value = mock_blob_client
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch("core.core.read_raw_bytes", return_value=existing_parquet), patch(
+            "tasks.price_target_data.bronze_price_target_data.load_coverage_marker",
+            return_value={
+                "coverageStatus": "limited",
+                "backfillStart": "2024-01-01",
+            },
+        ):
+            summary = await bronze.process_batch_bronze(
+                [symbol],
+                semaphore,
+                backfill_start=date(2024, 1, 1),
+            )
+            assert summary["coverage_checked"] == 1
+            assert summary["coverage_forced_refetch"] == 0
+            assert summary["coverage_skipped_limited_marker"] == 1
+            assert summary["stale"] == 0
+            mock_nasdaq.get_table.assert_not_called()
 
     asyncio.run(run_test())

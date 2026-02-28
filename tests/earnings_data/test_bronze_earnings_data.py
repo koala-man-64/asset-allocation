@@ -2,7 +2,7 @@ import pytest
 import uuid
 import json
 import pandas as pd
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from tasks.earnings_data import bronze_earnings_data as bronze
 
@@ -182,3 +182,168 @@ def test_fetch_and_save_raw_skips_write_when_no_new_earnings_dates(unique_ticker
         assert wrote is False
         mock_store.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+
+
+def test_fetch_and_save_raw_coverage_gap_overrides_freshness(unique_ticker):
+    symbol = unique_ticker
+    payload = {
+        "symbol": symbol,
+        "quarterlyEarnings": [
+            {
+                "fiscalDateEnding": "2024-03-31",
+                "reportedEPS": "1.8",
+                "estimatedEPS": "1.7",
+                "surprisePercentage": "3.0",
+            },
+        ],
+    }
+    existing_df = pd.DataFrame(
+        [
+            {
+                "Date": pd.Timestamp("2025-03-31"),
+                "Symbol": symbol,
+                "Reported EPS": 1.9,
+                "EPS Estimate": 1.7,
+                "Surprise": 0.03,
+            },
+        ]
+    )
+    existing_raw = existing_df.to_json(orient="records").encode("utf-8")
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = payload
+
+    mock_blob = MagicMock()
+    mock_blob.exists.return_value = True
+    mock_blob.get_blob_properties.return_value = MagicMock(last_modified=datetime.now(timezone.utc))
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob
+    coverage_summary = bronze._empty_coverage_summary()
+
+    with patch("tasks.earnings_data.bronze_earnings_data.bronze_client", mock_bronze_client), patch(
+        "tasks.earnings_data.bronze_earnings_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_raw,
+    ), patch(
+        "tasks.earnings_data.bronze_earnings_data.load_coverage_marker",
+        return_value=None,
+    ), patch(
+        "tasks.earnings_data.bronze_earnings_data._mark_coverage"
+    ) as mock_mark_coverage, patch(
+        "core.core.store_raw_bytes"
+    ) as mock_store:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            mock_av,
+            backfill_start=date(2024, 1, 1),
+            coverage_summary=coverage_summary,
+        )
+
+    assert wrote is True
+    assert coverage_summary["coverage_checked"] == 1
+    assert coverage_summary["coverage_forced_refetch"] == 1
+    mock_av.get_earnings.assert_called_once()
+    mock_store.assert_called_once()
+    mock_mark_coverage.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_status", "expected_earliest"),
+    [
+        (
+            {
+                "quarterlyEarnings": [
+                    {
+                        "fiscalDateEnding": "2023-12-31",
+                        "reportedEPS": "1.4",
+                        "estimatedEPS": "1.2",
+                        "surprisePercentage": "5.0",
+                    },
+                    {
+                        "fiscalDateEnding": "2025-03-31",
+                        "reportedEPS": "1.9",
+                        "estimatedEPS": "1.8",
+                        "surprisePercentage": "2.0",
+                    },
+                ]
+            },
+            "covered",
+            date(2023, 12, 31),
+        ),
+        (
+            {
+                "quarterlyEarnings": [
+                    {
+                        "fiscalDateEnding": "2025-03-31",
+                        "reportedEPS": "1.9",
+                        "estimatedEPS": "1.8",
+                        "surprisePercentage": "2.0",
+                    },
+                ]
+            },
+            "limited",
+            date(2025, 3, 31),
+        ),
+    ],
+)
+def test_fetch_and_save_raw_marks_coverage_status_from_source_payload(
+    unique_ticker,
+    payload,
+    expected_status,
+    expected_earliest,
+):
+    symbol = unique_ticker
+    payload = {"symbol": symbol, **payload}
+    existing_df = pd.DataFrame(
+        [
+            {
+                "Date": pd.Timestamp("2025-01-01"),
+                "Symbol": symbol,
+                "Reported EPS": 1.9,
+                "EPS Estimate": 1.8,
+                "Surprise": 0.02,
+            },
+        ]
+    )
+    existing_raw = existing_df.to_json(orient="records").encode("utf-8")
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = payload
+
+    mock_blob = MagicMock()
+    mock_blob.exists.return_value = True
+    mock_blob.get_blob_properties.return_value = MagicMock(
+        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    )
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob
+    coverage_summary = bronze._empty_coverage_summary()
+
+    with patch("tasks.earnings_data.bronze_earnings_data.bronze_client", mock_bronze_client), patch(
+        "tasks.earnings_data.bronze_earnings_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_raw,
+    ), patch(
+        "tasks.earnings_data.bronze_earnings_data.load_coverage_marker",
+        return_value=None,
+    ), patch(
+        "tasks.earnings_data.bronze_earnings_data._mark_coverage"
+    ) as mock_mark_coverage, patch(
+        "core.core.store_raw_bytes"
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            mock_av,
+            backfill_start=date(2024, 1, 1),
+            coverage_summary=coverage_summary,
+        )
+
+    assert wrote is True
+    assert coverage_summary["coverage_forced_refetch"] == 1
+    _, kwargs = mock_mark_coverage.call_args
+    assert kwargs["status"] == expected_status
+    assert kwargs["earliest_available"] == expected_earliest

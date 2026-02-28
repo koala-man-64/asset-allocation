@@ -17,12 +17,20 @@ from core.alpha_vantage_gateway_client import (
 )
 from core import core as mdc
 from core.pipeline import ListManager
-from tasks.common.backfill import get_backfill_range
+from tasks.common.bronze_backfill_coverage import (
+    extract_min_date_from_payload_sections,
+    load_coverage_marker,
+    normalize_date,
+    resolve_backfill_start_date,
+    should_force_backfill,
+    write_coverage_marker,
+)
 from tasks.common.run_manifests import create_bronze_finance_manifest
 from tasks.finance_data import config as cfg
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
 list_manager = ListManager(bronze_client, "finance-data", auto_flush=False)
 
 
@@ -56,6 +64,44 @@ FINANCE_REPORT_STALE_DAYS = 7
 _RECOVERY_MAX_ATTEMPTS = 3
 _RECOVERY_SLEEP_SECONDS = 5.0
 _DEFAULT_SHARED_FINANCE_LOCK = "finance-pipeline-shared"
+_COVERAGE_DOMAIN = "finance"
+_COVERAGE_PROVIDER = "alpha-vantage"
+
+
+def _empty_coverage_summary() -> dict[str, int]:
+    return {
+        "coverage_checked": 0,
+        "coverage_forced_refetch": 0,
+        "coverage_marked_covered": 0,
+        "coverage_marked_limited": 0,
+        "coverage_skipped_limited_marker": 0,
+    }
+
+
+def _mark_coverage(
+    *,
+    symbol: str,
+    backfill_start: date,
+    status: str,
+    earliest_available: Optional[date],
+    coverage_summary: dict[str, int],
+) -> None:
+    try:
+        write_coverage_marker(
+            common_client=common_client,
+            domain=_COVERAGE_DOMAIN,
+            symbol=symbol,
+            backfill_start=backfill_start,
+            coverage_status=status,
+            earliest_available=earliest_available,
+            provider=_COVERAGE_PROVIDER,
+        )
+        if status == "covered":
+            coverage_summary["coverage_marked_covered"] += 1
+        elif status == "limited":
+            coverage_summary["coverage_marked_limited"] += 1
+    except Exception as exc:
+        mdc.write_warning(f"Failed to write finance coverage marker for {symbol}: {exc}")
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -157,6 +203,14 @@ def _extract_latest_finance_report_date(payload: dict[str, Any]) -> Optional[dat
     return latest
 
 
+def _extract_source_earliest_finance_date(payload: dict[str, Any]) -> Optional[date]:
+    return extract_min_date_from_payload_sections(
+        payload,
+        section_keys=("quarterlyReports", "annualReports"),
+        date_keys=("fiscalDateEnding", "reportedDate", "date"),
+    )
+
+
 def _load_existing_finance_payload(blob_path: str) -> Optional[dict[str, Any]]:
     try:
         raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
@@ -219,12 +273,14 @@ def fetch_and_save_raw(
     av_client: AlphaVantageGatewayClient,
     *,
     backfill_start: Optional[date] = None,
+    coverage_summary: Optional[dict[str, int]] = None,
 ) -> bool:
     """
     Fetch a finance report via the API-hosted Alpha Vantage gateway and store raw JSON bytes in Bronze.
 
     Returns True when a write occurred, False when skipped (fresh/no-op).
     """
+    coverage_summary = coverage_summary if coverage_summary is not None else _empty_coverage_summary()
     if list_manager.is_blacklisted(symbol):
         return False
 
@@ -234,16 +290,47 @@ def fetch_and_save_raw(
 
     blob_path = f"finance-data/{folder}/{symbol}_{suffix}.json"
     blob_exists: Optional[bool] = None
+    resolved_backfill_start = normalize_date(backfill_start)
+    existing_payload: Optional[dict[str, Any]] = None
+    existing_min_date: Optional[date] = None
+    force_backfill = False
 
     try:
         blob = bronze_client.get_blob_client(blob_path)
         blob_exists = bool(blob.exists())
         if blob_exists:
+            existing_payload = _load_existing_finance_payload(blob_path)
+            if resolved_backfill_start is not None:
+                coverage_summary["coverage_checked"] += 1
+                if isinstance(existing_payload, dict):
+                    existing_min_date = _extract_source_earliest_finance_date(existing_payload)
+                marker = load_coverage_marker(
+                    common_client=common_client,
+                    domain=_COVERAGE_DOMAIN,
+                    symbol=symbol,
+                )
+                force_backfill, skipped_limited_marker = should_force_backfill(
+                    existing_min_date=existing_min_date,
+                    backfill_start=resolved_backfill_start,
+                    marker=marker,
+                )
+                if skipped_limited_marker:
+                    coverage_summary["coverage_skipped_limited_marker"] += 1
+                if force_backfill:
+                    coverage_summary["coverage_forced_refetch"] += 1
+                elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
+                    _mark_coverage(
+                        symbol=symbol,
+                        backfill_start=resolved_backfill_start,
+                        status="covered",
+                        earliest_available=existing_min_date,
+                        coverage_summary=coverage_summary,
+                    )
             props = blob.get_blob_properties()
             if _is_fresh(
                 props.last_modified,
                 fresh_days=FINANCE_REPORT_STALE_DAYS,
-            ):
+            ) and not force_backfill:
                 list_manager.add_to_whitelist(symbol)
                 return False
     except Exception:
@@ -260,12 +347,21 @@ def fetch_and_save_raw(
         raise AlphaVantageGatewayInvalidSymbolError(
             f"Alpha Vantage returned empty finance payload for {symbol} report={report_name}; blacklisting."
         )
-    payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=backfill_start)
-    if backfill_start is not None and _is_empty_finance_payload(payload, report_name=report_name):
+    source_earliest = _extract_source_earliest_finance_date(payload)
+    payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=resolved_backfill_start)
+    if resolved_backfill_start is not None and _is_empty_finance_payload(payload, report_name=report_name):
+        if force_backfill:
+            _mark_coverage(
+                symbol=symbol,
+                backfill_start=resolved_backfill_start,
+                status="limited",
+                earliest_available=source_earliest,
+                coverage_summary=coverage_summary,
+            )
         if blob_exists is not False:
             bronze_client.delete_file(blob_path)
             mdc.write_line(
-                f"No finance rows on/after {backfill_start.isoformat()} for {symbol} report={report_name}; "
+                f"No finance rows on/after {resolved_backfill_start.isoformat()} for {symbol} report={report_name}; "
                 f"deleted bronze {blob_path}."
             )
             list_manager.add_to_whitelist(symbol)
@@ -273,12 +369,27 @@ def fetch_and_save_raw(
         list_manager.add_to_whitelist(symbol)
         return False
 
-    existing_payload = _load_existing_finance_payload(blob_path) if blob_exists else None
+    if resolved_backfill_start is not None and force_backfill:
+        marker_status = (
+            "covered"
+            if source_earliest is not None and source_earliest <= resolved_backfill_start
+            else "limited"
+        )
+        _mark_coverage(
+            symbol=symbol,
+            backfill_start=resolved_backfill_start,
+            status=marker_status,
+            earliest_available=source_earliest,
+            coverage_summary=coverage_summary,
+        )
+
+    if existing_payload is None and blob_exists:
+        existing_payload = _load_existing_finance_payload(blob_path)
     if existing_payload is not None:
         if existing_payload == payload:
             list_manager.add_to_whitelist(symbol)
             return False
-        if backfill_start is None:
+        if resolved_backfill_start is None:
             incoming_latest = _extract_latest_finance_report_date(payload)
             existing_latest = _extract_latest_finance_report_date(existing_payload)
             if (
@@ -392,12 +503,13 @@ def _process_symbol_with_recovery(
     backfill_start: Optional[date] = None,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
-) -> tuple[int, bool, list[tuple[str, BaseException]]]:
+) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
     attempts = max(1, int(max_attempts))
     sleep_seconds = max(0.0, float(sleep_seconds))
     pending_reports = list(REPORTS)
     wrote = 0
     final_failures: list[tuple[str, BaseException]] = []
+    coverage_summary = _empty_coverage_summary()
 
     for attempt in range(1, attempts + 1):
         next_pending: list[dict[str, str]] = []
@@ -407,10 +519,16 @@ def _process_symbol_with_recovery(
             report_name = str(report.get("report") or "unknown")
             try:
                 av_client = client_manager.get_client()
-                if fetch_and_save_raw(symbol, report, av_client, backfill_start=backfill_start):
+                if fetch_and_save_raw(
+                    symbol,
+                    report,
+                    av_client,
+                    backfill_start=backfill_start,
+                    coverage_summary=coverage_summary,
+                ):
                     wrote += 1
             except AlphaVantageGatewayInvalidSymbolError as exc:
-                return wrote, True, [(report_name, exc)]
+                return wrote, True, [(report_name, exc)], coverage_summary
             except BaseException as exc:
                 if _is_recoverable_alpha_vantage_error(exc) and attempt < attempts:
                     next_pending.append(report)
@@ -419,7 +537,7 @@ def _process_symbol_with_recovery(
                     final_failures.append((report_name, exc))
 
         if not next_pending:
-            return wrote, False, final_failures
+            return wrote, False, final_failures, coverage_summary
 
         report_labels = ",".join(sorted({name for name, _ in transient_failures})) or "unknown"
         mdc.write_warning(
@@ -431,7 +549,7 @@ def _process_symbol_with_recovery(
             time.sleep(sleep_seconds)
         pending_reports = next_pending
 
-    return wrote, False, final_failures
+    return wrote, False, final_failures, coverage_summary
 
 
 async def main_async() -> int:
@@ -459,8 +577,7 @@ async def main_async() -> int:
     mdc.write_line(f"Starting Alpha Vantage Bronze Finance Ingestion for {len(symbols)} symbols...")
 
     client_manager = _ThreadLocalAlphaVantageClientManager()
-    backfill_start_ts, _ = get_backfill_range()
-    backfill_start = backfill_start_ts.to_pydatetime().date() if backfill_start_ts is not None else None
+    backfill_start = resolve_backfill_start_date()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to bronze finance data: {backfill_start.isoformat()}")
 
@@ -479,12 +596,13 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
 
     progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    coverage_progress = _empty_coverage_summary()
     retry_next_run: set[str] = set()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
-    def worker(symbol: str) -> tuple[int, bool, list[tuple[str, BaseException]]]:
+    def worker(symbol: str) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
         return _process_symbol_with_recovery(
             symbol,
             client_manager,
@@ -521,12 +639,17 @@ async def main_async() -> int:
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
-                wrote, blacklisted, failures = await loop.run_in_executor(executor, worker, symbol)
+                wrote, blacklisted, failures, coverage_summary = await loop.run_in_executor(executor, worker, symbol)
                 if blacklisted:
                     list_manager.add_to_blacklist(symbol)
                     async with progress_lock:
                         progress["blacklisted"] += 1
+                        for key in coverage_progress:
+                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
                 elif failures:
+                    async with progress_lock:
+                        for key in coverage_progress:
+                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
                     await record_failures(symbol, failures)
                 else:
                     async with progress_lock:
@@ -534,6 +657,8 @@ async def main_async() -> int:
                             progress["written"] += 1
                         else:
                             progress["skipped"] += 1
+                        for key in coverage_progress:
+                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
             except Exception as exc:
                 await record_failures(symbol, [("unknown", exc)])
             finally:
@@ -578,7 +703,12 @@ async def main_async() -> int:
 
     mdc.write_line(
         "Bronze AV finance ingest complete: processed={processed} written={written} skipped={skipped} "
-        "blacklisted={blacklisted} failed={failed}".format(**progress)
+        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
+        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker}".format(
+            **progress,
+            **coverage_progress,
+        )
     )
     try:
         listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
