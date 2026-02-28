@@ -36,6 +36,11 @@ silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume")
 _REMOVED_MARKET_COLUMNS = ("FloatShares", "float_shares", "shares_float", "free_float", "float")
+_INDEX_ARTIFACT_COLUMN_NAMES = {
+    "index",
+    "level_0",
+    "index_level_0",
+}
 
 
 def _normalize_col_name(name: str) -> str:
@@ -144,6 +149,29 @@ def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFr
             f"Silver market {ticker}: collapsed legacy column {col} into symbol."
         )
 
+    return out
+
+
+def _drop_index_artifact_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    to_drop: list[str] = []
+    for col in out.columns:
+        normalized = str(col).strip().lower()
+        if normalized in _INDEX_ARTIFACT_COLUMN_NAMES:
+            to_drop.append(col)
+            continue
+        if normalized.startswith("unnamed_"):
+            suffix = normalized[len("unnamed_") :]
+            if suffix.replace("_", "").isdigit():
+                to_drop.append(col)
+                continue
+        if normalized.startswith("index_level_"):
+            suffix = normalized[len("index_level_") :]
+            if suffix.replace("_", "").isdigit():
+                to_drop.append(col)
+                continue
+    if to_drop:
+        out = out.drop(columns=to_drop)
     return out
 
 
@@ -277,6 +305,7 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
     try:
         df_merged = normalize_columns_to_snake_case(df_merged)
         df_merged = _repair_symbol_column_aliases(df_merged, ticker=ticker)
+        df_merged = _drop_index_artifact_columns(df_merged)
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
