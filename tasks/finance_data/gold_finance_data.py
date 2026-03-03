@@ -1,8 +1,6 @@
 import os
 import re
-import multiprocessing as mp
 from datetime import datetime, timezone
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Dict, Any, List, Optional
 
@@ -12,6 +10,7 @@ import pandas as pd
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     collect_delta_silver_finance_symbols,
@@ -653,119 +652,199 @@ def _run_finance_reconciliation(*, silver_container: str, gold_container: str) -
     return len(orphan_symbols), deleted_blobs
 
 
-def main() -> int:
+def _run_alpha26_finance_gold(
+    *,
+    silver_container: str,
+    gold_container: str,
+    backfill_start_iso: Optional[str],
+    watermarks: dict,
+) -> tuple[int, int, int, int, bool, int, Optional[str]]:
     from core import core as mdc
     from core.pipeline import DataPaths
     from core import delta_core
-	
+
+    force_rebuild = layer_bucketing.gold_alpha26_force_rebuild()
+    backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
+    processed = 0
+    skipped_unchanged = 0
+    skipped_missing_source = 0
+    failed = 0
+    watermarks_dirty = False
+    symbol_to_bucket: dict[str, str] = {}
+
+    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        silver_paths = {
+            "income_statement": DataPaths.get_silver_finance_bucket_path("income_statement", bucket),
+            "balance_sheet": DataPaths.get_silver_finance_bucket_path("balance_sheet", bucket),
+            "cash_flow": DataPaths.get_silver_finance_bucket_path("cash_flow", bucket),
+            "valuation": DataPaths.get_silver_finance_bucket_path("valuation", bucket),
+        }
+        commits = [
+            delta_core.get_delta_last_commit(silver_container, silver_paths["income_statement"]),
+            delta_core.get_delta_last_commit(silver_container, silver_paths["balance_sheet"]),
+            delta_core.get_delta_last_commit(silver_container, silver_paths["cash_flow"]),
+            delta_core.get_delta_last_commit(silver_container, silver_paths["valuation"]),
+        ]
+        silver_commit = max([c for c in commits if c is not None], default=None)
+        watermark_key = f"bucket::{bucket}"
+        prior = watermarks.get(watermark_key, {})
+        if (
+            (not force_rebuild)
+            and silver_commit is not None
+            and prior.get("silver_last_commit") is not None
+            and prior.get("silver_last_commit") >= silver_commit
+        ):
+            skipped_unchanged += 1
+            continue
+
+        if silver_commit is None:
+            skipped_missing_source += 1
+            df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+        else:
+            tables = {
+                key: delta_core.load_delta(silver_container, path)
+                for key, path in silver_paths.items()
+            }
+            symbol_candidates: set[str] = set()
+            for frame in tables.values():
+                if frame is None or frame.empty or "symbol" not in frame.columns:
+                    continue
+                symbol_candidates.update(
+                    str(sym).strip().upper()
+                    for sym in frame["symbol"].dropna().astype(str).tolist()
+                    if str(sym).strip()
+                )
+
+            symbol_frames: list[pd.DataFrame] = []
+            for ticker in sorted(symbol_candidates):
+                try:
+                    df_income = _prepare_table(
+                        tables.get("income_statement", pd.DataFrame()).query("symbol == @ticker").copy(),
+                        ticker,
+                        source_label="income_statement",
+                    )
+                    df_balance = _prepare_table(
+                        tables.get("balance_sheet", pd.DataFrame()).query("symbol == @ticker").copy(),
+                        ticker,
+                        source_label="balance_sheet",
+                    )
+                    df_cashflow = _prepare_table(
+                        tables.get("cash_flow", pd.DataFrame()).query("symbol == @ticker").copy(),
+                        ticker,
+                        source_label="cash_flow",
+                    )
+                    df_valuation = _prepare_table(
+                        tables.get("valuation", pd.DataFrame()).query("symbol == @ticker").copy(),
+                        ticker,
+                        source_label="valuation",
+                    )
+                except Exception as exc:
+                    failed += 1
+                    mdc.write_warning(f"Gold finance alpha26 source failed for {ticker}: {exc}")
+                    continue
+
+                base_dates = []
+                for table in (df_income, df_balance, df_cashflow, df_valuation):
+                    base_dates.append(table[["date", "symbol"]])
+                keys = pd.concat(base_dates, ignore_index=True).drop_duplicates(
+                    subset=["symbol", "date"], keep="last"
+                )
+
+                merged = keys
+                for table, suffix in (
+                    (df_income, "_is"),
+                    (df_balance, "_bs"),
+                    (df_cashflow, "_cf"),
+                    (df_valuation, "_val"),
+                ):
+                    merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
+
+                try:
+                    df_features = compute_features(merged)
+                    df_features, _ = apply_backfill_start_cutoff(
+                        df_features,
+                        date_col="date",
+                        backfill_start=backfill_start,
+                        context=f"gold finance alpha26 {ticker}",
+                    )
+                    if df_features is None or df_features.empty:
+                        continue
+                    symbol_frames.append(df_features)
+                    symbol_to_bucket[ticker] = bucket
+                except Exception as exc:
+                    failed += 1
+                    mdc.write_warning(f"Gold finance alpha26 compute failed for {ticker}: {exc}")
+
+            if symbol_frames:
+                df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)
+                df_gold_bucket = normalize_columns_to_snake_case(df_gold_bucket)
+            else:
+                df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+
+        gold_path = DataPaths.get_gold_finance_bucket_path(bucket)
+        try:
+            delta_core.store_delta(df_gold_bucket, gold_container, gold_path, mode="overwrite")
+            if backfill_start is not None:
+                delta_core.vacuum_delta_table(
+                    gold_container,
+                    gold_path,
+                    retention_hours=0,
+                    dry_run=False,
+                    enforce_retention_duration=False,
+                    full=True,
+                )
+            processed += 1
+            if silver_commit is not None:
+                watermarks[watermark_key] = {
+                    "silver_last_commit": silver_commit,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                watermarks_dirty = True
+        except Exception as exc:
+            failed += 1
+            mdc.write_error(f"Gold finance alpha26 write failed bucket={bucket}: {exc}")
+
+    index_path = layer_bucketing.write_layer_symbol_index(
+        layer="gold",
+        domain="finance",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
+
+
+def main() -> int:
+    from core import core as mdc
     mdc.log_environment_diagnostics()
     job_cfg = _build_job_config()
     backfill_start, _ = get_backfill_range()
     backfill_start_iso = backfill_start.date().isoformat() if backfill_start is not None else None
     if backfill_start_iso:
         mdc.write_line(f"Applying historical cutoff to gold finance features: {backfill_start_iso}")
-	
+    layer_bucketing.gold_layout_mode()
+		
     watermarks = load_watermarks("gold_finance_features")
-    watermarks_dirty = False
-
-    tasks = []
-    commit_map: Dict[str, float | None] = {}
-    skipped_unchanged = 0
-    for ticker in job_cfg.tickers:
-        income_path = DataPaths.get_finance_path("Income Statement", ticker, "quarterly_financials")
-        balance_path = DataPaths.get_finance_path("Balance Sheet", ticker, "quarterly_balance-sheet")
-        cashflow_path = DataPaths.get_finance_path("Cash Flow", ticker, "quarterly_cash-flow")
-        valuation_path = DataPaths.get_finance_path("Valuation", ticker, "quarterly_valuation_measures")
-        gold_path = DataPaths.get_gold_finance_path(ticker)
-
-        commits = [
-            delta_core.get_delta_last_commit(job_cfg.silver_container, income_path),
-            delta_core.get_delta_last_commit(job_cfg.silver_container, balance_path),
-            delta_core.get_delta_last_commit(job_cfg.silver_container, cashflow_path),
-            delta_core.get_delta_last_commit(job_cfg.silver_container, valuation_path),
-        ]
-        silver_commit = max([c for c in commits if c is not None], default=None)
-        commit_map[ticker] = silver_commit
-
-        if silver_commit is not None:
-            prior = watermarks.get(ticker, {})
-            if prior.get("silver_last_commit") is not None and prior.get("silver_last_commit") >= silver_commit:
-                skipped_unchanged += 1
-                continue
-
-        tasks.append(
-            (
-                ticker,
-                income_path,
-                balance_path,
-                cashflow_path,
-                valuation_path,
-                gold_path,
-                job_cfg.silver_container,
-                job_cfg.gold_container,
-                backfill_start_iso,
-            )
-        )
-
-    mp_context = mp.get_context("spawn")
-    results: List[Dict[str, Any]] = []
-
-    mdc.write_line("Starting finance feature engineering pool...")
-    with ProcessPoolExecutor(max_workers=job_cfg.max_workers, mp_context=mp_context) as executor:
-        futures = {executor.submit(_process_ticker, task): task[0] for task in tasks}
-        for future in as_completed(futures):
-            ticker = futures[future]
-            try:
-                result = future.result()
-            except Exception as exc:
-                mdc.write_error(f"Unhandled failure for {ticker}: {exc}")
-                results.append({"ticker": ticker, "status": "failed_unhandled", "error": str(exc)})
-                continue
-
-            status = result.get("status")
-            if status == "ok":
-                mdc.write_line(f"[OK] {ticker}: {result.get('rows')} rows -> {result.get('gold_path')}")
-            else:
-                mdc.write_warning(f"[{status}] {ticker}: {result.get('error') or ''}".strip())
-            results.append(result)
-
-    ok = sum(1 for r in results if r.get("status") == "ok")
-    failed = len(results) - ok
-    for result in results:
-        if result.get("status") != "ok":
-            continue
-        ticker = result.get("ticker")
-        if not ticker:
-            continue
-        silver_commit = commit_map.get(ticker)
-        if silver_commit is None:
-            continue
-        watermarks[ticker] = {
-            "silver_last_commit": silver_commit,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        watermarks_dirty = True
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        alpha26_index_path,
+    ) = _run_alpha26_finance_gold(
+        silver_container=job_cfg.silver_container,
+        gold_container=job_cfg.gold_container,
+        backfill_start_iso=backfill_start_iso,
+        watermarks=watermarks,
+    )
     if watermarks_dirty:
         save_watermarks("gold_finance_features", watermarks)
-
-    reconciliation_orphans = 0
-    reconciliation_deleted_blobs = 0
-    reconciliation_failed = 0
-    try:
-        reconciliation_orphans, reconciliation_deleted_blobs = _run_finance_reconciliation(
-            silver_container=job_cfg.silver_container,
-            gold_container=job_cfg.gold_container,
-        )
-    except Exception as exc:
-        reconciliation_failed = 1
-        mdc.write_error(f"Gold finance reconciliation failed: {exc}")
-
-    total_failed = failed + reconciliation_failed
+    total_failed = failed
     mdc.write_line(
-        f"Finance feature engineering complete: ok={ok}, "
-        f"skipped_unchanged={skipped_unchanged}, "
-        f"reconciled_orphans={reconciliation_orphans}, "
-        f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}, failed={total_failed}"
+        "Gold finance alpha26 complete: "
+        f"processed_buckets={processed} skipped_unchanged={skipped_unchanged} "
+        f"skipped_missing_source={skipped_missing_source} symbols={alpha26_symbols} "
+        f"index_path={alpha26_index_path or 'unavailable'} failed={total_failed}"
     )
     return 0 if total_failed == 0 else 1
 

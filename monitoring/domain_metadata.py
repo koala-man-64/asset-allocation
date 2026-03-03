@@ -13,6 +13,8 @@ from core.blob_storage import BlobStorageClient
 from core import core as mdc
 from core import delta_core
 from deltalake import DeltaTable
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 
 logger = logging.getLogger("asset_allocation.monitoring.domain_metadata")
 _DOMAIN_METADATA_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
@@ -178,6 +180,30 @@ def _ticker_listing_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
             return "targets/"
 
     return None
+
+
+def _is_alpha26_layout(layer: LayerKey) -> bool:
+    layer_key = _normalize_key(layer)
+    if layer_key == "bronze":
+        bronze_bucketing.bronze_layout_mode()
+        return True
+    if layer_key == "silver":
+        layer_bucketing.silver_layout_mode()
+        return True
+    if layer_key == "gold":
+        layer_bucketing.gold_layout_mode()
+        return True
+    return True
+
+
+def _load_alpha26_index_symbols(*, layer_key: str, domain_key: str) -> set[str]:
+    if domain_key not in {"market", "earnings", "price-target", "finance"}:
+        return set()
+    if layer_key == "bronze":
+        return bronze_bucketing.load_symbol_set(domain_key)
+    if layer_key in {"silver", "gold"}:
+        return layer_bucketing.load_layer_symbol_set(layer=layer_key, domain=domain_key)
+    return set()
 
 
 def _extract_ticker_from_blob_name(layer: LayerKey, domain: DomainKey, blob_name: str) -> Optional[str]:
@@ -803,6 +829,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
         symbol_truncated = False
         finance_subfolder_symbol_counts: Optional[Dict[FinanceSubfolderKey, int]] = None
         listing_prefix = _ticker_listing_prefix(layer_key, domain_key)
+        alpha26_layout = _is_alpha26_layout(layer_key)
         if domain_key == "finance" and prefix == "finance-data/":
             symbol_count, finance_subfolder_symbol_counts, symbol_truncated = _count_finance_symbols_from_listing(
                 client,
@@ -841,15 +868,20 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             except Exception as exc:
                 warnings.append(f"Unable to read blacklist.csv: {exc}")
 
-        # Bronze market/earnings/price-target is one blob per symbol; whitelist can be intentionally empty.
-        # Use file count as symbol count and exclude list artifacts when they exist.
-        if layer_key == "bronze" and domain_key in {"market", "earnings", "price-target"} and isinstance(files, int):
-            list_artifact_count = 0
-            if whitelist_blob_bytes is not None:
-                list_artifact_count += 1
-            if blacklist_blob_bytes is not None:
-                list_artifact_count += 1
-            symbol_count = max(files - list_artifact_count, 0)
+        if alpha26_layout:
+            index_domain_key = domain_key if domain_key != "price_target" else "price-target"
+            if layer_key == "bronze":
+                index_symbols = bronze_bucketing.load_symbol_set(index_domain_key)
+            else:
+                index_symbols = _load_alpha26_index_symbols(layer_key=layer_key, domain_key=index_domain_key)
+            symbol_count = len(index_symbols)
+            if domain_key == "finance" and finance_subfolder_symbol_counts:
+                if sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
+                    finance_subfolder_symbol_counts = None
+            if not index_symbols:
+                warnings.append(
+                    f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; symbol count may be incomplete."
+                )
 
         payload = {
             "layer": layer_key,

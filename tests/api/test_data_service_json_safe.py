@@ -2,6 +2,7 @@ import pandas as pd
 
 import api.data_service as data_service_module
 from api.data_service import DataService
+from core.pipeline import DataPaths
 
 
 def test_delta_nan_values_are_json_safe(monkeypatch):
@@ -60,3 +61,66 @@ def test_finance_regular_folders_are_supported_for_silver(monkeypatch):
         "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
         "finance-data/income_statement/MSFT_quarterly_financials",
     ]
+
+
+def test_market_silver_alpha26_reads_bucket_and_filters_symbol(monkeypatch):
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_silver_alpha26_mode", lambda: True)
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_gold_alpha26_mode", lambda: False)
+
+    calls: list[str] = []
+
+    def fake_read_delta(_container: str, path: str, limit=None):
+        calls.append(path)
+        return [
+            {"symbol": "AAPL", "date": "2026-02-01", "close": 100.0},
+            {"symbol": "AMZN", "date": "2026-02-01", "close": 200.0},
+        ]
+
+    monkeypatch.setattr(DataService, "_read_delta", staticmethod(fake_read_delta))
+
+    rows = DataService.get_data("silver", "market", ticker="AAPL", limit=5)
+
+    assert rows == [{"symbol": "AAPL", "date": "2026-02-01", "close": 100.0}]
+    assert calls == [DataPaths.get_silver_market_bucket_path("A")]
+
+
+def test_finance_subdomain_reads_silver_alpha26_bucket(monkeypatch):
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_silver_alpha26_mode", lambda: True)
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_gold_alpha26_mode", lambda: False)
+
+    calls: list[str] = []
+
+    def fake_read_delta(_container: str, path: str, limit=None):
+        calls.append(path)
+        return [
+            {"symbol": "AAPL", "sub_domain": "balance_sheet", "metric": 1},
+            {"symbol": "AMZN", "sub_domain": "balance_sheet", "metric": 2},
+        ]
+
+    monkeypatch.setattr(DataService, "_read_delta", staticmethod(fake_read_delta))
+
+    rows = DataService.get_finance_data("silver", "balance_sheet", ticker="AAPL")
+
+    assert rows == [{"symbol": "AAPL", "sub_domain": "balance_sheet", "metric": 1}]
+    assert calls == [DataPaths.get_silver_finance_bucket_path("balance_sheet", "A")]
+
+
+def test_finance_subdomain_reads_gold_alpha26_bucket(monkeypatch):
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_silver_alpha26_mode", lambda: False)
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_gold_alpha26_mode", lambda: True)
+
+    calls: list[str] = []
+
+    def fake_read_delta(_container: str, path: str, limit=None):
+        calls.append(path)
+        return [
+            {"symbol": "AAPL", "date": "2026-02-01", "value": 1.2},
+            {"symbol": "AMZN", "date": "2026-02-01", "value": 3.4},
+        ]
+
+    monkeypatch.setattr(DataService, "_read_delta", staticmethod(fake_read_delta))
+
+    rows = DataService.get_finance_data("gold", "balance_sheet", ticker="AAPL")
+
+    assert rows == [{"symbol": "AAPL", "date": "2026-02-01", "value": 1.2}]
+    assert calls == [DataPaths.get_gold_finance_bucket_path("A")]

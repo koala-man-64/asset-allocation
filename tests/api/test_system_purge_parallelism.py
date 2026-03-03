@@ -6,64 +6,59 @@ import pytest
 from api.endpoints import system
 
 
-def test_resolve_purge_preview_load_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PURGE_PREVIEW_LOAD_MAX_WORKERS", raising=False)
-    assert system._resolve_purge_preview_load_workers(0) == 1
-    assert system._resolve_purge_preview_load_workers(3) == 3
+@pytest.mark.parametrize(
+    ("env_name", "resolver", "max_workers_const", "invalid_value", "requested_count"),
+    [
+        (
+            "PURGE_PREVIEW_LOAD_MAX_WORKERS",
+            system._resolve_purge_preview_load_workers,
+            system._MAX_PURGE_PREVIEW_LOAD_MAX_WORKERS,
+            "not-a-number",
+            4,
+        ),
+        (
+            "PURGE_SCOPE_MAX_WORKERS",
+            system._resolve_purge_scope_workers,
+            system._MAX_PURGE_SCOPE_MAX_WORKERS,
+            "invalid",
+            5,
+        ),
+        (
+            "PURGE_SYMBOL_TARGET_MAX_WORKERS",
+            system._resolve_purge_symbol_target_workers,
+            system._MAX_PURGE_SYMBOL_TARGET_MAX_WORKERS,
+            "bad",
+            4,
+        ),
+        (
+            "PURGE_SYMBOL_LAYER_MAX_WORKERS",
+            system._resolve_purge_symbol_layer_workers,
+            system._MAX_PURGE_SYMBOL_LAYER_MAX_WORKERS,
+            "oops",
+            3,
+        ),
+    ],
+)
+def test_resolve_worker_limits(
+    env_name: str,
+    resolver,
+    max_workers_const: int,
+    invalid_value: str,
+    requested_count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(env_name, raising=False)
+    assert resolver(0) == 1
+    assert resolver(3) == 3
 
-    monkeypatch.setenv("PURGE_PREVIEW_LOAD_MAX_WORKERS", "2")
-    assert system._resolve_purge_preview_load_workers(10) == 2
+    monkeypatch.setenv(env_name, "2")
+    assert resolver(10) == 2
 
-    monkeypatch.setenv("PURGE_PREVIEW_LOAD_MAX_WORKERS", "999")
-    assert system._resolve_purge_preview_load_workers(100) == system._MAX_PURGE_PREVIEW_LOAD_MAX_WORKERS
+    monkeypatch.setenv(env_name, "999")
+    assert resolver(100) == max_workers_const
 
-    monkeypatch.setenv("PURGE_PREVIEW_LOAD_MAX_WORKERS", "not-a-number")
-    assert system._resolve_purge_preview_load_workers(4) == 4
-
-
-def test_resolve_purge_scope_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PURGE_SCOPE_MAX_WORKERS", raising=False)
-    assert system._resolve_purge_scope_workers(0) == 1
-    assert system._resolve_purge_scope_workers(3) == 3
-
-    monkeypatch.setenv("PURGE_SCOPE_MAX_WORKERS", "2")
-    assert system._resolve_purge_scope_workers(10) == 2
-
-    monkeypatch.setenv("PURGE_SCOPE_MAX_WORKERS", "999")
-    assert system._resolve_purge_scope_workers(100) == system._MAX_PURGE_SCOPE_MAX_WORKERS
-
-    monkeypatch.setenv("PURGE_SCOPE_MAX_WORKERS", "invalid")
-    assert system._resolve_purge_scope_workers(5) == 5
-
-
-def test_resolve_purge_symbol_target_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", raising=False)
-    assert system._resolve_purge_symbol_target_workers(0) == 1
-    assert system._resolve_purge_symbol_target_workers(3) == 3
-
-    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "2")
-    assert system._resolve_purge_symbol_target_workers(10) == 2
-
-    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "999")
-    assert system._resolve_purge_symbol_target_workers(100) == system._MAX_PURGE_SYMBOL_TARGET_MAX_WORKERS
-
-    monkeypatch.setenv("PURGE_SYMBOL_TARGET_MAX_WORKERS", "bad")
-    assert system._resolve_purge_symbol_target_workers(4) == 4
-
-
-def test_resolve_purge_symbol_layer_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", raising=False)
-    assert system._resolve_purge_symbol_layer_workers(0) == 1
-    assert system._resolve_purge_symbol_layer_workers(3) == 3
-
-    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "2")
-    assert system._resolve_purge_symbol_layer_workers(3) == 2
-
-    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "999")
-    assert system._resolve_purge_symbol_layer_workers(10) == system._MAX_PURGE_SYMBOL_LAYER_MAX_WORKERS
-
-    monkeypatch.setenv("PURGE_SYMBOL_LAYER_MAX_WORKERS", "oops")
-    assert system._resolve_purge_symbol_layer_workers(3) == 3
+    monkeypatch.setenv(env_name, invalid_value)
+    assert resolver(requested_count) == requested_count
 
 
 def test_load_rule_frame_parallel_preserves_table_order(monkeypatch: pytest.MonkeyPatch) -> None:

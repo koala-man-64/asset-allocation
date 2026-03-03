@@ -12,10 +12,16 @@ from tasks.common.market_reconciliation import (
     enforce_backfill_cutoff_on_tables,
     purge_orphan_market_tables,
 )
+import tasks.common.market_reconciliation as reconciliation
 import pandas as pd
 
 
-def test_collect_bronze_market_symbols_ignores_non_symbol_files() -> None:
+def test_collect_bronze_market_symbols_ignores_non_symbol_files(monkeypatch) -> None:
+    monkeypatch.setattr(
+        reconciliation,
+        "_load_index_symbols",
+        lambda domain: {"AAPL", "MSFT"} if domain == "market" else set(),
+    )
     blob_infos = [
         {"name": "market-data/AAPL.csv"},
         {"name": "market-data/MSFT.csv"},
@@ -84,7 +90,12 @@ def test_collect_delta_silver_finance_symbols_extracts_union_of_subfolders() -> 
     assert symbols == {"AAPL", "MSFT", "NVDA", "TSLA"}
 
 
-def test_collect_bronze_earnings_symbols_extracts_json_symbols() -> None:
+def test_collect_bronze_earnings_symbols_extracts_json_symbols(monkeypatch) -> None:
+    monkeypatch.setattr(
+        reconciliation,
+        "_load_index_symbols",
+        lambda domain: {"AAPL", "MSFT"} if domain == "earnings" else set(),
+    )
     blob_infos = [
         {"name": "earnings-data/AAPL.json"},
         {"name": "earnings-data/MSFT.json"},
@@ -97,7 +108,12 @@ def test_collect_bronze_earnings_symbols_extracts_json_symbols() -> None:
     assert symbols == {"AAPL", "MSFT"}
 
 
-def test_collect_bronze_price_target_symbols_extracts_parquet_symbols() -> None:
+def test_collect_bronze_price_target_symbols_extracts_parquet_symbols(monkeypatch) -> None:
+    monkeypatch.setattr(
+        reconciliation,
+        "_load_index_symbols",
+        lambda domain: {"AAPL", "MSFT"} if domain == "price-target" else set(),
+    )
     blob_infos = [
         {"name": "price-target-data/AAPL.parquet"},
         {"name": "price-target-data/MSFT.parquet"},
@@ -109,7 +125,12 @@ def test_collect_bronze_price_target_symbols_extracts_parquet_symbols() -> None:
     assert symbols == {"AAPL", "MSFT"}
 
 
-def test_collect_bronze_finance_symbols_extracts_known_suffixes() -> None:
+def test_collect_bronze_finance_symbols_extracts_known_suffixes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        reconciliation,
+        "_load_index_symbols",
+        lambda domain: {"AAPL", "MSFT", "NVDA"} if domain == "finance" else set(),
+    )
     blob_infos = [
         {"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json"},
         {"name": "finance-data/Income Statement/AAPL_quarterly_financials.json"},

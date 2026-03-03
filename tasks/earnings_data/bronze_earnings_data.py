@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 
 import pandas as pd
 
@@ -18,6 +19,7 @@ from core.alpha_vantage_gateway_client import (
 from core import config as cfg
 from core import core as mdc
 from core.pipeline import ListManager
+from tasks.common import bronze_bucketing
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
     extract_min_date_from_rows,
@@ -38,6 +40,15 @@ list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX, auto_flush=F
 EARNINGS_STALE_DAYS = 7
 _COVERAGE_DOMAIN = "earnings"
 _COVERAGE_PROVIDER = "alpha-vantage"
+_BUCKET_COLUMNS = [
+    "symbol",
+    "date",
+    "reported_eps",
+    "eps_estimate",
+    "surprise",
+    "ingested_at",
+    "source_hash",
+]
 
 
 def _empty_coverage_summary() -> dict[str, int]:
@@ -201,12 +212,87 @@ def _extract_latest_earnings_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
     return parsed.max()
 
 
+def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["symbol"] = str(symbol).upper()
+    out["date"] = pd.to_datetime(out.get("Date"), errors="coerce", utc=True).dt.tz_localize(None)
+    out["reported_eps"] = pd.to_numeric(out.get("Reported EPS"), errors="coerce")
+    out["eps_estimate"] = pd.to_numeric(out.get("EPS Estimate"), errors="coerce")
+    out["surprise"] = pd.to_numeric(out.get("Surprise"), errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    payload = out[["symbol", "date", "reported_eps", "eps_estimate", "surprise"]].to_json(
+        orient="records",
+        date_format="iso",
+    )
+    out["source_hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    out["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    out = out[_BUCKET_COLUMNS]
+    return out.reset_index(drop=True)
+
+
+def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
+    bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
+    symbol_to_bucket: dict[str, str] = {}
+    for symbol, frame in symbol_frames.items():
+        if frame is None or frame.empty:
+            continue
+        normalized = _normalize_bucket_df(symbol, frame)
+        if normalized.empty:
+            continue
+        bucket = bronze_bucketing.bucket_letter(symbol)
+        symbol_to_bucket[str(symbol).upper()] = bucket
+        if bucket_frames[bucket].empty:
+            bucket_frames[bucket] = normalized
+        else:
+            bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
+
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        frame = bucket_frames[bucket]
+        if frame.empty:
+            frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
+        bronze_bucketing.write_bucket_parquet(
+            client=bronze_client,
+            prefix=str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")),
+            bucket=bucket,
+            df=frame,
+            codec=bronze_bucketing.alpha26_codec(),
+        )
+
+    index_path = bronze_bucketing.write_symbol_index(
+        domain="earnings",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return len(symbol_to_bucket), index_path
+
+
+def _delete_legacy_symbol_blobs() -> int:
+    deleted = 0
+    prefix = str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/")
+    for blob in bronze_client.list_blob_infos(name_starts_with=f"{prefix}/"):
+        name = str(blob.get("name") or "")
+        if not name.endswith(".json"):
+            continue
+        if name.endswith("whitelist.csv") or name.endswith("blacklist.csv"):
+            continue
+        if "/buckets/" in name:
+            continue
+        try:
+            bronze_client.delete_file(name)
+            deleted += 1
+        except Exception as exc:
+            mdc.write_warning(f"Failed deleting legacy earnings blob {name}: {exc}")
+    return deleted
+
+
 def fetch_and_save_raw(
     symbol: str,
     av: AlphaVantageGatewayClient,
     *,
     backfill_start: Optional[date] = None,
     coverage_summary: Optional[dict[str, int]] = None,
+    write_symbol_file: bool = True,
+    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    alpha26_mode: bool = False,
 ) -> bool:
     """
     Fetch earnings for a single symbol via the API-hosted Alpha Vantage gateway and store as Bronze JSON records.
@@ -225,42 +311,45 @@ def fetch_and_save_raw(
     force_backfill = False
 
     # Freshness gate (quarterly data); avoid re-fetching too frequently.
-    try:
-        blob = bronze_client.get_blob_client(blob_path)
-        blob_exists = bool(blob.exists())
-        if blob_exists:
-            props = blob.get_blob_properties()
-            if resolved_backfill_start is not None:
-                coverage_summary["coverage_checked"] += 1
-                existing_df = _load_existing_earnings_df(blob_path)
-                existing_min_date = extract_min_date_from_dataframe(existing_df, date_col="Date")
-                marker = load_coverage_marker(
-                    common_client=common_client,
-                    domain=_COVERAGE_DOMAIN,
-                    symbol=symbol,
-                )
-                force_backfill, skipped_limited_marker = should_force_backfill(
-                    existing_min_date=existing_min_date,
-                    backfill_start=resolved_backfill_start,
-                    marker=marker,
-                )
-                if skipped_limited_marker:
-                    coverage_summary["coverage_skipped_limited_marker"] += 1
-                if force_backfill:
-                    coverage_summary["coverage_forced_refetch"] += 1
-                elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
-                    _mark_coverage(
+    if not alpha26_mode:
+        try:
+            blob = bronze_client.get_blob_client(blob_path)
+            blob_exists = bool(blob.exists())
+            if blob_exists:
+                props = blob.get_blob_properties()
+                if resolved_backfill_start is not None:
+                    coverage_summary["coverage_checked"] += 1
+                    existing_df = _load_existing_earnings_df(blob_path)
+                    existing_min_date = extract_min_date_from_dataframe(existing_df, date_col="Date")
+                    marker = load_coverage_marker(
+                        common_client=common_client,
+                        domain=_COVERAGE_DOMAIN,
                         symbol=symbol,
-                        backfill_start=resolved_backfill_start,
-                        status="covered",
-                        earliest_available=existing_min_date,
-                        coverage_summary=coverage_summary,
                     )
-            if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS) and not force_backfill:
-                list_manager.add_to_whitelist(symbol)
-                return False
-    except Exception:
-        pass
+                    force_backfill, skipped_limited_marker = should_force_backfill(
+                        existing_min_date=existing_min_date,
+                        backfill_start=resolved_backfill_start,
+                        marker=marker,
+                    )
+                    if skipped_limited_marker:
+                        coverage_summary["coverage_skipped_limited_marker"] += 1
+                    if force_backfill:
+                        coverage_summary["coverage_forced_refetch"] += 1
+                    elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
+                        _mark_coverage(
+                            symbol=symbol,
+                            backfill_start=resolved_backfill_start,
+                            status="covered",
+                            earliest_available=existing_min_date,
+                            coverage_summary=coverage_summary,
+                        )
+                if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS) and not force_backfill:
+                    list_manager.add_to_whitelist(symbol)
+                    return False
+        except Exception:
+            pass
+    else:
+        blob_exists = False
 
     payload = av.get_earnings(symbol=symbol)
     if not isinstance(payload, dict):
@@ -325,7 +414,7 @@ def fetch_and_save_raw(
             coverage_summary=coverage_summary,
         )
 
-    if blob_exists:
+    if (not alpha26_mode) and blob_exists:
         try:
             existing_raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
         except Exception:
@@ -333,6 +422,12 @@ def fetch_and_save_raw(
         if existing_raw == raw_json:
             list_manager.add_to_whitelist(symbol)
             return False
+
+    if not write_symbol_file:
+        if df is not None and not df.empty and collected_symbol_frames is not None:
+            collected_symbol_frames[symbol] = df.copy()
+        list_manager.add_to_whitelist(symbol)
+        return bool(df is not None and not df.empty)
 
     mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
     list_manager.add_to_whitelist(symbol)
@@ -379,6 +474,7 @@ async def main_async() -> int:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
 
+    alpha26_mode = bronze_bucketing.is_alpha26_mode()
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
     av = AlphaVantageGatewayClient.from_env()
@@ -396,6 +492,7 @@ async def main_async() -> int:
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
+    collected_symbol_frames: Dict[str, pd.DataFrame] = {}
 
     def worker(symbol: str) -> tuple[bool, dict[str, int]]:
         coverage_summary = _empty_coverage_summary()
@@ -404,6 +501,9 @@ async def main_async() -> int:
             av,
             backfill_start=backfill_start,
             coverage_summary=coverage_summary,
+            write_symbol_file=not alpha26_mode,
+            collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
+            alpha26_mode=alpha26_mode,
         )
         return wrote, coverage_summary
 
@@ -474,6 +574,18 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+
+    if alpha26_mode:
+        try:
+            written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames)
+            legacy_deleted = _delete_legacy_symbol_blobs()
+            mdc.write_line(
+                "Bronze earnings alpha26 buckets written: "
+                f"symbols={written_symbols} index={index_path or 'n/a'} legacy_deleted={legacy_deleted}"
+            )
+        except Exception as exc:
+            progress["failed"] += 1
+            mdc.write_error(f"Bronze earnings alpha26 bucket write failed: {exc}")
 
     if failure_counts:
         ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)

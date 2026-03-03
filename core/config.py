@@ -133,6 +133,15 @@ class AppSettings(BaseSettings):
     MASSIVE_TICKERS_PAGE_LIMIT: int = 1000
     MASSIVE_FINANCE_FRESH_DAYS: int = 28
 
+    # Bronze/Silver/Gold storage layout strategy (alpha26-only).
+    BRONZE_LAYOUT_MODE: str = "alpha26"
+    BRONZE_ALPHA26_FORCE_REBUILD: bool = True
+    BRONZE_ALPHA26_CODEC: str = "snappy"
+    SILVER_LAYOUT_MODE: str = "alpha26"
+    SILVER_ALPHA26_FORCE_REBUILD: bool = True
+    GOLD_LAYOUT_MODE: str = "alpha26"
+    GOLD_ALPHA26_FORCE_REBUILD: bool = True
+
     # Comma-separated list for debug runs (e.g., "AAPL,MSFT"). Empty disables filtering.
     # Note: ETL jobs may override this from Postgres at startup.
     DEBUG_SYMBOLS: list[str] = Field(default_factory=list)
@@ -141,6 +150,14 @@ class AppSettings(BaseSettings):
     @classmethod
     def _parse_debug_symbols(cls, value):
         return parse_debug_symbols(value)
+
+    @field_validator("BRONZE_LAYOUT_MODE", "SILVER_LAYOUT_MODE", "GOLD_LAYOUT_MODE", mode="before")
+    @classmethod
+    def _validate_alpha26_layout_mode(cls, value: object) -> str:
+        mode = str(value or "").strip().lower()
+        if mode != "alpha26":
+            raise ValueError("Only alpha26 storage layout mode is supported.")
+        return mode
 
     @model_validator(mode="after")
     def _validate_storage_auth(self):
@@ -182,6 +199,13 @@ def _apply_settings(new_settings: AppSettings) -> None:
     global MASSIVE_MAX_WORKERS
     global MASSIVE_TICKERS_PAGE_LIMIT
     global MASSIVE_FINANCE_FRESH_DAYS
+    global BRONZE_LAYOUT_MODE
+    global BRONZE_ALPHA26_FORCE_REBUILD
+    global BRONZE_ALPHA26_CODEC
+    global SILVER_LAYOUT_MODE
+    global SILVER_ALPHA26_FORCE_REBUILD
+    global GOLD_LAYOUT_MODE
+    global GOLD_ALPHA26_FORCE_REBUILD
     global DEBUG_SYMBOLS
 
     settings = new_settings
@@ -213,6 +237,14 @@ def _apply_settings(new_settings: AppSettings) -> None:
     MASSIVE_MAX_WORKERS = settings.MASSIVE_MAX_WORKERS
     MASSIVE_TICKERS_PAGE_LIMIT = settings.MASSIVE_TICKERS_PAGE_LIMIT
     MASSIVE_FINANCE_FRESH_DAYS = settings.MASSIVE_FINANCE_FRESH_DAYS
+
+    BRONZE_LAYOUT_MODE = settings.BRONZE_LAYOUT_MODE
+    BRONZE_ALPHA26_FORCE_REBUILD = settings.BRONZE_ALPHA26_FORCE_REBUILD
+    BRONZE_ALPHA26_CODEC = settings.BRONZE_ALPHA26_CODEC
+    SILVER_LAYOUT_MODE = settings.SILVER_LAYOUT_MODE
+    SILVER_ALPHA26_FORCE_REBUILD = settings.SILVER_ALPHA26_FORCE_REBUILD
+    GOLD_LAYOUT_MODE = settings.GOLD_LAYOUT_MODE
+    GOLD_ALPHA26_FORCE_REBUILD = settings.GOLD_ALPHA26_FORCE_REBUILD
 
     DEBUG_SYMBOLS = settings.DEBUG_SYMBOLS
 

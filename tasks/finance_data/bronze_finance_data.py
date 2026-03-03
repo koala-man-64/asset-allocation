@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import hashlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
+
+import pandas as pd
 
 from core.alpha_vantage_gateway_client import (
     AlphaVantageGatewayClient,
@@ -26,6 +29,7 @@ from tasks.common.bronze_backfill_coverage import (
     write_coverage_marker,
 )
 from tasks.common.run_manifests import create_bronze_finance_manifest
+from tasks.common import bronze_bucketing
 from tasks.finance_data import config as cfg
 
 
@@ -66,6 +70,15 @@ _RECOVERY_SLEEP_SECONDS = 5.0
 _DEFAULT_SHARED_FINANCE_LOCK = "finance-pipeline-shared"
 _COVERAGE_DOMAIN = "finance"
 _COVERAGE_PROVIDER = "alpha-vantage"
+_BUCKET_COLUMNS = [
+    "symbol",
+    "report_type",
+    "payload_json",
+    "source_min_date",
+    "source_max_date",
+    "ingested_at",
+    "payload_hash",
+]
 
 
 def _empty_coverage_summary() -> dict[str, int]:
@@ -148,6 +161,196 @@ def _is_fresh(blob_last_modified: Optional[datetime], *, fresh_days: int) -> boo
 
 def _serialize_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _json_dumps_compact(payload: Any) -> str:
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+
+def _decode_payload_json(raw: Any) -> Optional[dict[str, Any]]:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
+
+def _parse_ingested_at(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_finance_bucket_row(
+    *,
+    symbol: str,
+    report_type: str,
+    payload: dict[str, Any],
+    source_min_date: Optional[date],
+    source_max_date: Optional[date],
+) -> dict[str, Any]:
+    payload_json = _json_dumps_compact(payload)
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    return {
+        "symbol": str(symbol).strip().upper(),
+        "report_type": str(report_type).strip().lower(),
+        "payload_json": payload_json,
+        "source_min_date": source_min_date.isoformat() if source_min_date is not None else None,
+        "source_max_date": source_max_date.isoformat() if source_max_date is not None else None,
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "payload_hash": payload_hash,
+    }
+
+
+def _load_alpha26_finance_row_map(*, symbols: set[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        try:
+            df = bronze_bucketing.read_bucket_parquet(
+                client=bronze_client,
+                prefix="finance-data",
+                bucket=bucket,
+            )
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        if "symbol" not in df.columns or "report_type" not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            symbol = str(row.get("symbol") or "").strip().upper()
+            report_type = str(row.get("report_type") or "").strip().lower()
+            if not symbol or not report_type:
+                continue
+            if symbols and symbol not in symbols:
+                continue
+            candidate = {
+                "symbol": symbol,
+                "report_type": report_type,
+                "payload_json": row.get("payload_json"),
+                "source_min_date": row.get("source_min_date"),
+                "source_max_date": row.get("source_max_date"),
+                "ingested_at": row.get("ingested_at"),
+                "payload_hash": row.get("payload_hash"),
+            }
+            key = (symbol, report_type)
+            existing = out.get(key)
+            if existing is None:
+                out[key] = candidate
+                continue
+            existing_ts = _parse_ingested_at(existing.get("ingested_at"))
+            candidate_ts = _parse_ingested_at(candidate.get("ingested_at"))
+            if existing_ts is None and candidate_ts is not None:
+                out[key] = candidate
+                continue
+            if existing_ts is not None and candidate_ts is not None and candidate_ts >= existing_ts:
+                out[key] = candidate
+    return out
+
+
+def _upsert_alpha26_finance_row(
+    *,
+    row_key: tuple[str, str],
+    row: dict[str, Any],
+    alpha26_rows: Optional[dict[tuple[str, str], dict[str, Any]]],
+    alpha26_lock: Optional[threading.Lock],
+) -> None:
+    if alpha26_rows is None:
+        return
+    if alpha26_lock is not None:
+        with alpha26_lock:
+            alpha26_rows[row_key] = row
+    else:
+        alpha26_rows[row_key] = row
+
+
+def _remove_alpha26_finance_row(
+    *,
+    row_key: tuple[str, str],
+    alpha26_rows: Optional[dict[tuple[str, str], dict[str, Any]]],
+    alpha26_lock: Optional[threading.Lock],
+) -> None:
+    if alpha26_rows is None:
+        return
+    if alpha26_lock is not None:
+        with alpha26_lock:
+            alpha26_rows.pop(row_key, None)
+    else:
+        alpha26_rows.pop(row_key, None)
+
+
+def _write_alpha26_finance_buckets(alpha26_rows: dict[tuple[str, str], dict[str, Any]]) -> tuple[int, Optional[str]]:
+    bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
+    if alpha26_rows:
+        frame = pd.DataFrame(list(alpha26_rows.values()), columns=_BUCKET_COLUMNS)
+    else:
+        frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
+
+    if not frame.empty:
+        frame["symbol"] = frame["symbol"].astype(str).str.strip().str.upper()
+        frame["report_type"] = frame["report_type"].astype(str).str.strip().str.lower()
+        frame["ingested_at_sort"] = pd.to_datetime(frame.get("ingested_at"), errors="coerce", utc=True)
+        frame = frame.sort_values("ingested_at_sort").drop(columns=["ingested_at_sort"])
+        frame = frame.drop_duplicates(subset=["symbol", "report_type"], keep="last").reset_index(drop=True)
+        for bucket, part in bronze_bucketing.split_df_by_bucket(frame, symbol_column="symbol").items():
+            bucket_frames[bucket] = part
+
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        part = bucket_frames[bucket]
+        if part is None or part.empty:
+            part = pd.DataFrame(columns=_BUCKET_COLUMNS)
+        bronze_bucketing.write_bucket_parquet(
+            client=bronze_client,
+            prefix="finance-data",
+            bucket=bucket,
+            df=part,
+            codec=bronze_bucketing.alpha26_codec(),
+        )
+
+    symbols = sorted({str(key[0]).upper() for key in alpha26_rows.keys()})
+    symbol_to_bucket = {symbol: bronze_bucketing.bucket_letter(symbol) for symbol in symbols}
+    index_path = bronze_bucketing.write_symbol_index(domain="finance", symbol_to_bucket=symbol_to_bucket)
+    return len(symbol_to_bucket), index_path
+
+
+def _delete_legacy_finance_symbol_blobs() -> int:
+    deleted = 0
+    allowed_folders = {str(report.get("folder")) for report in REPORTS}
+    for blob in bronze_client.list_blob_infos(name_starts_with="finance-data/"):
+        name = str(blob.get("name") or "")
+        if "/buckets/" in name:
+            continue
+        parts = name.strip("/").split("/")
+        if len(parts) != 3:
+            continue
+        if parts[0] != "finance-data":
+            continue
+        if parts[1] not in allowed_folders:
+            continue
+        if not parts[2].endswith(".json"):
+            continue
+        try:
+            bronze_client.delete_file(name)
+            deleted += 1
+        except Exception as exc:
+            mdc.write_warning(f"Failed deleting legacy finance blob {name}: {exc}")
+    return deleted
 
 
 def _parse_iso_date(raw: Any) -> Optional[date]:
@@ -274,6 +477,10 @@ def fetch_and_save_raw(
     *,
     backfill_start: Optional[date] = None,
     coverage_summary: Optional[dict[str, int]] = None,
+    alpha26_mode: bool = False,
+    alpha26_existing_row: Optional[dict[str, Any]] = None,
+    alpha26_rows: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
+    alpha26_lock: Optional[threading.Lock] = None,
 ) -> bool:
     """
     Fetch a finance report via the API-hosted Alpha Vantage gateway and store raw JSON bytes in Bronze.
@@ -287,6 +494,7 @@ def fetch_and_save_raw(
     folder = report["folder"]
     suffix = report["file_suffix"]
     report_name = report["report"]
+    row_key = (str(symbol).strip().upper(), str(report_name).strip().lower())
 
     blob_path = f"finance-data/{folder}/{symbol}_{suffix}.json"
     blob_exists: Optional[bool] = None
@@ -296,43 +504,81 @@ def fetch_and_save_raw(
     force_backfill = False
 
     try:
-        blob = bronze_client.get_blob_client(blob_path)
-        blob_exists = bool(blob.exists())
-        if blob_exists:
-            existing_payload = _load_existing_finance_payload(blob_path)
-            if resolved_backfill_start is not None:
-                coverage_summary["coverage_checked"] += 1
-                if isinstance(existing_payload, dict):
-                    existing_min_date = _extract_source_earliest_finance_date(existing_payload)
-                marker = load_coverage_marker(
-                    common_client=common_client,
-                    domain=_COVERAGE_DOMAIN,
-                    symbol=symbol,
-                )
-                force_backfill, skipped_limited_marker = should_force_backfill(
-                    existing_min_date=existing_min_date,
-                    backfill_start=resolved_backfill_start,
-                    marker=marker,
-                )
-                if skipped_limited_marker:
-                    coverage_summary["coverage_skipped_limited_marker"] += 1
-                if force_backfill:
-                    coverage_summary["coverage_forced_refetch"] += 1
-                elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
-                    _mark_coverage(
+        if alpha26_mode:
+            existing_row = dict(alpha26_existing_row or {})
+            if existing_row:
+                blob_exists = True
+                existing_payload = _decode_payload_json(existing_row.get("payload_json"))
+                if resolved_backfill_start is not None:
+                    coverage_summary["coverage_checked"] += 1
+                    if isinstance(existing_payload, dict):
+                        existing_min_date = _extract_source_earliest_finance_date(existing_payload)
+                    marker = load_coverage_marker(
+                        common_client=common_client,
+                        domain=_COVERAGE_DOMAIN,
                         symbol=symbol,
-                        backfill_start=resolved_backfill_start,
-                        status="covered",
-                        earliest_available=existing_min_date,
-                        coverage_summary=coverage_summary,
                     )
-            props = blob.get_blob_properties()
-            if _is_fresh(
-                props.last_modified,
-                fresh_days=FINANCE_REPORT_STALE_DAYS,
-            ) and not force_backfill:
-                list_manager.add_to_whitelist(symbol)
-                return False
+                    force_backfill, skipped_limited_marker = should_force_backfill(
+                        existing_min_date=existing_min_date,
+                        backfill_start=resolved_backfill_start,
+                        marker=marker,
+                    )
+                    if skipped_limited_marker:
+                        coverage_summary["coverage_skipped_limited_marker"] += 1
+                    if force_backfill:
+                        coverage_summary["coverage_forced_refetch"] += 1
+                    elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
+                        _mark_coverage(
+                            symbol=symbol,
+                            backfill_start=resolved_backfill_start,
+                            status="covered",
+                            earliest_available=existing_min_date,
+                            coverage_summary=coverage_summary,
+                        )
+                ingested_at = _parse_ingested_at(existing_row.get("ingested_at"))
+                if _is_fresh(ingested_at, fresh_days=FINANCE_REPORT_STALE_DAYS) and not force_backfill:
+                    list_manager.add_to_whitelist(symbol)
+                    return False
+            else:
+                blob_exists = False
+        else:
+            blob = bronze_client.get_blob_client(blob_path)
+            blob_exists = bool(blob.exists())
+            if blob_exists:
+                existing_payload = _load_existing_finance_payload(blob_path)
+                if resolved_backfill_start is not None:
+                    coverage_summary["coverage_checked"] += 1
+                    if isinstance(existing_payload, dict):
+                        existing_min_date = _extract_source_earliest_finance_date(existing_payload)
+                    marker = load_coverage_marker(
+                        common_client=common_client,
+                        domain=_COVERAGE_DOMAIN,
+                        symbol=symbol,
+                    )
+                    force_backfill, skipped_limited_marker = should_force_backfill(
+                        existing_min_date=existing_min_date,
+                        backfill_start=resolved_backfill_start,
+                        marker=marker,
+                    )
+                    if skipped_limited_marker:
+                        coverage_summary["coverage_skipped_limited_marker"] += 1
+                    if force_backfill:
+                        coverage_summary["coverage_forced_refetch"] += 1
+                    elif existing_min_date is not None and existing_min_date <= resolved_backfill_start:
+                        _mark_coverage(
+                            symbol=symbol,
+                            backfill_start=resolved_backfill_start,
+                            status="covered",
+                            earliest_available=existing_min_date,
+                            coverage_summary=coverage_summary,
+                        )
+                props = blob.get_blob_properties()
+                if _is_fresh(
+                    props.last_modified,
+                    fresh_days=FINANCE_REPORT_STALE_DAYS,
+                ) and not force_backfill:
+                    list_manager.add_to_whitelist(symbol)
+                    return False
     except Exception:
         pass
 
@@ -359,10 +605,17 @@ def fetch_and_save_raw(
                 coverage_summary=coverage_summary,
             )
         if blob_exists is not False:
-            bronze_client.delete_file(blob_path)
+            if alpha26_mode:
+                _remove_alpha26_finance_row(
+                    row_key=row_key,
+                    alpha26_rows=alpha26_rows,
+                    alpha26_lock=alpha26_lock,
+                )
+            else:
+                bronze_client.delete_file(blob_path)
             mdc.write_line(
                 f"No finance rows on/after {resolved_backfill_start.isoformat()} for {symbol} report={report_name}; "
-                f"deleted bronze {blob_path}."
+                f"{'removed alpha26 row' if alpha26_mode else f'deleted bronze {blob_path}'}."
             )
             list_manager.add_to_whitelist(symbol)
             return True
@@ -383,7 +636,7 @@ def fetch_and_save_raw(
             coverage_summary=coverage_summary,
         )
 
-    if existing_payload is None and blob_exists:
+    if existing_payload is None and blob_exists and not alpha26_mode:
         existing_payload = _load_existing_finance_payload(blob_path)
     if existing_payload is not None:
         if existing_payload == payload:
@@ -400,8 +653,25 @@ def fetch_and_save_raw(
                 list_manager.add_to_whitelist(symbol)
                 return False
 
-    raw = _serialize_json_bytes(payload)
-    mdc.store_raw_bytes(raw, blob_path, client=bronze_client)
+    if alpha26_mode:
+        source_min = _extract_source_earliest_finance_date(payload)
+        source_max = _extract_latest_finance_report_date(payload)
+        bucket_row = _build_finance_bucket_row(
+            symbol=symbol,
+            report_type=report_name,
+            payload=payload,
+            source_min_date=source_min,
+            source_max_date=source_max,
+        )
+        _upsert_alpha26_finance_row(
+            row_key=row_key,
+            row=bucket_row,
+            alpha26_rows=alpha26_rows,
+            alpha26_lock=alpha26_lock,
+        )
+    else:
+        raw = _serialize_json_bytes(payload)
+        mdc.store_raw_bytes(raw, blob_path, client=bronze_client)
     list_manager.add_to_whitelist(symbol)
     return True
 
@@ -501,6 +771,9 @@ def _process_symbol_with_recovery(
     client_manager: _ThreadLocalAlphaVantageClientManager,
     *,
     backfill_start: Optional[date] = None,
+    alpha26_mode: bool = False,
+    alpha26_rows: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
+    alpha26_lock: Optional[threading.Lock] = None,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
 ) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
@@ -519,13 +792,30 @@ def _process_symbol_with_recovery(
             report_name = str(report.get("report") or "unknown")
             try:
                 av_client = client_manager.get_client()
-                if fetch_and_save_raw(
-                    symbol,
-                    report,
-                    av_client,
-                    backfill_start=backfill_start,
-                    coverage_summary=coverage_summary,
-                ):
+                call_kwargs: dict[str, Any] = {
+                    "backfill_start": backfill_start,
+                    "coverage_summary": coverage_summary,
+                }
+                if alpha26_mode:
+                    alpha26_existing_row: Optional[dict[str, Any]] = None
+                    if alpha26_rows is not None:
+                        key = (str(symbol).strip().upper(), str(report_name).strip().lower())
+                        if alpha26_lock is not None:
+                            with alpha26_lock:
+                                existing = alpha26_rows.get(key)
+                        else:
+                            existing = alpha26_rows.get(key)
+                        if isinstance(existing, dict):
+                            alpha26_existing_row = dict(existing)
+                    call_kwargs.update(
+                        {
+                            "alpha26_mode": True,
+                            "alpha26_existing_row": alpha26_existing_row,
+                            "alpha26_rows": alpha26_rows,
+                            "alpha26_lock": alpha26_lock,
+                        }
+                    )
+                if fetch_and_save_raw(symbol, report, av_client, **call_kwargs):
                     wrote += 1
             except AlphaVantageGatewayInvalidSymbolError as exc:
                 return wrote, True, [(report_name, exc)], coverage_summary
@@ -574,6 +864,17 @@ async def main_async() -> int:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
 
+    alpha26_mode = bronze_bucketing.is_alpha26_mode()
+    alpha26_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    alpha26_lock: Optional[threading.Lock] = None
+    if alpha26_mode:
+        symbol_set = {str(s).strip().upper() for s in symbols}
+        alpha26_rows = _load_alpha26_finance_row_map(symbols=symbol_set)
+        alpha26_lock = threading.Lock()
+        mdc.write_line(
+            f"Loaded existing finance alpha26 seed rows: reports={len(alpha26_rows)} symbols={len(symbol_set)}."
+        )
+
     mdc.write_line(f"Starting Alpha Vantage Bronze Finance Ingestion for {len(symbols)} symbols...")
 
     client_manager = _ThreadLocalAlphaVantageClientManager()
@@ -607,6 +908,9 @@ async def main_async() -> int:
             symbol,
             client_manager,
             backfill_start=backfill_start,
+            alpha26_mode=alpha26_mode,
+            alpha26_rows=alpha26_rows if alpha26_mode else None,
+            alpha26_lock=alpha26_lock if alpha26_mode else None,
         )
 
     async def record_failures(symbol: str, failures: list[tuple[str, BaseException]]) -> None:
@@ -685,6 +989,18 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+
+    if alpha26_mode:
+        try:
+            written_symbols, index_path = _write_alpha26_finance_buckets(alpha26_rows)
+            legacy_deleted = _delete_legacy_finance_symbol_blobs()
+            mdc.write_line(
+                "Bronze finance alpha26 buckets written: "
+                f"symbols={written_symbols} index={index_path or 'n/a'} legacy_deleted={legacy_deleted}"
+            )
+        except Exception as exc:
+            progress["failed"] += 1
+            mdc.write_error(f"Bronze finance alpha26 bucket write failed: {exc}")
 
     if failure_counts:
         ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)

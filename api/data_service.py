@@ -12,6 +12,8 @@ from core import config as cfg
 from core import core as mdc
 from core import delta_core
 from core.pipeline import DataPaths
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 
 
 _FINANCE_SILVER_FOLDERS: dict[str, tuple[str, str]] = {
@@ -19,6 +21,12 @@ _FINANCE_SILVER_FOLDERS: dict[str, tuple[str, str]] = {
     "income_statement": ("Income Statement", "quarterly_financials"),
     "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
     "valuation": ("Valuation", "quarterly_valuation_measures"),
+}
+_FINANCE_SUBDOMAIN_TO_REPORT_TYPE: dict[str, str] = {
+    "balance_sheet": "balance_sheet",
+    "income_statement": "income_statement",
+    "cash_flow": "cash_flow",
+    "valuation": "overview",
 }
 
 
@@ -113,6 +121,41 @@ class DataService:
         raise ValueError(f"Unsupported layer: {layer!r}")
 
     @staticmethod
+    def _read_bronze_alpha26_bucket(
+        *,
+        container: str,
+        client: Any,
+        domain_prefix: str,
+        symbol: Optional[str] = None,
+        report_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        resolved_symbol = str(symbol or "").strip().upper()
+        resolved_report_type = str(report_type or "").strip().lower()
+        if resolved_symbol:
+            bucket = bronze_bucketing.bucket_letter(resolved_symbol)
+            blob_path = bronze_bucketing.bucket_blob_path(domain_prefix, bucket)
+        else:
+            blob_path = DataService._first_bronze_blob_path(
+                client,
+                container=container,
+                prefix=f"{str(domain_prefix).strip('/')}/buckets",
+                allowed_suffixes=(".parquet",),
+            )
+
+        raw_bytes = mdc.read_raw_bytes(blob_path, client=client)
+        if not raw_bytes:
+            raise FileNotFoundError(f"Raw blob not found: {container}/{blob_path}")
+        df = pd.read_parquet(BytesIO(raw_bytes))
+
+        if resolved_symbol and "symbol" in df.columns:
+            df = df[df["symbol"].astype(str).str.upper() == resolved_symbol]
+        if resolved_report_type and "report_type" in df.columns:
+            df = df[df["report_type"].astype(str).str.lower() == resolved_report_type]
+
+        return DataService._df_to_records_json_safe(df, limit=limit)
+
+    @staticmethod
     def _require_storage_client(container: str) -> Any:
         client = mdc.get_storage_client(container)
         if client is None:
@@ -193,9 +236,10 @@ class DataService:
     ) -> List[Dict[str, Any]]:
         symbol = str(ticker or "").strip().upper()
         if symbol:
+            bucket = layer_bucketing.bucket_letter(symbol)
             paths = [
-                DataPaths.get_finance_path(folder, symbol, suffix)
-                for folder, suffix in _FINANCE_SILVER_FOLDERS.values()
+                DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+                for sub_domain in _FINANCE_SILVER_FOLDERS.keys()
             ]
         else:
             paths = DataService._discover_delta_table_paths(container, "finance-data")
@@ -204,13 +248,10 @@ class DataService:
             out = df.copy()
             parts = str(path or "").split("/")
             sub_domain = parts[1] if len(parts) > 2 else ""
-            table_name = parts[2] if len(parts) > 2 else ""
             if sub_domain and "sub_domain" not in out.columns:
                 out["sub_domain"] = sub_domain
-            if "symbol" not in out.columns and "Symbol" not in out.columns:
-                guessed = table_name.split("_", 1)[0].strip().upper()
-                if guessed:
-                    out["symbol"] = guessed
+            if symbol and "symbol" in out.columns:
+                out = out[out["symbol"].astype(str).str.upper() == symbol]
             return out
 
         frames = DataService._collect_delta_frames(container, paths, limit=limit, enrich=_enrich)
@@ -228,8 +269,8 @@ class DataService:
 
         Notes
         - Silver/Gold use Delta tables.
-        - Bronze stores raw source files (CSV/JSON/Parquet) partitioned by ticker.
-        - Cross-sectional requests are assembled from regular per-symbol Delta folders.
+        - Bronze stores alpha26 bucket parquet files (`A..Z`) per domain.
+        - Cross-sectional requests are assembled from bucketed Delta folders.
         """
         resolved_layer = str(layer or "").strip().lower()
         raw_domain = str(domain or "").strip().lower()
@@ -246,34 +287,60 @@ class DataService:
             return DataService.get_finance_data(resolved_layer, sub_domain, ticker=ticker, limit=limit)
 
         is_silver = resolved_layer == "silver"
+        is_gold = resolved_layer == "gold"
+        if is_silver:
+            layer_bucketing.silver_layout_mode()
+        if is_gold:
+            layer_bucketing.gold_layout_mode()
         symbol = str(ticker or "").strip().upper()
 
         if resolved_domain == "market":
             if symbol:
-                path = DataPaths.get_market_data_path(symbol) if is_silver else DataPaths.get_gold_features_path(symbol)
-                return DataService._read_delta(container, path, limit=limit)
-            prefix = "market-data" if is_silver else "market"
+                path = (
+                    DataPaths.get_silver_market_bucket_path(layer_bucketing.bucket_letter(symbol))
+                    if is_silver
+                    else DataPaths.get_gold_market_bucket_path(layer_bucketing.bucket_letter(symbol))
+                )
+                rows = DataService._read_delta(container, path, limit=None)
+                rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+                return rows[: int(limit)] if limit else rows
+            prefix = "market-data/buckets" if is_silver else "market/buckets"
             return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
 
         if resolved_domain == "finance":
             if is_silver:
                 return DataService._read_silver_finance_regular(container=container, ticker=symbol or None, limit=limit)
             if symbol:
-                return DataService._read_delta(container, DataPaths.get_gold_finance_path(symbol), limit=limit)
-            return DataService._read_cross_section_from_prefix(container, "finance", limit=limit)
+                path = DataPaths.get_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol))
+                rows = DataService._read_delta(container, path, limit=None)
+                rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+                return rows[: int(limit)] if limit else rows
+            return DataService._read_cross_section_from_prefix(container, "finance/buckets", limit=limit)
 
         if resolved_domain == "earnings":
             if symbol:
-                path = DataPaths.get_earnings_path(symbol) if is_silver else DataPaths.get_gold_earnings_path(symbol)
-                return DataService._read_delta(container, path, limit=limit)
-            prefix = (getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data") if is_silver else "earnings"
+                path = (
+                    DataPaths.get_silver_earnings_bucket_path(layer_bucketing.bucket_letter(symbol))
+                    if is_silver
+                    else DataPaths.get_gold_earnings_bucket_path(layer_bucketing.bucket_letter(symbol))
+                )
+                rows = DataService._read_delta(container, path, limit=None)
+                rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+                return rows[: int(limit)] if limit else rows
+            prefix = f"{(getattr(cfg, 'EARNINGS_DATA_PREFIX', 'earnings-data') or 'earnings-data')}/buckets" if is_silver else "earnings/buckets"
             return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
 
         if resolved_domain == "price-target":
             if symbol:
-                path = DataPaths.get_price_target_path(symbol) if is_silver else DataPaths.get_gold_price_targets_path(symbol)
-                return DataService._read_delta(container, path, limit=limit)
-            prefix = "price-target-data" if is_silver else "targets"
+                path = (
+                    DataPaths.get_silver_price_target_bucket_path(layer_bucketing.bucket_letter(symbol))
+                    if is_silver
+                    else DataPaths.get_gold_price_targets_bucket_path(layer_bucketing.bucket_letter(symbol))
+                )
+                rows = DataService._read_delta(container, path, limit=None)
+                rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+                return rows[: int(limit)] if limit else rows
+            prefix = "price-target-data/buckets" if is_silver else "targets/buckets"
             return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
 
         raise ValueError(f"Domain '{domain}' not supported on generic endpoint")
@@ -303,35 +370,45 @@ class DataService:
             if resolved_sub not in _FINANCE_SILVER_FOLDERS:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
 
-            folder, suffix = _FINANCE_SILVER_FOLDERS[resolved_sub]
-            symbol = str(ticker or "").strip().upper() if ticker else ""
-            blob_path = (
-                f"finance-data/{folder}/{symbol}_{suffix}.csv"
-                if symbol
-                else DataService._first_bronze_blob_path(
-                    client,
-                    container=container,
-                    prefix=f"finance-data/{folder}",
-                    allowed_suffixes=(f"_{suffix}.csv",),
-                )
+            report_type = _FINANCE_SUBDOMAIN_TO_REPORT_TYPE.get(resolved_sub)
+            if not report_type:
+                raise ValueError(f"Unsupported finance sub-domain in alpha26 mode: {sub_domain}")
+            return DataService._read_bronze_alpha26_bucket(
+                container=container,
+                client=client,
+                domain_prefix="finance-data",
+                symbol=ticker,
+                report_type=report_type,
+                limit=limit,
             )
-            return DataService._read_bronze_raw(container, blob_path, kind="csv", limit=limit, client=client)
         
         if resolved_layer == "silver":
             if not ticker:
                 raise ValueError("ticker is required for Silver finance data.")
             if resolved_sub not in _FINANCE_SILVER_FOLDERS:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
-            
-            folder, suffix = _FINANCE_SILVER_FOLDERS[resolved_sub]
-            path = DataPaths.get_finance_path(folder, ticker, suffix)
-        else:
-            # Gold logic
+
+            layer_bucketing.silver_layout_mode()
+            symbol = str(ticker).strip().upper()
+            path = DataPaths.get_silver_finance_bucket_path(
+                resolved_sub,
+                layer_bucketing.bucket_letter(symbol),
+            )
+            rows = DataService._read_delta(container, path, limit=None)
+            rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+            return rows[: int(limit)] if limit else rows
+
+        if resolved_layer == "gold":
             if not ticker:
                 raise ValueError("ticker is required for Gold finance data.")
-            path = DataPaths.get_gold_finance_path(ticker)
-                
-        return DataService._read_delta(container, path, limit=limit)
+            layer_bucketing.gold_layout_mode()
+            symbol = str(ticker).strip().upper()
+            path = DataPaths.get_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol))
+            rows = DataService._read_delta(container, path, limit=None)
+            rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+            return rows[: int(limit)] if limit else rows
+
+        raise ValueError("Layer must be 'bronze', 'silver', or 'gold'.")
 
     @staticmethod
     def _get_bronze_data(
@@ -349,103 +426,43 @@ class DataService:
             )
 
         symbol = str(ticker or "").strip().upper() if ticker else ""
+        bronze_bucketing.bronze_layout_mode()
 
         if domain == "market":
-            blob_path = (
-                f"market-data/{symbol}.csv"
-                if symbol
-                else DataService._first_bronze_blob_path(
-                    client,
-                    container=container,
-                    prefix="market-data",
-                    allowed_suffixes=(".csv",),
-                )
-            )
-            return DataService._read_bronze_raw(
-                container,
-                blob_path,
-                kind="csv",
-                limit=limit,
+            return DataService._read_bronze_alpha26_bucket(
+                container=container,
                 client=client,
+                domain_prefix="market-data",
+                symbol=symbol or None,
+                limit=limit,
             )
 
         if domain == "earnings":
             prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
-            blob_path = (
-                f"{prefix}/{symbol}.json"
-                if symbol
-                else DataService._first_bronze_blob_path(
-                    client,
-                    container=container,
-                    prefix=prefix,
-                    allowed_suffixes=(".json",),
-                )
-            )
-            return DataService._read_bronze_raw(
-                container,
-                blob_path,
-                kind="json",
-                limit=limit,
+            return DataService._read_bronze_alpha26_bucket(
+                container=container,
                 client=client,
+                domain_prefix=prefix,
+                symbol=symbol or None,
+                limit=limit,
             )
 
         if domain == "finance":
-            if symbol:
-                symbol_prefixes = [
-                    f"finance-data/balance_sheet/{symbol}_",
-                    f"finance-data/income_statement/{symbol}_",
-                    f"finance-data/cash_flow/{symbol}_",
-                    f"finance-data/valuation/{symbol}_",
-                ]
-                blob_path = ""
-                for prefix in symbol_prefixes:
-                    try:
-                        blob_path = DataService._first_bronze_blob_path(
-                            client,
-                            container=container,
-                            prefix=prefix,
-                            allowed_suffixes=(".csv",),
-                        )
-                        break
-                    except FileNotFoundError:
-                        continue
-                if not blob_path:
-                    raise FileNotFoundError(
-                        f"No Bronze finance blobs found for symbol={symbol!r} under {container}/finance-data/"
-                    )
-            else:
-                blob_path = DataService._first_bronze_blob_path(
-                    client,
-                    container=container,
-                    prefix="finance-data",
-                    allowed_suffixes=(".csv",),
-                )
-
-            return DataService._read_bronze_raw(
-                container,
-                blob_path,
-                kind="csv",
-                limit=limit,
+            return DataService._read_bronze_alpha26_bucket(
+                container=container,
                 client=client,
+                domain_prefix="finance-data",
+                symbol=symbol or None,
+                limit=limit,
             )
 
         if domain in {"price-target", "price_target"}:
-            blob_path = (
-                f"price-target-data/{symbol}.parquet"
-                if symbol
-                else DataService._first_bronze_blob_path(
-                    client,
-                    container=container,
-                    prefix="price-target-data",
-                    allowed_suffixes=(".parquet",),
-                )
-            )
-            return DataService._read_bronze_raw(
-                container,
-                blob_path,
-                kind="parquet",
-                limit=limit,
+            return DataService._read_bronze_alpha26_bucket(
+                container=container,
                 client=client,
+                domain_prefix="price-target-data",
+                symbol=symbol or None,
+                limit=limit,
             )
 
         raise ValueError(f"Domain '{domain}' not supported on Bronze explorer endpoint")

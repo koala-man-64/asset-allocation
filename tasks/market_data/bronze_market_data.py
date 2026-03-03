@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import threading
 import time
@@ -8,7 +9,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from io import BytesIO, StringIO
-from typing import Any, Callable
+from typing import Any, Callable, Dict, Optional
 
 import pandas as pd
 
@@ -20,6 +21,7 @@ from core.massive_gateway_client import (
 )
 from core import core as mdc
 from core.pipeline import ListManager
+from tasks.common import bronze_bucketing
 from tasks.market_data import config as cfg
 
 
@@ -32,6 +34,19 @@ _RECOVERY_SLEEP_SECONDS = 5.0
 _FULL_HISTORY_START_DATE = "1970-01-01"
 _SNAPSHOT_BATCH_SIZE = 250
 _SNAPSHOT_ASSET_TYPE = "stocks"
+_BUCKET_COLUMNS = [
+    "symbol",
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "short_interest",
+    "short_volume",
+    "ingested_at",
+    "source_hash",
+]
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -534,6 +549,159 @@ def _normalize_provider_daily_csv(csv_text: str) -> bytes:
     return _serialize_market_csv(_normalize_provider_daily_df(csv_text))
 
 
+def _normalize_market_bucket_df(symbol: str, df_daily: pd.DataFrame) -> pd.DataFrame:
+    out = df_daily.copy()
+    out["symbol"] = str(symbol).upper()
+    out["date"] = pd.to_datetime(out.get("Date"), errors="coerce", utc=True).dt.tz_localize(None)
+    out["open"] = pd.to_numeric(out.get("Open"), errors="coerce")
+    out["high"] = pd.to_numeric(out.get("High"), errors="coerce")
+    out["low"] = pd.to_numeric(out.get("Low"), errors="coerce")
+    out["close"] = pd.to_numeric(out.get("Close"), errors="coerce")
+    out["volume"] = pd.to_numeric(out.get("Volume"), errors="coerce")
+    out["short_interest"] = pd.to_numeric(out.get("ShortInterest"), errors="coerce")
+    out["short_volume"] = pd.to_numeric(out.get("ShortVolume"), errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    payload = out[
+        [
+            "symbol",
+            "date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "short_interest",
+            "short_volume",
+        ]
+    ].to_json(orient="records", date_format="iso")
+    out["source_hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    out["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    out = out[_BUCKET_COLUMNS]
+    return out.reset_index(drop=True)
+
+
+def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tuple[int, str | None]:
+    bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
+    symbol_to_bucket: dict[str, str] = {}
+    for symbol, frame in symbol_frames.items():
+        if frame is None or frame.empty:
+            continue
+        normalized = _normalize_market_bucket_df(symbol, frame)
+        if normalized.empty:
+            continue
+        bucket = bronze_bucketing.bucket_letter(symbol)
+        symbol_to_bucket[str(symbol).upper()] = bucket
+        if bucket_frames[bucket].empty:
+            bucket_frames[bucket] = normalized
+        else:
+            bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
+
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        frame = bucket_frames[bucket]
+        if frame.empty:
+            frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
+        bronze_bucketing.write_bucket_parquet(
+            client=bronze_client,
+            prefix="market-data",
+            bucket=bucket,
+            df=frame,
+            codec=bronze_bucketing.alpha26_codec(),
+        )
+
+    index_path = bronze_bucketing.write_symbol_index(
+        domain="market",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return len(symbol_to_bucket), index_path
+
+
+def _delete_legacy_symbol_blobs() -> int:
+    deleted = 0
+    for blob in bronze_client.list_blob_infos(name_starts_with="market-data/"):
+        name = str(blob.get("name") or "")
+        if not name.endswith(".csv"):
+            continue
+        if name.endswith("whitelist.csv") or name.endswith("blacklist.csv"):
+            continue
+        if "/buckets/" in name:
+            continue
+        try:
+            bronze_client.delete_file(name)
+            deleted += 1
+        except Exception as exc:
+            mdc.write_warning(f"Failed deleting legacy market blob {name}: {exc}")
+    return deleted
+
+
+def _load_alpha26_existing_market_frames(*, symbols: set[str]) -> dict[str, pd.DataFrame]:
+    frames: dict[str, pd.DataFrame] = {}
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        try:
+            bucket_df = bronze_bucketing.read_bucket_parquet(
+                client=bronze_client,
+                prefix="market-data",
+                bucket=bucket,
+            )
+        except Exception:
+            continue
+        if bucket_df is None or bucket_df.empty:
+            continue
+
+        out = bucket_df.copy()
+        rename_map = {
+            "symbol": "Symbol",
+            "date": "Date",
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+            "short_interest": "ShortInterest",
+            "short_volume": "ShortVolume",
+        }
+        out = out.rename(columns={k: v for k, v in rename_map.items() if k in out.columns})
+        if "Symbol" not in out.columns or "Date" not in out.columns:
+            continue
+
+        out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
+        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+        out = out.dropna(subset=["Symbol", "Date"]).copy()
+        if out.empty:
+            continue
+        out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
+        keep_cols = ["Symbol", "Date", "Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS]
+        out = out[[c for c in keep_cols if c in out.columns]]
+        for symbol, group in out.groupby("Symbol", sort=False):
+            clean_symbol = str(symbol).strip().upper()
+            if not clean_symbol or (symbols and clean_symbol not in symbols):
+                continue
+            group = group.drop(columns=["Symbol"], errors="ignore")
+            group = _canonical_market_df(group)
+            if not group.empty:
+                frames[clean_symbol] = group
+    return frames
+
+
+def _set_collected_market_frame(
+    *,
+    symbol: str,
+    frame: pd.DataFrame,
+    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]],
+    collected_lock: Optional[threading.Lock],
+) -> None:
+    if collected_symbol_frames is None:
+        return
+    normalized_symbol = str(symbol).strip().upper()
+    if not normalized_symbol:
+        return
+    normalized_frame = _canonical_market_df(frame)
+    if collected_lock is not None:
+        with collected_lock:
+            collected_symbol_frames[normalized_symbol] = normalized_frame
+    else:
+        collected_symbol_frames[normalized_symbol] = normalized_frame
+
+
 def _is_header_only_provider_daily_csv(csv_text: str) -> bool:
     """
     Detect CSV payloads that contain only the header row and no usable data rows.
@@ -727,6 +895,11 @@ def _download_and_save_raw_with_recovery(
     *,
     snapshot_row: dict[str, float | str] | None = None,
     backfill_start: date | None = None,
+    write_symbol_file: bool = True,
+    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    collected_lock: Optional[threading.Lock] = None,
+    existing_symbol_df: Optional[pd.DataFrame] = None,
+    alpha26_mode: bool = False,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
 ) -> None:
@@ -738,11 +911,18 @@ def _download_and_save_raw_with_recovery(
     for attempt in range(1, attempts + 1):
         client = client_manager.get_client()
         try:
-            download_and_save_raw(
-                symbol,
-                client,
-                snapshot_row=snapshot_row,
-            )
+            call_kwargs: dict[str, Any] = {"snapshot_row": snapshot_row}
+            if alpha26_mode or not write_symbol_file or collected_symbol_frames is not None or existing_symbol_df is not None:
+                call_kwargs.update(
+                    {
+                        "write_symbol_file": write_symbol_file,
+                        "collected_symbol_frames": collected_symbol_frames,
+                        "collected_lock": collected_lock,
+                        "existing_symbol_df": existing_symbol_df,
+                        "alpha26_mode": alpha26_mode,
+                    }
+                )
+            download_and_save_raw(symbol, client, **call_kwargs)
             return
         except MassiveGatewayNotFoundError:
             raise
@@ -765,6 +945,11 @@ def download_and_save_raw(
     *,
     snapshot_row: dict[str, float | str] | None = None,
     backfill_start: date | None = None,
+    write_symbol_file: bool = True,
+    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    collected_lock: Optional[threading.Lock] = None,
+    existing_symbol_df: Optional[pd.DataFrame] = None,
+    alpha26_mode: bool = False,
 ) -> None:
     """
     Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
@@ -775,7 +960,10 @@ def download_and_save_raw(
     if list_manager.is_blacklisted(symbol):
         return
 
-    existing_df = _load_existing_market_df(symbol)
+    if existing_symbol_df is not None and not existing_symbol_df.empty:
+        existing_df = _canonical_market_df(existing_symbol_df)
+    else:
+        existing_df = _load_existing_market_df(symbol)
     existing_latest_date = _extract_latest_market_date(existing_df)
     from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
     raw_text = ""
@@ -786,6 +974,13 @@ def download_and_save_raw(
     ):
         if snapshot_date is not None and existing_latest_date is not None and snapshot_date <= existing_latest_date:
             # Snapshot confirms we are already at the latest obtainable daily bar.
+            if alpha26_mode and not existing_df.empty:
+                _set_collected_market_frame(
+                    symbol=symbol,
+                    frame=existing_df,
+                    collected_symbol_frames=collected_symbol_frames,
+                    collected_lock=collected_lock,
+                )
             list_manager.add_to_whitelist(symbol)
             return
         df_daily = _snapshot_row_to_daily_df(snapshot_row)
@@ -794,6 +989,13 @@ def download_and_save_raw(
             if snapshot_dates.empty or snapshot_dates.max().date() < existing_latest_date:
                 # Snapshot can lag around weekends/market close windows.
                 # If the local bronze blob is newer, keep local data and skip work.
+                if alpha26_mode and not existing_df.empty:
+                    _set_collected_market_frame(
+                        symbol=symbol,
+                        frame=existing_df,
+                        collected_symbol_frames=collected_symbol_frames,
+                        collected_lock=collected_lock,
+                    )
                 list_manager.add_to_whitelist(symbol)
                 return
 
@@ -811,6 +1013,13 @@ def download_and_save_raw(
                     f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
                     "keeping existing bronze data."
                 )
+                if alpha26_mode and not existing_df.empty:
+                    _set_collected_market_frame(
+                        symbol=symbol,
+                        frame=existing_df,
+                        collected_symbol_frames=collected_symbol_frames,
+                        collected_lock=collected_lock,
+                    )
                 list_manager.add_to_whitelist(symbol)
                 return
             list_manager.add_to_blacklist(symbol)
@@ -832,6 +1041,13 @@ def download_and_save_raw(
             and _existing_has_complete_supplementals(existing_df, as_of_date=existing_latest_date)
         ):
             # No new market rows and supplemental metrics already populated.
+            if alpha26_mode and not existing_df.empty:
+                _set_collected_market_frame(
+                    symbol=symbol,
+                    frame=existing_df,
+                    collected_symbol_frames=collected_symbol_frames,
+                    collected_lock=collected_lock,
+                )
             list_manager.add_to_whitelist(symbol)
             return
 
@@ -860,6 +1076,13 @@ def download_and_save_raw(
         )
         df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
         if not existing_df.empty and _market_frames_equal(existing_df, df_daily):
+            if alpha26_mode:
+                _set_collected_market_frame(
+                    symbol=symbol,
+                    frame=existing_df,
+                    collected_symbol_frames=collected_symbol_frames,
+                    collected_lock=collected_lock,
+                )
             list_manager.add_to_whitelist(symbol)
             return
         raw_bytes = _serialize_market_csv(df_daily)
@@ -874,10 +1097,18 @@ def download_and_save_raw(
             payload={"snippet": snippet},
         ) from exc
 
-    try:
-        mdc.store_raw_bytes(raw_bytes, blob_path, client=bronze_client)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
+    if not write_symbol_file:
+        _set_collected_market_frame(
+            symbol=symbol,
+            frame=df_daily,
+            collected_symbol_frames=collected_symbol_frames,
+            collected_lock=collected_lock,
+        )
+    else:
+        try:
+            mdc.store_raw_bytes(raw_bytes, blob_path, client=bronze_client)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
     list_manager.add_to_whitelist(symbol)
     return
 
@@ -926,7 +1157,20 @@ async def main_async() -> int:
         mdc.write_line(f"DEBUG MODE: Restricting to {cfg.DEBUG_SYMBOLS}")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
 
+    alpha26_mode = bronze_bucketing.is_alpha26_mode()
     mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
+    alpha26_existing_frames: dict[str, pd.DataFrame] = {}
+    collected_symbol_frames: Dict[str, pd.DataFrame] = {}
+    collected_lock: Optional[threading.Lock] = None
+    if alpha26_mode:
+        symbol_set = {str(s).strip().upper() for s in symbols}
+        alpha26_existing_frames = _load_alpha26_existing_market_frames(symbols=symbol_set)
+        # Seed with existing rows to preserve unchanged symbols under full 26-bucket rewrite.
+        collected_symbol_frames = {k: v.copy() for k, v in alpha26_existing_frames.items()}
+        collected_lock = threading.Lock()
+        mdc.write_line(
+            f"Loaded existing market alpha26 seed frames: symbols={len(collected_symbol_frames)}."
+        )
 
     snapshot_rows_by_symbol: dict[str, dict[str, float | str]] = {}
     if symbols:
@@ -958,6 +1202,11 @@ async def main_async() -> int:
             symbol,
             client_manager,
             snapshot_row=snapshot_rows_by_symbol.get(symbol),
+            write_symbol_file=not alpha26_mode,
+            collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
+            collected_lock=collected_lock if alpha26_mode else None,
+            existing_symbol_df=alpha26_existing_frames.get(symbol) if alpha26_mode else None,
+            alpha26_mode=alpha26_mode,
         )
 
     max_workers = _get_max_workers()
@@ -1038,6 +1287,18 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+
+    if alpha26_mode:
+        try:
+            written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames)
+            legacy_deleted = _delete_legacy_symbol_blobs()
+            mdc.write_line(
+                "Bronze market alpha26 buckets written: "
+                f"symbols={written_symbols} index={index_path or 'n/a'} legacy_deleted={legacy_deleted}"
+            )
+        except Exception as exc:
+            progress["failed"] += 1
+            mdc.write_error(f"Bronze market alpha26 bucket write failed: {exc}")
 
     mdc.write_line(
         "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} "

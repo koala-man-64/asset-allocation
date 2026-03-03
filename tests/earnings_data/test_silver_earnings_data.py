@@ -2,7 +2,6 @@ import pandas as pd
 import pytest
 from unittest.mock import patch
 from tasks.earnings_data import silver_earnings_data as silver
-from core.pipeline import DataPaths
 
 
 def test_process_file_success():
@@ -76,72 +75,3 @@ def test_process_file_preserves_earnings_numeric_precision():
         assert silver.process_file(blob_name) is True
         df_saved = mock_store.call_args[0][0]
         assert df_saved.iloc[0]["reported_eps"] == pytest.approx(1.234567)
-
-
-def test_run_earnings_reconciliation_purges_silver_orphans(monkeypatch):
-    class _FakeSilverClient:
-        def __init__(self) -> None:
-            self.deleted_paths: list[str] = []
-
-        def delete_prefix(self, path: str) -> int:
-            self.deleted_paths.append(path)
-            return 2
-
-    fake_client = _FakeSilverClient()
-    monkeypatch.setattr(silver, "silver_client", fake_client)
-    monkeypatch.setattr(
-        silver,
-        "collect_delta_market_symbols",
-        lambda *, client, root_prefix: {"AAPL", "MSFT"},
-    )
-    monkeypatch.setattr(silver, "get_backfill_range", lambda: (None, None))
-
-    orphan_count, deleted_blobs = silver._run_earnings_reconciliation(
-        bronze_blob_list=[
-            {"name": "earnings-data/AAPL.json"},
-            {"name": "earnings-data/whitelist.csv"},
-        ]
-    )
-
-    assert orphan_count == 1
-    assert deleted_blobs == 2
-    assert fake_client.deleted_paths == [DataPaths.get_earnings_path("MSFT")]
-
-
-def test_run_earnings_reconciliation_applies_cutoff_sweep(monkeypatch):
-    class _FakeSilverClient:
-        def delete_prefix(self, _path: str) -> int:
-            return 0
-
-    fake_client = _FakeSilverClient()
-    captured: dict = {}
-
-    monkeypatch.setattr(silver, "silver_client", fake_client)
-    monkeypatch.setattr(
-        silver,
-        "collect_delta_market_symbols",
-        lambda *, client, root_prefix: {"AAPL", "MSFT"},
-    )
-    monkeypatch.setattr(
-        silver,
-        "enforce_backfill_cutoff_on_tables",
-        lambda **kwargs: captured.update(kwargs)
-        or type(
-            "_Stats",
-            (),
-            {"tables_scanned": 0, "tables_rewritten": 0, "deleted_blobs": 0, "rows_dropped": 0, "errors": 0},
-        )(),
-    )
-    monkeypatch.setattr(silver, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
-
-    silver._run_earnings_reconciliation(bronze_blob_list=[{"name": "earnings-data/AAPL.json"}])
-
-    assert captured["symbols"] == {"AAPL"}
-    assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
-
-
-def test_run_earnings_reconciliation_requires_storage_client(monkeypatch):
-    monkeypatch.setattr(silver, "silver_client", None)
-
-    with pytest.raises(RuntimeError, match="requires silver storage client"):
-        silver._run_earnings_reconciliation(bronze_blob_list=[])

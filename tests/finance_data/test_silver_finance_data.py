@@ -270,8 +270,8 @@ def test_silver_finance_valuation_requires_silver_market_delta_no_fallback():
     mock_store.assert_not_called()
     mock_load_delta.assert_called_once_with(
         silver.cfg.AZURE_CONTAINER_SILVER,
-        "market-data/TEST",
-        columns=["date", "close"],
+        DataPaths.get_silver_market_bucket_path("T"),
+        columns=["date", "close", "symbol"],
     )
 
 
@@ -287,24 +287,33 @@ def test_silver_finance_rejects_legacy_csv_blob():
 
 
 def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks(monkeypatch):
-    class BronzeClientStub:
-        def __init__(self, blobs):
-            self._blobs = blobs
-
-        def list_blob_infos(self, name_starts_with=None):
-            assert name_starts_with == "finance-data/"
-            return list(self._blobs)
-
     blobs = [
-        {"name": "finance-data/Balance Sheet/OK_quarterly_balance-sheet.json"},
-        {"name": "finance-data/Cash Flow/SKIP_quarterly_cash-flow.json"},
-        {"name": "finance-data/Valuation/FAIL_quarterly_valuation_measures.json"},
+        {
+            "name": "finance-data/buckets/O.parquet",
+            "etag": "etag-ok",
+            "last_modified": datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc),
+        },
+        {
+            "name": "finance-data/buckets/S.parquet",
+            "etag": "etag-skip",
+            "last_modified": datetime(2026, 1, 31, 0, 1, tzinfo=timezone.utc),
+        },
+        {
+            "name": "finance-data/buckets/F.parquet",
+            "etag": "etag-fail",
+            "last_modified": datetime(2026, 1, 31, 0, 2, tzinfo=timezone.utc),
+        },
     ]
 
-    monkeypatch.setattr(silver, "bronze_client", BronzeClientStub(blobs))
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(silver, "_get_ingest_max_workers", lambda: 4)
+    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: (list(blobs), 0))
+    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
+    monkeypatch.setattr(
+        silver,
+        "_write_alpha26_finance_silver_buckets",
+        lambda _frames: (0, "system/silver-index/finance/latest.parquet"),
+    )
 
     initial_watermarks = {"preexisting": {"etag": "keep"}}
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: dict(initial_watermarks))
@@ -318,55 +327,75 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
 
     monkeypatch.setattr(silver, "save_watermarks", fake_save_watermarks)
 
-    def fake_process_blob(blob, *, desired_end, backfill_start=None, watermarks=None):
-        name = blob["name"]
-        if name.endswith("OK_quarterly_balance-sheet.json"):
-            return silver.BlobProcessResult(
-                blob_name=name,
-                silver_path="finance-data/balance_sheet/OK_quarterly_balance-sheet",
-                ticker="OK",
-                status="ok",
-                rows_written=7,
-                watermark_signature={
+    def fake_process_alpha26(
+        *,
+        candidate_blobs,
+        desired_end,
+        backfill_start=None,
+        watermarks=None,
+        persist=True,
+        alpha26_bucket_frames=None,
+    ):
+        del desired_end, backfill_start, persist, alpha26_bucket_frames
+        results = []
+        for blob in candidate_blobs:
+            name = str(blob.get("name", ""))
+            if name.endswith("/O.parquet"):
+                watermarks[name] = {
                     "etag": "etag-ok",
                     "last_modified": "2026-01-31T00:00:00+00:00",
                     "updated_at": "2026-01-31T00:00:01+00:00",
-                },
+                }
+                results.append(
+                    silver.BlobProcessResult(
+                        blob_name=name,
+                        silver_path="finance-data/balance_sheet/buckets/O",
+                        ticker="OK",
+                        status="ok",
+                        rows_written=7,
+                    )
+                )
+                continue
+            if name.endswith("/S.parquet"):
+                results.append(
+                    silver.BlobProcessResult(
+                        blob_name=name,
+                        silver_path="finance-data/cash_flow/buckets/S",
+                        ticker="SKIP",
+                        status="skipped",
+                    )
+                )
+                continue
+            results.append(
+                silver.BlobProcessResult(
+                    blob_name=name,
+                    silver_path="finance-data/valuation/buckets/F",
+                    ticker="FAIL",
+                    status="failed",
+                    error="simulated failure",
+                )
             )
-        if name.endswith("SKIP_quarterly_cash-flow.json"):
-            return silver.BlobProcessResult(
-                blob_name=name,
-                silver_path="finance-data/cash_flow/SKIP_quarterly_cash-flow",
-                ticker="SKIP",
-                status="skipped",
-            )
-        return silver.BlobProcessResult(
-            blob_name=name,
-            silver_path="finance-data/valuation/FAIL_quarterly_valuation_measures",
-            ticker="FAIL",
-            status="failed",
-            error="simulated failure",
-        )
+        return results, 0.01
 
-    monkeypatch.setattr(silver, "process_blob", fake_process_blob)
+    monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", fake_process_alpha26)
 
     exit_code = silver.main()
 
     assert exit_code == 1
     assert saved["key"] == "bronze_finance_data"
     assert saved["items"]["preexisting"] == {"etag": "keep"}
-    assert saved["items"]["finance-data/Balance Sheet/OK_quarterly_balance-sheet.json"]["etag"] == "etag-ok"
-    assert "finance-data/Valuation/FAIL_quarterly_valuation_measures.json" not in saved["items"]
+    assert saved["items"]["finance-data/buckets/O.parquet"]["etag"] == "etag-ok"
+    assert "finance-data/buckets/F.parquet" not in saved["items"]
 
 
 def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatch):
     blob_a = {
-        "name": "finance-data/Balance Sheet/A_quarterly_balance-sheet.json",
+        "name": "finance-data/buckets/A.parquet",
         "etag": "etag-a",
         "last_modified": datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc),
     }
     blob_b = {
-        "name": "finance-data/Balance Sheet/B_quarterly_balance-sheet.json",
+        "name": "finance-data/buckets/B.parquet",
         "etag": "etag-b",
         "last_modified": datetime(2026, 1, 31, 0, 1, tzinfo=timezone.utc),
     }
@@ -383,23 +412,24 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
         list_index["value"] += 1
         return listings[idx]
 
-    def _fake_process(candidate_blobs, **_kwargs):
+    def _fake_process(*, candidate_blobs, desired_end, backfill_start=None, watermarks=None, **_kwargs):
+        del desired_end, backfill_start
         out = []
         for blob in candidate_blobs:
             name = blob["name"]
-            ticker = name.split("/")[-1].split("_", 1)[0]
+            ticker = name.split("/")[-1].split(".", 1)[0]
+            watermarks[name] = {
+                "etag": blob["etag"],
+                "last_modified": blob["last_modified"].isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
             out.append(
                 silver.BlobProcessResult(
                     blob_name=name,
-                    silver_path=f"finance-data/balance_sheet/{ticker}_quarterly_balance-sheet",
+                    silver_path=f"finance-data/balance_sheet/buckets/{ticker}",
                     ticker=ticker,
                     status="ok",
                     rows_written=1,
-                    watermark_signature={
-                        "etag": blob["etag"],
-                        "last_modified": blob["last_modified"].isoformat(),
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    },
                 )
             )
         return out, 0.01
@@ -408,15 +438,14 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     saved_watermarks = {}
 
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(silver, "silver_manifest_consumption_enabled", lambda: False)
-    monkeypatch.setattr(silver, "_list_bronze_finance_candidates", _fake_list)
-    monkeypatch.setattr(silver, "_process_candidate_blobs", _fake_process)
+    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", _fake_list)
+    monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index"))
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 3)
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
-    monkeypatch.setattr(silver, "_run_finance_reconciliation", lambda *, bronze_blob_list: (0, 0))
-    monkeypatch.setattr(silver, "write_silver_finance_ack", lambda **_kwargs: None)
     monkeypatch.setattr(
         silver,
         "save_last_success",
@@ -439,49 +468,34 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     assert saved_watermarks["key"] == "bronze_finance_data"
 
 
-def test_silver_finance_manifest_mode_consumes_unacked_manifest_and_writes_ack(monkeypatch):
-    manifest_blob = {
-        "name": "finance-data/Valuation/A_quarterly_valuation_measures.json",
-        "etag": "etag-a",
-        "last_modified": datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc).isoformat(),
-    }
-    live_blob = {
-        "name": "finance-data/Valuation/A_quarterly_valuation_measures.json",
+def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
+    bucket_blob = {
+        "name": "finance-data/buckets/A.parquet",
         "etag": "etag-a",
         "last_modified": datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc),
     }
-    manifest_payload = {
-        "runId": "bronze-finance-20260131T000000000000Z-abcd1234",
-        "manifestPath": "system/run-manifests/bronze_finance/bronze-finance-20260131T000000000000Z-abcd1234.json",
-        "blobs": [manifest_blob],
-    }
-    ack_calls = {}
     saved_last_success = {}
 
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
-    monkeypatch.setattr(silver, "silver_manifest_consumption_enabled", lambda: True)
-    monkeypatch.setattr(silver, "load_latest_bronze_finance_manifest", lambda: dict(manifest_payload))
-    monkeypatch.setattr(silver, "silver_finance_ack_exists", lambda _run_id: False)
-    monkeypatch.setattr(silver, "_list_bronze_finance_candidates", lambda: ([dict(live_blob)], 0))
-    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 2)
+    monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([dict(bucket_blob)], 0))
+    monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
-    monkeypatch.setattr(silver, "_run_finance_reconciliation", lambda *, bronze_blob_list: (0, 0))
     monkeypatch.setattr(
         silver,
-        "_process_candidate_blobs",
-        lambda candidate_blobs, **_kwargs: (
+        "_process_alpha26_candidate_blobs",
+        lambda *, candidate_blobs, desired_end, backfill_start=None, watermarks=None, **_kwargs: (
             [
                 silver.BlobProcessResult(
                     blob_name=candidate_blobs[0]["name"],
-                    silver_path="finance-data/valuation/A_quarterly_valuation_measures",
+                    silver_path="finance-data/valuation/buckets/A",
                     ticker="A",
                     status="ok",
                     rows_written=1,
                     watermark_signature={
                         "etag": "etag-a",
-                        "last_modified": manifest_blob["last_modified"],
+                        "last_modified": bucket_blob["last_modified"].isoformat(),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     },
                 )
@@ -489,6 +503,7 @@ def test_silver_finance_manifest_mode_consumes_unacked_manifest_and_writes_ack(m
             0.01,
         ),
     )
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index"))
     monkeypatch.setattr(
         silver,
         "save_last_success",
@@ -497,84 +512,10 @@ def test_silver_finance_manifest_mode_consumes_unacked_manifest_and_writes_ack(m
         ),
     )
     monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        silver,
-        "write_silver_finance_ack",
-        lambda **kwargs: ack_calls.update(kwargs) or "system/run-manifests/silver_finance/ack.json",
-    )
 
     exit_code = silver.main()
     assert exit_code == 0
-    assert saved_last_success["metadata"]["source"] == "bronze-manifest"
-    assert saved_last_success["metadata"]["manifest_run_id"] == manifest_payload["runId"]
-    assert ack_calls["run_id"] == manifest_payload["runId"]
+    assert saved_last_success["metadata"]["source"] == "alpha26-bucket-listing"
+    assert saved_last_success["metadata"]["manifest_run_id"] is None
+    assert saved_last_success["metadata"]["manifest_path"] is None
 
-
-def test_run_finance_reconciliation_purges_silver_orphans(monkeypatch):
-    class _FakeSilverClient:
-        def __init__(self) -> None:
-            self.deleted_paths: list[str] = []
-
-        def delete_prefix(self, path: str) -> int:
-            self.deleted_paths.append(path)
-            return 2
-
-    fake_client = _FakeSilverClient()
-    monkeypatch.setattr(silver, "silver_client", fake_client)
-    monkeypatch.setattr(silver, "collect_delta_silver_finance_symbols", lambda *, client: {"AAPL", "MSFT"})
-    monkeypatch.setattr(silver, "get_backfill_range", lambda: (None, None))
-
-    orphan_count, deleted_blobs = silver._run_finance_reconciliation(
-        bronze_blob_list=[
-            {"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json"},
-            {"name": "finance-data/Income Statement/AAPL_quarterly_financials.json"},
-        ]
-    )
-
-    assert orphan_count == 1
-    assert deleted_blobs == 8
-    assert fake_client.deleted_paths == [
-        DataPaths.get_finance_path("balance_sheet", "MSFT", "quarterly_balance-sheet"),
-        DataPaths.get_finance_path("income_statement", "MSFT", "quarterly_financials"),
-        DataPaths.get_finance_path("cash_flow", "MSFT", "quarterly_cash-flow"),
-        DataPaths.get_finance_path("valuation", "MSFT", "quarterly_valuation_measures"),
-    ]
-
-
-def test_run_finance_reconciliation_applies_cutoff_sweep(monkeypatch):
-    class _FakeSilverClient:
-        def delete_prefix(self, _path: str) -> int:
-            return 0
-
-    fake_client = _FakeSilverClient()
-    captured: dict = {}
-
-    monkeypatch.setattr(silver, "silver_client", fake_client)
-    monkeypatch.setattr(silver, "collect_delta_silver_finance_symbols", lambda *, client: {"AAPL", "MSFT"})
-    monkeypatch.setattr(
-        silver,
-        "enforce_backfill_cutoff_on_tables",
-        lambda **kwargs: captured.update(kwargs)
-        or type(
-            "_Stats",
-            (),
-            {"tables_scanned": 0, "tables_rewritten": 0, "deleted_blobs": 0, "rows_dropped": 0, "errors": 0},
-        )(),
-    )
-    monkeypatch.setattr(silver, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
-
-    silver._run_finance_reconciliation(
-        bronze_blob_list=[
-            {"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json"},
-        ]
-    )
-
-    assert captured["symbols"] == {"AAPL"}
-    assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
-
-
-def test_run_finance_reconciliation_requires_storage_client(monkeypatch):
-    monkeypatch.setattr(silver, "silver_client", None)
-
-    with pytest.raises(RuntimeError, match="requires silver storage client"):
-        silver._run_finance_reconciliation(bronze_blob_list=[])

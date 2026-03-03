@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 import hashlib
+from io import BytesIO
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
@@ -34,6 +35,7 @@ from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 from core import config as cfg
 from core import core as mdc
+from core import delta_core
 from core.blob_storage import BlobStorageClient
 from core.debug_symbols import read_debug_symbols_state, update_debug_symbols_state
 from core.core import get_symbol_sync_state
@@ -48,6 +50,8 @@ from core.runtime_config import (
     normalize_env_override,
     upsert_runtime_config,
 )
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 from core.purge_rules import (
     PurgeRule,
     claim_purge_rule_for_run,
@@ -3283,69 +3287,96 @@ def _append_symbol_to_bronze_blacklists(client: BlobStorageClient, symbol: str) 
     return {"updated": len(blacklist_paths), "paths": blacklist_paths}
 
 
+def _remove_symbol_from_alpha26_bucket(
+    *,
+    client: BlobStorageClient,
+    domain_prefix: str,
+    symbol: str,
+) -> int:
+    bucket = bronze_bucketing.bucket_letter(symbol)
+    bucket_path = bronze_bucketing.bucket_blob_path(domain_prefix, bucket)
+    raw = mdc.read_raw_bytes(bucket_path, client=client)
+    if not raw:
+        return 0
+    df = pd.read_parquet(BytesIO(raw))
+    if df is None or df.empty or "symbol" not in df.columns:
+        return 0
+    symbol_mask = df["symbol"].astype(str).str.upper() == symbol
+    removed = int(symbol_mask.sum())
+    if removed <= 0:
+        return 0
+    filtered = df.loc[~symbol_mask].copy()
+    payload = filtered.to_parquet(index=False, compression=bronze_bucketing.alpha26_codec())
+    mdc.store_raw_bytes(payload, bucket_path, client=client)
+    return removed
+
+
+def _remove_symbol_from_delta_bucket(
+    *,
+    container: str,
+    path: str,
+    symbol: str,
+) -> int:
+    try:
+        df = load_delta(container, path)
+    except Exception:
+        return 0
+    if df is None or df.empty:
+        return 0
+
+    symbol_column = None
+    for candidate in ("symbol", "Symbol", "ticker", "Ticker"):
+        if candidate in df.columns:
+            symbol_column = candidate
+            break
+    if not symbol_column:
+        return 0
+
+    mask = df[symbol_column].astype(str).str.upper() == symbol
+    removed = int(mask.sum())
+    if removed <= 0:
+        return 0
+
+    filtered = df.loc[~mask].reset_index(drop=True)
+    delta_core.store_delta(filtered, container, path, mode="overwrite")
+    return removed
+
+
 def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -> List[Dict[str, Any]]:
     normalized_symbol = _normalize_purge_symbol(symbol)
-    market_symbol = _market_symbol(normalized_symbol)
     earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
-
-    tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
-
-    market_path = f"market-data/{market_symbol}.csv"
-    tasks.append(
-        (
-            {
-                "layer": "bronze",
-                "domain": "market",
-                "container": client.container_name,
-                "path": market_path,
-            },
-            lambda path=market_path: _delete_blob_if_exists(client, path=path),
-        )
-    )
-
-    for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
-        folder_candidates = _FINANCE_BRONZE_FOLDER_ALIASES.get(folder, (folder,))
-        for folder_candidate in folder_candidates:
-            finance_path = f"finance-data/{folder_candidate}/{normalized_symbol}_{suffix}.json"
-            tasks.append(
-                (
-                    {
-                        "layer": "bronze",
-                        "domain": "finance",
-                        "container": client.container_name,
-                        "path": finance_path,
-                    },
-                    lambda path=finance_path: _delete_blob_if_exists(client, path=path),
-                )
+    bronze_bucketing.bronze_layout_mode()
+    alpha26_tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
+    alpha26_domains = {
+        "market": "market-data",
+        "finance": "finance-data",
+        "earnings": str(earnings_prefix).strip("/"),
+        "price-target": "price-target-data",
+    }
+    for domain, prefix in alpha26_domains.items():
+        bucket_path = bronze_bucketing.bucket_blob_path(prefix, bronze_bucketing.bucket_letter(normalized_symbol))
+        alpha26_tasks.append(
+            (
+                {
+                    "layer": "bronze",
+                    "domain": domain,
+                    "container": client.container_name,
+                    "path": bucket_path,
+                    "operation": "row_delete",
+                },
+                lambda p=prefix: _remove_symbol_from_alpha26_bucket(
+                    client=client,
+                    domain_prefix=p,
+                    symbol=normalized_symbol,
+                ),
             )
-
-    earnings_path = f"{earnings_prefix}/{normalized_symbol}.json"
-    tasks.append(
-        (
-            {
-                "layer": "bronze",
-                "domain": "earnings",
-                "container": client.container_name,
-                "path": earnings_path,
-            },
-            lambda path=earnings_path: _delete_blob_if_exists(client, path=path),
         )
+    worker_count = _resolve_purge_symbol_target_workers(len(alpha26_tasks))
+    return _run_symbol_cleanup_tasks(
+        alpha26_tasks,
+        worker_count=worker_count,
+        thread_name_prefix="purge-symbol-bronze-alpha26",
     )
-
-    price_target_path = f"price-target-data/{normalized_symbol}.parquet"
-    tasks.append(
-        (
-            {
-                "layer": "bronze",
-                "domain": "price-target",
-                "container": client.container_name,
-                "path": price_target_path,
-            },
-            lambda path=price_target_path: _delete_blob_if_exists(client, path=path),
-        )
-    )
-    worker_count = _resolve_purge_symbol_target_workers(len(tasks))
-    return _run_symbol_cleanup_tasks(tasks, worker_count=worker_count, thread_name_prefix="purge-symbol-bronze")
 
 
 def _remove_symbol_from_layer_storage(
@@ -3355,114 +3386,148 @@ def _remove_symbol_from_layer_storage(
     layer: Literal["silver", "gold"],
 ) -> List[Dict[str, Any]]:
     normalized_symbol = _normalize_purge_symbol(symbol)
-    market_symbol = _market_symbol(normalized_symbol)
-    tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
-
+    bucket = layer_bucketing.bucket_letter(normalized_symbol)
+    alpha26_tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
     if layer == "silver":
-        market_path = DataPaths.get_market_data_path(market_symbol)
-        tasks.append(
-            (
-                {
-                    "layer": layer,
-                    "domain": "market",
-                    "container": container,
-                    "path": market_path,
-                },
-                lambda path=market_path: _delete_prefix_if_exists(client=client, path=path),
-            )
+        layer_bucketing.silver_layout_mode()
+        alpha26_tasks.extend(
+            [
+                (
+                    {
+                        "layer": layer,
+                        "domain": "market",
+                        "container": container,
+                        "path": DataPaths.get_silver_market_bucket_path(bucket),
+                        "operation": "row_delete",
+                    },
+                    lambda path=DataPaths.get_silver_market_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                        container=container,
+                        path=path,
+                        symbol=normalized_symbol,
+                    ),
+                ),
+                (
+                    {
+                        "layer": layer,
+                        "domain": "earnings",
+                        "container": container,
+                        "path": DataPaths.get_silver_earnings_bucket_path(bucket),
+                        "operation": "row_delete",
+                    },
+                    lambda path=DataPaths.get_silver_earnings_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                        container=container,
+                        path=path,
+                        symbol=normalized_symbol,
+                    ),
+                ),
+                (
+                    {
+                        "layer": layer,
+                        "domain": "price-target",
+                        "container": container,
+                        "path": DataPaths.get_silver_price_target_bucket_path(bucket),
+                        "operation": "row_delete",
+                    },
+                    lambda path=DataPaths.get_silver_price_target_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                        container=container,
+                        path=path,
+                        symbol=normalized_symbol,
+                    ),
+                ),
+            ]
         )
-
-        for folder, suffix in _FINANCE_BRONZE_TABLE_TYPES:
-            finance_path = DataPaths.get_finance_path(folder, normalized_symbol, suffix)
-            tasks.append(
+        for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation"):
+            finance_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+            alpha26_tasks.append(
                 (
                     {
                         "layer": layer,
                         "domain": "finance",
                         "container": container,
-                        "path": finance_path,
+                        "path": finance_bucket_path,
+                        "operation": "row_delete",
                     },
-                    lambda path=finance_path: _delete_prefix_if_exists(client=client, path=path),
+                    lambda path=finance_bucket_path: _remove_symbol_from_delta_bucket(
+                        container=container,
+                        path=path,
+                        symbol=normalized_symbol,
+                    ),
                 )
             )
+        worker_count = _resolve_purge_symbol_target_workers(len(alpha26_tasks))
+        return _run_symbol_cleanup_tasks(
+            alpha26_tasks,
+            worker_count=worker_count,
+            thread_name_prefix="purge-symbol-silver-alpha26",
+        )
 
-        earnings_path = DataPaths.get_earnings_path(normalized_symbol)
-        tasks.append(
-            (
-                {
-                    "layer": layer,
-                    "domain": "earnings",
-                    "container": container,
-                    "path": earnings_path,
-                },
-                lambda path=earnings_path: _delete_prefix_if_exists(client=client, path=path),
-            )
-        )
-        price_target_path = DataPaths.get_price_target_path(normalized_symbol)
-        tasks.append(
-            (
-                {
-                    "layer": layer,
-                    "domain": "price-target",
-                    "container": container,
-                    "path": price_target_path,
-                },
-                lambda path=price_target_path: _delete_prefix_if_exists(client=client, path=path),
-            )
-        )
-    else:
-        market_path = DataPaths.get_gold_features_path(market_symbol)
-        tasks.append(
+    layer_bucketing.gold_layout_mode()
+    alpha26_tasks.extend(
+        [
             (
                 {
                     "layer": layer,
                     "domain": "market",
                     "container": container,
-                    "path": market_path,
+                    "path": DataPaths.get_gold_market_bucket_path(bucket),
+                    "operation": "row_delete",
                 },
-                lambda path=market_path: _delete_prefix_if_exists(client=client, path=path),
-            )
-        )
-        finance_path = DataPaths.get_gold_finance_path(normalized_symbol)
-        tasks.append(
+                lambda path=DataPaths.get_gold_market_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                    container=container,
+                    path=path,
+                    symbol=normalized_symbol,
+                ),
+            ),
             (
                 {
                     "layer": layer,
                     "domain": "finance",
                     "container": container,
-                    "path": finance_path,
+                    "path": DataPaths.get_gold_finance_bucket_path(bucket),
+                    "operation": "row_delete",
                 },
-                lambda path=finance_path: _delete_prefix_if_exists(client=client, path=path),
-            )
-        )
-        earnings_path = DataPaths.get_gold_earnings_path(normalized_symbol)
-        tasks.append(
+                lambda path=DataPaths.get_gold_finance_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                    container=container,
+                    path=path,
+                    symbol=normalized_symbol,
+                ),
+            ),
             (
                 {
                     "layer": layer,
                     "domain": "earnings",
                     "container": container,
-                    "path": earnings_path,
+                    "path": DataPaths.get_gold_earnings_bucket_path(bucket),
+                    "operation": "row_delete",
                 },
-                lambda path=earnings_path: _delete_prefix_if_exists(client=client, path=path),
-            )
-        )
-        price_target_path = DataPaths.get_gold_price_targets_path(normalized_symbol)
-        tasks.append(
+                lambda path=DataPaths.get_gold_earnings_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                    container=container,
+                    path=path,
+                    symbol=normalized_symbol,
+                ),
+            ),
             (
                 {
                     "layer": layer,
                     "domain": "price-target",
                     "container": container,
-                    "path": price_target_path,
+                    "path": DataPaths.get_gold_price_targets_bucket_path(bucket),
+                    "operation": "row_delete",
                 },
-                lambda path=price_target_path: _delete_prefix_if_exists(client=client, path=path),
-            )
-        )
-
-    worker_count = _resolve_purge_symbol_target_workers(len(tasks))
-    thread_name = f"purge-symbol-{layer}"
-    return _run_symbol_cleanup_tasks(tasks, worker_count=worker_count, thread_name_prefix=thread_name)
+                lambda path=DataPaths.get_gold_price_targets_bucket_path(bucket): _remove_symbol_from_delta_bucket(
+                    container=container,
+                    path=path,
+                    symbol=normalized_symbol,
+                ),
+            ),
+        ]
+    )
+    worker_count = _resolve_purge_symbol_target_workers(len(alpha26_tasks))
+    return _run_symbol_cleanup_tasks(
+        alpha26_tasks,
+        worker_count=worker_count,
+        thread_name_prefix="purge-symbol-gold-alpha26",
+    )
 
 
 def _resolve_purge_targets(scope: str, layer: Optional[str], domain: Optional[str]) -> List[Dict[str, Optional[str]]]:

@@ -1,10 +1,14 @@
 import pandas as pd
 from datetime import datetime
+from io import BytesIO
+from typing import Optional
 
 from core import core as mdc
 from core import config as cfg
 from core import delta_core
 from core.pipeline import DataPaths
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 from tasks.common.backfill import (
     apply_backfill_start_cutoff,
     filter_by_date,
@@ -38,6 +42,13 @@ from tasks.common.market_reconciliation import (
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
+_ALPHA26_EARNINGS_MIN_COLUMNS = [
+    "date",
+    "symbol",
+    "reported_eps",
+    "eps_estimate",
+    "surprise",
+]
 
 
 def process_file(blob_name: str) -> bool:
@@ -49,69 +60,62 @@ def process_file(blob_name: str) -> bool:
     return process_blob({"name": blob_name}, watermarks={}) != "failed"
 
 
-def process_blob(blob: dict, *, watermarks: dict) -> str:
-    blob_name = blob["name"]  # earnings-data/{symbol}.json
-    if not blob_name.endswith(".json"):
-        return "skipped_non_json"
-
-    # Expecting earnings-data/{symbol}.json
-    prefix_len = len(cfg.EARNINGS_DATA_PREFIX) + 1  # +1 for slash
-    ticker = blob_name[prefix_len:].replace(".json", "")
-    mdc.write_line(f"Processing {ticker} from {blob_name}...")
-
+def _process_symbol_frame(
+    *,
+    ticker: str,
+    df_new: pd.DataFrame,
+    source_name: str,
+    include_history: bool = True,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
     cloud_path = DataPaths.get_earnings_path(ticker)
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return "skipped_unchanged"
+    out = df_new.copy()
+    out = out.drop(columns=["source_hash", "ingested_at", "symbol"], errors="ignore")
+    out = out.drop(columns=[col for col in out.columns if "Unnamed" in col], errors="ignore")
+    out = out.rename(
+        columns={
+            "date": "Date",
+            "reported_eps": "Reported EPS",
+            "eps_estimate": "EPS Estimate",
+            "surprise": "Surprise",
+        }
+    )
 
-    # 1. Read Raw from Bronze
     try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        from io import BytesIO
-
-        # JSON
-        df_new = pd.read_json(BytesIO(raw_bytes), orient="records")
-    except Exception as e:
-        mdc.write_error(f"Failed to read/parse {blob_name}: {e}")
-        return "failed"
-
-    # 2. Clean/Normalize
-    df_new = df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in col], errors="ignore")
-    try:
-        df_new = normalize_date_column(
-            df_new,
-            context=f"earnings date parse {blob_name}",
+        out = normalize_date_column(
+            out,
+            context=f"earnings date parse {source_name}",
             aliases=("Date", "date"),
             canonical="Date",
         )
-        df_new = assert_no_unexpected_mixed_empty(df_new, context=f"earnings date filter {blob_name}", alias="Date")
+        out = assert_no_unexpected_mixed_empty(out, context=f"earnings date filter {source_name}", alias="Date")
     except ContractViolation as exc:
-        log_contract_violation(f"earnings preflight failed for {blob_name}", exc, severity="ERROR")
+        log_contract_violation(f"earnings preflight failed for {source_name}", exc, severity="ERROR")
         return "failed"
 
-    df_new["Symbol"] = ticker
+    out["Symbol"] = ticker
 
     backfill_start, backfill_end = get_backfill_range()
     if backfill_start or backfill_end:
-        df_new = filter_by_date(df_new, "Date", backfill_start, backfill_end)
+        out = filter_by_date(out, "Date", backfill_start, backfill_end)
         latest_only = False
     else:
         latest_only = get_latest_only_flag("EARNINGS", default=True)
+    if not include_history:
+        latest_only = False
 
-    # Only process the most recent earnings date unless backfill or latest_only disabled.
-    if latest_only and "Date" in df_new.columns and not df_new.empty:
-        latest_date = df_new["Date"].max()
-        df_new = df_new[df_new["Date"] == latest_date].copy()
+    if latest_only and "Date" in out.columns and not out.empty:
+        latest_date = out["Date"].max()
+        out = out[out["Date"] == latest_date].copy()
 
-    # 3. Load Existing Silver (History)
-    df_history = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
-
-    # 4. Merge
-    # Earnings data is tricky. We often want to UPDATE fields (Surprise) for past dates.
-    # Simple strategy: Concat -> Drop Duplicates on [Symbol, Date] -> Keep Last (Latest Snapshot version of that date).
-
+    df_history = (
+        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
+        if include_history
+        else None
+    )
     if df_history is None or df_history.empty:
-        df_merged = df_new
+        df_merged = out
     else:
         df_history = align_to_existing_schema(df_history, cfg.AZURE_CONTAINER_SILVER, cloud_path)
         if "Date" in df_history.columns:
@@ -119,34 +123,27 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         elif "date" in df_history.columns:
             df_history = df_history.rename(columns={"date": "Date"})
             df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
+        df_merged = pd.concat([df_history, out], ignore_index=True)
 
-        df_merged = pd.concat([df_history, df_new], ignore_index=True)
-
-    # Sort
     df_merged = df_merged.sort_values(by=["Date"], ascending=True)
-
-    # Dedup: Keep LAST (Newest information for that Earnings Date)
     df_merged = df_merged.drop_duplicates(subset=["Date", "Symbol"], keep="last")
     df_merged = df_merged.reset_index(drop=True)
 
-    # Enforce shared backfill cutoff on final merged Silver payload.
     df_merged, _ = apply_backfill_start_cutoff(
         df_merged,
         date_col="Date",
         backfill_start=backfill_start,
         context=f"silver earnings {ticker}",
     )
-
     if backfill_start is not None and df_merged.empty:
+        if not persist:
+            return "ok"
         if silver_client is not None:
             deleted = silver_client.delete_prefix(cloud_path)
             mdc.write_line(
                 f"Silver earnings backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
                 f"deleted {deleted} blob(s) under {cloud_path}."
             )
-            if signature:
-                signature["updated_at"] = datetime.utcnow().isoformat()
-                watermarks[blob_name] = signature
             return "ok"
         mdc.write_warning(
             f"Silver earnings backfill purge for {ticker} could not delete {cloud_path}: storage client unavailable."
@@ -161,32 +158,167 @@ def process_blob(blob: dict, *, watermarks: dict) -> str:
         price_scale=2,
         calculated_scale=4,
     )
-
-    # 5. Write to Silver
     try:
-        delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
-        if backfill_start is not None:
-            delta_core.vacuum_delta_table(
-                cfg.AZURE_CONTAINER_SILVER,
-                cloud_path,
-                retention_hours=0,
-                dry_run=False,
-                enforce_retention_duration=False,
-                full=True,
-            )
+        if not persist:
+            if alpha26_bucket_frames is None:
+                raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
+            bucket = layer_bucketing.bucket_letter(ticker)
+            alpha26_bucket_frames.setdefault(bucket, []).append(df_merged.copy())
+        else:
+            delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+            if backfill_start is not None:
+                delta_core.vacuum_delta_table(
+                    cfg.AZURE_CONTAINER_SILVER,
+                    cloud_path,
+                    retention_hours=0,
+                    dry_run=False,
+                    enforce_retention_duration=False,
+                    full=True,
+                )
         mdc.write_line(
             "precision_policy_applied domain=earnings "
             f"ticker={ticker} price_cols=none calc_cols=none rows={len(df_merged)}"
         )
-    except Exception as e:
-        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {e}")
+    except Exception as exc:
+        mdc.write_error(f"Failed to write Silver Delta for {ticker}: {exc}")
         return "failed"
 
-    mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
-    if signature:
+    if persist:
+        mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+    return "ok"
+
+
+def process_blob(
+    blob: dict,
+    *,
+    watermarks: dict,
+    include_history: bool = True,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
+    blob_name = blob["name"]  # earnings-data/{symbol}.json
+    if not blob_name.endswith(".json"):
+        return "skipped_non_json"
+
+    prefix_len = len(cfg.EARNINGS_DATA_PREFIX) + 1
+    ticker = blob_name[prefix_len:].replace(".json", "")
+    mdc.write_line(f"Processing {ticker} from {blob_name}...")
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return "skipped_unchanged"
+
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_new = pd.read_json(BytesIO(raw_bytes), orient="records")
+    except Exception as exc:
+        mdc.write_error(f"Failed to read/parse {blob_name}: {exc}")
+        return "failed"
+
+    status = _process_symbol_frame(
+        ticker=ticker,
+        df_new=df_new,
+        source_name=blob_name,
+        include_history=include_history,
+        persist=persist,
+        alpha26_bucket_frames=alpha26_bucket_frames,
+    )
+    if status == "ok" and signature:
         signature["updated_at"] = datetime.utcnow().isoformat()
         watermarks[blob_name] = signature
-    return "ok"
+    return status
+
+
+def process_alpha26_bucket_blob(
+    blob: dict,
+    *,
+    watermarks: dict,
+    include_history: bool = False,
+    persist: bool = False,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
+    blob_name = str(blob.get("name", ""))
+    if not blob_name.endswith(".parquet"):
+        return "skipped_non_parquet"
+
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return "skipped_unchanged"
+
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_bucket = pd.read_parquet(BytesIO(raw_bytes))
+    except Exception as exc:
+        mdc.write_error(f"Failed to read earnings alpha26 bucket {blob_name}: {exc}")
+        return "failed"
+
+    if df_bucket is None or df_bucket.empty:
+        if signature:
+            signature["updated_at"] = datetime.utcnow().isoformat()
+            watermarks[blob_name] = signature
+        return "ok"
+
+    symbol_col = "symbol" if "symbol" in df_bucket.columns else ("Symbol" if "Symbol" in df_bucket.columns else None)
+    if symbol_col is None:
+        mdc.write_error(f"Missing symbol column in earnings alpha26 bucket {blob_name}.")
+        return "failed"
+
+    debug_symbols = set(getattr(cfg, "DEBUG_SYMBOLS", []) or [])
+    has_failed = False
+    for symbol, group in df_bucket.groupby(symbol_col):
+        ticker = str(symbol or "").strip().upper()
+        if not ticker:
+            continue
+        if debug_symbols and ticker not in debug_symbols:
+            continue
+        status = _process_symbol_frame(
+            ticker=ticker,
+            df_new=group.copy(),
+            source_name=blob_name,
+            include_history=include_history,
+            persist=persist,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
+        if status == "failed":
+            has_failed = True
+
+    if not has_failed and signature:
+        signature["updated_at"] = datetime.utcnow().isoformat()
+        watermarks[blob_name] = signature
+    return "failed" if has_failed else "ok"
+
+
+def _write_alpha26_earnings_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) -> tuple[int, Optional[str]]:
+    symbol_to_bucket: dict[str, str] = {}
+    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        parts = bucket_frames.get(bucket, [])
+        if parts:
+            df_bucket = pd.concat(parts, ignore_index=True)
+            if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
+                df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
+                df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
+                df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
+                df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
+                    subset=["symbol", "date"], keep="last"
+                )
+                for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
+                    if symbol:
+                        symbol_to_bucket[symbol] = bucket
+            else:
+                df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
+        else:
+            df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
+        delta_core.store_delta(
+            df_bucket.reset_index(drop=True),
+            cfg.AZURE_CONTAINER_SILVER,
+            DataPaths.get_silver_earnings_bucket_path(bucket),
+            mode="overwrite",
+        )
+    index_path = layer_bucketing.write_layer_symbol_index(
+        layer="silver",
+        domain="earnings",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return len(symbol_to_bucket), index_path
 
 
 def _run_earnings_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
@@ -250,17 +382,22 @@ def main():
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to silver earnings data: {backfill_start.date().isoformat()}")
+    bronze_bucketing.bronze_layout_mode()
+    layer_bucketing.silver_layout_mode()
+    force_rebuild = layer_bucketing.silver_alpha26_force_rebuild()
 
     mdc.write_line("Listing Bronze files...")
-    blobs = bronze_client.list_blob_infos(name_starts_with="earnings-data/")
+    earnings_prefix = str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/")
+    blobs = bronze_client.list_blob_infos(name_starts_with=f"{earnings_prefix}/")
     watermarks = load_watermarks("bronze_earnings_data")
     last_success = load_last_success("silver_earnings_data")
     watermarks_dirty = False
-    blob_list = [b for b in blobs if b["name"].endswith(".json")]
-
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
-        mdc.write_line(f"DEBUG: Filtering for {cfg.DEBUG_SYMBOLS}")
-        blob_list = [b for b in blob_list if any(s in b["name"] for s in cfg.DEBUG_SYMBOLS)]
+    blob_list = [
+        b
+        for b in blobs
+        if str(b.get("name", "")).startswith(f"{earnings_prefix}/buckets/")
+        and str(b.get("name", "")).endswith(".parquet")
+    ]
 
     checkpoint_skipped = 0
     candidate_blobs: list[dict] = []
@@ -270,6 +407,7 @@ def main():
             blob,
             prior_signature=prior,
             last_success_at=last_success,
+            force_reprocess=force_rebuild,
         )
         if should_process:
             candidate_blobs.append(blob)
@@ -287,8 +425,15 @@ def main():
     failed = 0
     skipped_unchanged = 0
     skipped_other = 0
+    alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
     for blob in candidate_blobs:
-        status = process_blob(blob, watermarks=watermarks)
+        status = process_alpha26_bucket_blob(
+            blob,
+            watermarks=watermarks,
+            include_history=False,
+            persist=False,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
         if status == "ok":
             processed += 1
             watermarks_dirty = True
@@ -299,20 +444,29 @@ def main():
         else:
             failed += 1
 
+    alpha26_written_symbols = 0
+    alpha26_index_path: Optional[str] = None
+    if failed == 0:
+        try:
+            alpha26_written_symbols, alpha26_index_path = _write_alpha26_earnings_buckets(alpha26_bucket_frames)
+            mdc.write_line(
+                "Silver earnings alpha26 buckets written: "
+                f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
+            )
+        except Exception as exc:
+            failed += 1
+            mdc.write_error(f"Silver earnings alpha26 bucket write failed: {exc}")
+
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
-    try:
-        reconciliation_orphans, reconciliation_deleted_blobs = _run_earnings_reconciliation(bronze_blob_list=blob_list)
-    except Exception as exc:
-        reconciliation_failed = 1
-        mdc.write_error(f"Silver earnings reconciliation failed: {exc}")
 
     total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver earnings job complete: "
         f"processed={processed} skipped_unchanged={skipped_unchanged} "
         f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} "
+        f"alpha26_symbols={alpha26_written_symbols} "
         f"reconciled_orphans={reconciliation_orphans} "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} "
         f"failed={total_failed}"
@@ -329,6 +483,8 @@ def main():
                 "skipped_checkpoint": checkpoint_skipped,
                 "skipped_unchanged": skipped_unchanged,
                 "skipped_other": skipped_other,
+                "alpha26_symbols": alpha26_written_symbols,
+                "alpha26_index_path": alpha26_index_path,
                 "reconciled_orphans": reconciliation_orphans,
                 "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },

@@ -92,12 +92,11 @@ def test_get_blacklist_symbols_for_purge_returns_payload(monkeypatch) -> None:
 
 
 def test_remove_symbol_from_bronze_storage_covers_all_medallion_domain_folders(monkeypatch) -> None:
-    deleted_paths: List[str] = []
-
+    removed_calls: List[Dict[str, str]] = []
     monkeypatch.setattr(
         system,
-        "_delete_blob_if_exists",
-        lambda client, path: deleted_paths.append(path) or 1,
+        "_remove_symbol_from_alpha26_bucket",
+        lambda client, domain_prefix, symbol: removed_calls.append({"domain_prefix": domain_prefix, "symbol": symbol}) or 1,
     )
     monkeypatch.setattr(system.cfg, "EARNINGS_DATA_PREFIX", "earnings-data", raising=False)
 
@@ -105,34 +104,21 @@ def test_remove_symbol_from_bronze_storage_covers_all_medallion_domain_folders(m
     outcomes = system._remove_symbol_from_bronze_storage(client, "AAPL")
 
     assert {str(item["domain"]) for item in outcomes} == {"market", "finance", "earnings", "price-target"}
-    assert "market-data/AAPL.csv" in deleted_paths
-    assert "earnings-data/AAPL.json" in deleted_paths
-    assert "price-target-data/AAPL.parquet" in deleted_paths
-
-    canonical_finance_paths = {
-        "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json",
-        "finance-data/Income Statement/AAPL_quarterly_financials.json",
-        "finance-data/Cash Flow/AAPL_quarterly_cash-flow.json",
-        "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
+    assert {call["domain_prefix"] for call in removed_calls} == {
+        "market-data",
+        "finance-data",
+        "earnings-data",
+        "price-target-data",
     }
-    legacy_finance_paths = {
-        "finance-data/balance_sheet/AAPL_quarterly_balance-sheet.json",
-        "finance-data/income_statement/AAPL_quarterly_financials.json",
-        "finance-data/cash_flow/AAPL_quarterly_cash-flow.json",
-        "finance-data/valuation/AAPL_quarterly_valuation_measures.json",
-    }
-    deleted_paths_set = set(deleted_paths)
-    assert canonical_finance_paths.issubset(deleted_paths_set)
-    assert legacy_finance_paths.issubset(deleted_paths_set)
+    assert all(call["symbol"] == "AAPL" for call in removed_calls)
 
 
 def test_remove_symbol_from_layer_storage_covers_all_medallion_domain_folders(monkeypatch) -> None:
-    deleted_prefixes: List[str] = []
-
+    delta_calls: List[Dict[str, str]] = []
     monkeypatch.setattr(
         system,
-        "_delete_prefix_if_exists",
-        lambda client, path: deleted_prefixes.append(path) or 1,
+        "_remove_symbol_from_delta_bucket",
+        lambda *, container, path, symbol: delta_calls.append({"container": container, "path": path, "symbol": symbol}) or 1,
     )
     monkeypatch.setattr(system.cfg, "EARNINGS_DATA_PREFIX", "earnings-data", raising=False)
 
@@ -154,22 +140,91 @@ def test_remove_symbol_from_layer_storage_covers_all_medallion_domain_folders(mo
 
     silver_paths = {str(item["path"]) for item in silver_outcomes}
     assert silver_paths == {
-        "market-data/AAPL",
-        "finance-data/balance_sheet/AAPL_quarterly_balance-sheet",
-        "finance-data/income_statement/AAPL_quarterly_financials",
-        "finance-data/cash_flow/AAPL_quarterly_cash-flow",
-        "finance-data/valuation/AAPL_quarterly_valuation_measures",
-        "earnings-data/AAPL",
-        "price-target-data/AAPL",
+        "market-data/buckets/A",
+        "finance-data/balance_sheet/buckets/A",
+        "finance-data/income_statement/buckets/A",
+        "finance-data/cash_flow/buckets/A",
+        "finance-data/valuation/buckets/A",
+        "earnings-data/buckets/A",
+        "price-target-data/buckets/A",
     }
 
     gold_paths = {str(item["path"]) for item in gold_outcomes}
     assert gold_paths == {
-        "market/AAPL",
-        "finance/AAPL",
-        "earnings/AAPL",
-        "targets/AAPL",
+        "market/buckets/A",
+        "finance/buckets/A",
+        "earnings/buckets/A",
+        "targets/buckets/A",
     }
+    assert len(delta_calls) == 11
+    assert all(call["symbol"] == "AAPL" for call in delta_calls)
+
+
+def test_remove_symbol_from_layer_storage_uses_row_delete_in_silver_alpha26(monkeypatch) -> None:
+    monkeypatch.setattr(system.layer_bucketing, "is_silver_alpha26_mode", lambda: True)
+    monkeypatch.setattr(system.layer_bucketing, "is_gold_alpha26_mode", lambda: False)
+    monkeypatch.setattr(system.layer_bucketing, "bucket_letter", lambda _symbol: "A")
+
+    calls: List[Dict[str, str]] = []
+
+    def fake_remove_symbol_from_delta_bucket(*, container: str, path: str, symbol: str) -> int:
+        calls.append({"container": container, "path": path, "symbol": symbol})
+        return 1
+
+    monkeypatch.setattr(system, "_remove_symbol_from_delta_bucket", fake_remove_symbol_from_delta_bucket)
+
+    outcomes = system._remove_symbol_from_layer_storage(
+        client=_DummyBlobClient("silver-container"),
+        container="silver-container",
+        symbol="AAPL",
+        layer="silver",
+    )
+
+    assert len(outcomes) == 7
+    assert all(item.get("operation") == "row_delete" for item in outcomes)
+    assert {str(item["path"]) for item in outcomes} == {
+        "market-data/buckets/A",
+        "earnings-data/buckets/A",
+        "price-target-data/buckets/A",
+        "finance-data/balance_sheet/buckets/A",
+        "finance-data/income_statement/buckets/A",
+        "finance-data/cash_flow/buckets/A",
+        "finance-data/valuation/buckets/A",
+    }
+    assert len(calls) == 7
+    assert all(call["symbol"] == "AAPL" for call in calls)
+
+
+def test_remove_symbol_from_layer_storage_uses_row_delete_in_gold_alpha26(monkeypatch) -> None:
+    monkeypatch.setattr(system.layer_bucketing, "is_silver_alpha26_mode", lambda: False)
+    monkeypatch.setattr(system.layer_bucketing, "is_gold_alpha26_mode", lambda: True)
+    monkeypatch.setattr(system.layer_bucketing, "bucket_letter", lambda _symbol: "A")
+
+    calls: List[Dict[str, str]] = []
+
+    def fake_remove_symbol_from_delta_bucket(*, container: str, path: str, symbol: str) -> int:
+        calls.append({"container": container, "path": path, "symbol": symbol})
+        return 1
+
+    monkeypatch.setattr(system, "_remove_symbol_from_delta_bucket", fake_remove_symbol_from_delta_bucket)
+
+    outcomes = system._remove_symbol_from_layer_storage(
+        client=_DummyBlobClient("gold-container"),
+        container="gold-container",
+        symbol="AAPL",
+        layer="gold",
+    )
+
+    assert len(outcomes) == 4
+    assert all(item.get("operation") == "row_delete" for item in outcomes)
+    assert {str(item["path"]) for item in outcomes} == {
+        "market/buckets/A",
+        "finance/buckets/A",
+        "earnings/buckets/A",
+        "targets/buckets/A",
+    }
+    assert len(calls) == 4
+    assert all(call["symbol"] == "AAPL" for call in calls)
 
 
 def test_run_purge_symbol_operation_returns_regular_targets(monkeypatch) -> None:
@@ -218,8 +273,8 @@ def test_run_purge_symbol_operation_returns_regular_targets(monkeypatch) -> None
 
 
 def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
-    blob_paths: List[str] = []
-    prefix_paths: List[str] = []
+    bronze_bucket_calls: List[Dict[str, str]] = []
+    delta_bucket_calls: List[Dict[str, str]] = []
 
     monkeypatch.setattr(system, "BlobStorageClient", _DummyBlobClient)
     monkeypatch.setattr(
@@ -236,8 +291,16 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
         "_append_symbol_to_bronze_blacklists",
         lambda client, symbol: {"updated": 4, "paths": ["a.csv", "b.csv", "c.csv", "d.csv"]},
     )
-    monkeypatch.setattr(system, "_delete_blob_if_exists", lambda client, path: blob_paths.append(path) or 1)
-    monkeypatch.setattr(system, "_delete_prefix_if_exists", lambda client, path: prefix_paths.append(path) or 1)
+    monkeypatch.setattr(
+        system,
+        "_remove_symbol_from_alpha26_bucket",
+        lambda client, domain_prefix, symbol: bronze_bucket_calls.append({"domain_prefix": domain_prefix, "symbol": symbol}) or 1,
+    )
+    monkeypatch.setattr(
+        system,
+        "_remove_symbol_from_delta_bucket",
+        lambda *, container, path, symbol: delta_bucket_calls.append({"container": container, "path": path, "symbol": symbol}) or 1,
+    )
 
     result = system._run_purge_symbol_operation(system.PurgeSymbolRequest(symbol="AAPL", confirm=True))
 
@@ -246,7 +309,7 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
     assert counts == Counter(
         {
             ("bronze", "market"): 1,
-            ("bronze", "finance"): 8,
+            ("bronze", "finance"): 1,
             ("bronze", "earnings"): 1,
             ("bronze", "price-target"): 1,
             ("silver", "market"): 1,
@@ -260,27 +323,16 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
         }
     )
 
-    assert result["totalDeleted"] == 22
-    assert len(blob_paths) == 11
-    assert len(prefix_paths) == 11
+    assert result["totalDeleted"] == 15
+    assert len(bronze_bucket_calls) == 4
+    assert len(delta_bucket_calls) == 11
 
     bronze_finance_paths = sorted(
         item["path"]
         for item in data_targets
         if item["layer"] == "bronze" and item["domain"] == "finance"
     )
-    assert bronze_finance_paths == sorted(
-        [
-            "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json",
-            "finance-data/Income Statement/AAPL_quarterly_financials.json",
-            "finance-data/Cash Flow/AAPL_quarterly_cash-flow.json",
-            "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
-            "finance-data/balance_sheet/AAPL_quarterly_balance-sheet.json",
-            "finance-data/income_statement/AAPL_quarterly_financials.json",
-            "finance-data/cash_flow/AAPL_quarterly_cash-flow.json",
-            "finance-data/valuation/AAPL_quarterly_valuation_measures.json",
-        ]
-    )
+    assert bronze_finance_paths == ["finance-data/buckets/A.parquet"]
 
 
 def test_execute_purge_symbols_operation_tracks_partial_failures(monkeypatch) -> None:

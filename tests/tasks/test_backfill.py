@@ -52,15 +52,6 @@ def test_get_backfill_range_ignores_invalid_values(monkeypatch) -> None:
     assert end is None
 
 
-def test_get_backfill_range_always_returns_none_for_end(monkeypatch) -> None:
-    monkeypatch.setenv("BACKFILL_START_DATE", "2022-01-01")
-
-    start, end = backfill.get_backfill_range()
-
-    assert start == pd.Timestamp("2022-01-01")
-    assert end is None
-
-
 def test_filter_by_date_resets_index_after_filter() -> None:
     df = pd.DataFrame(
         {

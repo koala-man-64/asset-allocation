@@ -5,6 +5,8 @@ from typing import Any, Callable, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 
+from tasks.common import bronze_bucketing
+
 from tasks.common.backfill import apply_backfill_start_cutoff
 
 _FINANCE_BRONZE_SUBFOLDERS = {
@@ -25,6 +27,15 @@ _FINANCE_SILVER_SUBFOLDERS = {
     "cash_flow",
     "valuation",
 }
+
+
+def _use_index_symbol_source() -> bool:
+    bronze_bucketing.bronze_layout_mode()
+    return True
+
+
+def _load_index_symbols(domain: str) -> Set[str]:
+    return set(bronze_bucketing.load_symbol_set(domain))
 
 
 @dataclass(frozen=True)
@@ -125,39 +136,19 @@ def _extract_silver_finance_symbol(blob_name: str) -> Optional[str]:
 
 
 def collect_bronze_market_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
-    symbols: Set[str] = set()
-    for blob in blob_infos:
-        symbol = _extract_bronze_market_symbol(str(blob.get("name") or ""))
-        if symbol:
-            symbols.add(symbol)
-    return symbols
+    return _load_index_symbols("market")
 
 
 def collect_bronze_earnings_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
-    symbols: Set[str] = set()
-    for blob in blob_infos:
-        symbol = _extract_bronze_earnings_symbol(str(blob.get("name") or ""))
-        if symbol:
-            symbols.add(symbol)
-    return symbols
+    return _load_index_symbols("earnings")
 
 
 def collect_bronze_price_target_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
-    symbols: Set[str] = set()
-    for blob in blob_infos:
-        symbol = _extract_bronze_price_target_symbol(str(blob.get("name") or ""))
-        if symbol:
-            symbols.add(symbol)
-    return symbols
+    return _load_index_symbols("price-target")
 
 
 def collect_bronze_finance_symbols_from_blob_infos(blob_infos: Sequence[dict[str, Any]]) -> Set[str]:
-    symbols: Set[str] = set()
-    for blob in blob_infos:
-        symbol = _extract_bronze_finance_symbol(str(blob.get("name") or ""))
-        if symbol:
-            symbols.add(symbol)
-    return symbols
+    return _load_index_symbols("finance")
 
 
 def collect_delta_symbols(*, client: Any, root_prefix: str) -> Set[str]:

@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import BytesIO
 import os
 import time
 from typing import Any, Optional, Tuple
@@ -13,14 +14,9 @@ from core import core as mdc
 from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
-from tasks.common.run_manifests import (
-    load_latest_bronze_finance_manifest,
-    manifest_blobs,
-    silver_finance_ack_exists,
-    silver_manifest_consumption_enabled,
-    write_silver_finance_ack,
-)
 from tasks.common.watermarks import (
     check_blob_unchanged,
     load_last_success,
@@ -75,6 +71,13 @@ _FINANCE_RECONCILIATION_TABLES: Tuple[Tuple[str, str], ...] = (
     ("cash_flow", "quarterly_cash-flow"),
     ("valuation", "quarterly_valuation_measures"),
 )
+_ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = {
+    "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
+    "income_statement": ("Income Statement", "quarterly_financials"),
+    "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
+    "overview": ("Valuation", "quarterly_valuation_measures"),
+    "valuation": ("Valuation", "quarterly_valuation_measures"),
+}
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
 _DEFAULT_CATCHUP_MAX_PASSES = 3
@@ -86,6 +89,12 @@ _FINANCE_VALUATION_CALCULATED_COLUMNS = {
     "ev_revenue",
     "shares_outstanding",
 }
+_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = (
+    "balance_sheet",
+    "income_statement",
+    "cash_flow",
+    "valuation",
+)
 
 
 def _get_available_cpus() -> int:
@@ -204,6 +213,7 @@ def _build_checkpoint_candidates(
     blobs: list[dict],
     watermarks: dict,
     last_success: Optional[datetime],
+    force_reprocess: bool = False,
 ) -> tuple[list[dict], int]:
     checkpoint_skipped = 0
     candidates: list[dict] = []
@@ -216,6 +226,49 @@ def _build_checkpoint_candidates(
             blob,
             prior_signature=prior,
             last_success_at=last_success,
+            force_reprocess=force_reprocess,
+        )
+        if should_process:
+            candidates.append(blob)
+        else:
+            checkpoint_skipped += 1
+    return candidates, checkpoint_skipped
+
+
+def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
+    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/buckets/")
+    blobs = [
+        blob
+        for blob in listed_blobs
+        if str(blob.get("name", "")).startswith("finance-data/buckets/")
+        and str(blob.get("name", "")).endswith(".parquet")
+    ]
+    blobs.sort(key=lambda item: str(item.get("name", "")))
+    unsupported = max(0, len(listed_blobs) - len(blobs))
+    if unsupported > 0:
+        mdc.write_line(
+            f"Silver finance alpha26 input filter removed {unsupported} unsupported Bronze blob candidate(s); "
+            f"processing {len(blobs)} bucket inputs."
+        )
+    return blobs, 0
+
+
+def _build_alpha26_checkpoint_candidates(
+    *,
+    blobs: list[dict],
+    watermarks: dict,
+    last_success: Optional[datetime],
+    force_reprocess: bool = False,
+) -> tuple[list[dict], int]:
+    checkpoint_skipped = 0
+    candidates: list[dict] = []
+    for blob in blobs:
+        prior = watermarks.get(str(blob.get("name", "")))
+        should_process = should_process_blob_since_last_success(
+            blob,
+            prior_signature=prior,
+            last_success_at=last_success,
+            force_reprocess=force_reprocess,
         )
         if should_process:
             candidates.append(blob)
@@ -332,8 +385,16 @@ def _load_close_prices(ticker: str) -> pd.DataFrame:
     Load close price series for valuation approximation from Silver market Delta only.
     Fallback sources are intentionally disabled.
     """
-    market_path = DataPaths.get_market_data_path(ticker.replace(".", "-"))
-    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["date", "close"])
+    symbol = str(ticker or "").strip().upper()
+    if not symbol:
+        return pd.DataFrame()
+
+    layer_bucketing.silver_layout_mode()
+    market_path = DataPaths.get_silver_market_bucket_path(layer_bucketing.bucket_letter(symbol))
+    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["date", "close", "symbol"])
+    if df is not None and not df.empty and "symbol" in df.columns:
+        df = df[df["symbol"].astype(str).str.upper() == symbol]
+
     if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
         return pd.DataFrame()
 
@@ -518,154 +579,171 @@ def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFr
     return out
 
 
-def process_blob(
-    blob,
+def _finance_sub_domain(folder_name: str) -> str:
+    key = str(folder_name or "").strip().lower().replace("-", " ").replace("_", " ")
+    key = " ".join(key.split())
+    if key == "balance sheet":
+        return "balance_sheet"
+    if key == "income statement":
+        return "income_statement"
+    if key == "cash flow":
+        return "cash_flow"
+    if key == "valuation":
+        return "valuation"
+    return key.replace(" ", "_")
+
+
+def _write_alpha26_finance_silver_buckets(
+    bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
+) -> tuple[int, Optional[str]]:
+    symbol_to_bucket: dict[str, str] = {}
+    for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+        for bucket in layer_bucketing.ALPHABET_BUCKETS:
+            parts = bucket_frames.get((sub_domain, bucket), [])
+            if parts:
+                df_bucket = pd.concat(parts, ignore_index=True)
+                if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
+                    df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
+                    df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
+                    df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
+                    df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
+                        subset=["symbol", "date"], keep="last"
+                    )
+                    for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
+                        if symbol:
+                            symbol_to_bucket[symbol] = bucket
+                else:
+                    df_bucket = pd.DataFrame(columns=["date", "symbol"])
+            else:
+                df_bucket = pd.DataFrame(columns=["date", "symbol"])
+            delta_core.store_delta(
+                df_bucket.reset_index(drop=True),
+                cfg.AZURE_CONTAINER_SILVER,
+                DataPaths.get_silver_finance_bucket_path(sub_domain, bucket),
+                mode="overwrite",
+            )
+    index_path = layer_bucketing.write_layer_symbol_index(
+        layer="silver",
+        domain="finance",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return len(symbol_to_bucket), index_path
+
+
+def _process_finance_frame(
     *,
+    blob_name: str,
+    ticker: str,
+    folder_name: str,
+    suffix: str,
+    silver_path: str,
+    df_raw: pd.DataFrame,
     desired_end: pd.Timestamp,
-    backfill_start: Optional[pd.Timestamp] = None,
-    watermarks: dict,
+    backfill_start: Optional[pd.Timestamp],
+    signature: Optional[dict[str, Optional[str]]],
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> BlobProcessResult:
-    blob_name = blob["name"]
-    parsed_blob = _parse_supported_blob_name(blob_name)
-    if parsed_blob is None:
+    if df_raw is None or df_raw.empty:
         return BlobProcessResult(
             blob_name=blob_name,
-            silver_path=None,
-            ticker=None,
+            silver_path=silver_path,
+            ticker=ticker,
             status="failed",
-            error=f"Unsupported finance blob format: {blob_name}",
-        )
-    folder_name, ticker, suffix = parsed_blob
-
-    # Silver Path
-    # Use DataPaths or manual? DataPaths uses folder name.
-    # DataPaths.get_finance_path(folder_name, ticker, suffix)
-    silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
-
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=silver_path,
-            ticker=ticker,
-            status="skipped",
+            error=f"Empty finance payload: {blob_name}",
         )
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=silver_path,
-            ticker=ticker,
-            status="skipped",
-        )
-
-    mdc.write_line(f"Processing {ticker} {folder_name}...")
-
+    df_clean = df_raw
     try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_raw = _read_finance_json(raw_bytes, ticker=ticker, suffix=suffix)
-
-        if df_raw is None or df_raw.empty:
-            return BlobProcessResult(
-                blob_name=blob_name,
-                silver_path=silver_path,
-                ticker=ticker,
-                status="failed",
-                error=f"Empty finance payload: {blob_name}",
-            )
-
-        df_clean = df_raw
-
-        try:
-            df_clean = require_non_empty_frame(df_clean, context=f"finance preflight {blob_name}")
-            df_clean = normalize_date_column(
-                df_clean,
-                context=f"finance date parse {blob_name}",
-                aliases=("Date", "date"),
-                canonical="Date",
-            )
-            df_clean = assert_no_unexpected_mixed_empty(
-                df_clean, context=f"finance date filter {blob_name}", alias="Date"
-            )
-        except ContractViolation as exc:
-            log_contract_violation(f"finance preflight failed for {blob_name}", exc, severity="ERROR")
-            return BlobProcessResult(
-                blob_name=blob_name,
-                silver_path=silver_path,
-                ticker=ticker,
-                status="failed",
-                error=str(exc),
-            )
-
-        df_clean, _ = apply_backfill_start_cutoff(
+        df_clean = require_non_empty_frame(df_clean, context=f"finance preflight {blob_name}")
+        df_clean = normalize_date_column(
             df_clean,
-            date_col="Date",
-            backfill_start=backfill_start,
-            context=f"silver finance {ticker}",
+            context=f"finance date parse {blob_name}",
+            aliases=("Date", "date"),
+            canonical="Date",
         )
-        if backfill_start is not None and (df_clean is None or df_clean.empty):
-            if silver_client is not None:
-                deleted = silver_client.delete_prefix(silver_path)
-                mdc.write_line(
-                    f"Silver finance backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
-                    f"deleted {deleted} blob(s) under {silver_path}."
-                )
-                watermark_signature = None
-                if signature:
-                    watermark_signature = dict(signature)
-                    watermark_signature["updated_at"] = datetime.now(timezone.utc).isoformat()
-                return BlobProcessResult(
-                    blob_name=blob_name,
-                    silver_path=silver_path,
-                    ticker=ticker,
-                    status="ok",
-                    rows_written=0,
-                    watermark_signature=watermark_signature,
-                )
+        df_clean = assert_no_unexpected_mixed_empty(df_clean, context=f"finance date filter {blob_name}", alias="Date")
+    except ContractViolation as exc:
+        log_contract_violation(f"finance preflight failed for {blob_name}", exc, severity="ERROR")
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="failed",
+            error=str(exc),
+        )
+
+    df_clean, _ = apply_backfill_start_cutoff(
+        df_clean,
+        date_col="Date",
+        backfill_start=backfill_start,
+        context=f"silver finance {ticker}",
+    )
+    if backfill_start is not None and (df_clean is None or df_clean.empty):
+        if not persist:
             return BlobProcessResult(
                 blob_name=blob_name,
                 silver_path=silver_path,
                 ticker=ticker,
-                status="failed",
-                error=f"Storage client unavailable for cutoff purge {silver_path}.",
+                status="ok",
+                rows_written=0,
             )
-
-        # Resample to daily frequency (forward fill)
-        df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
-        if df_clean is None or df_clean.empty:
+        if silver_client is not None:
+            deleted = silver_client.delete_prefix(silver_path)
+            mdc.write_line(
+                f"Silver finance backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                f"deleted {deleted} blob(s) under {silver_path}."
+            )
+            watermark_signature = None
+            if signature:
+                watermark_signature = dict(signature)
+                watermark_signature["updated_at"] = datetime.now(timezone.utc).isoformat()
             return BlobProcessResult(
                 blob_name=blob_name,
                 silver_path=silver_path,
                 ticker=ticker,
-                status="failed",
-                error="No valid dated rows after cleaning/resample.",
+                status="ok",
+                rows_written=0,
+                watermark_signature=watermark_signature,
             )
-
-        # Write to Silver (Overwrite is fine for finance snapshots, or merge?
-        # Typically Finance Sheets are full snapshots. Replacing is safer for consistency,
-        # but if we want history of OLD financial restatements...
-        # Current logic: Overwrite/Upsert. store_delta defaults to append?
-        # Let's use overwrite mode for now as Transposed data is simpler.
-        # But wait, store_delta default implementation?
-        # Checking delta_core usage: usually it appends or overwrites.
-        # I'll check store_delta signature in next turn if needed.
-        # Assuming overwrite for the partition/table is safest for now to avoid specific duplicates.
-
-        df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
-        df_clean = normalize_columns_to_snake_case(df_clean)
-        df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
-        applied_calculated_columns: set[str] = set()
-        if suffix == "quarterly_valuation_measures":
-            applied_calculated_columns = {
-                col for col in _FINANCE_VALUATION_CALCULATED_COLUMNS if col in df_clean.columns
-            }
-        df_clean = apply_precision_policy(
-            df_clean,
-            price_columns=set(),
-            calculated_columns=applied_calculated_columns,
-            price_scale=2,
-            calculated_scale=4,
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="failed",
+            error=f"Storage client unavailable for cutoff purge {silver_path}.",
         )
+
+    df_clean = resample_daily_ffill(df_clean, extend_to=desired_end)
+    if df_clean is None or df_clean.empty:
+        return BlobProcessResult(
+            blob_name=blob_name,
+            silver_path=silver_path,
+            ticker=ticker,
+            status="failed",
+            error="No valid dated rows after cleaning/resample.",
+        )
+
+    df_clean = _align_to_existing_schema(df_clean, cfg.AZURE_CONTAINER_SILVER, silver_path)
+    df_clean = normalize_columns_to_snake_case(df_clean)
+    df_clean = _repair_symbol_column_aliases(df_clean, ticker=ticker)
+    applied_calculated_columns: set[str] = set()
+    if suffix == "quarterly_valuation_measures":
+        applied_calculated_columns = {col for col in _FINANCE_VALUATION_CALCULATED_COLUMNS if col in df_clean.columns}
+    df_clean = apply_precision_policy(
+        df_clean,
+        price_columns=set(),
+        calculated_columns=applied_calculated_columns,
+        price_scale=2,
+        calculated_scale=4,
+    )
+    if not persist:
+        if alpha26_bucket_frames is None:
+            raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
+        sub_domain = _finance_sub_domain(folder_name)
+        bucket = layer_bucketing.bucket_letter(ticker)
+        alpha26_bucket_frames.setdefault((sub_domain, bucket), []).append(df_clean.copy())
+    else:
         delta_core.store_delta(
             df_clean,
             cfg.AZURE_CONTAINER_SILVER,
@@ -681,34 +759,187 @@ def process_blob(
                 enforce_retention_duration=False,
                 full=True,
             )
-        calc_cols_str = ",".join(sorted(applied_calculated_columns)) if applied_calculated_columns else "none"
-        mdc.write_line(
-            "precision_policy_applied domain=finance "
-            f"ticker={ticker} report_suffix={suffix} price_cols=none calc_cols={calc_cols_str} rows={len(df_clean)}"
-        )
+    calc_cols_str = ",".join(sorted(applied_calculated_columns)) if applied_calculated_columns else "none"
+    mdc.write_line(
+        "precision_policy_applied domain=finance "
+        f"ticker={ticker} report_suffix={suffix} price_cols=none calc_cols={calc_cols_str} rows={len(df_clean)}"
+    )
+    if persist:
         mdc.write_line(f"Updated Silver {silver_path}")
-        watermark_signature = None
-        if signature:
-            watermark_signature = dict(signature)
-            watermark_signature["updated_at"] = datetime.now(timezone.utc).isoformat()
+    watermark_signature = None
+    if signature:
+        watermark_signature = dict(signature)
+        watermark_signature["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return BlobProcessResult(
+        blob_name=blob_name,
+        silver_path=silver_path,
+        ticker=ticker,
+        status="ok",
+        rows_written=int(len(df_clean)),
+        watermark_signature=watermark_signature,
+    )
+
+
+def process_blob(
+    blob,
+    *,
+    desired_end: pd.Timestamp,
+    backfill_start: Optional[pd.Timestamp] = None,
+    watermarks: dict,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
+) -> BlobProcessResult:
+    blob_name = blob["name"]
+    parsed_blob = _parse_supported_blob_name(blob_name)
+    if parsed_blob is None:
         return BlobProcessResult(
             blob_name=blob_name,
-            silver_path=silver_path,
-            ticker=ticker,
-            status="ok",
-            rows_written=int(len(df_clean)),
-            watermark_signature=watermark_signature,
+            silver_path=None,
+            ticker=None,
+            status="failed",
+            error=f"Unsupported finance blob format: {blob_name}",
         )
+    folder_name, ticker, suffix = parsed_blob
+    silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
 
-    except Exception as e:
-        mdc.write_error(f"Failed to process {blob_name}: {e}")
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
+        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, ticker=ticker, status="skipped")
+
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, ticker=ticker, status="skipped")
+
+    mdc.write_line(f"Processing {ticker} {folder_name}...")
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_raw = _read_finance_json(raw_bytes, ticker=ticker, suffix=suffix)
+        return _process_finance_frame(
+            blob_name=blob_name,
+            ticker=ticker,
+            folder_name=folder_name,
+            suffix=suffix,
+            silver_path=silver_path,
+            df_raw=df_raw,
+            desired_end=desired_end,
+            backfill_start=backfill_start,
+            signature=signature,
+            persist=persist,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
+    except Exception as exc:
+        mdc.write_error(f"Failed to process {blob_name}: {exc}")
         return BlobProcessResult(
             blob_name=blob_name,
             silver_path=silver_path,
             ticker=ticker,
             status="failed",
-            error=str(e),
+            error=str(exc),
         )
+
+
+def process_alpha26_bucket_blob(
+    blob: dict,
+    *,
+    desired_end: pd.Timestamp,
+    backfill_start: Optional[pd.Timestamp],
+    watermarks: dict,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
+) -> list[BlobProcessResult]:
+    blob_name = str(blob.get("name", ""))
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
+
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_bucket = pd.read_parquet(BytesIO(raw_bytes))
+    except Exception as exc:
+        return [
+            BlobProcessResult(
+                blob_name=blob_name,
+                silver_path=None,
+                ticker=None,
+                status="failed",
+                error=f"Failed to read alpha26 bucket {blob_name}: {exc}",
+            )
+        ]
+
+    if df_bucket is None or df_bucket.empty:
+        if signature:
+            signature["updated_at"] = datetime.now(timezone.utc).isoformat()
+            watermarks[blob_name] = signature
+        return [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
+
+    debug_symbols = set(getattr(cfg, "DEBUG_SYMBOLS", []) or [])
+    results: list[BlobProcessResult] = []
+    for _, row in df_bucket.iterrows():
+        ticker = str(row.get("symbol") or "").strip().upper()
+        report_type = str(row.get("report_type") or "").strip().lower()
+        if not ticker or not report_type:
+            continue
+        if debug_symbols and ticker not in debug_symbols:
+            continue
+        mapped = _ALPHA26_REPORT_TYPE_TO_TABLE.get(report_type)
+        if not mapped:
+            results.append(
+                BlobProcessResult(
+                    blob_name=blob_name,
+                    silver_path=None,
+                    ticker=ticker,
+                    status="failed",
+                    error=f"Unsupported alpha26 report_type={report_type}",
+                )
+            )
+            continue
+        folder_name, suffix = mapped
+        silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
+        payload_raw = row.get("payload_json")
+        try:
+            payload = json.loads(str(payload_raw))
+        except Exception as exc:
+            results.append(
+                BlobProcessResult(
+                    blob_name=blob_name,
+                    silver_path=silver_path,
+                    ticker=ticker,
+                    status="failed",
+                    error=f"Invalid payload_json for {ticker}/{report_type}: {exc}",
+                )
+            )
+            continue
+        try:
+            raw_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            df_raw = _read_finance_json(raw_json, ticker=ticker, suffix=suffix)
+            result = _process_finance_frame(
+                blob_name=blob_name,
+                ticker=ticker,
+                folder_name=folder_name,
+                suffix=suffix,
+                silver_path=silver_path,
+                df_raw=df_raw,
+                desired_end=desired_end,
+                backfill_start=backfill_start,
+                signature=None,
+                persist=persist,
+                alpha26_bucket_frames=alpha26_bucket_frames,
+            )
+            results.append(result)
+        except Exception as exc:
+            results.append(
+                BlobProcessResult(
+                    blob_name=blob_name,
+                    silver_path=silver_path,
+                    ticker=ticker,
+                    status="failed",
+                    error=f"Failed alpha26 process for {ticker}/{report_type}: {exc}",
+                )
+            )
+
+    if all(result.status != "failed" for result in results) and signature:
+        signature["updated_at"] = datetime.now(timezone.utc).isoformat()
+        watermarks[blob_name] = signature
+    return results or [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
 
 
 def _process_candidate_blobs(
@@ -717,20 +948,29 @@ def _process_candidate_blobs(
     desired_end: pd.Timestamp,
     backfill_start: Optional[pd.Timestamp],
     watermarks: dict,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> tuple[list[BlobProcessResult], float]:
     max_workers = _get_ingest_max_workers()
     mdc.write_line(f"Silver finance ingest workers={max_workers} candidates={len(candidate_blobs)}.")
 
     ingest_started = time.perf_counter()
     results: list[BlobProcessResult] = []
+    call_kwargs = {
+        "desired_end": desired_end,
+        "backfill_start": backfill_start,
+        "watermarks": watermarks,
+    }
+    if (not persist) or (alpha26_bucket_frames is not None):
+        call_kwargs["persist"] = persist
+        call_kwargs["alpha26_bucket_frames"] = alpha26_bucket_frames
+
     if max_workers <= 1:
         for blob in candidate_blobs:
             results.append(
                 process_blob(
                     blob,
-                    desired_end=desired_end,
-                    backfill_start=backfill_start,
-                    watermarks=watermarks,
+                    **call_kwargs,
                 )
             )
     else:
@@ -739,9 +979,7 @@ def _process_candidate_blobs(
                 executor.submit(
                     process_blob,
                     blob,
-                    desired_end=desired_end,
-                    backfill_start=backfill_start,
-                    watermarks=watermarks,
+                    **call_kwargs,
                 ): blob
                 for blob in candidate_blobs
             }
@@ -765,12 +1003,48 @@ def _process_candidate_blobs(
     return results, ingest_elapsed
 
 
+def _process_alpha26_candidate_blobs(
+    *,
+    candidate_blobs: list[dict],
+    desired_end: pd.Timestamp,
+    backfill_start: Optional[pd.Timestamp],
+    watermarks: dict,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
+) -> tuple[list[BlobProcessResult], float]:
+    ingest_started = time.perf_counter()
+    results: list[BlobProcessResult] = []
+    call_kwargs = {
+        "desired_end": desired_end,
+        "backfill_start": backfill_start,
+        "watermarks": watermarks,
+    }
+    if (not persist) or (alpha26_bucket_frames is not None):
+        call_kwargs["persist"] = persist
+        call_kwargs["alpha26_bucket_frames"] = alpha26_bucket_frames
+    for blob in candidate_blobs:
+        blob_results = process_alpha26_bucket_blob(
+            blob,
+            **call_kwargs,
+        )
+        results.extend(blob_results)
+        # Watermarks are updated per-bucket internally on all-success.
+        for result in blob_results:
+            if result.status == "ok" and result.watermark_signature:
+                watermarks[result.blob_name] = result.watermark_signature
+    ingest_elapsed = time.perf_counter() - ingest_started
+    return results, ingest_elapsed
+
+
 def main() -> int:
     mdc.log_environment_diagnostics()
     run_started_at = datetime.now(timezone.utc)
     watermarks = load_watermarks("bronze_finance_data")
     last_success = load_last_success("silver_finance_data")
     watermarks_dirty = False
+    bronze_bucketing.bronze_layout_mode()
+    layer_bucketing.silver_layout_mode()
+    force_rebuild = layer_bucketing.silver_alpha26_force_rebuild()
 
     desired_end = _utc_today()
     backfill_start, _ = get_backfill_range()
@@ -778,35 +1052,12 @@ def main() -> int:
         mdc.write_line(f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}")
     mdc.write_line("Listing Bronze Finance files...")
 
-    manifest_run_id: Optional[str] = None
-    manifest_path: Optional[str] = None
-    initial_source = "live-listing"
+    initial_source = "alpha26-bucket-listing"
     initial_blobs: list[dict] = []
     deduped_total = 0
 
-    if silver_manifest_consumption_enabled():
-        manifest = load_latest_bronze_finance_manifest()
-        if isinstance(manifest, dict):
-            candidate_run_id = str(manifest.get("runId") or "").strip()
-            candidate_manifest_path = str(manifest.get("manifestPath") or "").strip()
-            if candidate_run_id and not silver_finance_ack_exists(candidate_run_id):
-                manifest_run_id = candidate_run_id
-                manifest_path = candidate_manifest_path
-                initial_blobs = _select_preferred_blob_candidates(manifest_blobs(manifest))
-                initial_source = "bronze-manifest"
-                mdc.write_line(
-                    "Silver finance will consume bronze manifest runId={run_id} manifestBlobs={blob_count}.".format(
-                        run_id=manifest_run_id, blob_count=len(initial_blobs)
-                    )
-                )
-            elif candidate_run_id:
-                mdc.write_line(
-                    f"Latest bronze finance manifest runId={candidate_run_id} is already acknowledged; "
-                    "falling back to live listing."
-                )
-
     if not initial_blobs:
-        initial_blobs, deduped = _list_bronze_finance_candidates()
+        initial_blobs, deduped = _list_alpha26_finance_bucket_candidates()
         deduped_total += deduped
 
     max_passes = _get_catchup_max_passes()
@@ -817,18 +1068,17 @@ def main() -> int:
     checkpoint_skipped_total = 0
     all_results: list[BlobProcessResult] = []
     total_ingest_elapsed = 0.0
-    reconciliation_source_blobs: list[dict] = list(initial_blobs)
+    alpha26_bucket_frames: dict[tuple[str, str], list[pd.DataFrame]] = {}
 
     while pass_count < max_passes:
         pass_count += 1
         if pass_count == 1:
             blobs = list(initial_blobs)
         else:
-            blobs, deduped = _list_bronze_finance_candidates()
+            blobs, deduped = _list_alpha26_finance_bucket_candidates()
             deduped_total += deduped
 
         current_blob_names = {str(item.get("name", "")).strip() for item in blobs if item.get("name")}
-        reconciliation_source_blobs = list(blobs)
         if pass_count > 1:
             newly_seen = current_blob_names - seen_blob_names
             if newly_seen:
@@ -838,10 +1088,11 @@ def main() -> int:
                 )
         seen_blob_names.update(current_blob_names)
 
-        candidate_blobs, checkpoint_skipped = _build_checkpoint_candidates(
+        candidate_blobs, checkpoint_skipped = _build_alpha26_checkpoint_candidates(
             blobs=blobs,
             watermarks=watermarks,
             last_success=last_success,
+            force_reprocess=force_rebuild,
         )
         checkpoint_skipped_total += checkpoint_skipped
         if pass_count == 1:
@@ -858,7 +1109,7 @@ def main() -> int:
             "candidates={candidates} skipped_checkpoint={skipped}.".format(
                 pass_no=pass_count,
                 max_passes=max_passes,
-                source=initial_source if pass_count == 1 else "live-listing",
+                source=initial_source if pass_count == 1 else "alpha26-bucket-listing",
                 total=len(blobs),
                 candidates=len(candidate_blobs),
                 skipped=checkpoint_skipped,
@@ -867,29 +1118,27 @@ def main() -> int:
         if not candidate_blobs:
             break
 
-        pass_results, pass_elapsed = _process_candidate_blobs(
+        pass_results, pass_elapsed = _process_alpha26_candidate_blobs(
             candidate_blobs=candidate_blobs,
             desired_end=desired_end,
             backfill_start=backfill_start,
             watermarks=watermarks,
+            persist=False,
+            alpha26_bucket_frames=alpha26_bucket_frames,
         )
+        watermarks_dirty = True if candidate_blobs else watermarks_dirty
         total_ingest_elapsed += pass_elapsed
         all_results.extend(pass_results)
-        for result in pass_results:
-            if result.status != "ok" or not result.watermark_signature:
-                continue
-            watermarks[result.blob_name] = result.watermark_signature
-            watermarks_dirty = True
 
     lag_candidate_count = 0
     try:
-        latest_blobs, deduped = _list_bronze_finance_candidates()
-        reconciliation_source_blobs = list(latest_blobs)
+        latest_blobs, deduped = _list_alpha26_finance_bucket_candidates()
         deduped_total += deduped
-        lag_candidates, _ = _build_checkpoint_candidates(
+        lag_candidates, _ = _build_alpha26_checkpoint_candidates(
             blobs=latest_blobs,
             watermarks=watermarks,
             last_success=last_success,
+            force_reprocess=force_rebuild,
         )
         lag_candidate_count = len(lag_candidates)
     except Exception as exc:
@@ -901,23 +1150,29 @@ def main() -> int:
     attempts = len(all_results)
     distinct_tickers = len({str(r.ticker).strip() for r in all_results if r.ticker})
     rows_written = sum(int(r.rows_written or 0) for r in all_results if r.status == "ok")
+    alpha26_written_symbols = 0
+    alpha26_index_path: Optional[str] = None
+    if failed == 0:
+        try:
+            alpha26_written_symbols, alpha26_index_path = _write_alpha26_finance_silver_buckets(alpha26_bucket_frames)
+            mdc.write_line(
+                "Silver finance alpha26 buckets written: "
+                f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
+            )
+        except Exception as exc:
+            failed += 1
+            mdc.write_error(f"Silver finance alpha26 bucket write failed: {exc}")
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
-    try:
-        reconciliation_orphans, reconciliation_deleted_blobs = _run_finance_reconciliation(
-            bronze_blob_list=reconciliation_source_blobs
-        )
-    except Exception as exc:
-        reconciliation_failed = 1
-        mdc.write_error(f"Silver finance reconciliation failed: {exc}")
 
     total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver finance ingest complete: "
         f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={total_failed}, "
         f"skippedCheckpoint={checkpoint_skipped_first_pass}, "
-        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, elapsedSec={total_ingest_elapsed:.2f}, "
+        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, alpha26Symbols={alpha26_written_symbols}, "
+        f"elapsedSec={total_ingest_elapsed:.2f}, "
         f"passes={pass_count}, newlyDiscoveredAfterFirstPass={len(newly_discovered_blob_names)}, "
         f"lagCandidates={lag_candidate_count}, reconciled_orphans={reconciliation_orphans}, "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}"
@@ -926,7 +1181,6 @@ def main() -> int:
         save_watermarks("bronze_finance_data", watermarks)
 
     run_ended_at = datetime.now(timezone.utc)
-    manifest_ack_path: Optional[str] = None
     if total_failed == 0:
         checkpoint_metadata = {
             "total_blobs": len(initial_blobs),
@@ -938,6 +1192,8 @@ def main() -> int:
             "skipped_checkpoint": checkpoint_skipped_first_pass,
             "skipped_checkpoint_total": checkpoint_skipped_total,
             "rows_written": rows_written,
+            "alpha26_symbols": alpha26_written_symbols,
+            "alpha26_index_path": alpha26_index_path,
             "elapsed_seconds": round(total_ingest_elapsed, 3),
             "catchup_passes": pass_count,
             "new_blobs_discovered_after_first_pass": len(newly_discovered_blob_names),
@@ -945,8 +1201,8 @@ def main() -> int:
             "run_started_at": run_started_at.isoformat(),
             "run_ended_at": run_ended_at.isoformat(),
             "deduped_candidates_total": deduped_total,
-            "manifest_run_id": manifest_run_id,
-            "manifest_path": manifest_path,
+            "manifest_run_id": None,
+            "manifest_path": None,
             "reconciled_orphans": reconciliation_orphans,
             "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
         }
@@ -955,26 +1211,7 @@ def main() -> int:
             when=run_ended_at,
             metadata=checkpoint_metadata,
         )
-        if manifest_run_id:
-            manifest_ack_path = write_silver_finance_ack(
-                run_id=manifest_run_id,
-                manifest_path=manifest_path or "",
-                status="succeeded",
-                metadata={
-                    "processed": processed,
-                    "failed": total_failed,
-                    "skipped": skipped,
-                    "attempts": attempts,
-                    "rows_written": rows_written,
-                    "run_started_at": run_started_at.isoformat(),
-                    "run_ended_at": run_ended_at.isoformat(),
-                },
-            )
-            if manifest_ack_path:
-                mdc.write_line(f"Silver finance manifest ack written: runId={manifest_run_id} path={manifest_ack_path}")
         return 0
-    if manifest_run_id:
-        mdc.write_warning(f"Silver finance run failed; bronze manifest runId={manifest_run_id} was not acknowledged.")
     return 1
 
 

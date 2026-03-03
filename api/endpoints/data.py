@@ -14,6 +14,7 @@ from api.service.dependencies import get_settings, validate_auth
 from core.delta_core import load_delta
 from core.pipeline import DataPaths
 from core.postgres import PostgresError, connect
+from tasks.common import layer_bucketing
 
 from ..data_service import DataService
 from api.service.validation_service import ValidationService
@@ -289,15 +290,9 @@ def _find_latest_market_date(
     max_symbols: int = 300,
 ) -> Optional[date]:
     latest: Optional[date] = None
-    scanned = 0
-    for symbol_raw in symbols:
-        if scanned >= int(max_symbols):
-            break
-        symbol = str(symbol_raw or "").strip().upper()
-        if not symbol:
-            continue
-        scanned += 1
-        path = DataPaths.get_gold_features_path(symbol)
+    layer_bucketing.gold_layout_mode()
+    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        path = DataPaths.get_gold_market_bucket_path(bucket)
         try:
             df = load_delta(gold_container, path, columns=["date"])
         except Exception:
@@ -440,26 +435,35 @@ def get_stock_screener(
         "volume_z_20d",
         "volume_pct_rank_252d",
     ]
-    gold_rows: list[Dict[str, Any]] = []
-    silver_rows: list[Dict[str, Any]] = []
-    for symbol in symbol_list:
-        gold_path = DataPaths.get_gold_features_path(symbol)
+    layer_bucketing.gold_layout_mode()
+    layer_bucketing.silver_layout_mode()
+
+    gold_frames: list[pd.DataFrame] = []
+    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        gold_path = DataPaths.get_gold_market_bucket_path(bucket)
         try:
             gold_src = load_delta(gold_container, gold_path, columns=["date", "symbol", *gold_cols])
         except Exception:
-            gold_src = None
-        if gold_src is not None and not gold_src.empty:
-            gdf = gold_src.copy()
-            g_date_col = _first_present(gdf.columns.tolist(), ["date", "Date"])
-            if g_date_col:
-                gdf[g_date_col] = pd.to_datetime(gdf[g_date_col], errors="coerce").dt.normalize()
-                gdf = gdf[gdf[g_date_col] == resolved_dt]
-                if not gdf.empty:
-                    row = gdf.iloc[-1].to_dict()
-                    row["symbol"] = str(row.get("symbol") or symbol).upper()
-                    gold_rows.append(row)
+            continue
+        if gold_src is None or gold_src.empty:
+            continue
+        gdf = gold_src.copy()
+        g_date_col = _first_present(gdf.columns.tolist(), ["date", "Date"])
+        g_symbol_col = _first_present(gdf.columns.tolist(), ["symbol", "Symbol"])
+        if not g_date_col or not g_symbol_col:
+            continue
+        gdf[g_date_col] = pd.to_datetime(gdf[g_date_col], errors="coerce").dt.normalize()
+        gdf = gdf[gdf[g_date_col] == resolved_dt]
+        if gdf.empty:
+            continue
+        if g_symbol_col != "symbol":
+            gdf = gdf.rename(columns={g_symbol_col: "symbol"})
+        gdf["symbol"] = gdf["symbol"].astype(str).str.upper()
+        gold_frames.append(gdf)
 
-        silver_path = DataPaths.get_market_data_path(symbol)
+    silver_frames: list[pd.DataFrame] = []
+    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        silver_path = DataPaths.get_silver_market_bucket_path(bucket)
         try:
             silver_src = load_delta(
                 silver_container,
@@ -467,21 +471,25 @@ def get_stock_screener(
                 columns=["Date", "date", "Symbol", "symbol", "Open", "High", "Low", "Close", "Volume"],
             )
         except Exception:
-            silver_src = None
-        if silver_src is not None and not silver_src.empty:
-            sdf = silver_src.copy()
-            s_date_col = _first_present(sdf.columns.tolist(), ["Date", "date"])
-            if s_date_col:
-                sdf[s_date_col] = pd.to_datetime(sdf[s_date_col], errors="coerce").dt.normalize()
-                sdf = sdf[sdf[s_date_col] == resolved_dt]
-                if not sdf.empty:
-                    row = sdf.iloc[-1].to_dict()
-                    sym_col = _first_present(list(row.keys()), ["Symbol", "symbol"])
-                    row["symbol"] = str(row.get(sym_col) or symbol).upper() if sym_col else symbol
-                    silver_rows.append(row)
+            continue
+        if silver_src is None or silver_src.empty:
+            continue
+        sdf = silver_src.copy()
+        s_date_col = _first_present(sdf.columns.tolist(), ["Date", "date"])
+        s_symbol_col = _first_present(sdf.columns.tolist(), ["symbol", "Symbol"])
+        if not s_date_col or not s_symbol_col:
+            continue
+        sdf[s_date_col] = pd.to_datetime(sdf[s_date_col], errors="coerce").dt.normalize()
+        sdf = sdf[sdf[s_date_col] == resolved_dt]
+        if sdf.empty:
+            continue
+        if s_symbol_col != "symbol":
+            sdf = sdf.rename(columns={s_symbol_col: "symbol"})
+        sdf["symbol"] = sdf["symbol"].astype(str).str.upper()
+        silver_frames.append(sdf)
 
-    gold_df = pd.DataFrame(gold_rows)
-    silver_df = pd.DataFrame(silver_rows)
+    gold_df = pd.concat(gold_frames, ignore_index=True) if gold_frames else pd.DataFrame()
+    silver_df = pd.concat(silver_frames, ignore_index=True) if silver_frames else pd.DataFrame()
 
     if gold_df.empty:
         raise HTTPException(status_code=503, detail=f"Gold market features unavailable for {resolved_date.isoformat()}.")
@@ -489,6 +497,7 @@ def get_stock_screener(
         raise HTTPException(status_code=503, detail=f"Silver market data unavailable for {resolved_date.isoformat()}.")
 
     gold_df["symbol"] = gold_df["symbol"].astype(str).str.upper()
+    gold_df = gold_df.sort_values(["symbol"]).drop_duplicates(subset=["symbol"], keep="last")
     silver_symbol_col = _first_present(silver_df.columns.tolist(), ["symbol", "Symbol"])
     if not silver_symbol_col:
         raise HTTPException(status_code=500, detail="Silver market schema missing Symbol/date columns.")
@@ -503,6 +512,7 @@ def get_stock_screener(
         }
     )
     silver_df["symbol"] = silver_df["symbol"].astype(str).str.upper()
+    silver_df = silver_df.sort_values(["symbol"]).drop_duplicates(subset=["symbol"], keep="last")
 
     merged = symbols_df.merge(silver_df[["symbol", "open", "high", "low", "close", "volume"]], on="symbol", how="left")
     merged = merged.merge(gold_df[["symbol", *gold_cols]], on="symbol", how="left", suffixes=("", "_gold"))

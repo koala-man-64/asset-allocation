@@ -1,27 +1,33 @@
+import pandas as pd
+
 import api.data_service as data_service_module
 from api.data_service import DataService
 
 
-def test_bronze_market_reads_raw_csv(monkeypatch):
+def test_bronze_market_reads_alpha26_bucket_parquet(monkeypatch):
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: object())
+    payload = pd.DataFrame(
+        [{"symbol": "AAPL", "date": "2025-01-01", "open": 1.0, "close": 2.0}],
+    ).to_parquet(index=False)
     monkeypatch.setattr(
         data_service_module.mdc,
         "read_raw_bytes",
-        lambda _path, client=None: b"Date,Open,Close\n2025-01-01,1,2\n2025-01-02,3,4\n",
+        lambda _path, client=None: payload,
     )
 
     rows = DataService.get_data("bronze", "market", ticker="AAPL", limit=1)
 
     assert len(rows) == 1
-    assert rows[0]["Date"] == "2025-01-01"
+    assert rows[0]["date"] == "2025-01-01"
 
 
-def test_bronze_earnings_reads_raw_json(monkeypatch):
+def test_bronze_earnings_reads_alpha26_bucket_parquet(monkeypatch):
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: object())
+    payload = pd.DataFrame([{"symbol": "AAPL", "eps": 1.23}, {"symbol": "AAPL", "eps": 2.34}]).to_parquet(index=False)
     monkeypatch.setattr(
         data_service_module.mdc,
         "read_raw_bytes",
-        lambda _path, client=None: b'[{"symbol":"AAPL","eps":1.23},{"symbol":"AAPL","eps":2.34}]',
+        lambda _path, client=None: payload,
     )
 
     rows = DataService.get_data("bronze", "earnings", ticker="AAPL", limit=1)
@@ -32,10 +38,11 @@ def test_bronze_earnings_reads_raw_json(monkeypatch):
 
 def test_bronze_earnings_missing_values_are_json_safe(monkeypatch):
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: object())
+    payload = pd.DataFrame([{"symbol": "AAPL", "eps": 1.23}, {"symbol": "AAPL"}]).to_parquet(index=False)
     monkeypatch.setattr(
         data_service_module.mdc,
         "read_raw_bytes",
-        lambda _path, client=None: b'[{"symbol":"AAPL","eps":1.23},{"symbol":"AAPL"}]',
+        lambda _path, client=None: payload,
     )
 
     rows = DataService.get_data("bronze", "earnings", ticker="AAPL", limit=2)
@@ -47,37 +54,43 @@ def test_bronze_earnings_missing_values_are_json_safe(monkeypatch):
 def test_bronze_market_defaults_to_first_blob_when_ticker_missing(monkeypatch):
     class StubClient:
         def list_files(self, name_starts_with=None):
-            assert name_starts_with == "market-data/"
-            return ["market-data/MSFT.csv", "market-data/AAPL.csv"]
+            assert name_starts_with == "market-data/buckets/"
+            return ["market-data/buckets/M.parquet", "market-data/buckets/A.parquet"]
 
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
 
+    payload = pd.DataFrame([{"symbol": "AAPL", "date": "2025-01-01", "open": 1.0, "close": 2.0}]).to_parquet(index=False)
+
     def fake_read_raw_bytes(path, client=None):
-        assert path == "market-data/AAPL.csv"
-        return b"Date,Open,Close\n2025-01-01,1,2\n"
+        assert path == "market-data/buckets/A.parquet"
+        return payload
 
     monkeypatch.setattr(data_service_module.mdc, "read_raw_bytes", fake_read_raw_bytes)
 
     rows = DataService.get_data("bronze", "market", limit=1)
 
     assert len(rows) == 1
-    assert rows[0]["Date"] == "2025-01-01"
+    assert rows[0]["date"] == "2025-01-01"
 
 
 def test_bronze_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
     class StubClient:
         def list_files(self, name_starts_with=None):
-            assert name_starts_with == "finance-data/Valuation/"
+            assert name_starts_with == "finance-data/buckets/"
             return [
-                "finance-data/Valuation/MSFT_quarterly_valuation_measures.csv",
-                "finance-data/Valuation/AAPL_quarterly_valuation_measures.csv",
+                "finance-data/buckets/M.parquet",
+                "finance-data/buckets/A.parquet",
             ]
 
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
 
+    payload = pd.DataFrame(
+        [{"symbol": "AAPL", "report_type": "overview", "metric": 123}],
+    ).to_parquet(index=False)
+
     def fake_read_raw_bytes(path, client=None):
-        assert path == "finance-data/Valuation/AAPL_quarterly_valuation_measures.csv"
-        return b"Date,metric\n2025-01-01,123\n"
+        assert path == "finance-data/buckets/A.parquet"
+        return payload
 
     monkeypatch.setattr(data_service_module.mdc, "read_raw_bytes", fake_read_raw_bytes)
 
@@ -90,17 +103,19 @@ def test_bronze_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
 def test_bronze_generic_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
     class StubClient:
         def list_files(self, name_starts_with=None):
-            assert name_starts_with == "finance-data/"
+            assert name_starts_with == "finance-data/buckets/"
             return [
-                "finance-data/valuation/MSFT_quarterly_valuation_measures.csv",
-                "finance-data/valuation/AAPL_quarterly_valuation_measures.csv",
+                "finance-data/buckets/M.parquet",
+                "finance-data/buckets/A.parquet",
             ]
 
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
 
+    payload = pd.DataFrame([{"symbol": "AAPL", "metric": 123}]).to_parquet(index=False)
+
     def fake_read_raw_bytes(path, client=None):
-        assert path == "finance-data/valuation/AAPL_quarterly_valuation_measures.csv"
-        return b"Date,metric\n2025-01-01,123\n"
+        assert path == "finance-data/buckets/A.parquet"
+        return payload
 
     monkeypatch.setattr(data_service_module.mdc, "read_raw_bytes", fake_read_raw_bytes)
 

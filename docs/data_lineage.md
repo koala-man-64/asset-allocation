@@ -23,21 +23,24 @@ This document describes how the data pipelines in `tasks/` flow through the Bron
 ### Silver (cleaned / standardized)
 
 - Container: `AZURE_CONTAINER_SILVER`
-- Per-symbol Delta tables (examples):
-  - Market: `core.pipeline.DataPaths.get_market_data_path()` (written by `tasks/market_data/silver_market_data.py`)
-  - Finance: `core.pipeline.DataPaths.get_finance_path()` (written by `tasks/finance_data/silver_finance_data.py`)
-  - Earnings: `core.pipeline.DataPaths.get_earnings_path()` (written by `tasks/earnings_data/silver_earnings_data.py`)
-  - Price Target: `core.pipeline.DataPaths.get_price_target_path()` (written by `tasks/price_target_data/silver_price_target_data.py`)
+- Layout mode:
+  - `SILVER_LAYOUT_MODE=alpha26` (required): first-letter bucket Delta tables (`A..Z`).
+- Bucket tables:
+  - Market: `market-data/buckets/<A..Z>`
+  - Earnings: `earnings-data/buckets/<A..Z>`
+  - Price Target: `price-target-data/buckets/<A..Z>`
+  - Finance: `finance-data/<balance_sheet|income_statement|cash_flow|valuation>/buckets/<A..Z>` (4x26)
 
 ### Gold (feature store)
 
 - Container: `AZURE_CONTAINER_GOLD`
-- Feature engineering jobs (examples):
-  - Market features: `tasks/market_data/gold_market_data.py` → `market/<ticker>`
-    - Includes technical features such as candlestick patterns, Heikin-Ashi (`ha_*`), and Ichimoku (`ichimoku_*`) columns.
-  - Finance features: `tasks/finance_data/gold_finance_data.py` → `finance/<ticker>`
-  - Earnings features: `tasks/earnings_data/gold_earnings_data.py` → `earnings/<ticker>`
-  - Price target features: `tasks/price_target_data/gold_price_target_data.py` → `targets/<ticker>`
+- Layout mode:
+  - `GOLD_LAYOUT_MODE=alpha26` (required): first-letter bucket feature tables (`A..Z`).
+- Feature engineering jobs write bucket tables:
+  - Market: `market/buckets/<A..Z>`
+  - Earnings: `earnings/buckets/<A..Z>`
+  - Finance: `finance/buckets/<A..Z>`
+  - Price target: `targets/buckets/<A..Z>`
 
 ### Platinum (reserved)
 
@@ -57,7 +60,6 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 - Silver jobs also persist a per-job last-success checkpoint and pre-filter candidate blobs
   to items changed since that checkpoint:
   - Path: `system/watermarks/runs/silver_*_data.json`.
-- If the common container is unavailable (e.g., local tests), Silver falls back to legacy freshness checks.
 - Market/Earnings default to **latest-only** ingestion:
   - `SILVER_LATEST_ONLY` (global)
   - `SILVER_MARKET_LATEST_ONLY`, `SILVER_EARNINGS_LATEST_ONLY` (domain overrides)
@@ -74,7 +76,15 @@ The System Status UI consumes `GET /api/system/lineage` to display domain impact
 ### Gold feature engineering
 - Gold jobs skip unchanged tickers using Silver commit watermarks:
   - Path: `system/watermarks/gold_*` (JSON map keyed by ticker).
+- Watermark keys are bucket-based (`bucket::<A..Z>`).
 - If watermarks are unavailable, Gold fails fast and logs an error.
+
+### Alpha26 symbol indexes
+- Bronze/Silver/Gold runs publish symbol index artifacts in `AZURE_CONTAINER_COMMON`:
+  - Bronze: `system/bronze-index/<domain>/latest.parquet`
+  - Silver: `system/silver-index/<domain>/latest.parquet`
+  - Gold: `system/gold-index/<domain>/latest.parquet`
+- These indexes are used for symbol discovery/monitoring in bucketed layouts.
 
 ### System health markers
 - Successful Bronze/Silver/Gold jobs emit system-health markers under

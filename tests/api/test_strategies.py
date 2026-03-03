@@ -78,15 +78,9 @@ def test_save_strategy(client, mock_repo):
     }
     
     try:
-        # Override dependency locally if needed, but global override should work
-        # app.dependency_overrides[AuthManager.verify_jwt] = mock_verify_jwt
         response = client.post("/api/strategies/", json=payload)
     except Exception as e:
         pytest.fail(f"API call failed: {e}")
 
-    # Note: If this fails with 401/403, check auth dependency override
-    if response.status_code in [401, 403]:
-        pytest.skip("Auth mocking issue - verify dependency injection path")
-        
     assert response.status_code == 200
     repo_instance.save_strategy.assert_called_once()

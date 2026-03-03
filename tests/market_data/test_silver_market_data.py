@@ -240,68 +240,6 @@ def test_silver_processing_applies_backfill_start_cutoff(unique_ticker):
         assert pd.to_datetime(df_saved["date"]).min().date().isoformat() >= "2024-01-01"
 
 
-def test_run_market_reconciliation_purges_silver_orphans(monkeypatch):
-    class _FakeSilverClient:
-        def __init__(self) -> None:
-            self.deleted_paths: list[str] = []
-
-        def delete_prefix(self, path: str) -> int:
-            self.deleted_paths.append(path)
-            return 3
-
-    fake_client = _FakeSilverClient()
-    monkeypatch.setattr(silver, "silver_client", fake_client)
-    monkeypatch.setattr(
-        silver,
-        "collect_delta_market_symbols",
-        lambda *, client, root_prefix: {"AAPL", "MSFT"},
-    )
-    monkeypatch.setattr(silver, "get_backfill_range", lambda: (None, None))
-
-    orphan_count, deleted_blobs = silver._run_market_reconciliation(
-        bronze_blob_list=[
-            {"name": "market-data/AAPL.csv"},
-            {"name": "market-data/blacklist.csv"},
-        ]
-    )
-
-    assert orphan_count == 1
-    assert deleted_blobs == 3
-    assert fake_client.deleted_paths == [DataPaths.get_market_data_path("MSFT")]
-
-
-def test_run_market_reconciliation_applies_cutoff_sweep(monkeypatch):
-    class _FakeSilverClient:
-        def delete_prefix(self, _path: str) -> int:
-            return 0
-
-    fake_client = _FakeSilverClient()
-    captured: dict = {}
-
-    monkeypatch.setattr(silver, "silver_client", fake_client)
-    monkeypatch.setattr(
-        silver,
-        "collect_delta_market_symbols",
-        lambda *, client, root_prefix: {"AAPL", "MSFT"},
-    )
-    monkeypatch.setattr(
-        silver,
-        "enforce_backfill_cutoff_on_tables",
-        lambda **kwargs: captured.update(kwargs)
-        or type(
-            "_Stats",
-            (),
-            {"tables_scanned": 0, "tables_rewritten": 0, "deleted_blobs": 0, "rows_dropped": 0, "errors": 0},
-        )(),
-    )
-    monkeypatch.setattr(silver, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
-
-    silver._run_market_reconciliation(bronze_blob_list=[{"name": "market-data/AAPL.csv"}])
-
-    assert captured["symbols"] == {"AAPL"}
-    assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
-
-
 def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(monkeypatch, tmp_path):
     class _FakeSilverClient:
         def delete_prefix(self, _path: str) -> int:

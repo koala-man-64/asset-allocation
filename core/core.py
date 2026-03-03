@@ -9,7 +9,7 @@ import random
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from io import StringIO
+from io import StringIO, BytesIO
 from pathlib import Path
 from typing import Any, Union, Optional
 from core.massive_provider import get_complete_ticker_list
@@ -1587,6 +1587,43 @@ def store_raw_bytes(
 
     client.upload_data(remote_path, data, overwrite=overwrite)
     return remote_path
+
+
+def read_parquet_bytes(
+    file_path: Union[str, Path],
+    *,
+    client: Optional[BlobStorageClient] = None,
+) -> pd.DataFrame:
+    """
+    Loads a parquet blob into a DataFrame from Azure Blob Storage.
+    Returns an empty DataFrame when the blob is missing/unreadable.
+    """
+    raw = read_raw_bytes(file_path, client=client)
+    if not raw:
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(BytesIO(raw))
+    except Exception as exc:
+        logger.warning(f"Failed to parse parquet bytes from {file_path}: {exc}")
+        return pd.DataFrame()
+
+
+def write_parquet_bytes(
+    df: pd.DataFrame,
+    file_path: Union[str, Path],
+    *,
+    client: Optional[BlobStorageClient] = None,
+    overwrite: bool = True,
+    compression: str = "snappy",
+) -> str:
+    """
+    Writes a DataFrame as parquet bytes to Azure Blob Storage.
+    """
+    payload = (df if isinstance(df, pd.DataFrame) else pd.DataFrame()).to_parquet(
+        index=False,
+        compression=compression,
+    )
+    return store_raw_bytes(payload, file_path, client=client, overwrite=overwrite)
 
 
 def get_symbol_sync_state(dsn: str) -> Optional[dict]:

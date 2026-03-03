@@ -2,11 +2,14 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from io import BytesIO
+from typing import Optional
 
 from core import core as mdc
 from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import (
     check_blob_unchanged,
@@ -37,6 +40,17 @@ bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 _PRICE_TARGET_PRICE_COLUMNS = {"tp_mean_est", "tp_high_est", "tp_low_est"}
 _PRICE_TARGET_CALCULATED_COLUMNS = {"tp_std_dev_est"}
+_ALPHA26_PRICE_TARGET_MIN_COLUMNS = [
+    "obs_date",
+    "symbol",
+    "tp_mean_est",
+    "tp_std_dev_est",
+    "tp_high_est",
+    "tp_low_est",
+    "tp_cnt_est",
+    "tp_cnt_est_rev_up",
+    "tp_cnt_est_rev_down",
+]
 
 
 def _needs_obs_date_migration(silver_path: str) -> bool:
@@ -58,175 +72,158 @@ def _extract_ticker(blob_name: str) -> str:
     return blob_name.replace("price-target-data/", "").replace(".parquet", "")
 
 
-def process_blob(blob, *, watermarks: dict) -> str:
-    blob_name = blob["name"]  # price-target-data/{symbol}.parquet
-    if not blob_name.endswith(".parquet"):
-        return "skipped_non_parquet"
-
-    ticker = blob_name.replace("price-target-data/", "").replace(".parquet", "")
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
-        return "skipped_debug_symbols"
-
-    # Silver Path
+def _process_symbol_frame(
+    *,
+    ticker: str,
+    df_new: pd.DataFrame,
+    source_name: str,
+    include_history: bool = True,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
     silver_path = DataPaths.get_price_target_path(ticker)
     backfill_start, _ = get_backfill_range()
+    out = df_new.copy()
+    out = out.drop(columns=["ingested_at", "source_hash"], errors="ignore")
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        if not _needs_obs_date_migration(silver_path):
-            return "skipped_unchanged"
-        mdc.write_line(f"Schema migration required for {ticker}; processing despite unchanged source blob.")
+    column_names = [
+        "symbol",
+        "obs_date",
+        "tp_mean_est",
+        "tp_std_dev_est",
+        "tp_high_est",
+        "tp_low_est",
+        "tp_cnt_est",
+        "tp_cnt_est_rev_up",
+        "tp_cnt_est_rev_down",
+    ]
 
-    mdc.write_line(f"Processing {ticker}...")
+    if out.empty:
+        return "skipped_empty"
 
     try:
-        # Read Bronze
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_new = pd.read_parquet(BytesIO(raw_bytes))
-
-        column_names = [
-            "symbol",
-            "obs_date",
-            "tp_mean_est",
-            "tp_std_dev_est",
-            "tp_high_est",
-            "tp_low_est",
-            "tp_cnt_est",
-            "tp_cnt_est_rev_up",
-            "tp_cnt_est_rev_down",
-        ]
-
-        # Transform
-        if df_new.empty:
-            return "skipped_empty"
-
-        try:
-            df_new = normalize_date_column(
-                df_new,
-                context=f"price target date parse {blob_name}",
-                aliases=("obs_date", "Date", "date"),
-                canonical="obs_date",
-            )
-            df_new = assert_no_unexpected_mixed_empty(
-                df_new, context=f"price target date filter {blob_name}", alias="obs_date"
-            )
-            df_new["obs_date"] = df_new["obs_date"].dt.normalize()
-        except ContractViolation as exc:
-            log_contract_violation(
-                f"price-target preflight failed for {ticker} in {blob_name}",
-                exc,
-                severity="ERROR",
-            )
-            return "failed"
-
-        df_new, _ = apply_backfill_start_cutoff(
-            df_new,
-            date_col="obs_date",
-            backfill_start=backfill_start,
-            context=f"silver price-target {ticker}",
+        out = normalize_date_column(
+            out,
+            context=f"price target date parse {source_name}",
+            aliases=("obs_date", "Date", "date"),
+            canonical="obs_date",
         )
-        if backfill_start is not None and df_new.empty:
-            if silver_client is not None:
-                deleted = silver_client.delete_prefix(silver_path)
-                mdc.write_line(
-                    f"Silver price-target backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
-                    f"deleted {deleted} blob(s) under {silver_path}."
-                )
-                if signature:
-                    signature["updated_at"] = datetime.utcnow().isoformat()
-                    watermarks[blob_name] = signature
-                return "ok"
-            mdc.write_warning(
-                f"Silver price-target backfill purge for {ticker} could not delete {silver_path}: storage client unavailable."
-            )
-            return "failed"
-
-        df_new = df_new.sort_values(by="obs_date")
-
-        # Carry Forward / Upsample
-        today = pd.to_datetime("today").normalize()
-        if not df_new.empty:
-            latest_obs = df_new["obs_date"].max()
-            if latest_obs < today:
-                # Extend date range
-                all_dates = pd.date_range(start=df_new["obs_date"].min(), end=today)
-                df_dates = pd.DataFrame({"obs_date": all_dates})
-                df_new = df_dates.merge(df_new, on="obs_date", how="left")
-                df_new = df_new.ffill()
-
-        df_new["symbol"] = ticker
-
-        for col in column_names:
-            if col not in df_new.columns:
-                df_new[col] = np.nan
-        df_new = df_new[column_names]
-
-        # Resample Daily (Full Range)
-        df_new = df_new.set_index("obs_date")
-        df_new = df_new[~df_new.index.duplicated(keep="last")]
-
-        full_range = pd.date_range(start=df_new.index.min(), end=df_new.index.max(), freq="D")
-        df_new = df_new.reindex(full_range)
-        df_new.ffill(inplace=True)
-        df_new = df_new.reset_index().rename(columns={"index": "obs_date"})
-        df_new["symbol"] = ticker
-
-        # Load Existing Silver
-        df_history = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, silver_path)
-
-        # Merge
-        if df_history is None or df_history.empty:
-            df_merged = df_new
-        else:
-            df_history = align_to_existing_schema(df_history, container=cfg.AZURE_CONTAINER_SILVER, path=silver_path)
-            if "Date" in df_history.columns and "obs_date" not in df_history.columns:
-                df_history = df_history.rename(columns={"Date": "obs_date"})
-            if "date" in df_history.columns and "obs_date" not in df_history.columns:
-                df_history = df_history.rename(columns={"date": "obs_date"})
-            if "obs_date" in df_history.columns:
-                df_history["obs_date"] = pd.to_datetime(df_history["obs_date"], errors="coerce")
-            df_merged = pd.concat([df_history, df_new], ignore_index=True)
-
-        for legacy_col in ("Date", "date"):
-            if legacy_col in df_merged.columns:
-                df_merged = df_merged.drop(columns=[legacy_col])
-
-        df_merged = df_merged.drop_duplicates(subset=["obs_date", "symbol"], keep="last")
-        df_merged = df_merged.sort_values(by=["obs_date", "symbol"])
-        df_merged = df_merged.reset_index(drop=True)
-
-        df_merged, _ = apply_backfill_start_cutoff(
-            df_merged,
-            date_col="obs_date",
-            backfill_start=backfill_start,
-            context=f"silver price-target merged {ticker}",
+        out = assert_no_unexpected_mixed_empty(out, context=f"price target date filter {source_name}", alias="obs_date")
+        out["obs_date"] = out["obs_date"].dt.normalize()
+    except ContractViolation as exc:
+        log_contract_violation(
+            f"price-target preflight failed for {ticker} in {source_name}",
+            exc,
+            severity="ERROR",
         )
-        if backfill_start is not None and df_merged.empty:
-            if silver_client is not None:
-                deleted = silver_client.delete_prefix(silver_path)
-                mdc.write_line(
-                    f"Silver price-target merged purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
-                    f"deleted {deleted} blob(s) under {silver_path}."
-                )
-                if signature:
-                    signature["updated_at"] = datetime.utcnow().isoformat()
-                    watermarks[blob_name] = signature
-                return "ok"
-            mdc.write_warning(
-                f"Silver price-target merged purge for {ticker} could not delete {silver_path}: storage client unavailable."
+        return "failed"
+
+    out, _ = apply_backfill_start_cutoff(
+        out,
+        date_col="obs_date",
+        backfill_start=backfill_start,
+        context=f"silver price-target {ticker}",
+    )
+    if backfill_start is not None and out.empty:
+        if not persist:
+            return "ok"
+        if silver_client is not None:
+            deleted = silver_client.delete_prefix(silver_path)
+            mdc.write_line(
+                f"Silver price-target backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                f"deleted {deleted} blob(s) under {silver_path}."
             )
-            return "failed"
-
-        df_merged = normalize_columns_to_snake_case(df_merged)
-        df_merged = apply_precision_policy(
-            df_merged,
-            price_columns=_PRICE_TARGET_PRICE_COLUMNS,
-            calculated_columns=_PRICE_TARGET_CALCULATED_COLUMNS,
-            price_scale=2,
-            calculated_scale=4,
+            return "ok"
+        mdc.write_warning(
+            f"Silver price-target backfill purge for {ticker} could not delete {silver_path}: storage client unavailable."
         )
+        return "failed"
 
-        # Write
+    out = out.sort_values(by="obs_date")
+    today = pd.to_datetime("today").normalize()
+    if not out.empty:
+        latest_obs = out["obs_date"].max()
+        if latest_obs < today:
+            all_dates = pd.date_range(start=out["obs_date"].min(), end=today)
+            df_dates = pd.DataFrame({"obs_date": all_dates})
+            out = df_dates.merge(out, on="obs_date", how="left")
+            out = out.ffill()
+
+    out["symbol"] = ticker
+    for col in column_names:
+        if col not in out.columns:
+            out[col] = np.nan
+    out = out[column_names]
+
+    out = out.set_index("obs_date")
+    out = out[~out.index.duplicated(keep="last")]
+    full_range = pd.date_range(start=out.index.min(), end=out.index.max(), freq="D")
+    out = out.reindex(full_range)
+    out.ffill(inplace=True)
+    out = out.reset_index().rename(columns={"index": "obs_date"})
+    out["symbol"] = ticker
+
+    df_history = (
+        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, silver_path)
+        if include_history
+        else None
+    )
+    if df_history is None or df_history.empty:
+        df_merged = out
+    else:
+        df_history = align_to_existing_schema(df_history, container=cfg.AZURE_CONTAINER_SILVER, path=silver_path)
+        if "Date" in df_history.columns and "obs_date" not in df_history.columns:
+            df_history = df_history.rename(columns={"Date": "obs_date"})
+        if "date" in df_history.columns and "obs_date" not in df_history.columns:
+            df_history = df_history.rename(columns={"date": "obs_date"})
+        if "obs_date" in df_history.columns:
+            df_history["obs_date"] = pd.to_datetime(df_history["obs_date"], errors="coerce")
+        df_merged = pd.concat([df_history, out], ignore_index=True)
+
+    for legacy_col in ("Date", "date"):
+        if legacy_col in df_merged.columns:
+            df_merged = df_merged.drop(columns=[legacy_col])
+
+    df_merged = df_merged.drop_duplicates(subset=["obs_date", "symbol"], keep="last")
+    df_merged = df_merged.sort_values(by=["obs_date", "symbol"])
+    df_merged = df_merged.reset_index(drop=True)
+
+    df_merged, _ = apply_backfill_start_cutoff(
+        df_merged,
+        date_col="obs_date",
+        backfill_start=backfill_start,
+        context=f"silver price-target merged {ticker}",
+    )
+    if backfill_start is not None and df_merged.empty:
+        if not persist:
+            return "ok"
+        if silver_client is not None:
+            deleted = silver_client.delete_prefix(silver_path)
+            mdc.write_line(
+                f"Silver price-target merged purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                f"deleted {deleted} blob(s) under {silver_path}."
+            )
+            return "ok"
+        mdc.write_warning(
+            f"Silver price-target merged purge for {ticker} could not delete {silver_path}: storage client unavailable."
+        )
+        return "failed"
+
+    df_merged = normalize_columns_to_snake_case(df_merged)
+    df_merged = apply_precision_policy(
+        df_merged,
+        price_columns=_PRICE_TARGET_PRICE_COLUMNS,
+        calculated_columns=_PRICE_TARGET_CALCULATED_COLUMNS,
+        price_scale=2,
+        calculated_scale=4,
+    )
+
+    if not persist:
+        if alpha26_bucket_frames is None:
+            raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
+        bucket = layer_bucketing.bucket_letter(ticker)
+        alpha26_bucket_frames.setdefault(bucket, []).append(df_merged.copy())
+    else:
         delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
@@ -237,22 +234,154 @@ def process_blob(blob, *, watermarks: dict) -> str:
                 enforce_retention_duration=False,
                 full=True,
             )
-        applied_price_cols = sorted(col for col in _PRICE_TARGET_PRICE_COLUMNS if col in df_merged.columns)
-        applied_calc_cols = sorted(col for col in _PRICE_TARGET_CALCULATED_COLUMNS if col in df_merged.columns)
-        price_cols_str = ",".join(applied_price_cols) if applied_price_cols else "none"
-        calc_cols_str = ",".join(applied_calc_cols) if applied_calc_cols else "none"
-        mdc.write_line(
-            "precision_policy_applied domain=price-target "
-            f"ticker={ticker} price_cols={price_cols_str} calc_cols={calc_cols_str} rows={len(df_merged)}"
-        )
+    applied_price_cols = sorted(col for col in _PRICE_TARGET_PRICE_COLUMNS if col in df_merged.columns)
+    applied_calc_cols = sorted(col for col in _PRICE_TARGET_CALCULATED_COLUMNS if col in df_merged.columns)
+    price_cols_str = ",".join(applied_price_cols) if applied_price_cols else "none"
+    calc_cols_str = ",".join(applied_calc_cols) if applied_calc_cols else "none"
+    mdc.write_line(
+        "precision_policy_applied domain=price-target "
+        f"ticker={ticker} price_cols={price_cols_str} calc_cols={calc_cols_str} rows={len(df_merged)}"
+    )
+    if persist:
         mdc.write_line(f"Updated Silver {ticker}")
+    return "ok"
+
+
+def process_blob(
+    blob,
+    *,
+    watermarks: dict,
+    include_history: bool = True,
+    persist: bool = True,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
+    blob_name = blob["name"]  # price-target-data/{symbol}.parquet
+    if not blob_name.endswith(".parquet"):
+        return "skipped_non_parquet"
+
+    ticker = blob_name.replace("price-target-data/", "").replace(".parquet", "")
+    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
+        return "skipped_debug_symbols"
+
+    silver_path = DataPaths.get_price_target_path(ticker)
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        if not _needs_obs_date_migration(silver_path):
+            return "skipped_unchanged"
+        mdc.write_line(f"Schema migration required for {ticker}; processing despite unchanged source blob.")
+
+    mdc.write_line(f"Processing {ticker}...")
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_new = pd.read_parquet(BytesIO(raw_bytes))
+        status = _process_symbol_frame(
+            ticker=ticker,
+            df_new=df_new,
+            source_name=blob_name,
+            include_history=include_history,
+            persist=persist,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
+        if status == "ok" and signature:
+            signature["updated_at"] = datetime.utcnow().isoformat()
+            watermarks[blob_name] = signature
+        return status
+    except Exception as exc:
+        mdc.write_error(f"Failed to process {ticker}: {exc}")
+        return "failed"
+
+
+def process_alpha26_bucket_blob(
+    blob,
+    *,
+    watermarks: dict,
+    include_history: bool = False,
+    persist: bool = False,
+    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
+) -> str:
+    blob_name = str(blob.get("name", ""))
+    if not blob_name.endswith(".parquet"):
+        return "skipped_non_parquet"
+
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    if unchanged:
+        return "skipped_unchanged"
+
+    try:
+        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
+        df_bucket = pd.read_parquet(BytesIO(raw_bytes))
+    except Exception as exc:
+        mdc.write_error(f"Failed to read price-target alpha26 bucket {blob_name}: {exc}")
+        return "failed"
+
+    if df_bucket is None or df_bucket.empty:
         if signature:
             signature["updated_at"] = datetime.utcnow().isoformat()
             watermarks[blob_name] = signature
         return "ok"
-    except Exception as e:
-        mdc.write_error(f"Failed to process {ticker}: {e}")
+
+    symbol_col = "symbol" if "symbol" in df_bucket.columns else ("Symbol" if "Symbol" in df_bucket.columns else None)
+    if symbol_col is None:
+        mdc.write_error(f"Missing symbol column in price-target alpha26 bucket {blob_name}.")
         return "failed"
+
+    debug_symbols = set(getattr(cfg, "DEBUG_SYMBOLS", []) or [])
+    has_failed = False
+    for symbol, group in df_bucket.groupby(symbol_col):
+        ticker = str(symbol or "").strip().upper()
+        if not ticker:
+            continue
+        if debug_symbols and ticker not in debug_symbols:
+            continue
+        status = _process_symbol_frame(
+            ticker=ticker,
+            df_new=group.copy(),
+            source_name=blob_name,
+            include_history=include_history,
+            persist=persist,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
+        if status == "failed":
+            has_failed = True
+
+    if not has_failed and signature:
+        signature["updated_at"] = datetime.utcnow().isoformat()
+        watermarks[blob_name] = signature
+    return "failed" if has_failed else "ok"
+
+
+def _write_alpha26_price_target_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) -> tuple[int, Optional[str]]:
+    symbol_to_bucket: dict[str, str] = {}
+    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        parts = bucket_frames.get(bucket, [])
+        if parts:
+            df_bucket = pd.concat(parts, ignore_index=True)
+            if "symbol" in df_bucket.columns and "obs_date" in df_bucket.columns:
+                df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
+                df_bucket["obs_date"] = pd.to_datetime(df_bucket["obs_date"], errors="coerce")
+                df_bucket = df_bucket.dropna(subset=["symbol", "obs_date"]).copy()
+                df_bucket = df_bucket.sort_values(["symbol", "obs_date"]).drop_duplicates(
+                    subset=["symbol", "obs_date"], keep="last"
+                )
+                for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
+                    if symbol:
+                        symbol_to_bucket[symbol] = bucket
+            else:
+                df_bucket = pd.DataFrame(columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
+        else:
+            df_bucket = pd.DataFrame(columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
+        delta_core.store_delta(
+            df_bucket.reset_index(drop=True),
+            cfg.AZURE_CONTAINER_SILVER,
+            DataPaths.get_silver_price_target_bucket_path(bucket),
+            mode="overwrite",
+        )
+    index_path = layer_bucketing.write_layer_symbol_index(
+        layer="silver",
+        domain="price-target",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return len(symbol_to_bucket), index_path
 
 
 def _run_price_target_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
@@ -315,31 +444,34 @@ def main():
     backfill_start, _ = get_backfill_range()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to silver price-target data: {backfill_start.date().isoformat()}")
+    bronze_bucketing.bronze_layout_mode()
+    layer_bucketing.silver_layout_mode()
+    force_rebuild = layer_bucketing.silver_alpha26_force_rebuild()
     mdc.write_line("Listing Bronze Price Target files...")
     blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     watermarks = load_watermarks("bronze_price_target_data")
     last_success = load_last_success("silver_price_target_data")
     watermarks_dirty = False
 
-    blob_list = list(blobs)
+    blob_list = [
+        b
+        for b in blobs
+        if str(b.get("name", "")).startswith("price-target-data/buckets/")
+        and str(b.get("name", "")).endswith(".parquet")
+    ]
     checkpoint_skipped = 0
     forced_schema_migration = 0
     candidate_blobs: list[dict] = []
     for blob in blob_list:
         blob_name = str(blob.get("name", ""))
         force_reprocess = False
-        if blob_name.endswith(".parquet"):
-            ticker = _extract_ticker(blob_name)
-            silver_path = DataPaths.get_price_target_path(ticker)
-            force_reprocess = _needs_obs_date_migration(silver_path)
-            if force_reprocess:
-                forced_schema_migration += 1
+        force_reprocess = False
         prior = watermarks.get(blob_name)
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
             last_success_at=last_success,
-            force_reprocess=force_reprocess,
+            force_reprocess=force_reprocess or force_rebuild,
         )
         if should_process:
             candidate_blobs.append(blob)
@@ -358,8 +490,15 @@ def main():
     failed = 0
     skipped_unchanged = 0
     skipped_other = 0
+    alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
     for blob in candidate_blobs:
-        status = process_blob(blob, watermarks=watermarks)
+        status = process_alpha26_bucket_blob(
+            blob,
+            watermarks=watermarks,
+            include_history=False,
+            persist=False,
+            alpha26_bucket_frames=alpha26_bucket_frames,
+        )
         if status == "ok":
             ok_or_skipped += 1
             watermarks_dirty = True
@@ -372,22 +511,29 @@ def main():
         else:
             failed += 1
 
+    alpha26_written_symbols = 0
+    alpha26_index_path: Optional[str] = None
+    if failed == 0:
+        try:
+            alpha26_written_symbols, alpha26_index_path = _write_alpha26_price_target_buckets(alpha26_bucket_frames)
+            mdc.write_line(
+                "Silver price-target alpha26 buckets written: "
+                f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
+            )
+        except Exception as exc:
+            failed += 1
+            mdc.write_error(f"Silver price-target alpha26 bucket write failed: {exc}")
+
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
-    try:
-        reconciliation_orphans, reconciliation_deleted_blobs = _run_price_target_reconciliation(
-            bronze_blob_list=blob_list
-        )
-    except Exception as exc:
-        reconciliation_failed = 1
-        mdc.write_error(f"Silver price-target reconciliation failed: {exc}")
 
     total_failed = failed + reconciliation_failed
     mdc.write_line(
         "Silver price target job complete: "
         f"ok_or_skipped={ok_or_skipped} skipped_unchanged={skipped_unchanged} skipped_other={skipped_other} "
-        f"skipped_checkpoint={checkpoint_skipped} reconciled_orphans={reconciliation_orphans} "
+        f"skipped_checkpoint={checkpoint_skipped} alpha26_symbols={alpha26_written_symbols} "
+        f"reconciled_orphans={reconciliation_orphans} "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} failed={total_failed}"
     )
     if watermarks_dirty:
@@ -401,6 +547,8 @@ def main():
                 "ok_or_skipped": ok_or_skipped,
                 "skipped_checkpoint": checkpoint_skipped,
                 "forced_schema_migration": forced_schema_migration,
+                "alpha26_symbols": alpha26_written_symbols,
+                "alpha26_index_path": alpha26_index_path,
                 "reconciled_orphans": reconciliation_orphans,
                 "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },

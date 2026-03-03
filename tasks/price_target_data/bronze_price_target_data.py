@@ -3,6 +3,7 @@ import os
 import asyncio
 import pandas as pd
 import nasdaqdatalink
+import hashlib
 from datetime import datetime, date, timedelta, timezone
 from io import BytesIO
 from typing import Dict, List, Optional
@@ -10,6 +11,7 @@ from typing import Dict, List, Optional
 from core import core as mdc
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
+from tasks.common import bronze_bucketing
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
     load_coverage_marker,
@@ -27,6 +29,19 @@ BATCH_SIZE = 50
 PRICE_TARGET_FULL_HISTORY_START_DATE = date(2020, 1, 1)
 _COVERAGE_DOMAIN = "price-target"
 _COVERAGE_PROVIDER = "nasdaq"
+_BUCKET_COLUMNS = [
+    "symbol",
+    "obs_date",
+    "tp_mean_est",
+    "tp_std_dev_est",
+    "tp_high_est",
+    "tp_low_est",
+    "tp_cnt_est",
+    "tp_cnt_est_rev_up",
+    "tp_cnt_est_rev_down",
+    "ingested_at",
+    "source_hash",
+]
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -129,11 +144,91 @@ def _delete_price_target_blob_for_cutoff(
         )
 
 
+def _normalize_bucket_symbol_df(symbol: str, symbol_df: pd.DataFrame) -> pd.DataFrame:
+    out = symbol_df.copy()
+    out["symbol"] = str(symbol).upper()
+    if "obs_date" not in out.columns:
+        out["obs_date"] = pd.NaT
+    out["obs_date"] = pd.to_datetime(out["obs_date"], errors="coerce", utc=True).dt.tz_localize(None)
+    out = out.dropna(subset=["obs_date"]).copy()
+    for col in [
+        "tp_mean_est",
+        "tp_std_dev_est",
+        "tp_high_est",
+        "tp_low_est",
+        "tp_cnt_est",
+        "tp_cnt_est_rev_up",
+        "tp_cnt_est_rev_down",
+    ]:
+        if col not in out.columns:
+            out[col] = pd.NA
+    source_json = out.to_json(orient="records", date_format="iso")
+    out["source_hash"] = hashlib.sha256(source_json.encode("utf-8")).hexdigest()
+    out["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    out = out[_BUCKET_COLUMNS]
+    return out.reset_index(drop=True)
+
+
+def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
+    bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
+    symbol_to_bucket: dict[str, str] = {}
+
+    for symbol, frame in symbol_frames.items():
+        if frame is None or frame.empty:
+            continue
+        normalized = _normalize_bucket_symbol_df(symbol, frame)
+        if normalized.empty:
+            continue
+        bucket = bronze_bucketing.bucket_letter(symbol)
+        symbol_to_bucket[str(symbol).upper()] = bucket
+        if bucket_frames[bucket].empty:
+            bucket_frames[bucket] = normalized
+        else:
+            bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
+
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        frame = bucket_frames[bucket]
+        if frame.empty:
+            frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
+        bronze_bucketing.write_bucket_parquet(
+            client=bronze_client,
+            prefix="price-target-data",
+            bucket=bucket,
+            df=frame,
+            codec=bronze_bucketing.alpha26_codec(),
+        )
+
+    index_path = bronze_bucketing.write_symbol_index(
+        domain="price-target",
+        symbol_to_bucket=symbol_to_bucket,
+    )
+    return len(symbol_to_bucket), index_path
+
+
+def _delete_legacy_symbol_blobs() -> int:
+    deleted = 0
+    for blob in bronze_client.list_blob_infos(name_starts_with="price-target-data/"):
+        name = str(blob.get("name") or "")
+        if not name.endswith(".parquet"):
+            continue
+        if "/buckets/" in name:
+            continue
+        try:
+            bronze_client.delete_file(name)
+            deleted += 1
+        except Exception as exc:
+            mdc.write_warning(f"Failed deleting legacy price target blob {name}: {exc}")
+    return deleted
+
+
 async def process_batch_bronze(
     symbols: List[str],
     semaphore: asyncio.Semaphore,
     *,
     backfill_start: Optional[date] = None,
+    write_symbol_files: bool = True,
+    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    alpha26_mode: bool = False,
 ) -> dict:
     batch_summary = {
         "requested": len(symbols),
@@ -158,6 +253,11 @@ async def process_batch_bronze(
         default_start_date = backfill_start or PRICE_TARGET_FULL_HISTORY_START_DATE
 
         for sym in symbols:
+            if alpha26_mode:
+                symbol_force_backfill[sym] = False
+                symbol_start_dates[sym] = default_start_date
+                stale_symbols.append(sym)
+                continue
             blob_path = f"price-target-data/{sym}.parquet"
             force_backfill = False
             try:
@@ -318,9 +418,12 @@ async def process_batch_bronze(
                         summary=batch_summary,
                     )
 
-                raw_parquet = symbol_df.to_parquet(index=False)
-                mdc.store_raw_bytes(raw_parquet, f"price-target-data/{sym}.parquet", client=bronze_client)
-                mdc.write_line(f"Saved Bronze {sym}")
+                if write_symbol_files:
+                    raw_parquet = symbol_df.to_parquet(index=False)
+                    mdc.store_raw_bytes(raw_parquet, f"price-target-data/{sym}.parquet", client=bronze_client)
+                    mdc.write_line(f"Saved Bronze {sym}")
+                elif collected_symbol_frames is not None:
+                    collected_symbol_frames[sym] = symbol_df.copy()
                 list_manager.add_to_whitelist(sym)
                 batch_summary["saved"] += 1
             except Exception as e:
@@ -361,12 +464,24 @@ async def main_async() -> int:
     if cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
         symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
-        
+
+    alpha26_mode = bronze_bucketing.is_alpha26_mode()
     chunked_symbols = [symbols[i:i + BATCH_SIZE] for i in range(0, len(symbols), BATCH_SIZE)]
     semaphore = asyncio.Semaphore(3)
-    
+
+    bucket_symbol_frames: Dict[str, pd.DataFrame] = {}
     mdc.write_line(f"Starting Bronze Price Target Ingestion for {len(symbols)} symbols...")
-    tasks = [process_batch_bronze(chunk, semaphore, backfill_start=backfill_start) for chunk in chunked_symbols]
+    tasks = [
+        process_batch_bronze(
+            chunk,
+            semaphore,
+            backfill_start=backfill_start,
+            write_symbol_files=not alpha26_mode,
+            collected_symbol_frames=bucket_symbol_frames if alpha26_mode else None,
+            alpha26_mode=alpha26_mode,
+        )
+        for chunk in chunked_symbols
+    ]
     batch_exception_count = 0
     aggregate = {
         "requested": 0,
@@ -413,6 +528,21 @@ async def main_async() -> int:
             if bool(result.get("api_error", False)):
                 aggregate["api_error_batches"] += 1
     finally:
+        alpha26_written_symbols = 0
+        alpha26_index_path: Optional[str] = None
+        legacy_deleted = 0
+        if alpha26_mode:
+            try:
+                alpha26_written_symbols, alpha26_index_path = _write_alpha26_price_target_buckets(bucket_symbol_frames)
+                legacy_deleted = _delete_legacy_symbol_blobs()
+                mdc.write_line(
+                    "Bronze price-target alpha26 buckets written: "
+                    f"symbols={alpha26_written_symbols} index={alpha26_index_path or 'n/a'} "
+                    f"legacy_deleted={legacy_deleted}"
+                )
+            except Exception as exc:
+                batch_exception_count += 1
+                mdc.write_error(f"Bronze price-target alpha26 bucket write failed: {exc}")
         try:
             list_manager.flush()
         except Exception as exc:
