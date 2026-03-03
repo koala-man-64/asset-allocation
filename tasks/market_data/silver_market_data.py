@@ -485,6 +485,15 @@ def _write_alpha26_market_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) 
     return len(symbol_to_bucket), index_path
 
 
+def _count_staged_bucket_rows(bucket_frames: dict[str, list[pd.DataFrame]]) -> int:
+    total_rows = 0
+    for parts in bucket_frames.values():
+        for frame in parts:
+            if frame is not None:
+                total_rows += int(len(frame))
+    return total_rows
+
+
 def _run_market_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
     if silver_client is None:
         raise RuntimeError("Silver market reconciliation requires silver storage client.")
@@ -614,16 +623,20 @@ def main():
 
     alpha26_written_symbols = 0
     alpha26_index_path: Optional[str] = None
+    alpha26_staged_rows = _count_staged_bucket_rows(alpha26_bucket_frames)
     if failed == 0:
-        try:
-            alpha26_written_symbols, alpha26_index_path = _write_alpha26_market_buckets(alpha26_bucket_frames)
-            mdc.write_line(
-                "Silver market alpha26 buckets written: "
-                f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
-            )
-        except Exception as exc:
-            failed += 1
-            mdc.write_error(f"Silver market alpha26 bucket write failed: {exc}")
+        if alpha26_staged_rows == 0:
+            mdc.write_line("Silver market alpha26 bucket write skipped: no staged rows.")
+        else:
+            try:
+                alpha26_written_symbols, alpha26_index_path = _write_alpha26_market_buckets(alpha26_bucket_frames)
+                mdc.write_line(
+                    "Silver market alpha26 buckets written: "
+                    f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
+                )
+            except Exception as exc:
+                failed += 1
+                mdc.write_error(f"Silver market alpha26 bucket write failed: {exc}")
 
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
@@ -634,6 +647,7 @@ def main():
         "Silver market job complete: "
         f"processed={processed} skipped_unchanged={skipped_unchanged} "
         f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} "
+        f"alpha26_staged_rows={alpha26_staged_rows} "
         f"alpha26_symbols={alpha26_written_symbols} "
         f"reconciled_orphans={reconciliation_orphans} "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} "
@@ -651,6 +665,7 @@ def main():
                 "skipped_checkpoint": checkpoint_skipped,
                 "skipped_unchanged": skipped_unchanged,
                 "skipped_other": skipped_other,
+                "alpha26_staged_rows": alpha26_staged_rows,
                 "alpha26_symbols": alpha26_written_symbols,
                 "alpha26_index_path": alpha26_index_path,
                 "reconciled_orphans": reconciliation_orphans,

@@ -10,224 +10,88 @@
   },
   "category_counts": {
     "config_infra": 1,
-    "performance": 1,
-    "security": 1,
+    "docs": 1,
     "test": 1
   },
   "category_scores": {
-    "config_infra": 15.0,
-    "performance": 7.5,
-    "security": 60.0,
-    "test": 37.5
+    "config_infra": 0.0,
+    "docs": 1.5,
+    "test": 25.0
   },
   "changed_files": [
-    "api/data_service.py",
-    "api/endpoints/data.py",
-    "api/endpoints/system.py",
-    "core/config.py",
-    "core/core.py",
-    "core/pipeline.py",
-    "docs/data_lineage.md",
-    "monitoring/domain_metadata.py",
-    "tasks/common/market_reconciliation.py",
-    "tasks/earnings_data/bronze_earnings_data.py",
-    "tasks/earnings_data/gold_earnings_data.py",
-    "tasks/earnings_data/silver_earnings_data.py",
-    "tasks/finance_data/bronze_finance_data.py",
-    "tasks/finance_data/gold_finance_data.py",
-    "tasks/finance_data/silver_finance_data.py",
-    "tasks/market_data/bronze_market_data.py",
-    "tasks/market_data/gold_market_data.py",
-    "tasks/market_data/silver_market_data.py",
-    "tasks/price_target_data/bronze_price_target_data.py",
-    "tasks/price_target_data/gold_price_target_data.py",
-    "tasks/price_target_data/silver_price_target_data.py",
-    "tests/api/test_data_screener_endpoints.py",
-    "tests/api/test_data_service_bronze_raw.py",
-    "tests/api/test_data_service_json_safe.py",
-    "tests/api/test_strategies.py",
-    "tests/api/test_system_purge_parallelism.py",
-    "tests/api/test_system_purge_symbol_cleanup.py",
-    "tests/core/test_alpha_vantage_gateway_client.py",
-    "tests/core/test_massive_gateway_client.py",
-    "tests/earnings_data/test_gold_earnings_data_reconciliation.py",
-    "tests/earnings_data/test_silver_earnings_data.py",
-    "tests/finance_data/test_gold_finance_data_reconciliation.py",
-    "tests/finance_data/test_silver_finance_data.py",
-    "tests/market_data/test_gold_market_data_reconciliation.py",
-    "tests/market_data/test_silver_market_data.py",
-    "tests/monitoring/test_domain_metadata.py",
-    "tests/price_target_data/test_gold_price_target_data_reconciliation.py",
-    "tests/price_target_data/test_silver_price_target_data.py",
-    "tests/tasks/test_backfill.py",
-    "tests/tasks/test_market_reconciliation.py",
-    "tests/test_ruff_lint.py"
+    ".codedrift.yml",
+    "ui/src/app/App.tsx",
+    "ui/src/app/components/layout/LeftNavigation.tsx",
+    "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx"
   ],
-  "drift_score": 120.0,
+  "drift_score": 26.5,
   "findings": [
     {
       "attribution": {
-        "tests/api/test_data_service_bronze_raw.py": [
-          "7072dbe|rdprokes|2026-02-08|cleaned"
+        "ui/src/app/App.tsx": [
+          "424b7f6|rdprokes|2026-02-25|fixed massive"
         ],
-        "tests/api/test_system_purge_parallelism.py": [
+        "ui/src/app/components/layout/LeftNavigation.tsx": [
           "98b6921|rdprokes|2026-02-25|fixed purging"
         ],
-        "tests/core/test_alpha_vantage_gateway_client.py": [
-          "5787e89|rdprokes|2026-02-21|gogo"
-        ],
-        "tests/core/test_massive_gateway_client.py": [
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx": [
           "72a40e1|rdprokes|2026-02-28|fixed"
-        ],
-        "tests/earnings_data/test_silver_earnings_data.py": [
-          "9a42074|rdprokes|2026-02-28|rounding added"
-        ],
-        "tests/finance_data/test_silver_finance_data.py": [
-          "9a42074|rdprokes|2026-02-28|rounding added"
-        ],
-        "tests/market_data/test_gold_market_data_reconciliation.py": [
-          "ef8310e|rdprokes|2026-02-28|index column removal"
-        ],
-        "tests/market_data/test_silver_market_data.py": [
-          "9a42074|rdprokes|2026-02-28|rounding added"
-        ],
-        "tests/price_target_data/test_silver_price_target_data.py": [
-          "9a42074|rdprokes|2026-02-28|rounding added"
-        ],
-        "tests/tasks/test_backfill.py": [
-          "ef8310e|rdprokes|2026-02-28|index column removal"
-        ],
-        "tests/tasks/test_market_reconciliation.py": [
-          "b1ffe25|rdprokes|2026-02-26|fixed code drift"
         ]
       },
       "category": "test",
-      "confidence": 0.8,
+      "confidence": 0.72,
       "evidence": [
-        "tests/api/test_data_service_bronze_raw.py: -def test_bronze_market_reads_raw_csv(monkeypatch):",
-        "tests/api/test_data_service_bronze_raw.py: -def test_bronze_earnings_reads_raw_json(monkeypatch):",
-        "tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_preview_load_workers(monkeypatch: pytest.MonkeyPatch) -> None:",
-        "tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_scope_workers(monkeypatch: pytest.MonkeyPatch) -> None:",
-        "tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_symbol_target_workers(monkeypatch: pytest.MonkeyPatch) -> None:",
-        "tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_symbol_layer_workers(monkeypatch: pytest.MonkeyPatch) -> None:",
-        "tests/core/test_alpha_vantage_gateway_client.py: -def test_build_headers_includes_caller_context(monkeypatch):",
-        "tests/core/test_alpha_vantage_gateway_client.py: -def test_from_env_enforces_long_timeout_floor(monkeypatch):",
-        "tests/core/test_alpha_vantage_gateway_client.py: -def test_public_warmup_gateway_reports_failure(monkeypatch):",
-        "tests/core/test_alpha_vantage_gateway_client.py: -def test_request_fails_fast_when_readiness_never_recovers(monkeypatch):",
-        "tests/core/test_massive_gateway_client.py: -def test_build_headers_includes_caller_context(monkeypatch):",
-        "tests/core/test_massive_gateway_client.py: -def test_from_env_enforces_timeout_floor(monkeypatch):"
+        "Changed non-test files: ui/src/app/App.tsx, ui/src/app/components/layout/LeftNavigation.tsx, ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx"
       ],
-      "expected": "Coverage should not regress for changed behavior.",
+      "expected": "Behavioral code changes should include corresponding test updates where relevant.",
       "files": [
-        "tests/api/test_data_service_bronze_raw.py",
-        "tests/api/test_system_purge_parallelism.py",
-        "tests/core/test_alpha_vantage_gateway_client.py",
-        "tests/core/test_massive_gateway_client.py",
-        "tests/earnings_data/test_silver_earnings_data.py",
-        "tests/finance_data/test_silver_finance_data.py",
-        "tests/market_data/test_gold_market_data_reconciliation.py",
-        "tests/market_data/test_silver_market_data.py",
-        "tests/price_target_data/test_silver_price_target_data.py",
-        "tests/tasks/test_backfill.py",
-        "tests/tasks/test_market_reconciliation.py"
+        "ui/src/app/App.tsx",
+        "ui/src/app/components/layout/LeftNavigation.tsx",
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx"
       ],
-      "observed": "Detected removed test definitions/assertions in diff.",
-      "remediation": "Restore removed tests or add equivalent coverage for modified behavior.",
+      "observed": "Detected source changes without matching test file changes.",
+      "remediation": "Add targeted unit tests for modified modules and critical edge cases.",
       "risk": "medium",
-      "score": 37.5,
-      "severity": "high",
-      "title": "Test cases removed",
+      "score": 25.0,
+      "severity": "medium",
+      "title": "Code changed without nearby test updates",
       "verification": [
-        "Run fast and full tests",
-        "Check coverage trend"
+        "Run fast tests",
+        "Review changed modules for edge cases"
       ]
     },
     {
       "attribution": {
-        "api/data_service.py": [
-          "c30c75c|rdprokes|2026-02-18|removed market by date"
+        "ui/src/app/App.tsx": [
+          "424b7f6|rdprokes|2026-02-25|fixed massive"
         ],
-        "api/endpoints/data.py": [
-          "c30c75c|rdprokes|2026-02-18|removed market by date"
+        "ui/src/app/components/layout/LeftNavigation.tsx": [
+          "98b6921|rdprokes|2026-02-25|fixed purging"
         ],
-        "api/endpoints/system.py": [
-          "b61bf5b|rdprokes|2026-02-26|purge parity"
-        ],
-        "core/config.py": [
-          "53a0df9|rdprokes|2026-02-09|fixed massive"
-        ],
-        "core/core.py": [
-          "fb8bba3|rdprokes|2026-02-23|dont even know"
-        ],
-        "core/pipeline.py": [
-          "18216cc|rdprokes|2026-02-24|materialize gold"
-        ],
-        "docs/data_lineage.md": [
-          "9a42074|rdprokes|2026-02-28|rounding added"
-        ],
-        "monitoring/domain_metadata.py": [
-          "e43f7c1|rdprokes|2026-02-26|reconciliation purging and strict only in gold added"
-        ],
-        "tasks/common/market_reconciliation.py": [
-          "ef8310e|rdprokes|2026-02-28|index column removal"
-        ],
-        "tasks/earnings_data/bronze_earnings_data.py": [
-          "0fde5aa|rdprokes|2026-02-28|backfill fix"
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx": [
+          "72a40e1|rdprokes|2026-02-28|fixed"
         ]
       },
-      "category": "performance",
-      "confidence": 0.62,
+      "category": "docs",
+      "confidence": 0.68,
       "evidence": [
-        "            for ticker in sorted(symbol_candidates):"
+        "No files matched docs patterns in the change set."
       ],
-      "expected": "Performance-sensitive code paths should avoid repeated query/network calls in loops and benchmark regressions.",
+      "expected": "Docs/examples/changelog should stay aligned with behavior and API changes.",
       "files": [
-        "api/data_service.py",
-        "api/endpoints/data.py",
-        "api/endpoints/system.py",
-        "core/config.py",
-        "core/core.py",
-        "core/pipeline.py",
-        "docs/data_lineage.md",
-        "monitoring/domain_metadata.py",
-        "tasks/common/market_reconciliation.py",
-        "tasks/earnings_data/bronze_earnings_data.py"
+        "ui/src/app/App.tsx",
+        "ui/src/app/components/layout/LeftNavigation.tsx",
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx"
       ],
-      "observed": "Detected suspicious loop + I/O patterns and/or benchmark command failures.",
-      "remediation": "Inspect hotspots for N+1 patterns, cache repeated calls, and add focused micro-benchmarks.",
-      "risk": "medium",
-      "score": 7.5,
+      "observed": "No documentation files changed alongside code updates.",
+      "remediation": "Update README/docs/changelog to reflect behavior, API, and configuration changes.",
+      "risk": "low",
+      "score": 1.5,
       "severity": "low",
-      "title": "Potential performance drift signals detected",
+      "title": "Code changed without documentation updates",
       "verification": [
-        "Run benchmark command(s)",
-        "Profile impacted endpoints/functions"
-      ]
-    },
-    {
-      "attribution": {
-        "api/endpoints/system.py": [
-          "b61bf5b|rdprokes|2026-02-26|purge parity"
-        ]
-      },
-      "category": "security",
-      "confidence": 0.93,
-      "evidence": [
-        "Protected files touched: api/endpoints/system.py"
-      ],
-      "expected": "Protected areas require explicit opt-in review before modification.",
-      "files": [
-        "api/endpoints/system.py"
-      ],
-      "observed": "Files matching protected globs were modified.",
-      "remediation": "Require explicit approver sign-off and run focused regression/security tests.",
-      "risk": "high",
-      "score": 60.0,
-      "severity": "high",
-      "title": "Protected paths changed",
-      "verification": [
-        "Manual security review",
-        "Auth/infrastructure regression tests"
+        "Review docs for changed modules",
+        "Run docs lint/checks if available"
       ]
     },
     {
@@ -242,7 +106,7 @@
       "observed": "26 recent commits touched config/infra files in lookback window.",
       "remediation": "Consolidate config ownership, batch related changes, and document rationale in PRs.",
       "risk": "medium",
-      "score": 15.0,
+      "score": 0.0,
       "severity": "medium",
       "title": "Recent config churn detected",
       "verification": [
@@ -251,79 +115,33 @@
       ]
     }
   ],
-  "gate_result": "fail",
-  "generated_at": "2026-03-03T17:28:32.596218+00:00",
+  "gate_result": "pass",
+  "generated_at": "2026-03-03T19:48:53.172443+00:00",
   "hotspots": [
     {
       "findings": 2,
-      "path": "api/endpoints/system.py",
-      "score": 60.75
+      "path": "ui/src/app/components/layout/LeftNavigation.tsx",
+      "score": 8.83
+    },
+    {
+      "findings": 2,
+      "path": "ui/src/app/App.tsx",
+      "score": 8.83
+    },
+    {
+      "findings": 2,
+      "path": "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx",
+      "score": 8.83
     },
     {
       "findings": 1,
       "path": "(command-output)",
-      "score": 15.0
-    },
-    {
-      "findings": 1,
-      "path": "tests/tasks/test_backfill.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/earnings_data/test_silver_earnings_data.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/tasks/test_market_reconciliation.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/core/test_massive_gateway_client.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/market_data/test_gold_market_data_reconciliation.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/api/test_data_service_bronze_raw.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/market_data/test_silver_market_data.py",
-      "score": 3.41
-    },
-    {
-      "findings": 1,
-      "path": "tests/price_target_data/test_silver_price_target_data.py",
-      "score": 3.41
+      "score": 0.0
     }
   ],
   "mode": "audit",
   "patch_preview": [],
   "suggested_actions": [
-    {
-      "category": "security",
-      "files": [
-        "api/endpoints/system.py"
-      ],
-      "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
-      "risk_level": "high",
-      "severity": "high",
-      "title": "Protected paths changed",
-      "verification_steps": [
-        "Manual security review",
-        "Auth/infrastructure regression tests"
-      ],
-      "what_to_change": "Require explicit approver sign-off and run focused regression/security tests.",
-      "why_it_is_drift": "Expected: Protected areas require explicit opt-in review before modification. Observed: Files matching protected globs were modified."
-    },
     {
       "category": "config_infra",
       "files": [],
@@ -341,53 +159,38 @@
     {
       "category": "test",
       "files": [
-        "tests/api/test_data_service_bronze_raw.py",
-        "tests/api/test_system_purge_parallelism.py",
-        "tests/core/test_alpha_vantage_gateway_client.py",
-        "tests/core/test_massive_gateway_client.py",
-        "tests/earnings_data/test_silver_earnings_data.py",
-        "tests/finance_data/test_silver_finance_data.py",
-        "tests/market_data/test_gold_market_data_reconciliation.py",
-        "tests/market_data/test_silver_market_data.py",
-        "tests/price_target_data/test_silver_price_target_data.py",
-        "tests/tasks/test_backfill.py",
-        "tests/tasks/test_market_reconciliation.py"
+        "ui/src/app/App.tsx",
+        "ui/src/app/components/layout/LeftNavigation.tsx",
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx"
       ],
       "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
       "risk_level": "medium",
-      "severity": "high",
-      "title": "Test cases removed",
+      "severity": "medium",
+      "title": "Code changed without nearby test updates",
       "verification_steps": [
-        "Run fast and full tests",
-        "Check coverage trend"
+        "Run fast tests",
+        "Review changed modules for edge cases"
       ],
-      "what_to_change": "Restore removed tests or add equivalent coverage for modified behavior.",
-      "why_it_is_drift": "Expected: Coverage should not regress for changed behavior. Observed: Detected removed test definitions/assertions in diff."
+      "what_to_change": "Add targeted unit tests for modified modules and critical edge cases.",
+      "why_it_is_drift": "Expected: Behavioral code changes should include corresponding test updates where relevant. Observed: Detected source changes without matching test file changes."
     },
     {
-      "category": "performance",
+      "category": "docs",
       "files": [
-        "api/data_service.py",
-        "api/endpoints/data.py",
-        "api/endpoints/system.py",
-        "core/config.py",
-        "core/core.py",
-        "core/pipeline.py",
-        "docs/data_lineage.md",
-        "monitoring/domain_metadata.py",
-        "tasks/common/market_reconciliation.py",
-        "tasks/earnings_data/bronze_earnings_data.py"
+        "ui/src/app/App.tsx",
+        "ui/src/app/components/layout/LeftNavigation.tsx",
+        "ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx"
       ],
       "patch_approach": "Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.",
-      "risk_level": "medium",
+      "risk_level": "low",
       "severity": "low",
-      "title": "Potential performance drift signals detected",
+      "title": "Code changed without documentation updates",
       "verification_steps": [
-        "Run benchmark command(s)",
-        "Profile impacted endpoints/functions"
+        "Review docs for changed modules",
+        "Run docs lint/checks if available"
       ],
-      "what_to_change": "Inspect hotspots for N+1 patterns, cache repeated calls, and add focused micro-benchmarks.",
-      "why_it_is_drift": "Expected: Performance-sensitive code paths should avoid repeated query/network calls in loops and benchmark regressions. Observed: Detected suspicious loop + I/O patterns and/or benchmark command failures."
+      "what_to_change": "Update README/docs/changelog to reflect behavior, API, and configuration changes.",
+      "why_it_is_drift": "Expected: Docs/examples/changelog should stay aligned with behavior and API changes. Observed: No documentation files changed alongside code updates."
     }
   ],
   "thresholds": {

@@ -23,6 +23,7 @@ import {
   Pin,
   PinOff,
   Globe,
+  Database,
   Bug,
   SlidersHorizontal,
   Filter
@@ -60,6 +61,7 @@ const navSections: NavSection[] = [
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
       { path: '/symbol-purge', label: 'Symbol Purge', icon: Filter },
       { path: '/runtime-config', label: 'Runtime Config', icon: SlidersHorizontal },
+      { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database },
       { path: '/gold-materialization', label: 'Gold Materialization', icon: SlidersHorizontal }
     ]
   }

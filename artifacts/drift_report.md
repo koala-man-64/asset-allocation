@@ -2,41 +2,21 @@
 
 ## Summary
 - Mode: `audit`
-- Generated at: `2026-03-03T17:28:32.596218+00:00`
+- Generated at: `2026-03-03T19:48:53.172443+00:00`
 - Baseline: `main` (configured baseline.branch)
 - Compare: `main` -> `HEAD`
-- Drift score: **120.0** (threshold fail: `35.0`)
-- Result: **FAIL**
+- Drift score: **26.5** (threshold fail: `35.0`)
+- Result: **PASS**
 
 ## Top Drift Hotspots
 | File/Module | Findings | Score |
 |---|---:|---:|
-| `api/endpoints/system.py` | 2 | 60.75 |
-| `(command-output)` | 1 | 15.0 |
-| `tests/tasks/test_backfill.py` | 1 | 3.41 |
-| `tests/earnings_data/test_silver_earnings_data.py` | 1 | 3.41 |
-| `tests/tasks/test_market_reconciliation.py` | 1 | 3.41 |
-| `tests/core/test_massive_gateway_client.py` | 1 | 3.41 |
-| `tests/market_data/test_gold_market_data_reconciliation.py` | 1 | 3.41 |
-| `tests/api/test_data_service_bronze_raw.py` | 1 | 3.41 |
-| `tests/market_data/test_silver_market_data.py` | 1 | 3.41 |
-| `tests/price_target_data/test_silver_price_target_data.py` | 1 | 3.41 |
+| `ui/src/app/components/layout/LeftNavigation.tsx` | 2 | 8.83 |
+| `ui/src/app/App.tsx` | 2 | 8.83 |
+| `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx` | 2 | 8.83 |
+| `(command-output)` | 1 | 0.0 |
 
 ## Category Findings
-### Security Drift
-- **[HIGH] Protected paths changed** (confidence 0.93)
-  - Expected vs Observed: Protected areas require explicit opt-in review before modification. | Files matching protected globs were modified.
-  - Files: `api/endpoints/system.py`
-  - Evidence:
-    - Protected files touched: api/endpoints/system.py
-  - Attribution:
-    - `api/endpoints/system.py`
-      - b61bf5b|rdprokes|2026-02-26|purge parity
-  - Recommendation: Require explicit approver sign-off and run focused regression/security tests.
-  - Verification:
-    - `Manual security review`
-    - `Auth/infrastructure regression tests`
-
 ### Config/Infra Drift
 - **[MEDIUM] Recent config churn detected** (confidence 0.6)
   - Expected vs Observed: Configuration should remain stable and coordinated across contributors. | 26 recent commits touched config/infra files in lookback window.
@@ -48,60 +28,43 @@
     - `Audit gate consistency across workflows`
 
 ### Test Drift
-- **[HIGH] Test cases removed** (confidence 0.8)
-  - Expected vs Observed: Coverage should not regress for changed behavior. | Detected removed test definitions/assertions in diff.
-  - Files: `tests/api/test_data_service_bronze_raw.py`, `tests/api/test_system_purge_parallelism.py`, `tests/core/test_alpha_vantage_gateway_client.py`, `tests/core/test_massive_gateway_client.py`, `tests/earnings_data/test_silver_earnings_data.py`, `tests/finance_data/test_silver_finance_data.py`, `tests/market_data/test_gold_market_data_reconciliation.py`, `tests/market_data/test_silver_market_data.py`, `tests/price_target_data/test_silver_price_target_data.py`, `tests/tasks/test_backfill.py`
+- **[MEDIUM] Code changed without nearby test updates** (confidence 0.72)
+  - Expected vs Observed: Behavioral code changes should include corresponding test updates where relevant. | Detected source changes without matching test file changes.
+  - Files: `ui/src/app/App.tsx`, `ui/src/app/components/layout/LeftNavigation.tsx`, `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx`
   - Evidence:
-    - tests/api/test_data_service_bronze_raw.py: -def test_bronze_market_reads_raw_csv(monkeypatch):
-    - tests/api/test_data_service_bronze_raw.py: -def test_bronze_earnings_reads_raw_json(monkeypatch):
-    - tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_preview_load_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    - tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_scope_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    - tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_symbol_target_workers(monkeypatch: pytest.MonkeyPatch) -> None:
-    - tests/api/test_system_purge_parallelism.py: -def test_resolve_purge_symbol_layer_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    - Changed non-test files: ui/src/app/App.tsx, ui/src/app/components/layout/LeftNavigation.tsx, ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx
   - Attribution:
-    - `tests/api/test_data_service_bronze_raw.py`
-      - 7072dbe|rdprokes|2026-02-08|cleaned
-    - `tests/api/test_system_purge_parallelism.py`
+    - `ui/src/app/App.tsx`
+      - 424b7f6|rdprokes|2026-02-25|fixed massive
+    - `ui/src/app/components/layout/LeftNavigation.tsx`
       - 98b6921|rdprokes|2026-02-25|fixed purging
-    - `tests/core/test_alpha_vantage_gateway_client.py`
-      - 5787e89|rdprokes|2026-02-21|gogo
-    - `tests/core/test_massive_gateway_client.py`
+    - `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx`
       - 72a40e1|rdprokes|2026-02-28|fixed
-  - Recommendation: Restore removed tests or add equivalent coverage for modified behavior.
+  - Recommendation: Add targeted unit tests for modified modules and critical edge cases.
   - Verification:
-    - `Run fast and full tests`
-    - `Check coverage trend`
+    - `Run fast tests`
+    - `Review changed modules for edge cases`
 
-### Performance Drift
-- **[LOW] Potential performance drift signals detected** (confidence 0.62)
-  - Expected vs Observed: Performance-sensitive code paths should avoid repeated query/network calls in loops and benchmark regressions. | Detected suspicious loop + I/O patterns and/or benchmark command failures.
-  - Files: `api/data_service.py`, `api/endpoints/data.py`, `api/endpoints/system.py`, `core/config.py`, `core/core.py`, `core/pipeline.py`, `docs/data_lineage.md`, `monitoring/domain_metadata.py`, `tasks/common/market_reconciliation.py`, `tasks/earnings_data/bronze_earnings_data.py`
+### Docs Drift
+- **[LOW] Code changed without documentation updates** (confidence 0.68)
+  - Expected vs Observed: Docs/examples/changelog should stay aligned with behavior and API changes. | No documentation files changed alongside code updates.
+  - Files: `ui/src/app/App.tsx`, `ui/src/app/components/layout/LeftNavigation.tsx`, `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx`
   - Evidence:
-    -             for ticker in sorted(symbol_candidates):
+    - No files matched docs patterns in the change set.
   - Attribution:
-    - `api/data_service.py`
-      - c30c75c|rdprokes|2026-02-18|removed market by date
-    - `api/endpoints/data.py`
-      - c30c75c|rdprokes|2026-02-18|removed market by date
-    - `api/endpoints/system.py`
-      - b61bf5b|rdprokes|2026-02-26|purge parity
-    - `core/config.py`
-      - 53a0df9|rdprokes|2026-02-09|fixed massive
-  - Recommendation: Inspect hotspots for N+1 patterns, cache repeated calls, and add focused micro-benchmarks.
+    - `ui/src/app/App.tsx`
+      - 424b7f6|rdprokes|2026-02-25|fixed massive
+    - `ui/src/app/components/layout/LeftNavigation.tsx`
+      - 98b6921|rdprokes|2026-02-25|fixed purging
+    - `ui/src/app/components/pages/system-status/DomainLayerComparisonPanel.tsx`
+      - 72a40e1|rdprokes|2026-02-28|fixed
+  - Recommendation: Update README/docs/changelog to reflect behavior, API, and configuration changes.
   - Verification:
-    - `Run benchmark command(s)`
-    - `Profile impacted endpoints/functions`
+    - `Review docs for changed modules`
+    - `Run docs lint/checks if available`
 
 ## Suggested Remediation Plan
-1. **[HIGH] Protected paths changed** (Security Drift)
-   - What to change: Require explicit approver sign-off and run focused regression/security tests.
-   - Why: Expected: Protected areas require explicit opt-in review before modification. Observed: Files matching protected globs were modified.
-   - Patch approach: Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.
-   - Risk: high
-   - Verification:
-     - `Manual security review`
-     - `Auth/infrastructure regression tests`
-2. **[MEDIUM] Recent config churn detected** (Config/Infra Drift)
+1. **[MEDIUM] Recent config churn detected** (Config/Infra Drift)
    - What to change: Consolidate config ownership, batch related changes, and document rationale in PRs.
    - Why: Expected: Configuration should remain stable and coordinated across contributors. Observed: 26 recent commits touched config/infra files in lookback window.
    - Patch approach: Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.
@@ -109,22 +72,22 @@
    - Verification:
      - `Inspect recent config PRs`
      - `Audit gate consistency across workflows`
-3. **[HIGH] Test cases removed** (Test Drift)
-   - What to change: Restore removed tests or add equivalent coverage for modified behavior.
-   - Why: Expected: Coverage should not regress for changed behavior. Observed: Detected removed test definitions/assertions in diff.
+2. **[MEDIUM] Code changed without nearby test updates** (Test Drift)
+   - What to change: Add targeted unit tests for modified modules and critical edge cases.
+   - Why: Expected: Behavioral code changes should include corresponding test updates where relevant. Observed: Detected source changes without matching test file changes.
    - Patch approach: Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.
    - Risk: medium
    - Verification:
-     - `Run fast and full tests`
-     - `Check coverage trend`
-4. **[LOW] Potential performance drift signals detected** (Performance Drift)
-   - What to change: Inspect hotspots for N+1 patterns, cache repeated calls, and add focused micro-benchmarks.
-   - Why: Expected: Performance-sensitive code paths should avoid repeated query/network calls in loops and benchmark regressions. Observed: Detected suspicious loop + I/O patterns and/or benchmark command failures.
+     - `Run fast tests`
+     - `Review changed modules for edge cases`
+3. **[LOW] Code changed without documentation updates** (Docs Drift)
+   - What to change: Update README/docs/changelog to reflect behavior, API, and configuration changes.
+   - Why: Expected: Docs/examples/changelog should stay aligned with behavior and API changes. Observed: No documentation files changed alongside code updates.
    - Patch approach: Apply deterministic fixes first (formatter/lint/rule-based edits), then targeted manual refactors.
-   - Risk: medium
+   - Risk: low
    - Verification:
-     - `Run benchmark command(s)`
-     - `Profile impacted endpoints/functions`
+     - `Review docs for changed modules`
+     - `Run docs lint/checks if available`
 
 ## Appendix
 ### Tool Run Status

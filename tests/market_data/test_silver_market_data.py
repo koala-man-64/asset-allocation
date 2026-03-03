@@ -288,3 +288,94 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
     assert isinstance(captured["df"].index, pd.RangeIndex)
     assert captured["df"].index.start == 0
     assert captured["df"].index.step == 1
+
+
+def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
+    class _FakeBronzeClient:
+        def list_blob_infos(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return []
+
+    messages: list[str] = []
+    saved_last_success: dict = {}
+
+    def _save_last_success(_name: str, metadata=None):
+        if metadata:
+            saved_last_success.update(metadata)
+
+    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver, "save_last_success", _save_last_success)
+    monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
+
+    def _unexpected_write(_frames):
+        raise AssertionError("_write_alpha26_market_buckets should not be called when no rows are staged.")
+
+    monkeypatch.setattr(silver, "_write_alpha26_market_buckets", _unexpected_write)
+
+    assert silver.main() == 0
+    assert any("alpha26 bucket write skipped: no staged rows" in msg for msg in messages)
+    assert saved_last_success.get("processed") == 0
+    assert saved_last_success.get("alpha26_staged_rows") == 0
+    assert saved_last_success.get("alpha26_symbols") == 0
+
+
+def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeypatch):
+    blob = {"name": "market-data/buckets/A.parquet"}
+
+    class _FakeBronzeClient:
+        def list_blob_infos(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return [dict(blob)]
+
+    messages: list[str] = []
+    saved_last_success: dict = {}
+
+    def _save_last_success(_name: str, metadata=None):
+        if metadata:
+            saved_last_success.update(metadata)
+
+    def _fake_process_blob(
+        _blob,
+        *,
+        watermarks,
+        include_history=False,
+        persist=False,
+        alpha26_bucket_frames=None,
+    ):
+        del watermarks, include_history, persist, alpha26_bucket_frames
+        return "ok"
+
+    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver, "save_last_success", _save_last_success)
+    monkeypatch.setattr(silver, "should_process_blob_since_last_success", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_blob)
+    monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
+
+    def _unexpected_write(_frames):
+        raise AssertionError(
+            "_write_alpha26_market_buckets should not be called when candidates do not stage any rows."
+        )
+
+    monkeypatch.setattr(silver, "_write_alpha26_market_buckets", _unexpected_write)
+
+    assert silver.main() == 0
+    assert any("alpha26 bucket write skipped: no staged rows" in msg for msg in messages)
+    assert saved_last_success.get("processed") == 1
+    assert saved_last_success.get("alpha26_staged_rows") == 0
+    assert saved_last_success.get("alpha26_symbols") == 0

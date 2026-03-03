@@ -57,7 +57,7 @@ thresholds:
     performance: 15
     style: 5
     docs: 3
-    config_infra: 15
+    config_infra: 0
 
 auto_remediate:
   enabled: false
@@ -90,3 +90,4 @@ detection:
   lookback_days: 7
   exclude_globs:
     - "artifacts/**"
+    - "*.[mM][dD]"

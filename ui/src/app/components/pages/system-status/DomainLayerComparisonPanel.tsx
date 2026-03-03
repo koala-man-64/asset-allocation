@@ -273,7 +273,7 @@ interface DomainLayerComparisonPanelProps {
   recentJobs?: JobRun[];
   jobStates?: Record<string, string>;
   managedContainerJobs?: ManagedContainerJob[];
-  onRefresh?: () => void;
+  onRefresh?: () => Promise<void> | void;
   isRefreshing?: boolean;
   isFetching?: boolean;
 }
@@ -674,6 +674,35 @@ export function DomainLayerComparisonPanel({
       }
     },
     [queryClient, refreshingCells, snapshotQueryKey]
+  );
+
+  const refreshDomainMetadataAndStatus = useCallback(
+    async (targets: Array<{ layerKey: LayerKey; domainKey: string }>) => {
+      const dedupedTargets = Array.from(
+        new Map(
+          targets.map((target) => [makeCellKey(target.layerKey, target.domainKey), target] as const)
+        ).values()
+      );
+      if (dedupedTargets.length === 0) return;
+
+      const metadataRefreshPromise = Promise.allSettled(
+        dedupedTargets.map((target) => handleCellRefresh(target.layerKey, target.domainKey))
+      );
+      const statusRefreshPromise = onRefresh
+        ? Promise.resolve(onRefresh())
+        : queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+
+      const [, statusResult] = await Promise.allSettled([
+        metadataRefreshPromise,
+        statusRefreshPromise
+      ]);
+      if (statusResult.status === 'rejected') {
+        console.error('[DomainLayerComparisonPanel] status refresh failed', {
+          error: formatSystemStatusText(statusResult.reason)
+        });
+      }
+    },
+    [handleCellRefresh, onRefresh, queryClient]
   );
 
   const clearDomainMetadataCache = useCallback(
@@ -1578,10 +1607,12 @@ export function DomainLayerComparisonPanel({
                         isResettingCheckpoints
                       )
                         return;
-                      const refreshTargets = configuredModels.map((model) =>
-                        handleCellRefresh(model.layerColumn.key, row.key)
+                      await refreshDomainMetadataAndStatus(
+                        configuredModels.map((model) => ({
+                          layerKey: model.layerColumn.key,
+                          domainKey: row.key
+                        }))
                       );
-                      await Promise.allSettled(refreshTargets);
                     };
                     const toggleRowExpanded = () =>
                       setExpandedRowKey((previous) => (previous === row.key ? null : row.key));
@@ -1659,7 +1690,7 @@ export function DomainLayerComparisonPanel({
                                     }}
                                   >
                                     <RefreshCw className="h-4 w-4" />
-                                    Refresh domain counts
+                                    Refresh domain status + counts
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   {preferredModel?.jobPortalUrl ? (
@@ -2017,10 +2048,12 @@ export function DomainLayerComparisonPanel({
                                               }
                                               onSelect={(event) => {
                                                 event.preventDefault();
-                                                void handleCellRefresh(
-                                                  model.layerColumn.key,
-                                                  row.key
-                                                );
+                                                void refreshDomainMetadataAndStatus([
+                                                  {
+                                                    layerKey: model.layerColumn.key,
+                                                    domainKey: row.key
+                                                  }
+                                                ]);
                                               }}
                                             >
                                               <RefreshCw
