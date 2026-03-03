@@ -231,28 +231,22 @@ def _log_store_delta_column_comparison(
     path: str,
     df_columns: List[str],
     table_columns: List[str],
-    schema_mode: Optional[str],
 ) -> None:
     comparison = _compare_columns(df_columns, table_columns)
     if comparison["same_set"] and comparison["order_matches"]:
         return
 
-    merge_enabled = str(schema_mode or "").strip().lower() in {"merge", "overwrite"}
-    level = logging.INFO if merge_enabled else logging.WARNING
-    logger.log(
-        level,
-        "Pre-write Delta column check for %s: df_cols=%d table_cols=%d missing_in_df=%s extra_in_df=%s order_matches=%s schema_mode=%s",
+    logger.warning(
+        "Pre-write Delta column check for %s: df_cols=%d table_cols=%d missing_in_df=%s extra_in_df=%s order_matches=%s",
         path,
         len(df_columns),
         len(table_columns),
         comparison["missing_in_df"],
         comparison["extra_in_df"],
         comparison["order_matches"],
-        schema_mode,
     )
     if "drawdown_1y" in df_columns and "drawdown" in table_columns and "drawdown" not in df_columns:
-        logger.log(
-            level,
+        logger.warning(
             "Pre-write Delta schema hint for %s: existing table has 'drawdown' but DataFrame has 'drawdown_1y'.",
             path,
         )
@@ -537,8 +531,6 @@ def store_delta(
     path: str, 
     mode: str = 'overwrite', 
     partition_by: list = None,
-    merge_schema: bool = False,
-    schema_mode: Optional[str] = None,
     predicate: Optional[str] = None,
 ) -> None:
     """
@@ -554,52 +546,21 @@ def store_delta(
         index_was_reset = bool(sanitize_meta.get("index_was_reset", False))
         dropped_artifact_columns = [str(col) for col in (sanitize_meta.get("dropped_artifact_columns") or [])]
 
-        requested_schema_mode = schema_mode or ("merge" if merge_schema else None)
-        effective_schema_mode = None
-        if requested_schema_mode is not None:
-            logger.info(
-                "Ignoring requested schema_mode for %s; forcing schema_mode=None (requested=%s, merge_schema=%s).",
-                path,
-                requested_schema_mode,
-                merge_schema,
-            )
         table_cols = _get_existing_delta_schema_columns(uri, opts)
-        schema_overwrite_for_artifact_cleanup = False
-        artifact_columns_in_table: List[str] = []
         if table_cols:
-            artifact_columns_in_table, non_artifact_table_cols = _split_artifact_and_non_artifact_columns(
-                [str(col) for col in table_cols]
-            )
             sanitized_df_cols = [str(c) for c in df_to_write.columns.tolist()]
             _log_store_delta_column_comparison(
                 path=path,
                 df_columns=sanitized_df_cols,
                 table_columns=table_cols,
-                schema_mode=effective_schema_mode,
             )
 
-            dropped_from_table = [col for col in artifact_columns_in_table if col in dropped_artifact_columns]
-            comparison_against_non_artifact = _compare_columns(sanitized_df_cols, non_artifact_table_cols)
-            if (
-                str(mode).strip().lower() == "overwrite"
-                and dropped_from_table
-                and comparison_against_non_artifact["same_set"]
-            ):
-                effective_schema_mode = "overwrite"
-                schema_overwrite_for_artifact_cleanup = True
-                logger.info(
-                    "Enabling targeted schema overwrite for %s to remove index artifact columns: dropped=%s",
-                    path,
-                    dropped_from_table,
-                )
-
         logger.info(
-            "Delta write prep for %s: rows=%d index_was_reset=%s dropped_artifact_columns=%s schema_overwrite_for_artifact_cleanup=%s",
+            "Delta write prep for %s: rows=%d index_was_reset=%s dropped_artifact_columns=%s",
             path,
             int(len(df_to_write)),
             index_was_reset,
             dropped_artifact_columns,
-            schema_overwrite_for_artifact_cleanup,
         )
 
         write_deltalake(
@@ -607,7 +568,6 @@ def store_delta(
             df_to_write,
             mode=mode,
             partition_by=partition_by,
-            schema_mode=effective_schema_mode,
             predicate=predicate,
             storage_options=opts
         )

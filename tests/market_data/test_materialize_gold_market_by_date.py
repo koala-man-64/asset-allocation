@@ -67,7 +67,6 @@ def test_materialize_market_by_date_projects_selected_columns(monkeypatch) -> No
 
     assert captured["mode"] == "overwrite"
     assert captured["kwargs"]["partition_by"] == ["year_month"]
-    assert "schema_mode" not in captured["kwargs"]
     assert captured["kwargs"]["predicate"] is None
 
 
@@ -108,7 +107,6 @@ def test_materialize_market_by_date_filters_year_month_and_uses_partition_predic
     assert written["date"].dt.month.tolist() == [1]
 
     assert captured["kwargs"]["partition_by"] == ["year_month"]
-    assert "schema_mode" not in captured["kwargs"]
     assert captured["kwargs"]["predicate"] == "year_month = '2025-01'"
 
 
@@ -150,5 +148,4 @@ def test_materialize_market_by_date_filters_year_month_range_and_uses_range_pred
     assert written["date"].dt.month.tolist() == [1, 2]
 
     assert captured["kwargs"]["partition_by"] == ["year_month"]
-    assert "schema_mode" not in captured["kwargs"]
     assert captured["kwargs"]["predicate"] == "year_month >= '2025-01' AND year_month <= '2025-02'"

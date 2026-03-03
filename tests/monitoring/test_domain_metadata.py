@@ -26,7 +26,7 @@ def test_collect_delta_table_metadata_reports_rows_and_date_range(tmp_path) -> N
         }
     )
 
-    delta_core.store_delta(df, container=container, path=table_path, mode="overwrite", merge_schema=True)
+    delta_core.store_delta(df, container=container, path=table_path, mode="overwrite")
 
     meta = collect_delta_table_metadata(container, table_path)
     assert meta["totalRows"] == 4

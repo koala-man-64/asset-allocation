@@ -4,7 +4,7 @@ from core import delta_core
 from tasks.finance_data import gold_finance_data
 
 
-def test_gold_finance_process_ticker_writes_without_schema_merge(monkeypatch):
+def test_gold_finance_process_ticker_writes_overwrite(monkeypatch):
     base_df = pd.DataFrame(
         {
             "Date": ["01/01/2020"],
@@ -50,7 +50,6 @@ def test_gold_finance_process_ticker_writes_without_schema_merge(monkeypatch):
 
     assert result["status"] == "ok"
     assert captured["mode"] == "overwrite"
-    assert (captured["kwargs"] or {}).get("schema_mode") is None
     assert list((captured["df"]).columns) == ["b", "a", "extra"]
 
 
