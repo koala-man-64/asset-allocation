@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { DomainLayerComparisonPanel } from '@/app/components/pages/system-status/DomainLayerComparisonPanel';
 import { DataService } from '@/services/DataService';
@@ -114,6 +115,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
 
   it('refreshes both status and metadata from the row actions menu', async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
 
     renderWithProviders(
       <DomainLayerComparisonPanel
@@ -127,12 +129,12 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     const moreButton = await screen.findByRole('button', { name: 'More actions for market' });
-    fireEvent.click(moreButton);
+    await user.click(moreButton);
 
     const refreshMenuItem = await screen.findByRole('menuitem', {
       name: 'Refresh domain status + counts'
     });
-    fireEvent.click(refreshMenuItem);
+    await user.click(refreshMenuItem);
 
     await waitFor(() => {
       expect(onRefresh).toHaveBeenCalledTimes(1);
