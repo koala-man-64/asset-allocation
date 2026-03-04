@@ -600,6 +600,7 @@ def _write_alpha26_finance_silver_buckets(
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
         for bucket in layer_bucketing.ALPHABET_BUCKETS:
             silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+            existing_cols = delta_core.get_delta_schema_columns(cfg.AZURE_CONTAINER_SILVER, silver_bucket_path)
             parts = bucket_frames.get((sub_domain, bucket), [])
             if parts:
                 df_bucket = pd.concat(parts, ignore_index=True)
@@ -617,6 +618,12 @@ def _write_alpha26_finance_silver_buckets(
                     df_bucket = pd.DataFrame(columns=["date", "symbol"])
             else:
                 df_bucket = pd.DataFrame(columns=["date", "symbol"])
+
+            if df_bucket.empty and not existing_cols:
+                mdc.write_line(
+                    f"Skipping Silver finance empty bucket write for {silver_bucket_path}: no existing Delta schema."
+                )
+                continue
 
             # Keep bucket-table writes schema-compatible even when no rows are staged.
             df_bucket = _align_to_existing_schema(

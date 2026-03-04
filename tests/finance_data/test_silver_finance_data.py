@@ -551,3 +551,33 @@ def test_write_alpha26_finance_silver_buckets_aligns_empty_bucket_to_existing_sc
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
     assert list(df_written.columns) == existing_cols
+
+
+def test_write_alpha26_finance_silver_buckets_skips_empty_bucket_without_existing_schema(monkeypatch):
+    target_path = "finance-data/balance_sheet/buckets/C"
+    captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
+
+    monkeypatch.setattr(silver, "_FINANCE_ALPHA26_SUBDOMAINS", ("balance_sheet",))
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("C",))
+    monkeypatch.setattr(silver.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+
+    def _fake_get_schema(_container: str, path: str):
+        captured["checked_paths"].append(path)
+        return None
+
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", _fake_get_schema)
+
+    def _fake_store(df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite") -> None:
+        captured["store_calls"] = int(captured["store_calls"]) + 1
+        captured["path"] = path
+        captured["mode"] = mode
+        captured["df"] = df.copy()
+
+    monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
+
+    written_symbols, index_path = silver._write_alpha26_finance_silver_buckets({})
+
+    assert written_symbols == 0
+    assert index_path == "index"
+    assert captured["store_calls"] == 0
+    assert captured["checked_paths"] == [target_path]
