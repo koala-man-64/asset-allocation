@@ -398,6 +398,7 @@ def process_alpha26_bucket_blob(
     watermarks: dict,
     include_history: bool = False,
     persist: bool = False,
+    force_reprocess: bool = False,
     alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
     blob_name = str(blob.get("name", ""))
@@ -405,7 +406,7 @@ def process_alpha26_bucket_blob(
         return "skipped_non_parquet"
 
     unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
+    if unchanged and not force_reprocess:
         return "skipped_unchanged"
 
     try:
@@ -494,6 +495,30 @@ def _count_staged_bucket_rows(bucket_frames: dict[str, list[pd.DataFrame]]) -> i
     return total_rows
 
 
+def _detect_missing_alpha26_market_buckets() -> tuple[bool, set[str]]:
+    if silver_client is None:
+        return False, set()
+    try:
+        blob_infos = silver_client.list_blob_infos(name_starts_with="market-data/buckets/")
+    except Exception as exc:
+        mdc.write_warning(f"Silver market alpha26 bootstrap probe failed: {exc}")
+        return False, set()
+
+    present_buckets: set[str] = set()
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    for blob in blob_infos:
+        name = str(blob.get("name", "")).strip("/")
+        parts = name.split("/")
+        if len(parts) < 3:
+            continue
+        bucket = parts[2].strip().upper()
+        if bucket in valid_buckets:
+            present_buckets.add(bucket)
+
+    missing = valid_buckets.difference(present_buckets)
+    return bool(missing), missing
+
+
 def _run_market_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
     if silver_client is None:
         raise RuntimeError("Silver market reconciliation requires silver storage client.")
@@ -578,13 +603,21 @@ def main():
 
     checkpoint_skipped = 0
     candidate_blobs: list[dict] = []
+    bootstrap_missing, missing_buckets = _detect_missing_alpha26_market_buckets()
+    force_checkpoint_rebuild = bool(force_rebuild or bootstrap_missing)
+    if bootstrap_missing:
+        missing_list = ",".join(sorted(missing_buckets))
+        mdc.write_warning(
+            "Silver market alpha26 bootstrap required: "
+            f"missing_bucket_tables={missing_list}; forcing bronze replay."
+        )
     for blob in blob_list:
         prior = watermarks.get(blob["name"])
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
             last_success_at=last_success,
-            force_reprocess=force_rebuild,
+            force_reprocess=force_checkpoint_rebuild,
         )
         if should_process:
             candidate_blobs.append(blob)
@@ -609,6 +642,7 @@ def main():
             watermarks=watermarks,
             include_history=False,
             persist=False,
+            force_reprocess=bootstrap_missing,
             alpha26_bucket_frames=alpha26_bucket_frames,
         )
         if status == "ok":

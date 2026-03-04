@@ -311,6 +311,7 @@ def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
     monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (False, set()))
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
     monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
@@ -348,9 +349,11 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
         watermarks,
         include_history=False,
         persist=False,
+        force_reprocess=False,
         alpha26_bucket_frames=None,
     ):
         del watermarks, include_history, persist, alpha26_bucket_frames
+        assert force_reprocess is False
         return "ok"
 
     monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
@@ -360,6 +363,7 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
     monkeypatch.setattr(silver, "save_last_success", _save_last_success)
     monkeypatch.setattr(silver, "should_process_blob_since_last_success", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_blob)
+    monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (False, set()))
     monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
@@ -379,3 +383,66 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
     assert saved_last_success.get("processed") == 1
     assert saved_last_success.get("alpha26_staged_rows") == 0
     assert saved_last_success.get("alpha26_symbols") == 0
+
+
+def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
+    blob = {"name": "market-data/buckets/A.parquet"}
+
+    class _FakeBronzeClient:
+        def list_blob_infos(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return [dict(blob)]
+
+    messages: list[str] = []
+    saved_last_success: dict = {}
+    write_calls = {"count": 0}
+
+    def _save_last_success(_name: str, metadata=None):
+        if metadata:
+            saved_last_success.update(metadata)
+
+    def _fake_process_blob(
+        _blob,
+        *,
+        watermarks,
+        include_history=False,
+        persist=False,
+        force_reprocess=False,
+        alpha26_bucket_frames=None,
+    ):
+        del watermarks, include_history, persist
+        assert force_reprocess is True
+        assert alpha26_bucket_frames is not None
+        alpha26_bucket_frames.setdefault("A", []).append(
+            pd.DataFrame({"symbol": ["AAPL"], "date": [pd.Timestamp("2025-01-02")]})
+        )
+        return "ok"
+
+    def _fake_write(frames):
+        write_calls["count"] += 1
+        assert "A" in frames
+        return 1, "system/silver-index/market/latest.parquet"
+
+    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver, "save_last_success", _save_last_success)
+    monkeypatch.setattr(silver, "should_process_blob_since_last_success", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_blob)
+    monkeypatch.setattr(silver, "_write_alpha26_market_buckets", _fake_write)
+    monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (True, {"A"}))
+    monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
+    monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
+    monkeypatch.setattr(silver.mdc, "write_warning", lambda msg: messages.append(f"WARN:{msg}"))
+
+    assert silver.main() == 0
+    assert write_calls["count"] == 1
+    assert any("bootstrap required" in msg for msg in messages)
+    assert saved_last_success.get("processed") == 1
+    assert saved_last_success.get("alpha26_staged_rows") == 1
+    assert saved_last_success.get("alpha26_symbols") == 1
