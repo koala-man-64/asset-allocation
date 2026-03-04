@@ -446,3 +446,59 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
     assert saved_last_success.get("processed") == 1
     assert saved_last_success.get("alpha26_staged_rows") == 1
     assert saved_last_success.get("alpha26_symbols") == 1
+
+
+def test_write_alpha26_market_buckets_enforces_typed_schema_for_empty_buckets(monkeypatch):
+    captured: dict[str, pd.DataFrame] = {}
+
+    def _fake_store_delta(df, _container, path, mode="overwrite"):
+        assert mode == "overwrite"
+        captured[str(path)] = df.copy()
+
+    monkeypatch.setattr(delta_core, "store_delta", _fake_store_delta)
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ["A", "C"])
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **_kwargs: "system/silver-index/market/latest.parquet",
+    )
+
+    bucket_frames = {
+        "A": [
+            pd.DataFrame(
+                {
+                    "date": [pd.Timestamp("2026-01-02")],
+                    "symbol": ["aapl"],
+                    "open": [100.0],
+                    "high": [102.0],
+                    "low": [99.0],
+                    "close": [101.0],
+                    "volume": [1000],
+                    "short_interest": [pd.NA],
+                    "short_volume": [pd.NA],
+                    "unexpected": [None],
+                }
+            )
+        ]
+    }
+
+    symbol_count, index_path = silver._write_alpha26_market_buckets(bucket_frames)
+
+    assert symbol_count == 1
+    assert index_path == "system/silver-index/market/latest.parquet"
+
+    path_a = DataPaths.get_silver_market_bucket_path("A")
+    path_c = DataPaths.get_silver_market_bucket_path("C")
+    assert set(captured.keys()) == {path_a, path_c}
+
+    for path in (path_a, path_c):
+        frame = captured[path]
+        assert list(frame.columns) == silver._ALPHA26_MARKET_MIN_COLUMNS
+        assert str(frame.dtypes["date"]).startswith("datetime64")
+        assert str(frame.dtypes["symbol"]).startswith("string")
+        for col in silver._ALPHA26_MARKET_NUMERIC_COLUMNS:
+            assert pd.api.types.is_numeric_dtype(frame.dtypes[col])
+        assert all(str(dtype) != "object" for dtype in frame.dtypes.tolist())
+
+    assert captured[path_a]["symbol"].tolist() == ["AAPL"]
+    assert "unexpected" not in captured[path_a].columns

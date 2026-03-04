@@ -58,6 +58,50 @@ _ALPHA26_MARKET_MIN_COLUMNS = [
     "short_interest",
     "short_volume",
 ]
+_ALPHA26_MARKET_NUMERIC_COLUMNS = [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "short_interest",
+    "short_volume",
+]
+
+
+def _empty_alpha26_market_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "symbol": pd.Series(dtype="string"),
+            "open": pd.Series(dtype="float64"),
+            "high": pd.Series(dtype="float64"),
+            "low": pd.Series(dtype="float64"),
+            "close": pd.Series(dtype="float64"),
+            "volume": pd.Series(dtype="float64"),
+            "short_interest": pd.Series(dtype="float64"),
+            "short_volume": pd.Series(dtype="float64"),
+        }
+    )
+
+
+def _coerce_alpha26_market_bucket_frame(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in _ALPHA26_MARKET_MIN_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["symbol"] = out["symbol"].astype("string").str.upper()
+    for col in _ALPHA26_MARKET_NUMERIC_COLUMNS:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    out = out.dropna(subset=["symbol", "date"]).copy()
+    if out.empty:
+        return _empty_alpha26_market_frame()
+
+    out = out.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
+    return out[_ALPHA26_MARKET_MIN_COLUMNS].reset_index(drop=True)
 
 
 def _normalize_col_name(name: str) -> str:
@@ -458,20 +502,13 @@ def _write_alpha26_market_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) 
         parts = bucket_frames.get(bucket, [])
         if parts:
             df_bucket = pd.concat(parts, ignore_index=True)
-            if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
-                df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
-                df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
-                df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
-                df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
-                    subset=["symbol", "date"], keep="last"
-                )
-                for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
-                    if symbol:
-                        symbol_to_bucket[symbol] = bucket
-            else:
-                df_bucket = pd.DataFrame(columns=_ALPHA26_MARKET_MIN_COLUMNS)
         else:
-            df_bucket = pd.DataFrame(columns=_ALPHA26_MARKET_MIN_COLUMNS)
+            df_bucket = _empty_alpha26_market_frame()
+
+        df_bucket = _coerce_alpha26_market_bucket_frame(df_bucket)
+        for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
+            if symbol:
+                symbol_to_bucket[symbol] = bucket
         delta_core.store_delta(
             df_bucket.reset_index(drop=True),
             cfg.AZURE_CONTAINER_SILVER,
