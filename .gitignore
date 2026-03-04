@@ -38,6 +38,7 @@ data/
 !ui/src/data/
 !ui/src/data/**
 tmp/
+artifacts/**
 
 # --- Node / Frontend ---
 node_modules/

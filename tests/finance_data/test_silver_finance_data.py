@@ -581,3 +581,115 @@ def test_write_alpha26_finance_silver_buckets_skips_empty_bucket_without_existin
     assert index_path == "index"
     assert captured["store_calls"] == 0
     assert captured["checked_paths"] == [target_path]
+
+
+def test_process_blob_does_not_skip_when_signature_matches_watermark(monkeypatch):
+    blob_name = "finance-data/Balance Sheet/TEST_quarterly_balance-sheet.json"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-test",
+        "last_modified": datetime(2026, 3, 4, 1, 0, tzinfo=timezone.utc),
+    }
+    watermarks = {
+        blob_name: {
+            "etag": "etag-test",
+            "last_modified": "2026-03-04T01:00:00+00:00",
+        }
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda _name, client=None: b"{}")
+    monkeypatch.setattr(
+        silver,
+        "_read_finance_json",
+        lambda _raw, ticker, suffix: pd.DataFrame({"Date": [pd.Timestamp("2024-01-01")], "Symbol": [ticker]}),
+    )
+
+    def _fake_process_finance_frame(**kwargs):
+        captured["signature"] = kwargs.get("signature")
+        return silver.BlobProcessResult(
+            blob_name=kwargs["blob_name"],
+            silver_path=kwargs["silver_path"],
+            ticker=kwargs["ticker"],
+            status="ok",
+            rows_written=1,
+        )
+
+    monkeypatch.setattr(silver, "_process_finance_frame", _fake_process_finance_frame)
+
+    result = silver.process_blob(
+        blob,
+        desired_end=pd.Timestamp("2026-03-04"),
+        backfill_start=None,
+        watermarks=watermarks,
+        persist=True,
+    )
+
+    assert result.status == "ok"
+    assert isinstance(captured.get("signature"), dict)
+    assert captured["signature"]["etag"] == "etag-test"
+
+
+def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_watermark(monkeypatch):
+    blob_name = "finance-data/buckets/M.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-m",
+        "last_modified": datetime(2026, 3, 4, 1, 0, tzinfo=timezone.utc),
+    }
+    watermarks = {
+        blob_name: {
+            "etag": "etag-m",
+            "last_modified": "2026-03-04T01:00:00+00:00",
+        }
+    }
+    bucket_df = pd.DataFrame(
+        [
+            {
+                "symbol": "MSFT",
+                "report_type": "balance_sheet",
+                "payload_json": json.dumps(
+                    {"quarterlyReports": [{"fiscalDateEnding": "2024-01-01", "totalAssets": "100"}]}
+                ),
+            }
+        ]
+    )
+    captured_tickers: list[str] = []
+
+    monkeypatch.setattr(
+        silver.mdc,
+        "read_raw_bytes",
+        lambda _name, client=None: bucket_df.to_parquet(index=False),
+    )
+    monkeypatch.setattr(
+        silver,
+        "_read_finance_json",
+        lambda _raw, ticker, suffix: pd.DataFrame({"Date": [pd.Timestamp("2024-01-01")], "Symbol": [ticker]}),
+    )
+
+    def _fake_process_finance_frame(**kwargs):
+        captured_tickers.append(str(kwargs["ticker"]))
+        return silver.BlobProcessResult(
+            blob_name=kwargs["blob_name"],
+            silver_path=kwargs["silver_path"],
+            ticker=kwargs["ticker"],
+            status="ok",
+            rows_written=1,
+        )
+
+    monkeypatch.setattr(silver, "_process_finance_frame", _fake_process_finance_frame)
+
+    results = silver.process_alpha26_bucket_blob(
+        blob,
+        desired_end=pd.Timestamp("2026-03-04"),
+        backfill_start=None,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "ok"
+    assert captured_tickers == ["MSFT"]
+    assert blob_name in watermarks
+    assert watermarks[blob_name]["etag"] == "etag-m"

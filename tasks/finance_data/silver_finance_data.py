@@ -18,7 +18,7 @@ from tasks.common import bronze_bucketing
 from tasks.common import layer_bucketing
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import (
-    check_blob_unchanged,
+    build_blob_signature,
     load_last_success,
     load_watermarks,
     save_last_success,
@@ -820,9 +820,7 @@ def process_blob(
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
         return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, ticker=ticker, status="skipped")
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, ticker=ticker, status="skipped")
+    signature = build_blob_signature(blob)
 
     mdc.write_line(f"Processing {ticker} {folder_name}...")
     try:
@@ -862,9 +860,7 @@ def process_alpha26_bucket_blob(
     alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> list[BlobProcessResult]:
     blob_name = str(blob.get("name", ""))
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
+    signature = build_blob_signature(blob)
 
     try:
         raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
