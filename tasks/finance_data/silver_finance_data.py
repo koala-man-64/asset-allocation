@@ -599,6 +599,7 @@ def _write_alpha26_finance_silver_buckets(
     symbol_to_bucket: dict[str, str] = {}
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
         for bucket in layer_bucketing.ALPHABET_BUCKETS:
+            silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
             parts = bucket_frames.get((sub_domain, bucket), [])
             if parts:
                 df_bucket = pd.concat(parts, ignore_index=True)
@@ -616,10 +617,17 @@ def _write_alpha26_finance_silver_buckets(
                     df_bucket = pd.DataFrame(columns=["date", "symbol"])
             else:
                 df_bucket = pd.DataFrame(columns=["date", "symbol"])
-            delta_core.store_delta(
+
+            # Keep bucket-table writes schema-compatible even when no rows are staged.
+            df_bucket = _align_to_existing_schema(
                 df_bucket.reset_index(drop=True),
                 cfg.AZURE_CONTAINER_SILVER,
-                DataPaths.get_silver_finance_bucket_path(sub_domain, bucket),
+                silver_bucket_path,
+            )
+            delta_core.store_delta(
+                df_bucket,
+                cfg.AZURE_CONTAINER_SILVER,
+                silver_bucket_path,
                 mode="overwrite",
             )
     index_path = layer_bucketing.write_layer_symbol_index(
