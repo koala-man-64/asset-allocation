@@ -905,12 +905,19 @@ export const apiService = {
     domain: string,
     ticker?: string,
     limit?: number,
+    optionsOrSignal?: { sortByDate?: 'asc' | 'desc' } | AbortSignal,
     signal?: AbortSignal
   ): Promise<Record<string, unknown>[]> {
+    const options = optionsOrSignal instanceof AbortSignal ? undefined : optionsOrSignal;
+    const resolvedSignal = optionsOrSignal instanceof AbortSignal ? optionsOrSignal : signal;
     const endpoint = `/data/${layer}/${domain}`;
     return request<Record<string, unknown>[]>(endpoint, {
-      params: { ticker, limit },
-      signal
+      params: {
+        ticker,
+        limit,
+        date_sort: options?.sortByDate
+      },
+      signal: resolvedSignal
     });
   },
 

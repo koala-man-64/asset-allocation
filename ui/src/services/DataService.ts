@@ -198,9 +198,10 @@ export const DataService = {
     domain: string,
     ticker?: string,
     limit?: number,
+    optionsOrSignal?: { sortByDate?: 'asc' | 'desc' } | AbortSignal,
     signal?: AbortSignal
   ): Promise<Record<string, unknown>[]> {
-    return apiService.getGenericData(layer, domain, ticker, limit, signal);
+    return apiService.getGenericData(layer, domain, ticker, limit, optionsOrSignal, signal);
   },
 
   getDataQualityValidation(

@@ -9,8 +9,15 @@ from tests.api._client import get_test_client
 async def test_data_endpoint_calls_service(monkeypatch):
     calls = []
 
-    def fake_get_data(layer: str, domain: str, ticker: str | None = None):
-        calls.append((layer, domain, ticker))
+    def fake_get_data(
+        layer: str,
+        domain: str,
+        ticker: str | None = None,
+        *,
+        limit: int | None = None,
+        sort_by_date: str | None = None,
+    ):
+        calls.append((layer, domain, ticker, limit, sort_by_date))
         return [{"ok": True}]
 
     monkeypatch.setattr(data_endpoints.DataService, "get_data", fake_get_data)
@@ -21,7 +28,7 @@ async def test_data_endpoint_calls_service(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == [{"ok": True}]
-    assert calls == [("silver", "market", "AAPL")]
+    assert calls == [("silver", "market", "AAPL", None, None)]
 
 
 @pytest.mark.asyncio
@@ -37,8 +44,15 @@ async def test_data_endpoint_rejects_unknown_layer():
 async def test_bronze_endpoint_allows_missing_ticker_for_generic_domains(monkeypatch):
     calls = []
 
-    def fake_get_data(layer: str, domain: str, ticker: str | None = None):
-        calls.append((layer, domain, ticker))
+    def fake_get_data(
+        layer: str,
+        domain: str,
+        ticker: str | None = None,
+        *,
+        limit: int | None = None,
+        sort_by_date: str | None = None,
+    ):
+        calls.append((layer, domain, ticker, limit, sort_by_date))
         return [{"ok": True}]
 
     monkeypatch.setattr(data_endpoints.DataService, "get_data", fake_get_data)
@@ -49,7 +63,7 @@ async def test_bronze_endpoint_allows_missing_ticker_for_generic_domains(monkeyp
 
     assert resp.status_code == 200
     assert resp.json() == [{"ok": True}]
-    assert calls == [("bronze", "market", None)]
+    assert calls == [("bronze", "market", None, None, None)]
 
 
 @pytest.mark.asyncio
@@ -104,8 +118,15 @@ async def test_data_endpoint_rejects_invalid_ticker():
 async def test_data_endpoint_normalizes_ticker_to_uppercase(monkeypatch):
     calls = []
 
-    def fake_get_data(layer: str, domain: str, ticker: str | None = None):
-        calls.append((layer, domain, ticker))
+    def fake_get_data(
+        layer: str,
+        domain: str,
+        ticker: str | None = None,
+        *,
+        limit: int | None = None,
+        sort_by_date: str | None = None,
+    ):
+        calls.append((layer, domain, ticker, limit, sort_by_date))
         return [{"ok": True}]
 
     monkeypatch.setattr(data_endpoints.DataService, "get_data", fake_get_data)
@@ -115,7 +136,42 @@ async def test_data_endpoint_normalizes_ticker_to_uppercase(monkeypatch):
         resp = await client.get("/api/data/silver/market?ticker=aapl")
 
     assert resp.status_code == 200
-    assert calls == [("silver", "market", "AAPL")]
+    assert calls == [("silver", "market", "AAPL", None, None)]
+
+
+@pytest.mark.asyncio
+async def test_data_endpoint_forwards_date_sort_and_limit(monkeypatch):
+    calls = []
+
+    def fake_get_data(
+        layer: str,
+        domain: str,
+        ticker: str | None = None,
+        *,
+        limit: int | None = None,
+        sort_by_date: str | None = None,
+    ):
+        calls.append((layer, domain, ticker, limit, sort_by_date))
+        return [{"ok": True}]
+
+    monkeypatch.setattr(data_endpoints.DataService, "get_data", fake_get_data)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/silver/market?ticker=AAPL&limit=25&date_sort=desc")
+
+    assert resp.status_code == 200
+    assert calls == [("silver", "market", "AAPL", 25, "desc")]
+
+
+@pytest.mark.asyncio
+async def test_data_endpoint_rejects_invalid_date_sort():
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/data/silver/market?date_sort=latest")
+
+    assert resp.status_code == 400
+    assert "date_sort must be 'asc' or 'desc'" in resp.text
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ export const DataExplorerPage: React.FC = () => {
   const [domain, setDomain] = useState<string>('market');
   const [ticker, setTicker] = useState<string>('');
   const [limit, setLimit] = useState<number>(100);
+  const [dateSort, setDateSort] = useState<'none' | 'asc' | 'desc'>('none');
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,8 @@ export const DataExplorerPage: React.FC = () => {
         layer,
         domain,
         normalizedTicker || undefined,
-        limit
+        limit,
+        { sortByDate: dateSort === 'none' ? undefined : dateSort }
       );
       setData(result);
     } catch (err) {
@@ -40,7 +42,7 @@ export const DataExplorerPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [layer, domain, ticker, limit, tickerRequired]);
+  }, [layer, domain, ticker, limit, dateSort, tickerRequired]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -60,13 +62,13 @@ export const DataExplorerPage: React.FC = () => {
           Data Explorer
         </h1>
         <p className="page-subtitle">
-          Direct access to generic data layers. Query by domain and limit results.
+          Direct access to generic data layers. Query by domain, limit, and optionally sort by date.
         </p>
       </div>
 
       <div className="mcm-panel p-4 sm:p-5">
         {/* Layer Selector */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[180px_260px_180px_140px_1fr_auto] lg:items-end">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[180px_260px_180px_140px_160px_1fr_auto] lg:items-end">
           <div className="space-y-2">
             <label htmlFor="data-explorer-layer">Layer</label>
             <select
@@ -124,6 +126,20 @@ export const DataExplorerPage: React.FC = () => {
               max={10000}
               className={controlClass}
             />
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="data-explorer-date-sort">Date Sort</label>
+            <select
+              id="data-explorer-date-sort"
+              value={dateSort}
+              onChange={(e) => setDateSort(e.target.value as 'none' | 'asc' | 'desc')}
+              className={controlClass}
+            >
+              <option value="none">none</option>
+              <option value="desc">newest first</option>
+              <option value="asc">oldest first</option>
+            </select>
           </div>
 
           <div />

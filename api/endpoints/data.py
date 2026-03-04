@@ -635,6 +635,10 @@ def get_data_generic(
     request: Request,
     ticker: Optional[str] = None,
     limit: Optional[int] = Query(default=None, ge=1, le=10000, description="Max rows to return"),
+    date_sort: Optional[str] = Query(
+        default=None,
+        description="Optional date sort direction: asc|desc",
+    ),
 ):
     """
     Generic endpoint for retrieving data from Bronze/Silver/Gold layers.
@@ -644,10 +648,11 @@ def get_data_generic(
     request_id = request.headers.get("x-request-id", "")
     ticker_normalized = _validate_ticker(ticker)
     logger.info(
-        "Data generic request: layer=%s domain=%s ticker=%s request_id=%s",
+        "Data generic request: layer=%s domain=%s ticker=%s date_sort=%s request_id=%s",
         layer,
         domain,
         ticker_normalized or "-",
+        (str(date_sort).strip().lower() if date_sort is not None else "-"),
         request_id or "-",
     )
     validate_auth(request)
@@ -656,11 +661,21 @@ def get_data_generic(
             status_code=400,
             detail="Layer must be 'bronze', 'silver', or 'gold'.",
         )
-    
+
+    normalized_date_sort: Optional[str] = None
+    if date_sort is not None:
+        normalized_date_sort = str(date_sort).strip().lower()
+        if normalized_date_sort not in {"asc", "desc"}:
+            raise HTTPException(status_code=400, detail="date_sort must be 'asc' or 'desc'.")
+
     try:
-        if limit is None:
-            return DataService.get_data(layer, domain, ticker_normalized)
-        return DataService.get_data(layer, domain, ticker_normalized, limit=limit)
+        return DataService.get_data(
+            layer,
+            domain,
+            ticker_normalized,
+            limit=limit,
+            sort_by_date=normalized_date_sort,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:

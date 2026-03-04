@@ -78,6 +78,100 @@ class DataService:
         return sanitized
 
     @staticmethod
+    def _normalize_date_sort_direction(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        if normalized not in {"asc", "desc"}:
+            raise ValueError("date sort direction must be 'asc' or 'desc'.")
+        return normalized
+
+    @staticmethod
+    def _coerce_sortable_timestamp(value: Any) -> Optional[pd.Timestamp]:
+        if value is None:
+            return None
+        try:
+            parsed = pd.to_datetime(value, errors="coerce")
+        except Exception:
+            return None
+        if pd.isna(parsed):
+            return None
+        if isinstance(parsed, pd.Timestamp):
+            if parsed.tz is not None:
+                parsed = parsed.tz_convert(None)
+            return parsed
+        try:
+            ts = pd.Timestamp(parsed)
+            if ts.tz is not None:
+                ts = ts.tz_convert(None)
+            return ts
+        except Exception:
+            return None
+
+    @staticmethod
+    def _detect_date_column_for_sort(rows: List[Dict[str, Any]]) -> Optional[str]:
+        if not rows:
+            return None
+
+        columns: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for key in row.keys():
+                columns.add(str(key))
+
+        if not columns:
+            return None
+
+        preferred: List[str] = []
+        for candidate in ("date", "Date"):
+            if candidate in columns:
+                preferred.append(candidate)
+        for column in sorted(columns):
+            lowered = column.lower()
+            if column in preferred:
+                continue
+            if "date" in lowered or lowered in {"datetime", "timestamp", "as_of", "asof"}:
+                preferred.append(column)
+
+        for column in preferred:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if DataService._coerce_sortable_timestamp(row.get(column)) is not None:
+                    return column
+        return None
+
+    @staticmethod
+    def _finalize_rows(
+        rows: List[Dict[str, Any]],
+        *,
+        limit: Optional[int] = None,
+        sort_by_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        out = list(rows or [])
+        direction = DataService._normalize_date_sort_direction(sort_by_date)
+        if direction and out:
+            date_column = DataService._detect_date_column_for_sort(out)
+            if date_column:
+                valid: List[tuple[pd.Timestamp, Dict[str, Any]]] = []
+                missing: List[Dict[str, Any]] = []
+                for row in out:
+                    ts = DataService._coerce_sortable_timestamp(row.get(date_column))
+                    if ts is None:
+                        missing.append(row)
+                        continue
+                    valid.append((ts, row))
+                valid.sort(key=lambda item: item[0], reverse=(direction == "desc"))
+                out = [item[1] for item in valid] + missing
+
+        if limit is not None:
+            out = out[: int(limit)]
+        return out
+
+    @staticmethod
     def _first_bronze_blob_path(
         client: Any,
         *,
@@ -262,7 +356,8 @@ class DataService:
         layer: str, 
         domain: str, 
         ticker: Optional[str] = None,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        sort_by_date: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Generic data retrieval for market, earnings, and price-target domains.
@@ -276,15 +371,29 @@ class DataService:
         raw_domain = str(domain or "").strip().lower()
         resolved_domain = "price-target" if raw_domain in {"price-target", "price_target"} else raw_domain
         container = DataService._container_for_layer(resolved_layer)
+        resolved_sort = DataService._normalize_date_sort_direction(sort_by_date)
+        downstream_limit = None if resolved_sort else limit
 
         if resolved_layer == "bronze":
-            return DataService._get_bronze_data(container=container, domain=resolved_domain, ticker=ticker, limit=limit)
+            rows = DataService._get_bronze_data(
+                container=container,
+                domain=resolved_domain,
+                ticker=ticker,
+                limit=downstream_limit,
+            )
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         if resolved_domain.startswith("finance/"):
             _, _, sub_domain = resolved_domain.partition("/")
             if not sub_domain:
                 raise ValueError("finance domain requires a sub-domain, e.g. finance/balance_sheet")
-            return DataService.get_finance_data(resolved_layer, sub_domain, ticker=ticker, limit=limit)
+            return DataService.get_finance_data(
+                resolved_layer,
+                sub_domain,
+                ticker=ticker,
+                limit=limit,
+                sort_by_date=resolved_sort,
+            )
 
         is_silver = resolved_layer == "silver"
         is_gold = resolved_layer == "gold"
@@ -303,19 +412,26 @@ class DataService:
                 )
                 rows = DataService._read_delta(container, path, limit=None)
                 rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-                return rows[: int(limit)] if limit else rows
+                return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
             prefix = "market-data/buckets" if is_silver else "market/buckets"
-            return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
+            rows = DataService._read_cross_section_from_prefix(container, prefix, limit=downstream_limit)
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         if resolved_domain == "finance":
             if is_silver:
-                return DataService._read_silver_finance_regular(container=container, ticker=symbol or None, limit=limit)
+                rows = DataService._read_silver_finance_regular(
+                    container=container,
+                    ticker=symbol or None,
+                    limit=downstream_limit,
+                )
+                return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
             if symbol:
                 path = DataPaths.get_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol))
                 rows = DataService._read_delta(container, path, limit=None)
                 rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-                return rows[: int(limit)] if limit else rows
-            return DataService._read_cross_section_from_prefix(container, "finance/buckets", limit=limit)
+                return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
+            rows = DataService._read_cross_section_from_prefix(container, "finance/buckets", limit=downstream_limit)
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         if resolved_domain == "earnings":
             if symbol:
@@ -326,9 +442,10 @@ class DataService:
                 )
                 rows = DataService._read_delta(container, path, limit=None)
                 rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-                return rows[: int(limit)] if limit else rows
+                return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
             prefix = f"{(getattr(cfg, 'EARNINGS_DATA_PREFIX', 'earnings-data') or 'earnings-data')}/buckets" if is_silver else "earnings/buckets"
-            return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
+            rows = DataService._read_cross_section_from_prefix(container, prefix, limit=downstream_limit)
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         if resolved_domain == "price-target":
             if symbol:
@@ -339,9 +456,10 @@ class DataService:
                 )
                 rows = DataService._read_delta(container, path, limit=None)
                 rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-                return rows[: int(limit)] if limit else rows
+                return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
             prefix = "price-target-data/buckets" if is_silver else "targets/buckets"
-            return DataService._read_cross_section_from_prefix(container, prefix, limit=limit)
+            rows = DataService._read_cross_section_from_prefix(container, prefix, limit=downstream_limit)
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         raise ValueError(f"Domain '{domain}' not supported on generic endpoint")
 
@@ -350,7 +468,8 @@ class DataService:
         layer: str,
         sub_domain: str,
         ticker: Optional[str] = None,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        sort_by_date: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Specialized retrieval for Finance data.
@@ -358,6 +477,8 @@ class DataService:
         resolved_layer = str(layer or "").strip().lower()
         resolved_sub = str(sub_domain or "").strip().lower()
         container = DataService._container_for_layer(resolved_layer)
+        resolved_sort = DataService._normalize_date_sort_direction(sort_by_date)
+        downstream_limit = None if resolved_sort else limit
 
         if resolved_layer == "bronze":
             client = mdc.get_storage_client(container)
@@ -373,14 +494,15 @@ class DataService:
             report_type = _FINANCE_SUBDOMAIN_TO_REPORT_TYPE.get(resolved_sub)
             if not report_type:
                 raise ValueError(f"Unsupported finance sub-domain in alpha26 mode: {sub_domain}")
-            return DataService._read_bronze_alpha26_bucket(
+            rows = DataService._read_bronze_alpha26_bucket(
                 container=container,
                 client=client,
                 domain_prefix="finance-data",
                 symbol=ticker,
                 report_type=report_type,
-                limit=limit,
+                limit=downstream_limit,
             )
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
         
         if resolved_layer == "silver":
             if not ticker:
@@ -396,7 +518,7 @@ class DataService:
             )
             rows = DataService._read_delta(container, path, limit=None)
             rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-            return rows[: int(limit)] if limit else rows
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         if resolved_layer == "gold":
             if not ticker:
@@ -406,7 +528,7 @@ class DataService:
             path = DataPaths.get_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol))
             rows = DataService._read_delta(container, path, limit=None)
             rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-            return rows[: int(limit)] if limit else rows
+            return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         raise ValueError("Layer must be 'bronze', 'silver', or 'gold'.")
 

@@ -124,3 +124,25 @@ def test_finance_subdomain_reads_gold_alpha26_bucket(monkeypatch):
 
     assert rows == [{"symbol": "AAPL", "date": "2026-02-01", "value": 1.2}]
     assert calls == [DataPaths.get_gold_finance_bucket_path("A")]
+
+
+def test_market_sorts_by_date_desc_before_limit(monkeypatch):
+    def fake_read_delta(_container: str, _path: str, limit=None):
+        return [
+            {"symbol": "AAPL", "date": "2026-02-01", "close": 101.0},
+            {"symbol": "AAPL", "date": "2026-02-03", "close": 103.0},
+            {"symbol": "AAPL", "date": "invalid-date", "close": 999.0},
+            {"symbol": "AAPL", "date": "2026-02-02", "close": 102.0},
+        ]
+
+    monkeypatch.setattr(DataService, "_read_delta", staticmethod(fake_read_delta))
+
+    rows = DataService.get_data(
+        "silver",
+        "market",
+        ticker="AAPL",
+        limit=2,
+        sort_by_date="desc",
+    )
+
+    assert [row["date"] for row in rows] == ["2026-02-03", "2026-02-02"]
