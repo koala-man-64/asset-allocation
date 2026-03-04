@@ -695,3 +695,32 @@ def test_collect_domain_metadata_uses_alpha26_index_for_silver_market(monkeypatc
     assert payload["layer"] == "silver"
     assert payload["domain"] == "market"
     assert payload["symbolCount"] == 3
+
+
+def test_collect_domain_metadata_reports_zero_symbols_when_target_prefix_is_empty(monkeypatch) -> None:
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return []
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.layer_bucketing.load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: {"AAPL", "MSFT", "NVDA"},
+    )
+
+    payload = collect_domain_metadata(layer="silver", domain="market")
+
+    assert payload["fileCount"] == 0
+    assert payload["symbolCount"] == 0

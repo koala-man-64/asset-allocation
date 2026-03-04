@@ -916,27 +916,48 @@ export function DomainLayerComparisonPanel({
     });
 
     try {
-      const snapshot = await DataService.getDomainMetadataSnapshot({
-        layers: layerColumns.map((layer) => layer.key).join(','),
-        domains: domainRows.map((row) => row.key).join(','),
-        refresh: true
+      const refreshResults = await Promise.allSettled(
+        queryPairs.map((pair) => DataService.getDomainMetadata(pair.layerKey, pair.domainKey, { refresh: true }))
+      );
+
+      let refreshedCells = 0;
+      let failedCells = 0;
+      let firstFailureMessage = '';
+      const previousSnapshot =
+        queryClient.getQueryData<DomainMetadataSnapshotResponse>(snapshotQueryKey) || null;
+      const nextEntries = { ...(previousSnapshot?.entries || {}) };
+
+      refreshResults.forEach((result, index) => {
+        const pair = queryPairs[index];
+        if (result.status === 'fulfilled') {
+          refreshedCells += 1;
+          nextEntries[makeSnapshotKey(pair.layerKey, pair.domainKey)] = result.value;
+          queryClient.setQueryData(queryKeys.domainMetadata(pair.layerKey, pair.domainKey), result.value);
+          return;
+        }
+        failedCells += 1;
+        if (!firstFailureMessage) {
+          firstFailureMessage = formatSystemStatusText(result.reason) || 'Unknown error';
+        }
       });
+
+      const snapshot: DomainMetadataSnapshotResponse = {
+        version: previousSnapshot?.version || 1,
+        updatedAt: new Date().toISOString(),
+        entries: nextEntries,
+        warnings: (previousSnapshot?.warnings || []).filter(Boolean)
+      };
+
       persistSnapshot(snapshot);
       queryClient.setQueryData(snapshotQueryKey, snapshot);
-      for (const pair of queryPairs) {
-        const entry = snapshot.entries?.[makeSnapshotKey(pair.layerKey, pair.domainKey)];
-        if (entry) {
-          queryClient.setQueryData(queryKeys.domainMetadata(pair.layerKey, pair.domainKey), entry);
-        }
-      }
       void DataService.savePersistedDomainMetadataSnapshotCache(snapshot).catch(() => {
         // best-effort persistence to common container
       });
-      const refreshedCells = queryPairs.reduce((count, pair) => {
-        const key = makeSnapshotKey(pair.layerKey, pair.domainKey);
-        return snapshot.entries?.[key] ? count + 1 : count;
-      }, 0);
+
       toast.success(`Refreshed counts for ${refreshedCells}/${queryPairs.length} panel cells.`);
+      if (failedCells > 0) {
+        toast.error(`Failed to refresh ${failedCells} panel cells (first: ${firstFailureMessage})`);
+      }
     } catch (error) {
       toast.error(`Refresh failed (${formatSystemStatusText(error) || 'Unknown error'})`);
     } finally {
@@ -948,12 +969,10 @@ export function DomainLayerComparisonPanel({
       });
     }
   }, [
-    domainRows,
     isRefreshingPanelCounts,
     isResettingAllLists,
     isResettingCheckpoints,
     isResettingLists,
-    layerColumns,
     queryClient,
     queryPairs,
     snapshotQueryKey
@@ -1598,6 +1617,7 @@ export function DomainLayerComparisonPanel({
                       configuredModels.find((model) => Boolean(model.actionJobName)) ||
                       configuredModels[0] ||
                       null;
+                    const isDomainRefreshing = configuredModels.some((model) => model.isCellRefreshing);
 
                     const refreshDomainRow = async () => {
                       if (
@@ -1640,6 +1660,15 @@ export function DomainLayerComparisonPanel({
                               <span className={`${StatusTypos.MONO} truncate text-[11px] text-mcm-walnut/75`}>
                                 {row.key}
                               </span>
+                              {isDomainRefreshing ? (
+                                <span
+                                  data-testid={`domain-refresh-indicator-${row.key}`}
+                                  className={`${StatusTypos.MONO} inline-flex w-fit items-center gap-1 rounded-full border border-mcm-teal/35 bg-mcm-teal/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-mcm-teal`}
+                                >
+                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                  refreshing
+                                </span>
+                              ) : null}
                             </div>
                             <div className="flex shrink-0 items-center justify-end gap-1">
                               <Button
@@ -1804,11 +1833,18 @@ export function DomainLayerComparisonPanel({
                                   </span>
                                 </div>
                               </div>
-                              {model.isPending ? (
+                              {model.isCellRefreshing ? (
+                                <div
+                                  className={`${StatusTypos.MONO} mt-1 inline-flex items-center gap-1 text-[11px] text-mcm-teal`}
+                                >
+                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                  refreshing...
+                                </div>
+                              ) : model.isPending ? (
                                 <div
                                   className={`${StatusTypos.MONO} mt-1 text-[11px] text-mcm-walnut/70`}
                                 >
-                                  refreshing...
+                                  loading metadata...
                                 </div>
                               ) : null}
                               {model.error ? (

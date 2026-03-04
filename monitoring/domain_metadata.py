@@ -874,11 +874,14 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
                 index_symbols = bronze_bucketing.load_symbol_set(index_domain_key)
             else:
                 index_symbols = _load_alpha26_index_symbols(layer_key=layer_key, domain_key=index_domain_key)
-            symbol_count = len(index_symbols)
+            prefix_is_empty = isinstance(files, int) and files == 0
+            # If the target prefix has no blobs, report zero symbols even when the alpha26
+            # index still contains stale entries.
+            symbol_count = 0 if prefix_is_empty else len(index_symbols)
             if domain_key == "finance" and finance_subfolder_symbol_counts:
-                if sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
+                if not prefix_is_empty and sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
                     finance_subfolder_symbol_counts = None
-            if not index_symbols:
+            if not prefix_is_empty and not index_symbols:
                 warnings.append(
                     f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; symbol count may be incomplete."
                 )

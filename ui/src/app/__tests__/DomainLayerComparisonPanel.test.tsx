@@ -145,4 +145,91 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       });
     });
   });
+
+  it('shows a row-level refreshing indicator in the medallion-domain view during refresh', async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    let resolveMetadata: ((value: Awaited<ReturnType<typeof DataService.getDomainMetadata>>) => void) | null =
+      null;
+    const metadataPromise = new Promise<Awaited<ReturnType<typeof DataService.getDomainMetadata>>>((resolve) => {
+      resolveMetadata = resolve;
+    });
+    vi.mocked(DataService.getDomainMetadata).mockReturnValue(metadataPromise);
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={onRefresh}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    const moreButton = await screen.findByRole('button', { name: 'More actions for market' });
+    await user.click(moreButton);
+
+    const refreshMenuItem = await screen.findByRole('menuitem', {
+      name: 'Refresh domain status + counts'
+    });
+    await user.click(refreshMenuItem);
+
+    expect(await screen.findByTestId('domain-refresh-indicator-market')).toBeInTheDocument();
+
+    resolveMetadata?.({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      symbolCount: 123,
+      warnings: []
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();
+    });
+  });
+
+  it('refreshes panel counts with live metadata and updates zero counts', async () => {
+    const user = userEvent.setup();
+    vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      symbolCount: 0,
+      warnings: []
+    });
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    await waitFor(() => {
+      expect(DataService.getDomainMetadataSnapshot).toHaveBeenCalled();
+    });
+    const initialSnapshotCalls = vi.mocked(DataService.getDomainMetadataSnapshot).mock.calls.length;
+    const refreshCountsButton = await screen.findByRole('button', { name: 'Refresh counts' });
+    await user.click(refreshCountsButton);
+
+    await waitFor(() => {
+      expect(DataService.getDomainMetadata).toHaveBeenCalledWith('bronze', 'market', {
+        refresh: true
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('0 symbols')).toBeInTheDocument();
+    });
+    expect(vi.mocked(DataService.getDomainMetadataSnapshot).mock.calls.length).toBe(initialSnapshotCalls);
+  });
 });
