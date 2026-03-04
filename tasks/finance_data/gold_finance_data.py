@@ -27,6 +27,80 @@ class FeatureJobConfig:
 
 
 _NUMBER_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)\s*([kKmMbBtT])?\s*$")
+_FREE_CASH_FLOW_DERIVATION_LABEL = (
+    "free_cash_flow missing in source; derivable via operating_cash_flow - abs(capital_expenditures)"
+)
+_TOTAL_DEBT_DERIVATION_LABEL = (
+    "total_debt missing in source; derivable via short_long_term_debt_total or long_term_debt + short_term/current_debt"
+)
+_CASH_AND_EQUIVALENTS_DERIVATION_LABEL = (
+    "cash_and_equivalents missing in source; derivable via cash_and_cash_equivalents_at_carrying_value or cash_and_short_term_investments"
+)
+_EV_EBITDA_DERIVATION_LABEL = (
+    "ev_ebitda missing in source; derivable via enterprise_value/ebitda or ev_revenue*revenue/ebitda"
+)
+_REQUIRED_FEATURE_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "revenue": ("Total Revenue", "Revenue"),
+    "gross_profit": ("Gross Profit",),
+    "operating_income": ("Operating Income", "Operating Income or Loss"),
+    "net_income": ("Net Income", "Net Income Common Stockholders"),
+    "free_cash_flow": ("Free Cash Flow",),
+    "operating_cash_flow": (
+        "Operating Cash Flow",
+        "Total Cash From Operating Activities",
+        "Cash Flow From Continuing Operating Activities",
+        "Net Cash Provided by Operating Activities",
+    ),
+    "total_debt": ("Total Debt",),
+    "long_term_debt": (
+        "Long Term Debt",
+        "Long Term Debt And Capital Lease Obligation",
+        "Long Term Debt & Capital Lease Obligation",
+        "Long-term Debt",
+        "Long-Term Debt",
+    ),
+    "total_assets": ("Total Assets",),
+    "current_assets": ("Current Assets", "Total Current Assets"),
+    "current_liabilities": ("Current Liabilities", "Total Current Liabilities"),
+    "shares_outstanding": (
+        "Shares Outstanding",
+        "Common Stock Shares Outstanding",
+        "Common Shares Outstanding",
+        "Ordinary Shares Number",
+        "Share Issued",
+    ),
+    "pe_ratio": ("Trailing P/E", "PE Ratio (TTM)", "P/E Ratio", "P/E", "PE Ratio"),
+    "ev_ebitda": ("Enterprise Value/EBITDA", "EV/EBITDA", "EV / EBITDA"),
+    "market_cap": ("Market Cap", "Market Cap (intraday)"),
+    "ebitda": ("EBITDA", "Normalized EBITDA"),
+    "forward_pe": ("Forward P/E", "Forward PE"),
+    "ev_revenue": ("Enterprise Value/Revenue", "EV/Revenue", "EV / Revenue"),
+    "cash_and_equivalents": (
+        "Cash And Cash Equivalents",
+        "Cash & Cash Equivalents",
+        "Cash and Cash Equivalents",
+    ),
+}
+_CAPITAL_EXPENDITURES_ALIASES: Tuple[str, ...] = (
+    "Capital Expenditures",
+    "Capital Expenditure",
+)
+_TOTAL_DEBT_FALLBACK_ALIASES: Tuple[str, ...] = (
+    "Short Long Term Debt Total",
+    "Short/Long Term Debt Total",
+    "Short Long Term Debt",
+)
+_SHORT_TERM_DEBT_ALIASES: Tuple[str, ...] = (
+    "Short Term Debt",
+    "Current Debt",
+    "Current Long Term Debt",
+)
+_CASH_AND_EQUIVALENTS_FALLBACK_ALIASES: Tuple[str, ...] = (
+    "Cash And Cash Equivalents At Carrying Value",
+    "Cash and Cash Equivalents at Carrying Value",
+    "Cash And Short Term Investments",
+    "Cash and Short Term Investments",
+)
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -138,6 +212,159 @@ def _require_column(df: pd.DataFrame, *, label: str, candidates: Sequence[str]) 
     )
 
 
+def _build_missing_source_column_message(
+    label: str,
+    candidates: Sequence[str],
+    *,
+    derivation_inputs: Optional[str] = None,
+) -> str:
+    message = f"Missing required source column for {label}; accepted aliases={list(candidates)}"
+    if derivation_inputs:
+        message = f"{message} or derivation inputs {derivation_inputs}"
+    return message
+
+
+def _append_unique(values: List[str], item: str) -> None:
+    if item not in values:
+        values.append(item)
+
+
+def _derive_free_cash_flow_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
+    """
+    Return the free-cash-flow column name, deriving it when absent.
+
+    Derivation follows the common finance convention:
+    free_cash_flow = operating_cash_flow - capex_outflow
+    where capex_outflow is treated as an absolute outflow amount to handle both
+    positive and negative source sign conventions.
+    """
+    free_cash_flow_col = _resolve_column(
+        out, _REQUIRED_FEATURE_COLUMN_ALIASES["free_cash_flow"]
+    )
+    if free_cash_flow_col:
+        return free_cash_flow_col, False
+
+    operating_cash_flow_col = _resolve_column(
+        out, _REQUIRED_FEATURE_COLUMN_ALIASES["operating_cash_flow"]
+    )
+    capital_expenditures_col = _resolve_column(out, _CAPITAL_EXPENDITURES_ALIASES)
+    if not operating_cash_flow_col or not capital_expenditures_col:
+        raise ValueError(
+            _build_missing_source_column_message(
+                "free_cash_flow",
+                _REQUIRED_FEATURE_COLUMN_ALIASES["free_cash_flow"],
+                derivation_inputs=(
+                    f"operating_cash_flow aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['operating_cash_flow'])} "
+                    f"+ capital_expenditures aliases={list(_CAPITAL_EXPENDITURES_ALIASES)}"
+                ),
+            )
+        )
+
+    operating_cash_flow = _coerce_numeric(out[operating_cash_flow_col])
+    capital_expenditures = _coerce_numeric(out[capital_expenditures_col]).abs()
+    out["free_cash_flow"] = operating_cash_flow - capital_expenditures
+    return "free_cash_flow", True
+
+
+def _derive_total_debt_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
+    total_debt_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["total_debt"])
+    if total_debt_col:
+        return total_debt_col, False
+
+    total_debt_fallback_col = _resolve_column(out, _TOTAL_DEBT_FALLBACK_ALIASES)
+    if total_debt_fallback_col:
+        out["total_debt"] = _coerce_numeric(out[total_debt_fallback_col])
+        return "total_debt", True
+
+    long_term_debt_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["long_term_debt"])
+    short_term_debt_col = _resolve_column(out, _SHORT_TERM_DEBT_ALIASES)
+    if long_term_debt_col and short_term_debt_col:
+        long_term_debt = _coerce_numeric(out[long_term_debt_col])
+        short_term_debt = _coerce_numeric(out[short_term_debt_col])
+        out["total_debt"] = long_term_debt.add(short_term_debt, fill_value=0.0)
+        return "total_debt", True
+
+    raise ValueError(
+        _build_missing_source_column_message(
+            "total_debt",
+            _REQUIRED_FEATURE_COLUMN_ALIASES["total_debt"],
+            derivation_inputs=(
+                f"short_long_term_debt_total aliases={list(_TOTAL_DEBT_FALLBACK_ALIASES)} "
+                f"or long_term_debt aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['long_term_debt'])} "
+                f"+ short_term_debt aliases={list(_SHORT_TERM_DEBT_ALIASES)}"
+            ),
+        )
+    )
+
+
+def _derive_cash_and_equivalents_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
+    cash_and_equivalents_col = _resolve_column(
+        out, _REQUIRED_FEATURE_COLUMN_ALIASES["cash_and_equivalents"]
+    )
+    if cash_and_equivalents_col:
+        return cash_and_equivalents_col, False
+
+    fallback_col = _resolve_column(out, _CASH_AND_EQUIVALENTS_FALLBACK_ALIASES)
+    if fallback_col:
+        out["cash_and_equivalents"] = _coerce_numeric(out[fallback_col])
+        return "cash_and_equivalents", True
+
+    raise ValueError(
+        _build_missing_source_column_message(
+            "cash_and_equivalents",
+            _REQUIRED_FEATURE_COLUMN_ALIASES["cash_and_equivalents"],
+            derivation_inputs=f"fallback aliases={list(_CASH_AND_EQUIVALENTS_FALLBACK_ALIASES)}",
+        )
+    )
+
+
+def _derive_ev_ebitda_if_missing(out: pd.DataFrame) -> Tuple[str, bool]:
+    ev_ebitda_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["ev_ebitda"])
+    if ev_ebitda_col:
+        return ev_ebitda_col, False
+
+    market_cap_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["market_cap"])
+    ebitda_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["ebitda"])
+    if market_cap_col and ebitda_col:
+        try:
+            total_debt_col, _ = _derive_total_debt_if_missing(out)
+            cash_and_equivalents_col, _ = _derive_cash_and_equivalents_if_missing(out)
+            market_cap = _coerce_numeric(out[market_cap_col])
+            total_debt = _coerce_numeric(out[total_debt_col])
+            cash_and_equivalents = _coerce_numeric(out[cash_and_equivalents_col])
+            ebitda = _coerce_numeric(out[ebitda_col])
+            enterprise_value = market_cap + total_debt - cash_and_equivalents
+            out["ev_ebitda"] = _safe_div(enterprise_value, ebitda)
+            return "ev_ebitda", True
+        except ValueError:
+            pass
+
+    ev_revenue_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["ev_revenue"])
+    revenue_col = _resolve_column(out, _REQUIRED_FEATURE_COLUMN_ALIASES["revenue"])
+    if ev_revenue_col and revenue_col and ebitda_col:
+        ev_revenue = _coerce_numeric(out[ev_revenue_col])
+        revenue = _coerce_numeric(out[revenue_col])
+        ebitda = _coerce_numeric(out[ebitda_col])
+        out["ev_ebitda"] = _safe_div(ev_revenue * revenue, ebitda)
+        return "ev_ebitda", True
+
+    raise ValueError(
+        _build_missing_source_column_message(
+            "ev_ebitda",
+            _REQUIRED_FEATURE_COLUMN_ALIASES["ev_ebitda"],
+            derivation_inputs=(
+                f"(market_cap aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['market_cap'])} "
+                f"+ total_debt aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['total_debt'])} "
+                f"- cash_and_equivalents aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['cash_and_equivalents'])}) "
+                f"/ ebitda aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['ebitda'])} "
+                f"or ev_revenue aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['ev_revenue'])} "
+                f"* revenue aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['revenue'])} / "
+                f"ebitda aliases={list(_REQUIRED_FEATURE_COLUMN_ALIASES['ebitda'])}"
+            ),
+        )
+    )
+
+
 def _parse_human_number(value: Any) -> float:
     if value is None:
         return float("nan")
@@ -205,6 +432,47 @@ def _prepare_table(df: Optional[pd.DataFrame], ticker: str, *, source_label: str
     return out
 
 
+def _preflight_feature_schema(df: pd.DataFrame) -> Dict[str, Any]:
+    out = _snake_case_columns(df)
+    missing_requirements: List[str] = []
+    recoverable_drift: List[str] = []
+
+    derivable_requirements = {
+        "free_cash_flow",
+        "total_debt",
+        "cash_and_equivalents",
+        "ev_ebitda",
+    }
+    derivation_checks = (
+        (_derive_free_cash_flow_if_missing, _FREE_CASH_FLOW_DERIVATION_LABEL),
+        (_derive_total_debt_if_missing, _TOTAL_DEBT_DERIVATION_LABEL),
+        (_derive_cash_and_equivalents_if_missing, _CASH_AND_EQUIVALENTS_DERIVATION_LABEL),
+        (_derive_ev_ebitda_if_missing, _EV_EBITDA_DERIVATION_LABEL),
+    )
+    for derive_fn, label in derivation_checks:
+        try:
+            _, derived = derive_fn(out)
+            if derived:
+                _append_unique(recoverable_drift, label)
+        except ValueError as exc:
+            _append_unique(missing_requirements, str(exc))
+
+    for label, candidates in _REQUIRED_FEATURE_COLUMN_ALIASES.items():
+        if label in derivable_requirements:
+            continue
+        if _resolve_column(out, candidates) is None:
+            _append_unique(
+                missing_requirements,
+                _build_missing_source_column_message(label, candidates),
+            )
+
+    return {
+        "missing_requirements": missing_requirements,
+        "recoverable_drift": recoverable_drift,
+        "available_columns": sorted(str(col) for col in out.columns),
+    }
+
+
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = _snake_case_columns(df)
 
@@ -219,104 +487,73 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     symbol_key = out["symbol"]
 
-    revenue_col = _require_column(out, label="revenue", candidates=["Total Revenue", "Revenue"])
-    gross_profit_col = _require_column(out, label="gross_profit", candidates=["Gross Profit"])
+    revenue_col = _require_column(
+        out, label="revenue", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["revenue"]
+    )
+    gross_profit_col = _require_column(
+        out, label="gross_profit", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["gross_profit"]
+    )
     operating_income_col = _require_column(
         out,
         label="operating_income",
-        candidates=["Operating Income", "Operating Income or Loss"],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["operating_income"],
     )
     net_income_col = _require_column(
         out,
         label="net_income",
-        candidates=["Net Income", "Net Income Common Stockholders"],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["net_income"],
     )
-    free_cash_flow_col = _require_column(out, label="free_cash_flow", candidates=["Free Cash Flow"])
+    free_cash_flow_col, _ = _derive_free_cash_flow_if_missing(out)
     operating_cash_flow_col = _require_column(
         out,
         label="operating_cash_flow",
-        candidates=[
-            "Operating Cash Flow",
-            "Total Cash From Operating Activities",
-            "Cash Flow From Continuing Operating Activities",
-            "Net Cash Provided by Operating Activities",
-        ],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["operating_cash_flow"],
     )
 
-    total_debt_col = _require_column(out, label="total_debt", candidates=["Total Debt"])
+    total_debt_col, _ = _derive_total_debt_if_missing(out)
     long_term_debt_col = _require_column(
         out,
         label="long_term_debt",
-        candidates=[
-            "Long Term Debt",
-            "Long Term Debt And Capital Lease Obligation",
-            "Long Term Debt & Capital Lease Obligation",
-            "Long-term Debt",
-            "Long-Term Debt",
-        ],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["long_term_debt"],
     )
-    total_assets_col = _require_column(out, label="total_assets", candidates=["Total Assets"])
+    total_assets_col = _require_column(
+        out, label="total_assets", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["total_assets"]
+    )
     current_assets_col = _require_column(
-        out, label="current_assets", candidates=["Current Assets", "Total Current Assets"]
+        out, label="current_assets", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["current_assets"]
     )
     current_liabilities_col = _require_column(
         out,
         label="current_liabilities",
-        candidates=["Current Liabilities", "Total Current Liabilities"],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["current_liabilities"],
     )
     shares_outstanding_col = _require_column(
         out,
         label="shares_outstanding",
-        candidates=[
-            "Shares Outstanding",
-            "Common Stock Shares Outstanding",
-            "Common Shares Outstanding",
-            "Ordinary Shares Number",
-            "Share Issued",
-        ],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["shares_outstanding"],
     )
 
     pe_ratio_col = _require_column(
         out,
         label="pe_ratio",
-        candidates=[
-            "Trailing P/E",
-            "PE Ratio (TTM)",
-            "P/E Ratio",
-            "P/E",
-            "PE Ratio",
-        ],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["pe_ratio"],
     )
-    ev_ebitda_col = _require_column(
-        out,
-        label="ev_ebitda",
-        candidates=[
-            "Enterprise Value/EBITDA",
-            "EV/EBITDA",
-            "EV / EBITDA",
-        ],
+    ev_ebitda_col, _ = _derive_ev_ebitda_if_missing(out)
+    market_cap_col = _require_column(
+        out, label="market_cap", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["market_cap"]
     )
-    market_cap_col = _require_column(out, label="market_cap", candidates=["Market Cap", "Market Cap (intraday)"])
-    ebitda_col = _require_column(out, label="ebitda", candidates=["EBITDA", "Normalized EBITDA"])
-    forward_pe_col = _require_column(out, label="forward_pe", candidates=["Forward P/E", "Forward PE"])
+    ebitda_col = _require_column(
+        out, label="ebitda", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["ebitda"]
+    )
+    forward_pe_col = _require_column(
+        out, label="forward_pe", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["forward_pe"]
+    )
     ev_revenue_col = _require_column(
         out,
         label="ev_revenue",
-        candidates=[
-            "Enterprise Value/Revenue",
-            "EV/Revenue",
-            "EV / Revenue",
-        ],
+        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["ev_revenue"],
     )
-    cash_and_equivalents_col = _require_column(
-        out,
-        label="cash_and_equivalents",
-        candidates=[
-            "Cash And Cash Equivalents",
-            "Cash & Cash Equivalents",
-            "Cash and Cash Equivalents",
-        ],
-    )
+    cash_and_equivalents_col, _ = _derive_cash_and_equivalents_if_missing(out)
 
     revenue = _coerce_numeric(out[revenue_col])
     gross_profit = _coerce_numeric(out[gross_profit_col])
@@ -492,6 +729,18 @@ def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str, Optional
         (df_valuation, "_val"),
     ):
         merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
+
+    preflight = _preflight_feature_schema(merged)
+    if preflight["missing_requirements"]:
+        return {
+            "ticker": ticker,
+            "status": "failed_compute",
+            "error": (
+                "Gold finance schema preflight failed: "
+                f"missing={preflight['missing_requirements']} "
+                f"available_columns={preflight['available_columns']}"
+            ),
+        }
 
     try:
         df_features = compute_features(merged)
@@ -716,6 +965,8 @@ def _run_alpha26_finance_gold(
                 )
 
             symbol_frames: list[pd.DataFrame] = []
+            recoverable_schema_drift = 0
+            recoverable_schema_drift_samples: list[str] = []
             for ticker in sorted(symbol_candidates):
                 try:
                     df_income = _prepare_table(
@@ -759,6 +1010,20 @@ def _run_alpha26_finance_gold(
                 ):
                     merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
 
+                preflight = _preflight_feature_schema(merged)
+                if preflight["missing_requirements"]:
+                    failed += 1
+                    mdc.write_warning(
+                        "Gold finance alpha26 schema preflight failed for "
+                        f"{ticker}: missing={preflight['missing_requirements']} "
+                        f"available_columns={preflight['available_columns']}"
+                    )
+                    continue
+                if preflight["recoverable_drift"]:
+                    recoverable_schema_drift += 1
+                    if len(recoverable_schema_drift_samples) < 5:
+                        recoverable_schema_drift_samples.append(ticker)
+
                 try:
                     df_features = compute_features(merged)
                     df_features, _ = apply_backfill_start_cutoff(
@@ -774,6 +1039,13 @@ def _run_alpha26_finance_gold(
                 except Exception as exc:
                     failed += 1
                     mdc.write_warning(f"Gold finance alpha26 compute failed for {ticker}: {exc}")
+
+            if recoverable_schema_drift > 0:
+                mdc.write_line(
+                    "Gold finance alpha26 schema drift recovered via preflight fallback: "
+                    f"bucket={bucket} count={recoverable_schema_drift} "
+                    f"sample_tickers={recoverable_schema_drift_samples}"
+                )
 
             if symbol_frames:
                 df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)

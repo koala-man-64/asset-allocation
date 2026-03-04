@@ -37,6 +37,39 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_not_found_listing_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int) and status_code == 404:
+        return True
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_status = getattr(response, "status_code", None)
+        if response_status is None:
+            response_status = getattr(response, "status", None)
+        if isinstance(response_status, int) and response_status == 404:
+            return True
+
+    error_code = str(getattr(exc, "error_code", "") or "").strip().lower()
+    if error_code in {"resourcenotfound", "containernotfound", "blobnotfound", "pathnotfound", "filesystemnotfound"}:
+        return True
+
+    class_name = exc.__class__.__name__.lower()
+    if "notfound" in class_name:
+        return True
+
+    message = str(exc).lower()
+    not_found_tokens = (
+        "resource not found",
+        "container not found",
+        "blob not found",
+        "path not found",
+        "status code: 404",
+        "http status code 404",
+    )
+    return any(token in message for token in not_found_tokens)
+
+
 def _domain_metadata_cache_ttl_seconds() -> int:
     raw_ttl = os.environ.get("DOMAIN_METADATA_CACHE_TTL_SECONDS", "30").strip()
     try:
@@ -358,6 +391,14 @@ def _count_symbols_from_listing(
             if ticker:
                 tickers.add(ticker)
     except Exception as exc:
+        if _is_not_found_listing_error(exc):
+            logger.info(
+                "Blob prefix missing for symbol count; treating as zero. container=%s prefix=%s err=%s",
+                client.container_name,
+                prefix,
+                exc,
+            )
+            return 0, False
         logger.warning(
             "Failed to list blobs for symbol count: container=%s prefix=%s err=%s", client.container_name, prefix, exc
         )
@@ -390,6 +431,14 @@ def _count_finance_symbols_from_listing(
             if subfolder and ticker:
                 by_subfolder[subfolder].add(ticker)
     except Exception as exc:
+        if _is_not_found_listing_error(exc):
+            logger.info(
+                "Finance blob prefix missing for symbol count; treating as zero. container=%s prefix=%s err=%s",
+                client.container_name,
+                prefix,
+                exc,
+            )
+            return 0, {key: 0 for key in _FINANCE_SUBFOLDER_KEYS}, False
         logger.warning(
             "Failed to list blobs for finance subfolder symbol count: container=%s prefix=%s err=%s",
             client.container_name,
@@ -481,6 +530,14 @@ def _summarize_blob_prefix(
             if modified_dt is not None and (latest_modified is None or modified_dt > latest_modified):
                 latest_modified = modified_dt
     except Exception as exc:
+        if _is_not_found_listing_error(exc):
+            logger.info(
+                "Blob prefix missing for summary; treating as empty. container=%s prefix=%s err=%s",
+                client.container_name,
+                prefix,
+                exc,
+            )
+            return 0, 0, None, False
         logger.warning(
             "Failed to list blobs for prefix summary: container=%s prefix=%s err=%s", client.container_name, prefix, exc
         )
@@ -874,16 +931,21 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
                 index_symbols = bronze_bucketing.load_symbol_set(index_domain_key)
             else:
                 index_symbols = _load_alpha26_index_symbols(layer_key=layer_key, domain_key=index_domain_key)
-            prefix_is_empty = isinstance(files, int) and files == 0
-            # If the target prefix has no blobs, report zero symbols even when the alpha26
-            # index still contains stale entries.
-            symbol_count = 0 if prefix_is_empty else len(index_symbols)
-            if domain_key == "finance" and finance_subfolder_symbol_counts:
-                if not prefix_is_empty and sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
-                    finance_subfolder_symbol_counts = None
-            if not prefix_is_empty and not index_symbols:
+            if isinstance(files, int):
+                prefix_is_empty = files == 0
+                # If the target prefix has no blobs, report zero symbols even when the alpha26
+                # index still contains stale entries.
+                symbol_count = 0 if prefix_is_empty else len(index_symbols)
+                if domain_key == "finance" and finance_subfolder_symbol_counts:
+                    if not prefix_is_empty and sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
+                        finance_subfolder_symbol_counts = None
+                if not prefix_is_empty and not index_symbols:
+                    warnings.append(
+                        f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; symbol count may be incomplete."
+                    )
+            else:
                 warnings.append(
-                    f"{layer_key.title()} alpha26 index empty or unavailable for domain={index_domain_key}; symbol count may be incomplete."
+                    f"{layer_key.title()} blob listing unavailable for prefix={prefix}; symbol count set to unknown."
                 )
 
         payload = {

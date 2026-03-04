@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tasks.finance_data.gold_finance_data import compute_features
+from tasks.finance_data.gold_finance_data import _preflight_feature_schema, compute_features
 
 def _make_finance_df(rows: int = 8) -> pd.DataFrame:
     # Create quarterly dates
@@ -162,3 +162,62 @@ def test_parse_human_number_integration():
     })
     out = compute_features(df)
     assert out.iloc[0]["total_revenue"] == 10_000_000.0
+
+
+def test_compute_features_derives_free_cash_flow_from_operating_cash_flow_and_capex():
+    df = _make_finance_df(8).drop(columns=["Free Cash Flow"])
+    df["Capital Expenditures"] = np.array([-5.0] * 8)
+
+    out = compute_features(df)
+
+    expected = out["operating_cash_flow"] - out["capital_expenditures"].abs()
+    assert np.allclose(out["free_cash_flow"], expected, equal_nan=True)
+
+
+def test_compute_features_requires_free_cash_flow_or_derivation_inputs():
+    df = _make_finance_df(8).drop(columns=["Free Cash Flow"])
+
+    with pytest.raises(ValueError, match="Missing required source column for free_cash_flow"):
+        compute_features(df)
+
+
+def test_compute_features_derives_total_debt_from_short_long_term_debt_total():
+    df = _make_finance_df(8).drop(columns=["Total Debt"])
+    df["Short Long Term Debt Total"] = np.array([325.0] * 8)
+
+    out = compute_features(df)
+
+    assert np.allclose(out["total_debt"], 325.0, equal_nan=True)
+
+
+def test_compute_features_derives_cash_and_equivalents_from_carrying_value():
+    df = _make_finance_df(8).drop(columns=["Cash And Cash Equivalents"])
+    df["Cash And Cash Equivalents At Carrying Value"] = np.array([85.0] * 8)
+
+    out = compute_features(df)
+
+    assert np.allclose(out["cash_and_equivalents"], 85.0, equal_nan=True)
+
+
+def test_compute_features_derives_ev_ebitda_from_enterprise_value_components():
+    df = _make_finance_df(8).drop(columns=["EV/EBITDA"])
+
+    out = compute_features(df)
+
+    expected = (out["market_cap"] + 300.0 - 75.0) / out["ebitda"]
+    assert np.allclose(out["ev_ebitda"], expected, equal_nan=True)
+
+
+def test_preflight_reports_recoverable_drift_for_total_debt_cash_and_ev_ebitda():
+    df = _make_finance_df(4).drop(columns=["Total Debt", "Cash And Cash Equivalents", "EV/EBITDA", "Free Cash Flow"])
+    df["Short Long Term Debt Total"] = np.array([325.0] * 4)
+    df["Cash And Cash Equivalents At Carrying Value"] = np.array([85.0] * 4)
+    df["Capital Expenditures"] = np.array([-5.0] * 4)
+
+    preflight = _preflight_feature_schema(df)
+
+    assert preflight["missing_requirements"] == []
+    assert any("free_cash_flow missing in source" in item for item in preflight["recoverable_drift"])
+    assert any("total_debt missing in source" in item for item in preflight["recoverable_drift"])
+    assert any("cash_and_equivalents missing in source" in item for item in preflight["recoverable_drift"])
+    assert any("ev_ebitda missing in source" in item for item in preflight["recoverable_drift"])

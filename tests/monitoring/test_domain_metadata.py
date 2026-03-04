@@ -724,3 +724,65 @@ def test_collect_domain_metadata_reports_zero_symbols_when_target_prefix_is_empt
 
     assert payload["fileCount"] == 0
     assert payload["symbolCount"] == 0
+
+
+def test_collect_domain_metadata_reports_zero_symbols_when_listing_prefix_not_found(monkeypatch) -> None:
+    class _NotFoundError(Exception):
+        status_code = 404
+
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            raise _NotFoundError("Container not found")
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.layer_bucketing.load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: {"AAPL", "MSFT", "NVDA"},
+    )
+
+    payload = collect_domain_metadata(layer="silver", domain="market")
+
+    assert payload["fileCount"] == 0
+    assert payload["symbolCount"] == 0
+
+
+def test_collect_domain_metadata_keeps_symbol_count_unknown_when_listing_fails(monkeypatch) -> None:
+    class _ContainerClient:
+        def list_blobs(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            raise RuntimeError("Listing failed")
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+            self.container_client = _ContainerClient()
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.layer_bucketing.load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: {"AAPL", "MSFT", "NVDA"},
+    )
+
+    payload = collect_domain_metadata(layer="silver", domain="market")
+
+    assert payload["fileCount"] is None
+    assert payload["symbolCount"] is None
+    assert any("symbol count set to unknown" in warning for warning in payload["warnings"])
