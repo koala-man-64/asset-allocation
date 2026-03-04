@@ -1,53 +1,12 @@
-import pytest
 import pandas as pd
+
 from core import delta_core
 from core.pipeline import DataPaths
-from tasks.earnings_data import gold_earnings_data as gold
-
-def test_compute_features():
-    """
-    Verifies compute_features:
-    1. Snake-casing columns.
-    2. Calculating surprise %.
-    3. Resampling to daily with ffill.
-    4. Identifying earnings days.
-    """
-    df_raw = pd.DataFrame({
-        "Date": ["2023-01-01", "2023-04-01"],
-        "Symbol": ["TEST", "TEST"],
-        "Reported EPS": [1.1, 1.2],
-        "EPS Estimate": [1.0, 1.0],
-    })
-    
-    res = gold.compute_features(df_raw)
-    
-    # Check Result
-    # 1. Columns snake_cased
-    assert "reported_eps" in res.columns
-    assert "surprise_pct" in res.columns
-    
-    # 2. Daily resampling
-    # 2023-01-01 to 2023-04-01 is ~90 days
-    assert len(res) >= 90 
-    
-    # 3. Validation of a specific date
-    row_jan1 = res[res["date"] == pd.Timestamp("2023-01-01")].iloc[0]
-    assert row_jan1["is_earnings_day"] == 1.0
-    assert row_jan1["surprise_pct"] == (1.1 - 1.0) / 1.0 # 0.1
-    
-    row_jan2 = res[res["date"] == pd.Timestamp("2023-01-02")].iloc[0]
-    assert row_jan2["is_earnings_day"] == 0.0
-    # Should be ffilled
-    assert row_jan2["reported_eps"] == 1.1
-
-def test_compute_features_missing_cols():
-    df_raw = pd.DataFrame({"Date": []})
-    with pytest.raises(ValueError, match="Missing required columns"):
-        gold.compute_features(df_raw)
+from tasks.price_target_data import gold_price_target_data as gold
 
 
-def test_run_alpha26_earnings_gold_skips_empty_bucket_without_existing_schema(monkeypatch):
-    target_path = DataPaths.get_gold_earnings_bucket_path("A")
+def test_run_alpha26_price_target_gold_skips_empty_bucket_without_existing_schema(monkeypatch):
+    target_path = DataPaths.get_gold_price_targets_bucket_path("A")
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
 
     monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
@@ -74,7 +33,7 @@ def test_run_alpha26_earnings_gold_skips_empty_bucket_without_existing_schema(mo
         watermarks_dirty,
         alpha26_symbols,
         index_path,
-    ) = gold._run_alpha26_earnings_gold(
+    ) = gold._run_alpha26_price_target_gold(
         silver_container="silver",
         gold_container="gold",
         backfill_start_iso=None,
@@ -92,9 +51,9 @@ def test_run_alpha26_earnings_gold_skips_empty_bucket_without_existing_schema(mo
     assert captured["checked_paths"] == [target_path]
 
 
-def test_run_alpha26_earnings_gold_writes_empty_bucket_when_schema_exists(monkeypatch):
-    target_path = DataPaths.get_gold_earnings_bucket_path("A")
-    existing_cols = ["date", "symbol", "surprise"]
+def test_run_alpha26_price_target_gold_writes_empty_bucket_when_schema_exists(monkeypatch):
+    target_path = DataPaths.get_gold_price_targets_bucket_path("A")
+    existing_cols = ["obs_date", "symbol", "tp_mean_est"]
     captured: dict[str, object] = {"store_calls": 0}
 
     monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
@@ -123,7 +82,7 @@ def test_run_alpha26_earnings_gold_writes_empty_bucket_when_schema_exists(monkey
         watermarks_dirty,
         alpha26_symbols,
         index_path,
-    ) = gold._run_alpha26_earnings_gold(
+    ) = gold._run_alpha26_price_target_gold(
         silver_container="silver",
         gold_container="gold",
         backfill_start_iso=None,
@@ -143,4 +102,4 @@ def test_run_alpha26_earnings_gold_writes_empty_bucket_when_schema_exists(monkey
     df_written = captured["df"]
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
-    assert list(df_written.columns) == ["date", "symbol"]
+    assert list(df_written.columns) == ["obs_date", "symbol"]

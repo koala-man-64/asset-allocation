@@ -353,6 +353,8 @@ def process_alpha26_bucket_blob(
 def _write_alpha26_price_target_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) -> tuple[int, Optional[str]]:
     symbol_to_bucket: dict[str, str] = {}
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
+        bucket_path = DataPaths.get_silver_price_target_bucket_path(bucket)
+        existing_cols = delta_core.get_delta_schema_columns(cfg.AZURE_CONTAINER_SILVER, bucket_path)
         parts = bucket_frames.get(bucket, [])
         if parts:
             df_bucket = pd.concat(parts, ignore_index=True)
@@ -370,10 +372,15 @@ def _write_alpha26_price_target_buckets(bucket_frames: dict[str, list[pd.DataFra
                 df_bucket = pd.DataFrame(columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
         else:
             df_bucket = pd.DataFrame(columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
+        if df_bucket.empty and not existing_cols:
+            mdc.write_line(
+                f"Skipping Silver price-target empty bucket write for {bucket_path}: no existing Delta schema."
+            )
+            continue
         delta_core.store_delta(
             df_bucket.reset_index(drop=True),
             cfg.AZURE_CONTAINER_SILVER,
-            DataPaths.get_silver_price_target_bucket_path(bucket),
+            bucket_path,
             mode="overwrite",
         )
     index_path = layer_bucketing.write_layer_symbol_index(

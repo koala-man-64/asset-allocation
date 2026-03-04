@@ -397,6 +397,12 @@ def _run_alpha26_earnings_gold(
             else:
                 df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
 
+        existing_cols = delta_core.get_delta_schema_columns(gold_container, gold_path)
+        if df_gold_bucket.empty and not existing_cols:
+            mdc.write_line(
+                f"Skipping Gold earnings empty bucket write for {gold_path}: no existing Delta schema."
+            )
+            continue
         try:
             delta_core.store_delta(df_gold_bucket, gold_container, gold_path, mode="overwrite")
             if backfill_start is not None:
