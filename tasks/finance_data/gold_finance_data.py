@@ -688,7 +688,6 @@ def _build_job_config() -> FeatureJobConfig:
     silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
     gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
 
-    from core import core as mdc
     if not silver_container or not str(silver_container).strip():
         raise ValueError("Environment variable 'AZURE_CONTAINER_SILVER' is required.")
     if not gold_container or not str(gold_container).strip():
