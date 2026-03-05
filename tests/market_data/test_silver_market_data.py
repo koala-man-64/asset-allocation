@@ -312,11 +312,13 @@ def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
     monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (False, set()))
+    monkeypatch.setattr(silver, "_run_market_reconciliation", lambda *, bronze_blob_list: (0, 0))
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
     monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
 
-    def _unexpected_write(_frames):
+    def _unexpected_write(_frames, *, touched_buckets=None):
+        del touched_buckets
         raise AssertionError("_write_alpha26_market_buckets should not be called when no rows are staged.")
 
     monkeypatch.setattr(silver, "_write_alpha26_market_buckets", _unexpected_write)
@@ -368,10 +370,12 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
     monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver, "_run_market_reconciliation", lambda *, bronze_blob_list: (0, 0))
     monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
     monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
 
-    def _unexpected_write(_frames):
+    def _unexpected_write(_frames, *, touched_buckets=None):
+        del touched_buckets
         raise AssertionError(
             "_write_alpha26_market_buckets should not be called when candidates do not stage any rows."
         )
@@ -418,9 +422,10 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
         )
         return "ok"
 
-    def _fake_write(frames):
+    def _fake_write(frames, *, touched_buckets=None):
         write_calls["count"] += 1
         assert "A" in frames
+        assert touched_buckets == {"A"}
         return 1, "system/silver-index/market/latest.parquet"
 
     monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
@@ -435,6 +440,7 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
     monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver, "_run_market_reconciliation", lambda *, bronze_blob_list: (0, 0))
     monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
     monkeypatch.setattr(silver.mdc, "write_line", lambda msg: messages.append(str(msg)))
     monkeypatch.setattr(silver.mdc, "write_error", lambda msg: messages.append(f"ERROR:{msg}"))
@@ -502,3 +508,116 @@ def test_write_alpha26_market_buckets_enforces_typed_schema_for_empty_buckets(mo
 
     assert captured[path_a]["symbol"].tolist() == ["AAPL"]
     assert "unexpected" not in captured[path_a].columns
+
+
+def test_write_alpha26_market_buckets_partial_update_preserves_untouched_symbol_index(monkeypatch):
+    captured_paths: list[str] = []
+    captured_index: dict = {}
+
+    def _fake_store_delta(df, _container, path, mode="overwrite"):
+        del df
+        assert mode == "overwrite"
+        captured_paths.append(str(path))
+
+    monkeypatch.setattr(delta_core, "store_delta", _fake_store_delta)
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ["A", "C"])
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "load_layer_symbol_index",
+        lambda **_kwargs: pd.DataFrame(
+            {
+                "symbol": ["AAPL", "CSCO"],
+                "bucket": ["A", "C"],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **kwargs: captured_index.update(kwargs) or "system/silver-index/market/latest.parquet",
+    )
+
+    bucket_frames = {
+        "A": [
+            pd.DataFrame(
+                {
+                    "date": [pd.Timestamp("2026-01-02")],
+                    "symbol": ["amzn"],
+                    "open": [100.0],
+                    "high": [101.0],
+                    "low": [99.0],
+                    "close": [100.5],
+                    "volume": [1000.0],
+                    "short_interest": [pd.NA],
+                    "short_volume": [pd.NA],
+                }
+            )
+        ]
+    }
+
+    symbol_count, index_path = silver._write_alpha26_market_buckets(
+        bucket_frames,
+        touched_buckets={"A"},
+    )
+
+    assert index_path == "system/silver-index/market/latest.parquet"
+    assert captured_paths == [DataPaths.get_silver_market_bucket_path("A")]
+    assert symbol_count == 2
+    assert captured_index["symbol_to_bucket"] == {"AMZN": "A", "CSCO": "C"}
+
+
+def test_write_alpha26_market_buckets_partial_update_fails_closed_without_prior_index(monkeypatch):
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ["A", "C"])
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "load_layer_symbol_index",
+        lambda **_kwargs: pd.DataFrame(columns=["symbol", "bucket"]),
+    )
+
+    bucket_frames = {
+        "A": [
+            pd.DataFrame(
+                {
+                    "date": [pd.Timestamp("2026-01-02")],
+                    "symbol": ["amzn"],
+                    "open": [100.0],
+                    "high": [101.0],
+                    "low": [99.0],
+                    "close": [100.5],
+                    "volume": [1000.0],
+                    "short_interest": [pd.NA],
+                    "short_volume": [pd.NA],
+                }
+            )
+        ]
+    }
+
+    with pytest.raises(RuntimeError, match="incremental alpha26 write blocked"):
+        silver._write_alpha26_market_buckets(bucket_frames, touched_buckets={"A"})
+
+
+def test_main_fails_closed_when_market_reconciliation_fails(monkeypatch):
+    class _FakeBronzeClient:
+        def list_blob_infos(self, *, name_starts_with: str):
+            assert name_starts_with == "market-data/"
+            return []
+
+    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
+    monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
+    monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver, "save_last_success", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (False, set()))
+    monkeypatch.setattr(
+        silver,
+        "_run_market_reconciliation",
+        lambda *, bronze_blob_list: (_ for _ in ()).throw(RuntimeError("reconciliation boom")),
+    )
+    monkeypatch.setattr(silver.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(silver.mdc, "write_line", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(silver.mdc, "write_error", lambda *_args, **_kwargs: None)
+
+    assert silver.main() == 1

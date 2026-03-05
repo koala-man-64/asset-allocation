@@ -680,6 +680,36 @@ export interface StorageUsageResponse {
   containers: StorageContainerUsage[];
 }
 
+export interface AdlsHierarchyEntry {
+  type: 'folder' | 'file';
+  name: string;
+  path: string;
+  size?: number | null;
+  lastModified?: string | null;
+  contentType?: string | null;
+}
+
+export interface AdlsTreeResponse {
+  layer: string;
+  container: string;
+  path: string;
+  truncated: boolean;
+  scanLimit: number;
+  entries: AdlsHierarchyEntry[];
+}
+
+export interface AdlsFilePreviewResponse {
+  layer: string;
+  container: string;
+  path: string;
+  isPlainText: boolean;
+  encoding?: string | null;
+  truncated: boolean;
+  maxBytes: number;
+  contentType?: string | null;
+  contentPreview?: string | null;
+}
+
 export interface ContainerAppHealthCheck {
   status: 'healthy' | 'warning' | 'error' | 'unknown';
   url?: string | null;
@@ -938,6 +968,38 @@ export const apiService = {
 
   getStorageUsage(signal?: AbortSignal): Promise<StorageUsageResponse> {
     return request<StorageUsageResponse>('/data/storage-usage', {
+      signal
+    });
+  },
+
+  getAdlsTree(
+    params: { layer: 'bronze' | 'silver' | 'gold' | 'platinum'; path?: string; maxEntries?: number },
+    signal?: AbortSignal
+  ): Promise<AdlsTreeResponse> {
+    return request<AdlsTreeResponse>('/data/adls/tree', {
+      params: {
+        layer: params.layer,
+        path: params.path,
+        max_entries: params.maxEntries
+      },
+      signal
+    });
+  },
+
+  getAdlsFilePreview(
+    params: {
+      layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+      path: string;
+      maxBytes?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<AdlsFilePreviewResponse> {
+    return request<AdlsFilePreviewResponse>('/data/adls/file-preview', {
+      params: {
+        layer: params.layer,
+        path: params.path,
+        max_bytes: params.maxBytes
+      },
       signal
     });
   },

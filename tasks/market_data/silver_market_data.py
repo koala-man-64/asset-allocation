@@ -67,6 +67,15 @@ _ALPHA26_MARKET_NUMERIC_COLUMNS = [
     "short_interest",
     "short_volume",
 ]
+_BRONZE_TO_SILVER_REQUIRED_COLUMNS = {
+    "symbol",
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+}
 
 
 def _empty_alpha26_market_frame() -> pd.DataFrame:
@@ -102,6 +111,106 @@ def _coerce_alpha26_market_bucket_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     out = out.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
     return out[_ALPHA26_MARKET_MIN_COLUMNS].reset_index(drop=True)
+
+
+def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
+    text = str(blob_name or "").strip("/")
+    parts = text.split("/")
+    if len(parts) < 3:
+        return None
+    if parts[0] != "market-data" or parts[1] != "buckets":
+        return None
+    filename = parts[2]
+    if "." in filename:
+        filename = filename.split(".", 1)[0]
+    bucket = filename.strip().upper()
+    if bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
+        return None
+    return bucket
+
+
+def _load_existing_silver_symbol_to_bucket_map() -> dict[str, str]:
+    out: dict[str, str] = {}
+    existing = layer_bucketing.load_layer_symbol_index(layer="silver", domain="market")
+    if existing is None or existing.empty:
+        return out
+    if "symbol" not in existing.columns or "bucket" not in existing.columns:
+        return out
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    for _, row in existing.iterrows():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        bucket = str(row.get("bucket") or "").strip().upper()
+        if not symbol or bucket not in valid_buckets:
+            continue
+        out[symbol] = bucket
+    return out
+
+
+def _merge_symbol_to_bucket_map(
+    existing: dict[str, str],
+    *,
+    touched_buckets: set[str],
+    touched_symbol_to_bucket: dict[str, str],
+) -> dict[str, str]:
+    out = {
+        symbol: bucket
+        for symbol, bucket in existing.items()
+        if bucket not in touched_buckets
+    }
+    out.update(touched_symbol_to_bucket)
+    return out
+
+
+def _validate_bronze_to_silver_market_bucket_contract(df_bucket: pd.DataFrame, *, source_name: str) -> None:
+    if df_bucket is None or df_bucket.empty:
+        return
+
+    normalized_cols = {_normalize_col_name(col): col for col in df_bucket.columns}
+    missing = sorted(key for key in _BRONZE_TO_SILVER_REQUIRED_COLUMNS if key not in normalized_cols)
+    if missing:
+        raise ValueError(
+            f"bronze_to_silver contract violation for {source_name}: missing required columns={missing}"
+        )
+
+    date_col = normalized_cols["date"]
+    parsed_dates = pd.to_datetime(df_bucket[date_col], errors="coerce").dropna()
+    if parsed_dates.empty:
+        raise ValueError(
+            f"bronze_to_silver contract violation for {source_name}: no parseable date values."
+        )
+
+    symbol_col = normalized_cols["symbol"]
+    symbols = df_bucket[symbol_col].astype("string").str.strip().str.upper()
+    if symbols.empty or symbols.eq("").all():
+        raise ValueError(
+            f"bronze_to_silver contract violation for {source_name}: no non-empty symbols."
+        )
+
+
+def _validate_silver_market_bucket_output_contract(df_bucket: pd.DataFrame, *, bucket: str) -> None:
+    if df_bucket is None:
+        raise ValueError(f"bronze_to_silver contract violation for bucket={bucket}: frame is None.")
+
+    missing = [col for col in _ALPHA26_MARKET_MIN_COLUMNS if col not in df_bucket.columns]
+    if missing:
+        raise ValueError(
+            f"bronze_to_silver contract violation for bucket={bucket}: missing output columns={missing}"
+        )
+
+    if df_bucket.empty:
+        return
+
+    parsed_dates = pd.to_datetime(df_bucket["date"], errors="coerce")
+    if parsed_dates.isna().any():
+        raise ValueError(
+            f"bronze_to_silver contract violation for bucket={bucket}: invalid date values in output frame."
+        )
+
+    symbols = df_bucket["symbol"].astype("string").str.strip().str.upper()
+    if symbols.eq("").any():
+        raise ValueError(
+            f"bronze_to_silver contract violation for bucket={bucket}: blank symbols in output frame."
+        )
 
 
 def _normalize_col_name(name: str) -> str:
@@ -458,27 +567,55 @@ def process_alpha26_bucket_blob(
         df_bucket = pd.read_parquet(BytesIO(raw_bytes))
     except Exception as exc:
         mdc.write_error(f"Failed to read market alpha26 bucket {blob_name}: {exc}")
+        mdc.write_line(
+            f"layer_handoff_status transition=bronze_to_silver status=failed source={blob_name} reason=read_error"
+        )
         return "failed"
 
     if df_bucket is None or df_bucket.empty:
         if signature:
             signature["updated_at"] = datetime.utcnow().isoformat()
             watermarks[blob_name] = signature
+        bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
+        mdc.write_line(
+            f"layer_handoff_status transition=bronze_to_silver status=ok source={blob_name} bucket={bucket} "
+            "symbols_in=0 symbols_out=0 failures=0"
+        )
         return "ok"
+
+    try:
+        _validate_bronze_to_silver_market_bucket_contract(df_bucket, source_name=blob_name)
+    except Exception as exc:
+        mdc.write_error(str(exc))
+        bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
+        mdc.write_line(
+            f"layer_handoff_status transition=bronze_to_silver status=failed source={blob_name} bucket={bucket} "
+            "reason=contract_validation"
+        )
+        return "failed"
 
     symbol_col = "symbol" if "symbol" in df_bucket.columns else ("Symbol" if "Symbol" in df_bucket.columns else None)
     if symbol_col is None:
         mdc.write_error(f"Missing symbol column in market alpha26 bucket {blob_name}.")
+        bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
+        mdc.write_line(
+            f"layer_handoff_status transition=bronze_to_silver status=failed source={blob_name} bucket={bucket} "
+            "reason=missing_symbol_column"
+        )
         return "failed"
 
     debug_symbols = set(getattr(cfg, "DEBUG_SYMBOLS", []) or [])
     has_failed = False
+    input_symbols = 0
+    output_symbols = 0
+    failed_symbols = 0
     for symbol, group in df_bucket.groupby(symbol_col):
         ticker = str(symbol or "").strip().upper()
         if not ticker:
             continue
         if debug_symbols and ticker not in debug_symbols:
             continue
+        input_symbols += 1
         status = _process_symbol_frame(
             ticker=ticker,
             df_new=group.copy(),
@@ -489,16 +626,49 @@ def process_alpha26_bucket_blob(
         )
         if status == "failed":
             has_failed = True
+            failed_symbols += 1
+        elif status == "ok":
+            output_symbols += 1
 
     if not has_failed and signature:
         signature["updated_at"] = datetime.utcnow().isoformat()
         watermarks[blob_name] = signature
-    return "failed" if has_failed else "ok"
+    bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
+    status_text = "failed" if has_failed else "ok"
+    mdc.write_line(
+        f"layer_handoff_status transition=bronze_to_silver status={status_text} source={blob_name} bucket={bucket} "
+        f"symbols_in={input_symbols} symbols_out={output_symbols} failures={failed_symbols}"
+    )
+    return status_text
 
 
-def _write_alpha26_market_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) -> tuple[int, Optional[str]]:
-    symbol_to_bucket: dict[str, str] = {}
-    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+def _write_alpha26_market_buckets(
+    bucket_frames: dict[str, list[pd.DataFrame]],
+    *,
+    touched_buckets: Optional[set[str]] = None,
+) -> tuple[int, Optional[str]]:
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    selected_buckets = {
+        str(bucket).strip().upper()
+        for bucket in (touched_buckets if touched_buckets is not None else valid_buckets)
+        if str(bucket).strip()
+    }
+    if not selected_buckets:
+        return 0, None
+
+    invalid_buckets = selected_buckets.difference(valid_buckets)
+    if invalid_buckets:
+        raise ValueError(f"Invalid alpha26 bucket(s) for Silver write: {sorted(invalid_buckets)}")
+
+    existing_symbol_to_bucket = _load_existing_silver_symbol_to_bucket_map()
+    is_partial_update = selected_buckets != valid_buckets
+    if is_partial_update and not existing_symbol_to_bucket:
+        raise RuntimeError(
+            "Silver market incremental alpha26 write blocked: existing silver market symbol index is missing."
+        )
+
+    touched_symbol_to_bucket: dict[str, str] = {}
+    for bucket in sorted(selected_buckets):
         parts = bucket_frames.get(bucket, [])
         if parts:
             df_bucket = pd.concat(parts, ignore_index=True)
@@ -506,15 +676,26 @@ def _write_alpha26_market_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) 
             df_bucket = _empty_alpha26_market_frame()
 
         df_bucket = _coerce_alpha26_market_bucket_frame(df_bucket)
+        _validate_silver_market_bucket_output_contract(df_bucket, bucket=bucket)
         for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
             if symbol:
-                symbol_to_bucket[symbol] = bucket
+                touched_symbol_to_bucket[symbol] = bucket
         delta_core.store_delta(
             df_bucket.reset_index(drop=True),
             cfg.AZURE_CONTAINER_SILVER,
             DataPaths.get_silver_market_bucket_path(bucket),
             mode="overwrite",
         )
+        mdc.write_line(
+            f"layer_handoff_status transition=bronze_to_silver status=ok bucket={bucket} "
+            f"rows_out={len(df_bucket)} symbols_out={df_bucket['symbol'].nunique() if 'symbol' in df_bucket.columns else 0}"
+        )
+
+    symbol_to_bucket = _merge_symbol_to_bucket_map(
+        existing_symbol_to_bucket,
+        touched_buckets=selected_buckets,
+        touched_symbol_to_bucket=touched_symbol_to_bucket,
+    )
     index_path = layer_bucketing.write_layer_symbol_index(
         layer="silver",
         domain="market",
@@ -608,6 +789,13 @@ def _run_market_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, in
         mdc.write_warning(
             f"Silver market reconciliation cutoff sweep encountered errors={cutoff_stats.errors}."
         )
+    status = "failed" if cutoff_stats.errors > 0 else "ok"
+    mdc.write_line(
+        "reconciliation_result layer=silver domain=market "
+        f"status={status} orphan_count={len(orphan_symbols)} deleted_blobs={deleted_blobs} "
+        f"cutoff_rows_dropped={cutoff_stats.rows_dropped} cutoff_tables_rewritten={cutoff_stats.tables_rewritten} "
+        f"cutoff_errors={cutoff_stats.errors}"
+    )
     return len(orphan_symbols), deleted_blobs
 
 
@@ -673,6 +861,7 @@ def main():
     skipped_unchanged = 0
     skipped_other = 0
     alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
+    touched_buckets: set[str] = set()
     for blob in candidate_blobs:
         status = process_alpha26_bucket_blob(
             blob,
@@ -685,6 +874,14 @@ def main():
         if status == "ok":
             processed += 1
             watermarks_dirty = True
+            touched = _parse_alpha26_bucket_from_blob_name(str(blob.get("name", "")))
+            if not touched:
+                failed += 1
+                mdc.write_error(
+                    f"Silver market alpha26 write failed: unable to resolve bucket from blob {blob.get('name')!r}."
+                )
+            else:
+                touched_buckets.add(touched)
         elif status == "skipped_unchanged":
             skipped_unchanged += 1
         elif status.startswith("skipped"):
@@ -698,12 +895,21 @@ def main():
     if failed == 0:
         if alpha26_staged_rows == 0:
             mdc.write_line("Silver market alpha26 bucket write skipped: no staged rows.")
+        elif not touched_buckets:
+            failed += 1
+            mdc.write_error(
+                "Silver market alpha26 bucket write blocked: staged rows exist but touched bucket set is empty."
+            )
         else:
             try:
-                alpha26_written_symbols, alpha26_index_path = _write_alpha26_market_buckets(alpha26_bucket_frames)
+                alpha26_written_symbols, alpha26_index_path = _write_alpha26_market_buckets(
+                    alpha26_bucket_frames,
+                    touched_buckets=touched_buckets,
+                )
                 mdc.write_line(
                     "Silver market alpha26 buckets written: "
-                    f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
+                    f"touched_buckets={len(touched_buckets)} symbols={alpha26_written_symbols} "
+                    f"index_path={alpha26_index_path or 'unavailable'}"
                 )
             except Exception as exc:
                 failed += 1
@@ -712,6 +918,18 @@ def main():
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
+    if failed == 0:
+        try:
+            reconciliation_orphans, reconciliation_deleted_blobs = _run_market_reconciliation(
+                bronze_blob_list=blob_list
+            )
+        except Exception as exc:
+            reconciliation_failed = 1
+            mdc.write_error(f"Silver market reconciliation failed: {exc}")
+            mdc.write_line(
+                "reconciliation_result layer=silver domain=market "
+                "status=failed orphan_count=unknown deleted_blobs=unknown cutoff_rows_dropped=unknown"
+            )
 
     total_failed = failed + reconciliation_failed
     mdc.write_line(

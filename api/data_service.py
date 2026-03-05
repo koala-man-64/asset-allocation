@@ -29,6 +29,32 @@ _FINANCE_SUBDOMAIN_TO_REPORT_TYPE: dict[str, str] = {
     "valuation": "overview",
 }
 
+_ADLS_TREE_SCAN_LIMIT_DEFAULT = 5_000
+_ADLS_TREE_SCAN_LIMIT_MAX = 100_000
+_ADLS_PREVIEW_MAX_BYTES_DEFAULT = 256 * 1024
+_ADLS_PREVIEW_MAX_BYTES_MAX = 1_048_576
+_PLAINTEXT_EXTENSIONS = {
+    ".txt",
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".log",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".md",
+    ".py",
+    ".sql",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".css",
+    ".html",
+    ".htm",
+    ".env",
+}
+
 
 class DataService:
     """
@@ -258,6 +284,215 @@ class DataService:
                 "Set Azure storage env vars to enable Delta table discovery."
             )
         return client
+
+    @staticmethod
+    def _container_for_explorer_layer(layer: str) -> str:
+        resolved_layer = str(layer or "").strip().lower()
+        if resolved_layer in {"bronze", "silver", "gold"}:
+            return DataService._container_for_layer(resolved_layer)
+        if resolved_layer == "platinum":
+            return cfg.AZURE_CONTAINER_PLATINUM
+        raise ValueError("Layer must be 'bronze', 'silver', 'gold', or 'platinum'.")
+
+    @staticmethod
+    def _normalize_adls_path(path: Optional[str], *, expect_file: bool) -> str:
+        raw = str(path or "").strip().replace("\\", "/")
+        raw = raw.lstrip("/")
+        parts = [segment for segment in raw.split("/") if segment]
+        if any(segment == ".." for segment in parts):
+            raise ValueError("Path traversal is not allowed.")
+        normalized = "/".join(parts)
+        if expect_file:
+            if not normalized:
+                raise ValueError("file path is required.")
+            return normalized
+        if not normalized:
+            return ""
+        return f"{normalized}/"
+
+    @staticmethod
+    def _blob_datetime_to_iso(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+
+    @staticmethod
+    def _coerce_limit(raw: Optional[int], *, default: int, maximum: int) -> int:
+        if raw is None:
+            return default
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            return default
+        if parsed <= 0:
+            return default
+        return min(parsed, maximum)
+
+    @staticmethod
+    def list_adls_tree(
+        *,
+        layer: str,
+        path: Optional[str],
+        max_entries: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """List one hierarchy level for a layer/path in ADLS."""
+        resolved_layer = str(layer or "").strip().lower()
+        container = DataService._container_for_explorer_layer(resolved_layer)
+        prefix = DataService._normalize_adls_path(path, expect_file=False)
+        scan_limit = DataService._coerce_limit(
+            max_entries,
+            default=_ADLS_TREE_SCAN_LIMIT_DEFAULT,
+            maximum=_ADLS_TREE_SCAN_LIMIT_MAX,
+        )
+
+        client = DataService._require_storage_client(container)
+        entries_by_path: Dict[str, Dict[str, Any]] = {}
+        scanned = 0
+        truncated = False
+
+        blobs = client.container_client.list_blobs(name_starts_with=prefix or None)
+        for blob in blobs:
+            scanned += 1
+            if scanned > scan_limit:
+                truncated = True
+                break
+
+            blob_name = str(getattr(blob, "name", "") or "")
+            if not blob_name:
+                continue
+            if prefix and not blob_name.startswith(prefix):
+                continue
+
+            relative = blob_name[len(prefix):] if prefix else blob_name
+            if not relative:
+                continue
+
+            if "/" in relative:
+                folder_name = relative.split("/", 1)[0].strip()
+                if not folder_name:
+                    continue
+                folder_path = f"{prefix}{folder_name}/"
+                if folder_path not in entries_by_path:
+                    entries_by_path[folder_path] = {
+                        "type": "folder",
+                        "name": folder_name,
+                        "path": folder_path,
+                        "size": None,
+                        "lastModified": None,
+                    }
+                continue
+
+            content_settings = getattr(blob, "content_settings", None)
+            content_type = getattr(content_settings, "content_type", None)
+            file_path = f"{prefix}{relative}"
+            entries_by_path[file_path] = {
+                "type": "file",
+                "name": relative,
+                "path": file_path,
+                "size": getattr(blob, "size", None),
+                "lastModified": DataService._blob_datetime_to_iso(getattr(blob, "last_modified", None)),
+                "contentType": content_type,
+            }
+
+        entries = list(entries_by_path.values())
+        entries.sort(key=lambda item: (0 if item.get("type") == "folder" else 1, str(item.get("name", "")).lower()))
+
+        return {
+            "layer": resolved_layer,
+            "container": container,
+            "path": prefix,
+            "truncated": truncated,
+            "scanLimit": scan_limit,
+            "entries": entries,
+        }
+
+    @staticmethod
+    def _is_probably_plaintext(blob_path: str, content: bytes) -> bool:
+        lowered = str(blob_path or "").strip().lower()
+        extension = ""
+        if "." in lowered.rsplit("/", 1)[-1]:
+            extension = "." + lowered.rsplit(".", 1)[-1]
+
+        if extension in _PLAINTEXT_EXTENSIONS:
+            return True
+        if not content:
+            return True
+        if b"\x00" in content:
+            return False
+
+        decoded = content.decode("utf-8", errors="replace")
+        if not decoded:
+            return True
+
+        replacement_ratio = decoded.count("\ufffd") / len(decoded)
+        control_chars = sum(1 for ch in decoded if ord(ch) < 32 and ch not in {"\n", "\r", "\t"})
+        control_ratio = control_chars / len(decoded)
+        return replacement_ratio <= 0.02 and control_ratio <= 0.10
+
+    @staticmethod
+    def get_adls_file_preview(
+        *,
+        layer: str,
+        path: str,
+        max_bytes: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return a bounded plaintext preview for a blob path in ADLS."""
+        resolved_layer = str(layer or "").strip().lower()
+        container = DataService._container_for_explorer_layer(resolved_layer)
+        blob_path = DataService._normalize_adls_path(path, expect_file=True)
+        preview_limit = DataService._coerce_limit(
+            max_bytes,
+            default=_ADLS_PREVIEW_MAX_BYTES_DEFAULT,
+            maximum=_ADLS_PREVIEW_MAX_BYTES_MAX,
+        )
+
+        client = DataService._require_storage_client(container)
+        blob_client = client.container_client.get_blob_client(blob_path)
+        if not blob_client.exists():
+            raise FileNotFoundError(f"Blob not found: {container}/{blob_path}")
+
+        payload = blob_client.download_blob(offset=0, length=preview_limit + 1).readall()
+        truncated = len(payload) > preview_limit
+        if truncated:
+            payload = payload[:preview_limit]
+
+        content_type = None
+        try:
+            props = blob_client.get_blob_properties()
+            content_settings = getattr(props, "content_settings", None)
+            content_type = getattr(content_settings, "content_type", None)
+        except Exception:
+            content_type = None
+
+        is_plaintext = DataService._is_probably_plaintext(blob_path, payload)
+        if not is_plaintext:
+            return {
+                "layer": resolved_layer,
+                "container": container,
+                "path": blob_path,
+                "isPlainText": False,
+                "encoding": None,
+                "truncated": truncated,
+                "maxBytes": preview_limit,
+                "contentType": content_type,
+                "contentPreview": None,
+            }
+
+        decoded = payload.decode("utf-8", errors="replace")
+        return {
+            "layer": resolved_layer,
+            "container": container,
+            "path": blob_path,
+            "isPlainText": True,
+            "encoding": "utf-8",
+            "truncated": truncated,
+            "maxBytes": preview_limit,
+            "contentType": content_type,
+            "contentPreview": decoded,
+        }
 
     @staticmethod
     def _discover_delta_table_paths(container: str, prefix: str) -> List[str]:

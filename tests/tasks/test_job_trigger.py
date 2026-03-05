@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from tasks.common import job_trigger
@@ -8,6 +10,7 @@ from tasks.common import job_trigger
 def test_ensure_api_awake_raises_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
     monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "false")
+    monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "exec-1")
 
     def _unexpected_probe(**_kwargs):
         raise AssertionError("health probe should not run when startup wake is disabled")
@@ -20,6 +23,7 @@ def test_ensure_api_awake_raises_when_disabled(monkeypatch: pytest.MonkeyPatch) 
 
 def test_ensure_api_awake_raises_when_required_and_base_url_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ASSET_ALLOCATION_API_BASE_URL", raising=False)
+    monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "exec-1")
 
     with pytest.raises(RuntimeError, match="ASSET_ALLOCATION_API_BASE_URL"):
         job_trigger.ensure_api_awake_from_env(required=True)
@@ -30,6 +34,7 @@ def test_ensure_api_awake_starts_container_app_and_recovers(monkeypatch: pytest.
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "exec-1")
 
     probes = iter(
         [
@@ -58,6 +63,46 @@ def test_ensure_api_awake_starts_container_app_and_recovers(monkeypatch: pytest.
     job_trigger.ensure_api_awake_from_env(required=True)
 
     assert start_calls == [("asset-allocation-api", True)]
+
+
+def test_ensure_api_awake_local_waits_for_local_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CONTAINER_APP_JOB_EXECUTION_NAME", raising=False)
+    monkeypatch.delenv("CONTAINER_APP_REPLICA_NAME", raising=False)
+    monkeypatch.delenv("CONTAINER_APP_ENV_DNS_SUFFIX", raising=False)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    monkeypatch.setenv("JOB_STARTUP_API_WAKE_ENABLED", "true")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
+
+    probe_calls: list[str] = []
+    probes = iter(
+        [
+            (False, "status=503"),
+            (False, "status=503"),
+            (True, "status=200"),
+        ]
+    )
+
+    def _fake_probe(*, health_url: str, timeout_seconds: float) -> tuple[bool, str]:
+        assert timeout_seconds > 0
+        probe_calls.append(health_url)
+        return next(probes)
+
+    monkeypatch.setattr(job_trigger, "_probe_health", _fake_probe)
+    monkeypatch.setattr(job_trigger.time, "sleep", lambda _seconds: None)
+
+    def _unexpected_start(**_kwargs):
+        raise AssertionError("local runtime should not call ARM startup")
+
+    monkeypatch.setattr(job_trigger, "_start_container_app", _unexpected_start)
+
+    job_trigger.ensure_api_awake_from_env(required=True)
+
+    assert probe_calls == [
+        "http://127.0.0.1:8000/healthz",
+        "http://127.0.0.1:8000/healthz",
+        "http://127.0.0.1:8000/healthz",
+    ]
+    assert (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip() == "http://127.0.0.1:8000"
 
 
 def test_resolve_startup_container_apps_matches_allowlist_from_domain(monkeypatch: pytest.MonkeyPatch) -> None:

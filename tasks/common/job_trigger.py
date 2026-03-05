@@ -13,6 +13,16 @@ from monitoring.arm_client import ArmConfig, AzureArmClient
 
 
 _JOB_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?")
+_LOCAL_RUNTIME_MARKER_ENV_VARS = (
+    # Set by Azure Container Apps at runtime.
+    "CONTAINER_APP_ENV_DNS_SUFFIX",
+    "CONTAINER_APP_JOB_EXECUTION_NAME",
+    "CONTAINER_APP_REPLICA_NAME",
+    # Set inside Kubernetes pods.
+    "KUBERNETES_SERVICE_HOST",
+)
+_LOCAL_API_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_LOCAL_API_BASE_URL = "http://127.0.0.1:8000"
 
 
 def _parse_bool(raw: Optional[str], *, default: bool) -> bool:
@@ -50,6 +60,10 @@ def _resolve_api_base_url() -> str:
     return (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip()
 
 
+def _is_local_runtime() -> bool:
+    return not any((os.environ.get(key) or "").strip() for key in _LOCAL_RUNTIME_MARKER_ENV_VARS)
+
+
 def _normalize_url(raw: str) -> str:
     value = str(raw or "").strip()
     if not value:
@@ -69,6 +83,30 @@ def _resolve_api_health_url(base_url: str) -> str:
     if not health_path.startswith("/"):
         health_path = f"/{health_path}"
     return f"{parsed.scheme}://{parsed.netloc}{health_path}"
+
+
+def _is_local_api_base_url(base_url: str) -> bool:
+    normalized = _normalize_url(base_url)
+    if not normalized:
+        return False
+    parsed = urlparse(normalized)
+    host = str(parsed.hostname or "").strip().lower()
+    return host in _LOCAL_API_HOSTS
+
+
+def _resolve_local_api_base_url(base_url: str) -> str:
+    if _is_local_api_base_url(base_url):
+        return _normalize_url(base_url)
+    if base_url:
+        mdc.write_warning(
+            "Local runtime detected; overriding ASSET_ALLOCATION_API_BASE_URL "
+            f"from {base_url!r} to local default {_LOCAL_API_BASE_URL!r}."
+        )
+    else:
+        mdc.write_line(
+            f"Local runtime detected; defaulting ASSET_ALLOCATION_API_BASE_URL to {_LOCAL_API_BASE_URL!r}."
+        )
+    return _LOCAL_API_BASE_URL
 
 
 def _get_startup_probe_config() -> tuple[int, float, float]:
@@ -231,7 +269,12 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
         mdc.write_line(f"Skipping startup API wake check ({message})")
         return
 
+    local_runtime = _is_local_runtime()
+
     base_url = _resolve_api_base_url()
+    if local_runtime:
+        base_url = _resolve_local_api_base_url(base_url)
+        os.environ["ASSET_ALLOCATION_API_BASE_URL"] = base_url
     if not base_url:
         message = "Startup API wake check failed: ASSET_ALLOCATION_API_BASE_URL is not configured."
         if required:
@@ -250,6 +293,27 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
         return
 
     probe_attempts, probe_sleep_seconds, probe_timeout_seconds = _get_startup_probe_config()
+
+    if local_runtime:
+        attempt = 0
+        while True:
+            attempt += 1
+            healthy, detail = _probe_health(health_url=health_url, timeout_seconds=probe_timeout_seconds)
+            if healthy:
+                if attempt == 1:
+                    mdc.write_line(f"Startup API health probe succeeded ({detail}).")
+                else:
+                    mdc.write_line(f"Startup API became healthy after {attempt} attempts ({detail}).")
+                return
+            mdc.write_warning(f"Startup API health probe failed (attempt {attempt}, {detail}).")
+            if not required:
+                mdc.write_warning(
+                    f"Startup API is not healthy in local runtime (health_url={health_url}); continuing because required=false."
+                )
+                return
+            mdc.write_line(f"Waiting for local API to become healthy at {health_url}...")
+            time.sleep(probe_sleep_seconds)
+
     arm_start_enabled = _parse_bool(os.environ.get("JOB_STARTUP_API_ARM_START_ENABLED"), default=True)
     arm_start_attempted = False
 

@@ -10,6 +10,8 @@ import type {
 } from '@/types/data';
 import type { DomainMetadata, SystemHealth } from '@/types/strategy';
 import type {
+  AdlsFilePreviewResponse,
+  AdlsTreeResponse,
   ContainerAppLogsResponse,
   ContainerAppControlResponse,
   ContainerAppsStatusResponse,
@@ -230,6 +232,28 @@ export const DataService = {
 
   getStorageUsage(signal?: AbortSignal): Promise<StorageUsageResponse> {
     return apiService.getStorageUsage(signal);
+  },
+
+  getAdlsTree(
+    params: {
+      layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+      path?: string;
+      maxEntries?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<AdlsTreeResponse> {
+    return apiService.getAdlsTree(params, signal);
+  },
+
+  getAdlsFilePreview(
+    params: {
+      layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+      path: string;
+      maxBytes?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<AdlsFilePreviewResponse> {
+    return apiService.getAdlsFilePreview(params, signal);
   },
 
   purgeData(payload: PurgeRequest): Promise<PurgeOperationResponse> {

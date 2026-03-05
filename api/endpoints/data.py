@@ -573,6 +573,52 @@ def get_stock_screener(
     }
 
 
+@router.get("/adls/tree")
+def get_adls_tree(
+    request: Request,
+    layer: str = Query(default="gold", description="Storage layer: bronze|silver|gold|platinum"),
+    path: Optional[str] = Query(default=None, description="Folder path prefix to list."),
+    max_entries: int = Query(default=5000, ge=1, le=100000, description="Max blobs scanned while listing."),
+) -> Dict[str, Any]:
+    """List one ADLS hierarchy level (folders + files) for the given layer/path."""
+    validate_auth(request)
+    try:
+        return DataService.list_adls_tree(
+            layer=layer,
+            path=path,
+            max_entries=max_entries,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/adls/file-preview")
+def get_adls_file_preview(
+    request: Request,
+    layer: str = Query(default="gold", description="Storage layer: bronze|silver|gold|platinum"),
+    path: str = Query(..., description="Blob path to preview."),
+    max_bytes: int = Query(default=262144, ge=1024, le=1048576, description="Max bytes returned in preview."),
+) -> Dict[str, Any]:
+    """Return plaintext preview for an ADLS blob when content is text-like."""
+    validate_auth(request)
+    try:
+        return DataService.get_adls_file_preview(
+            layer=layer,
+            path=path,
+            max_bytes=max_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{layer}/profile")
 def get_column_profile(
     layer: str,
