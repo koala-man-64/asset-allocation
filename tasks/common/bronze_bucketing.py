@@ -24,7 +24,7 @@ def _is_truthy(raw: Optional[str]) -> bool:
 
 
 def bronze_layout_mode() -> str:
-    mode = (os.environ.get("BRONZE_LAYOUT_MODE")).strip().lower()
+    mode = (os.environ.get("BRONZE_LAYOUT_MODE") or "alpha26").strip().lower()
     if mode != "alpha26":
         raise ValueError("BRONZE_LAYOUT_MODE must be 'alpha26'.")
     return mode
