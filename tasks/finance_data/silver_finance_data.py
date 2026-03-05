@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
@@ -16,6 +15,7 @@ from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common import bronze_bucketing
 from tasks.common import layer_bucketing
+from tasks.common import run_manifests
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import (
     build_blob_signature,
@@ -35,12 +35,6 @@ from tasks.common.silver_contracts import (
     normalize_columns_to_snake_case,
 )
 from tasks.common.silver_precision import apply_precision_policy
-from tasks.common.market_reconciliation import (
-    collect_bronze_finance_symbols_from_blob_infos,
-    collect_delta_silver_finance_symbols,
-    enforce_backfill_cutoff_on_tables,
-    purge_orphan_tables,
-)
 
 # Initialize Clients
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -58,19 +52,18 @@ class BlobProcessResult:
     watermark_signature: Optional[dict[str, Optional[str]]] = None
 
 
+@dataclass(frozen=True)
+class _ManifestSelection:
+    source: str
+    blobs: list[dict]
+    deduped: int
+    manifest_run_id: Optional[str] = None
+    manifest_path: Optional[str] = None
+    manifest_blob_count: int = 0
+    manifest_filtered_bucket_blob_count: int = 0
+
+
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
-_KNOWN_FINANCE_SUFFIXES: Tuple[str, ...] = (
-    "quarterly_balance-sheet",
-    "quarterly_valuation_measures",
-    "quarterly_cash-flow",
-    "quarterly_financials",
-)
-_FINANCE_RECONCILIATION_TABLES: Tuple[Tuple[str, str], ...] = (
-    ("balance_sheet", "quarterly_balance-sheet"),
-    ("income_statement", "quarterly_financials"),
-    ("cash_flow", "quarterly_cash-flow"),
-    ("valuation", "quarterly_valuation_measures"),
-)
 _ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = {
     "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
     "income_statement": ("Income Statement", "quarterly_financials"),
@@ -97,13 +90,6 @@ _FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = (
 )
 
 
-def _get_available_cpus() -> int:
-    try:
-        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
-    except Exception:
-        return max(1, os.cpu_count() or 1)
-
-
 def _get_positive_int_env(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if raw is None:
@@ -113,11 +99,6 @@ def _get_positive_int_env(name: str, default: int) -> int:
     except Exception:
         return default
     return value if value > 0 else default
-
-
-def _get_ingest_max_workers() -> int:
-    default_workers = min(8, _get_available_cpus() * 2)
-    return _get_positive_int_env("SILVER_FINANCE_INGEST_MAX_WORKERS", default_workers)
 
 
 def _get_catchup_max_passes() -> int:
@@ -139,102 +120,6 @@ def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | N
     return max(0.0, parsed)
 
 
-def _parse_supported_blob_name(blob_name: str) -> Optional[tuple[str, str, str]]:
-    parts = str(blob_name).split("/")
-    if len(parts) < 3:
-        return None
-
-    folder_name = str(parts[1]).strip()
-    filename = str(parts[2]).strip()
-    if not filename.endswith(".json"):
-        return None
-
-    suffix = next((s for s in _KNOWN_FINANCE_SUFFIXES if filename.endswith(f"{s}.json")), None)
-    if not suffix:
-        return None
-
-    ticker = filename.replace(f"_{suffix}.json", "").strip()
-    if not ticker:
-        return None
-
-    return folder_name, ticker, suffix
-
-
-def _get_blob_dedupe_key(blob_name: str) -> Optional[str]:
-    parsed = _parse_supported_blob_name(blob_name)
-    if parsed is None:
-        return None
-    folder_name, ticker, suffix = parsed
-    return DataPaths.get_finance_path(folder_name, ticker, suffix)
-
-
-def _select_preferred_blob_candidates(blobs: list[dict]) -> list[dict]:
-    chosen_by_key: dict[str, dict] = {}
-
-    for blob in blobs:
-        blob_name = str(blob.get("name", "")).strip()
-        dedupe_key = _get_blob_dedupe_key(blob_name)
-        if not dedupe_key:
-            continue
-
-        existing = chosen_by_key.get(dedupe_key)
-        if existing is None:
-            chosen_by_key[dedupe_key] = blob
-            continue
-
-    selected = list(chosen_by_key.values())
-    selected.sort(key=lambda item: str(item.get("name", "")))
-    return selected
-
-
-def _list_bronze_finance_candidates() -> tuple[list[dict], int]:
-    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/")
-    blobs = _select_preferred_blob_candidates(listed_blobs)
-    supported_count = sum(
-        1 for blob in listed_blobs if _get_blob_dedupe_key(str(blob.get("name", "")).strip()) is not None
-    )
-    unsupported = max(0, len(listed_blobs) - supported_count)
-    deduped = max(0, supported_count - len(blobs))
-    if unsupported > 0:
-        mdc.write_line(
-            f"Silver finance strict input filter removed {unsupported} unsupported Bronze blob candidate(s); "
-            f"processing {len(blobs)} supported inputs."
-        )
-    if deduped > 0:
-        mdc.write_line(
-            f"Silver finance candidate dedupe removed {deduped} duplicate blob candidate(s); "
-            f"processing {len(blobs)} preferred inputs."
-        )
-    return blobs, deduped
-
-
-def _build_checkpoint_candidates(
-    *,
-    blobs: list[dict],
-    watermarks: dict,
-    last_success: Optional[datetime],
-    force_reprocess: bool = False,
-) -> tuple[list[dict], int]:
-    checkpoint_skipped = 0
-    candidates: list[dict] = []
-    for blob in blobs:
-        blob_name = str(blob.get("name", "")).strip()
-        if _get_blob_dedupe_key(blob_name) is None:
-            continue
-        prior = watermarks.get(blob_name)
-        should_process = should_process_blob_since_last_success(
-            blob,
-            prior_signature=prior,
-            last_success_at=last_success,
-            force_reprocess=force_reprocess,
-        )
-        if should_process:
-            candidates.append(blob)
-        else:
-            checkpoint_skipped += 1
-    return candidates, checkpoint_skipped
-
-
 def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
     listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/buckets/")
     blobs = [
@@ -251,6 +136,51 @@ def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
             f"processing {len(blobs)} bucket inputs."
         )
     return blobs, 0
+
+
+def _filter_alpha26_manifest_bucket_blobs(manifest: dict[str, Any]) -> list[dict]:
+    filtered: list[dict] = []
+    for blob in run_manifests.manifest_blobs(manifest):
+        name = str(blob.get("name", "")).strip()
+        if not name.startswith("finance-data/buckets/"):
+            continue
+        if not name.endswith(".parquet"):
+            continue
+        filtered.append(blob)
+    filtered.sort(key=lambda item: str(item.get("name", "")))
+    return filtered
+
+
+def _select_initial_alpha26_source() -> _ManifestSelection:
+    if run_manifests.silver_manifest_consumption_enabled():
+        manifest = run_manifests.load_latest_bronze_finance_manifest()
+        if isinstance(manifest, dict):
+            run_id = str(manifest.get("runId", "")).strip()
+            manifest_path = str(manifest.get("manifestPath", "")).strip()
+            if run_id and run_manifests.silver_finance_ack_exists(run_id):
+                mdc.write_line(f"Silver finance manifest run already acknowledged; falling back to listing runId={run_id}.")
+            elif run_id and manifest_path:
+                filtered = _filter_alpha26_manifest_bucket_blobs(manifest)
+                manifest_blob_count = len(run_manifests.manifest_blobs(manifest))
+                mdc.write_line(
+                    "Silver finance selected manifest source: "
+                    f"runId={run_id} manifestPath={manifest_path} "
+                    f"manifestBlobs={manifest_blob_count} bucketBlobs={len(filtered)}"
+                )
+                return _ManifestSelection(
+                    source="bronze-manifest",
+                    blobs=filtered,
+                    deduped=0,
+                    manifest_run_id=run_id,
+                    manifest_path=manifest_path,
+                    manifest_blob_count=manifest_blob_count,
+                    manifest_filtered_bucket_blob_count=len(filtered),
+                )
+            else:
+                mdc.write_warning("Silver finance manifest pointer missing runId/path; falling back to listing.")
+
+    listed, deduped = _list_alpha26_finance_bucket_candidates()
+    return _ManifestSelection(source="alpha26-bucket-listing", blobs=listed, deduped=deduped)
 
 
 def _build_alpha26_checkpoint_candidates(
@@ -275,72 +205,6 @@ def _build_alpha26_checkpoint_candidates(
         else:
             checkpoint_skipped += 1
     return candidates, checkpoint_skipped
-
-
-def _run_finance_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
-    if silver_client is None:
-        raise RuntimeError("Silver finance reconciliation requires silver storage client.")
-
-    bronze_symbols = collect_bronze_finance_symbols_from_blob_infos(bronze_blob_list)
-    silver_symbols = collect_delta_silver_finance_symbols(client=silver_client)
-
-    def _delete_symbol_tables(symbol: str) -> int:
-        deleted = 0
-        for folder, suffix in _FINANCE_RECONCILIATION_TABLES:
-            table_path = DataPaths.get_finance_path(folder, symbol, suffix)
-            deleted += int(silver_client.delete_prefix(table_path) or 0)
-        return deleted
-
-    orphan_symbols, deleted_blobs = purge_orphan_tables(
-        upstream_symbols=bronze_symbols,
-        downstream_symbols=silver_symbols,
-        downstream_path_builder=lambda symbol: symbol,
-        delete_prefix=_delete_symbol_tables,
-    )
-    if orphan_symbols:
-        mdc.write_line(
-            "Silver finance reconciliation purged orphan symbols: "
-            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
-        )
-    else:
-        mdc.write_line("Silver finance reconciliation: no orphan symbols detected.")
-
-    backfill_start, _ = get_backfill_range()
-    cutoff_symbols = silver_symbols.difference(set(orphan_symbols))
-    cutoff_stats = enforce_backfill_cutoff_on_tables(
-        symbols=cutoff_symbols,
-        table_paths_for_symbol=lambda symbol: [
-            DataPaths.get_finance_path(folder, symbol, suffix)
-            for folder, suffix in _FINANCE_RECONCILIATION_TABLES
-        ],
-        load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
-        store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
-        delete_prefix=silver_client.delete_prefix,
-        date_column_candidates=("date", "Date"),
-        backfill_start=backfill_start,
-        context="silver finance reconciliation cutoff",
-        vacuum_table=lambda path: delta_core.vacuum_delta_table(
-            cfg.AZURE_CONTAINER_SILVER,
-            path,
-            retention_hours=0,
-            dry_run=False,
-            enforce_retention_duration=False,
-            full=True,
-        ),
-    )
-    if cutoff_stats.rows_dropped > 0 or cutoff_stats.tables_rewritten > 0 or cutoff_stats.deleted_blobs > 0:
-        mdc.write_line(
-            "Silver finance reconciliation cutoff sweep: "
-            f"tables_scanned={cutoff_stats.tables_scanned} "
-            f"tables_rewritten={cutoff_stats.tables_rewritten} "
-            f"deleted_blobs={cutoff_stats.deleted_blobs} "
-            f"rows_dropped={cutoff_stats.rows_dropped}"
-        )
-    if cutoff_stats.errors > 0:
-        mdc.write_warning(
-            f"Silver finance reconciliation cutoff sweep encountered errors={cutoff_stats.errors}."
-        )
-    return len(orphan_symbols), deleted_blobs
 
 
 def _normalize_key(name: Any) -> str:
@@ -597,6 +461,7 @@ def _write_alpha26_finance_silver_buckets(
     bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
 ) -> tuple[int, Optional[str]]:
     symbol_to_bucket: dict[str, str] = {}
+    symbols_by_sub_domain: dict[str, dict[str, str]] = {key: {} for key in _FINANCE_ALPHA26_SUBDOMAINS}
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
         for bucket in layer_bucketing.ALPHABET_BUCKETS:
             silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
@@ -614,6 +479,7 @@ def _write_alpha26_finance_silver_buckets(
                     for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
                         if symbol:
                             symbol_to_bucket[symbol] = bucket
+                            symbols_by_sub_domain[sub_domain][symbol] = bucket
                 else:
                     df_bucket = pd.DataFrame(columns=["date", "symbol"])
             else:
@@ -642,6 +508,15 @@ def _write_alpha26_finance_silver_buckets(
         domain="finance",
         symbol_to_bucket=symbol_to_bucket,
     )
+    for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+        sub_index_path = layer_bucketing.write_layer_symbol_index(
+            layer="silver",
+            domain="finance",
+            symbol_to_bucket=symbols_by_sub_domain.get(sub_domain, {}),
+            sub_domain=sub_domain,
+        )
+        if sub_index_path:
+            index_path = sub_index_path
     return len(symbol_to_bucket), index_path
 
 
@@ -795,61 +670,6 @@ def _process_finance_frame(
     )
 
 
-def process_blob(
-    blob,
-    *,
-    desired_end: pd.Timestamp,
-    backfill_start: Optional[pd.Timestamp] = None,
-    watermarks: dict,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
-) -> BlobProcessResult:
-    blob_name = blob["name"]
-    parsed_blob = _parse_supported_blob_name(blob_name)
-    if parsed_blob is None:
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=None,
-            ticker=None,
-            status="failed",
-            error=f"Unsupported finance blob format: {blob_name}",
-        )
-    folder_name, ticker, suffix = parsed_blob
-    silver_path = DataPaths.get_finance_path(folder_name, ticker, suffix)
-
-    if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
-        return BlobProcessResult(blob_name=blob_name, silver_path=silver_path, ticker=ticker, status="skipped")
-
-    signature = build_blob_signature(blob)
-
-    mdc.write_line(f"Processing {ticker} {folder_name}...")
-    try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_raw = _read_finance_json(raw_bytes, ticker=ticker, suffix=suffix)
-        return _process_finance_frame(
-            blob_name=blob_name,
-            ticker=ticker,
-            folder_name=folder_name,
-            suffix=suffix,
-            silver_path=silver_path,
-            df_raw=df_raw,
-            desired_end=desired_end,
-            backfill_start=backfill_start,
-            signature=signature,
-            persist=persist,
-            alpha26_bucket_frames=alpha26_bucket_frames,
-        )
-    except Exception as exc:
-        mdc.write_error(f"Failed to process {blob_name}: {exc}")
-        return BlobProcessResult(
-            blob_name=blob_name,
-            silver_path=silver_path,
-            ticker=ticker,
-            status="failed",
-            error=str(exc),
-        )
-
-
 def process_alpha26_bucket_blob(
     blob: dict,
     *,
@@ -953,67 +773,6 @@ def process_alpha26_bucket_blob(
     return results or [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
 
 
-def _process_candidate_blobs(
-    *,
-    candidate_blobs: list[dict],
-    desired_end: pd.Timestamp,
-    backfill_start: Optional[pd.Timestamp],
-    watermarks: dict,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
-) -> tuple[list[BlobProcessResult], float]:
-    max_workers = _get_ingest_max_workers()
-    mdc.write_line(f"Silver finance ingest workers={max_workers} candidates={len(candidate_blobs)}.")
-
-    ingest_started = time.perf_counter()
-    results: list[BlobProcessResult] = []
-    call_kwargs = {
-        "desired_end": desired_end,
-        "backfill_start": backfill_start,
-        "watermarks": watermarks,
-    }
-    if (not persist) or (alpha26_bucket_frames is not None):
-        call_kwargs["persist"] = persist
-        call_kwargs["alpha26_bucket_frames"] = alpha26_bucket_frames
-
-    if max_workers <= 1:
-        for blob in candidate_blobs:
-            results.append(
-                process_blob(
-                    blob,
-                    **call_kwargs,
-                )
-            )
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="silver-finance") as executor:
-            futures = {
-                executor.submit(
-                    process_blob,
-                    blob,
-                    **call_kwargs,
-                ): blob
-                for blob in candidate_blobs
-            }
-            for future in as_completed(futures):
-                blob = futures[future]
-                blob_name = str(blob.get("name", "unknown"))
-                try:
-                    results.append(future.result())
-                except Exception as exc:
-                    mdc.write_error(f"Unhandled failure while processing {blob_name}: {exc}")
-                    results.append(
-                        BlobProcessResult(
-                            blob_name=blob_name,
-                            silver_path=None,
-                            ticker=None,
-                            status="failed",
-                            error=str(exc),
-                        )
-                    )
-    ingest_elapsed = time.perf_counter() - ingest_started
-    return results, ingest_elapsed
-
-
 def _process_alpha26_candidate_blobs(
     *,
     candidate_blobs: list[dict],
@@ -1063,13 +822,14 @@ def main() -> int:
         mdc.write_line(f"Applying historical cutoff to silver finance data: {backfill_start.date().isoformat()}")
     mdc.write_line("Listing Bronze Finance files...")
 
-    initial_source = "alpha26-bucket-listing"
-    initial_blobs: list[dict] = []
-    deduped_total = 0
-
-    if not initial_blobs:
-        initial_blobs, deduped = _list_alpha26_finance_bucket_candidates()
-        deduped_total += deduped
+    selection = _select_initial_alpha26_source()
+    initial_source = selection.source
+    initial_blobs = list(selection.blobs)
+    deduped_total = int(selection.deduped)
+    manifest_run_id = selection.manifest_run_id
+    manifest_path = selection.manifest_path
+    manifest_blob_count = int(selection.manifest_blob_count)
+    manifest_filtered_bucket_blob_count = int(selection.manifest_filtered_bucket_blob_count)
 
     max_passes = _get_catchup_max_passes()
     pass_count = 0
@@ -1185,7 +945,9 @@ def main() -> int:
         f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, alpha26Symbols={alpha26_written_symbols}, "
         f"elapsedSec={total_ingest_elapsed:.2f}, "
         f"passes={pass_count}, newlyDiscoveredAfterFirstPass={len(newly_discovered_blob_names)}, "
-        f"lagCandidates={lag_candidate_count}, reconciled_orphans={reconciliation_orphans}, "
+        f"lagCandidates={lag_candidate_count}, source={initial_source}, "
+        f"manifestRunId={manifest_run_id or 'n/a'}, "
+        f"reconciled_orphans={reconciliation_orphans}, "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs}"
     )
     if watermarks_dirty:
@@ -1193,6 +955,32 @@ def main() -> int:
 
     run_ended_at = datetime.now(timezone.utc)
     if total_failed == 0:
+        manifest_ack_path: Optional[str] = None
+        if initial_source == "bronze-manifest" and manifest_run_id and manifest_path:
+            manifest_ack_path = run_manifests.write_silver_finance_ack(
+                run_id=manifest_run_id,
+                manifest_path=manifest_path,
+                status="succeeded",
+                metadata={
+                    "processed": processed,
+                    "skipped": skipped,
+                    "failed": total_failed,
+                    "attempts": attempts,
+                    "rows_written": rows_written,
+                    "source": initial_source,
+                },
+            )
+            if manifest_ack_path:
+                mdc.write_line(
+                    "Silver finance manifest acknowledged: "
+                    f"runId={manifest_run_id} ackPath={manifest_ack_path}"
+                )
+            else:
+                mdc.write_warning(
+                    "Silver finance manifest ack not written: "
+                    f"runId={manifest_run_id} manifestPath={manifest_path}"
+                )
+
         checkpoint_metadata = {
             "total_blobs": len(initial_blobs),
             "source": initial_source,
@@ -1212,8 +1000,11 @@ def main() -> int:
             "run_started_at": run_started_at.isoformat(),
             "run_ended_at": run_ended_at.isoformat(),
             "deduped_candidates_total": deduped_total,
-            "manifest_run_id": None,
-            "manifest_path": None,
+            "manifest_run_id": manifest_run_id,
+            "manifest_path": manifest_path,
+            "manifest_blob_count": manifest_blob_count,
+            "manifest_filtered_bucket_blob_count": manifest_filtered_bucket_blob_count,
+            "manifest_ack_path": manifest_ack_path,
             "reconciled_orphans": reconciliation_orphans,
             "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
         }
@@ -1223,6 +1014,11 @@ def main() -> int:
             metadata=checkpoint_metadata,
         )
         return 0
+    if initial_source == "bronze-manifest" and manifest_run_id:
+        mdc.write_warning(
+            "Silver finance manifest remains unacknowledged due to run failures: "
+            f"runId={manifest_run_id} failed={total_failed}"
+        )
     return 1
 
 

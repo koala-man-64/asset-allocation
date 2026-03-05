@@ -19,9 +19,11 @@ def _is_truthy(raw: Optional[str]) -> bool:
 
 
 def silver_layout_mode() -> str:
-    mode = (os.environ.get("SILVER_LAYOUT_MODE") or "alpha26").strip().lower()
+    from core import config as cfg
+
+    mode = (os.environ.get("SILVER_LAYOUT_MODE") or str(cfg.SILVER_LAYOUT_MODE)).strip().lower()
     if mode != "alpha26":
-        raise ValueError("SILVER_LAYOUT_MODE must be 'alpha26'.")
+        raise ValueError("SILVER_LAYOUT_MODE must be 'alpha26' when set.")
     return mode
 
 
@@ -38,9 +40,11 @@ def silver_alpha26_force_rebuild() -> bool:
 
 
 def gold_layout_mode() -> str:
-    mode = (os.environ.get("GOLD_LAYOUT_MODE") or "alpha26").strip().lower()
+    from core import config as cfg
+
+    mode = (os.environ.get("GOLD_LAYOUT_MODE") or str(cfg.GOLD_LAYOUT_MODE)).strip().lower()
     if mode != "alpha26":
-        raise ValueError("GOLD_LAYOUT_MODE must be 'alpha26'.")
+        raise ValueError("GOLD_LAYOUT_MODE must be 'alpha26' when set.")
     return mode
 
 
@@ -133,6 +137,29 @@ def write_layer_symbol_index(
         rows.append(row)
     cols = ["symbol", "bucket", "updated_at", "sub_domain"]
     df = pd.DataFrame(rows, columns=cols)
+    if clean_sub_domain:
+        existing = load_layer_symbol_index(layer=layer, domain=domain)
+        if not existing.empty:
+            existing_sub = (
+                existing["sub_domain"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .str.replace("-", "_", regex=False)
+            )
+            preserved = existing[existing_sub != clean_sub_domain].copy()
+            df = pd.concat([preserved[cols], df], ignore_index=True)
+
+    if not df.empty:
+        df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
+        df["bucket"] = df["bucket"].astype(str).str.strip().str.upper()
+        df["sub_domain"] = (
+            df["sub_domain"].fillna("").astype(str).str.strip().str.lower().str.replace("-", "_", regex=False)
+        )
+        df.loc[df["sub_domain"] == "", "sub_domain"] = pd.NA
+        df = df.drop_duplicates(subset=["symbol", "sub_domain"], keep="last").reset_index(drop=True)
+
     payload = df.to_parquet(index=False, compression=bronze_bucketing.alpha26_codec())
     path = _index_path(layer=layer, domain=domain)
     mdc.store_raw_bytes(payload, path, client=mdc.common_storage_client)

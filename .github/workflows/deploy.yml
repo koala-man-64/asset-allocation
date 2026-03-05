@@ -332,7 +332,6 @@ jobs:
               - "tasks/common/**"
               - "tasks/finance_data/config.py"
               - "tasks/finance_data/silver_finance_data.py"
-              - "tasks/finance_data/materialize_silver_finance_by_date.py"
               - "deploy/job_silver_finance_data.yaml"
               - ".github/workflows/deploy.yml"
             gold_finance:
@@ -345,7 +344,6 @@ jobs:
               - "tasks/common/**"
               - "tasks/finance_data/config.py"
               - "tasks/finance_data/gold_finance_data.py"
-              - "tasks/finance_data/materialize_gold_finance_by_date.py"
               - "deploy/job_gold_finance_data.yaml"
               - ".github/workflows/deploy.yml"
 

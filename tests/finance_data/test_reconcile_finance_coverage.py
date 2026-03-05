@@ -1,21 +1,47 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from tasks.finance_data import reconcile_finance_coverage as reconcile
 
 
-def test_extract_symbol_helpers():
-    bronze = reconcile._extract_symbol_from_bronze_blob(
-        "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
-        folder="Valuation",
-        suffix="quarterly_valuation_measures",
+def test_collect_bronze_symbols_reads_alpha26_buckets(monkeypatch):
+    monkeypatch.setattr(reconcile.mdc, "get_storage_client", lambda _container: object())
+    monkeypatch.setattr(reconcile.bronze_bucketing, "ALPHABET_BUCKETS", ("A",))
+    monkeypatch.setattr(
+        reconcile.bronze_bucketing,
+        "read_bucket_parquet",
+        lambda **_kwargs: pd.DataFrame(
+            [
+                {"symbol": "AAPL", "report_type": "balance_sheet"},
+                {"symbol": "AAPL", "report_type": "overview"},
+                {"symbol": "MSFT", "report_type": "cash_flow"},
+            ]
+        ),
     )
-    silver = reconcile._extract_symbol_from_silver_blob(
-        "finance-data/valuation/AAPL_quarterly_valuation_measures/_delta_log/00000000000000000001.json",
-        folder="valuation",
-        suffix="quarterly_valuation_measures",
+
+    out = reconcile._collect_bronze_symbols()
+    assert out["balance_sheet"] == {"AAPL"}
+    assert out["valuation"] == {"AAPL"}
+    assert out["cash_flow"] == {"MSFT"}
+    assert out["income_statement"] == set()
+
+
+def test_collect_silver_symbols_reads_sub_domain_indexes(monkeypatch):
+    expected = {
+        "balance_sheet": {"AAPL"},
+        "income_statement": {"AAPL", "MSFT"},
+        "cash_flow": {"MSFT"},
+        "valuation": {"AAPL"},
+    }
+    monkeypatch.setattr(
+        reconcile.layer_bucketing,
+        "load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: set(expected.get(str(sub_domain), set())),
     )
-    assert bronze == "AAPL"
-    assert silver == "AAPL"
+
+    out = reconcile._collect_silver_symbols()
+    assert out == expected
 
 
 def test_build_report_computes_lag_counts(monkeypatch):
@@ -53,6 +79,8 @@ def test_build_report_computes_lag_counts(monkeypatch):
 def test_main_writes_report(monkeypatch):
     saved = {}
     monkeypatch.setattr(reconcile.mdc, "log_environment_diagnostics", lambda: None)
+    monkeypatch.setattr(reconcile.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
+    monkeypatch.setattr(reconcile.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(reconcile, "_build_report", lambda: {"totalLagSymbolCount": 0})
     monkeypatch.setattr(
         reconcile.mdc,

@@ -22,8 +22,6 @@ from tasks.common.market_reconciliation import (
 class FeatureJobConfig:
     silver_container: str
     gold_container: str
-    max_workers: int
-    tickers: Sequence[str]
 
 
 _NUMBER_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)\s*([kKmMbBtT])?\s*$")
@@ -686,157 +684,19 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _process_ticker(task: Tuple[str, str, str, str, str, str, str, str, Optional[str]]) -> Dict[str, Any]:
-    from core import core as mdc
-    from core import delta_core
-
-    ticker, income_path, balance_path, cashflow_path, valuation_path, gold_path, silver_container, gold_container, backfill_start_iso = task
-
-    try:
-        df_income = _prepare_table(
-            delta_core.load_delta(silver_container, income_path),
-            ticker,
-            source_label="income_statement",
-        )
-        df_balance = _prepare_table(
-            delta_core.load_delta(silver_container, balance_path),
-            ticker,
-            source_label="balance_sheet",
-        )
-        df_cashflow = _prepare_table(
-            delta_core.load_delta(silver_container, cashflow_path),
-            ticker,
-            source_label="cash_flow",
-        )
-        df_valuation = _prepare_table(
-            delta_core.load_delta(silver_container, valuation_path),
-            ticker,
-            source_label="valuation",
-        )
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_source", "error": str(exc)}
-
-    base_dates = []
-    for table in (df_income, df_balance, df_cashflow, df_valuation):
-        base_dates.append(table[["date", "symbol"]])
-    keys = pd.concat(base_dates, ignore_index=True).drop_duplicates(subset=["symbol", "date"], keep="last")
-
-    merged = keys
-    for table, suffix in (
-        (df_income, "_is"),
-        (df_balance, "_bs"),
-        (df_cashflow, "_cf"),
-        (df_valuation, "_val"),
-    ):
-        merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
-
-    preflight = _preflight_feature_schema(merged)
-    if preflight["missing_requirements"]:
-        return {
-            "ticker": ticker,
-            "status": "failed_compute",
-            "error": (
-                "Gold finance schema preflight failed: "
-                f"missing={preflight['missing_requirements']} "
-                f"available_columns={preflight['available_columns']}"
-            ),
-        }
-
-    try:
-        df_features = compute_features(merged)
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_compute", "error": str(exc)}
-
-    backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
-    df_features, _ = apply_backfill_start_cutoff(
-        df_features,
-        date_col="date",
-        backfill_start=backfill_start,
-        context=f"gold finance {ticker}",
-    )
-
-    if backfill_start is not None and df_features.empty:
-        gold_client = mdc.get_storage_client(gold_container)
-        if gold_client is None:
-            return {
-                "ticker": ticker,
-                "status": "failed_write",
-                "gold_path": gold_path,
-                "error": f"Storage client unavailable for cutoff purge {gold_path}.",
-            }
-        deleted = gold_client.delete_prefix(gold_path)
-        return {
-            "ticker": ticker,
-            "status": "ok",
-            "rows": 0,
-            "gold_path": gold_path,
-            "purged_blobs": deleted,
-        }
-
-    try:
-        df_features = normalize_columns_to_snake_case(df_features)
-        delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
-        if backfill_start is not None:
-            delta_core.vacuum_delta_table(
-                gold_container,
-                gold_path,
-                retention_hours=0,
-                dry_run=False,
-                enforce_retention_duration=False,
-                full=True,
-            )
-    except Exception as exc:
-        return {"ticker": ticker, "status": "failed_write", "gold_path": gold_path, "error": str(exc)}
-
-    return {"ticker": ticker, "status": "ok", "rows": len(df_features), "gold_path": gold_path}
-
-
-def _get_max_workers() -> int:
-    try:
-        available_cpus = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
-    except Exception:
-        available_cpus = os.cpu_count() or 1
-
-    default_workers = available_cpus if available_cpus <= 2 else available_cpus - 1
-
-    configured = os.environ.get("FEATURE_ENGINEERING_MAX_WORKERS")
-    if configured:
-        try:
-            parsed = int(configured)
-            if parsed > 0:
-                return min(parsed, available_cpus)
-        except ValueError:
-            pass
-    return max(1, default_workers)
-
-
 def _build_job_config() -> FeatureJobConfig:
     silver_container = os.environ.get("AZURE_CONTAINER_SILVER")
     gold_container = os.environ.get("AZURE_CONTAINER_GOLD")
 
     from core import core as mdc
-    from core import config as common_cfg
-
-    df_symbols = mdc.get_symbols()
-    df_symbols = df_symbols.dropna(subset=["Symbol"]).copy()
-
-    if hasattr(common_cfg, "DEBUG_SYMBOLS") and common_cfg.DEBUG_SYMBOLS:
-        mdc.write_line(
-            f"DEBUG MODE: Restricting execution to {len(common_cfg.DEBUG_SYMBOLS)} symbols: {common_cfg.DEBUG_SYMBOLS}"
-        )
-        df_symbols = df_symbols[df_symbols["Symbol"].isin(common_cfg.DEBUG_SYMBOLS)]
-
-    tickers: List[str] = [str(sym) for sym in df_symbols["Symbol"].astype(str).tolist()]
-    tickers = list(dict.fromkeys(tickers))
-
-    max_workers = _get_max_workers()
-    mdc.write_line(f"Finance feature engineering configured for {len(tickers)} tickers (max_workers={max_workers})")
+    if not silver_container or not str(silver_container).strip():
+        raise ValueError("Environment variable 'AZURE_CONTAINER_SILVER' is required.")
+    if not gold_container or not str(gold_container).strip():
+        raise ValueError("Environment variable 'AZURE_CONTAINER_GOLD' is required.")
 
     return FeatureJobConfig(
-        silver_container=silver_container,
-        gold_container=gold_container,
-        max_workers=max_workers,
-        tickers=tickers,
+        silver_container=str(silver_container).strip(),
+        gold_container=str(gold_container).strip(),
     )
 
 

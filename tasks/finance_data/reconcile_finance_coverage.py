@@ -5,42 +5,28 @@ from typing import Dict, Set, Tuple
 
 from core import core as mdc
 from tasks.finance_data import config as cfg
+from tasks.common import bronze_bucketing
+from tasks.common import layer_bucketing
 
 
-_FINANCE_SUBFOLDERS: Tuple[Tuple[str, str, str], ...] = (
-    ("Balance Sheet", "balance_sheet", "quarterly_balance-sheet"),
-    ("Income Statement", "income_statement", "quarterly_financials"),
-    ("Cash Flow", "cash_flow", "quarterly_cash-flow"),
-    ("Valuation", "valuation", "quarterly_valuation_measures"),
+_FINANCE_SUBFOLDERS: Tuple[str, ...] = (
+    "balance_sheet",
+    "income_statement",
+    "cash_flow",
+    "valuation",
 )
+_REPORT_TYPE_TO_SUBFOLDER: dict[str, str] = {
+    "balance_sheet": "balance_sheet",
+    "income_statement": "income_statement",
+    "cash_flow": "cash_flow",
+    "overview": "valuation",
+    "valuation": "valuation",
+}
 _COMMON_REPORT_PATH = "system/reconciliation/finance_coverage/latest.json"
 
 
-def _extract_symbol_from_bronze_blob(blob_name: str, *, folder: str, suffix: str) -> str:
-    parts = str(blob_name).strip("/").split("/")
-    if len(parts) < 3 or parts[0] != "finance-data" or parts[1] != folder:
-        return ""
-    filename = parts[2]
-    if not filename.endswith(".json"):
-        return ""
-    stem = filename[:-5]
-    token = f"_{suffix}"
-    if not stem.endswith(token):
-        return ""
-    return stem[: -len(token)].strip()
-
-
-def _extract_symbol_from_silver_blob(blob_name: str, *, folder: str, suffix: str) -> str:
-    parts = str(blob_name).strip("/").split("/")
-    if len(parts) < 5 or parts[0] != "finance-data" or parts[1] != folder:
-        return ""
-    if parts[3] != "_delta_log":
-        return ""
-    table = parts[2]
-    token = f"_{suffix}"
-    if not table.endswith(token):
-        return ""
-    return table[: -len(token)].strip()
+def _empty_symbol_map() -> Dict[str, Set[str]]:
+    return {subfolder: set() for subfolder in _FINANCE_SUBFOLDERS}
 
 
 def _collect_bronze_symbols() -> Dict[str, Set[str]]:
@@ -48,36 +34,37 @@ def _collect_bronze_symbols() -> Dict[str, Set[str]]:
     if client is None:
         raise RuntimeError("Unable to initialize Bronze storage client.")
 
-    out: Dict[str, Set[str]] = {silver_folder: set() for _, silver_folder, _ in _FINANCE_SUBFOLDERS}
-    for bronze_folder, silver_folder, suffix in _FINANCE_SUBFOLDERS:
-        prefix = f"finance-data/{bronze_folder}/"
-        for blob in client.list_blob_infos(name_starts_with=prefix):
-            symbol = _extract_symbol_from_bronze_blob(
-                str(blob.get("name", "")),
-                folder=bronze_folder,
-                suffix=suffix,
+    out = _empty_symbol_map()
+    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
+        try:
+            df_bucket = bronze_bucketing.read_bucket_parquet(
+                client=client,
+                prefix="finance-data",
+                bucket=bucket,
+                columns=["symbol", "report_type"],
             )
-            if symbol:
-                out[silver_folder].add(symbol)
+        except Exception as exc:
+            mdc.write_warning(f"Finance coverage bronze scan failed for bucket={bucket}: {exc}")
+            continue
+        if df_bucket is None or df_bucket.empty:
+            continue
+        for _, row in df_bucket.iterrows():
+            symbol = str(row.get("symbol") or "").strip().upper()
+            report_type = str(row.get("report_type") or "").strip().lower()
+            subfolder = _REPORT_TYPE_TO_SUBFOLDER.get(report_type)
+            if symbol and subfolder:
+                out[subfolder].add(symbol)
     return out
 
 
 def _collect_silver_symbols() -> Dict[str, Set[str]]:
-    client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
-    if client is None:
-        raise RuntimeError("Unable to initialize Silver storage client.")
-
-    out: Dict[str, Set[str]] = {silver_folder: set() for _, silver_folder, _ in _FINANCE_SUBFOLDERS}
-    for _, silver_folder, suffix in _FINANCE_SUBFOLDERS:
-        prefix = f"finance-data/{silver_folder}/"
-        for blob in client.list_blob_infos(name_starts_with=prefix):
-            symbol = _extract_symbol_from_silver_blob(
-                str(blob.get("name", "")),
-                folder=silver_folder,
-                suffix=suffix,
-            )
-            if symbol:
-                out[silver_folder].add(symbol)
+    out = _empty_symbol_map()
+    for subfolder in _FINANCE_SUBFOLDERS:
+        out[subfolder] = layer_bucketing.load_layer_symbol_set(
+            layer="silver",
+            domain="finance",
+            sub_domain=subfolder,
+        )
     return out
 
 
@@ -89,7 +76,7 @@ def _build_report() -> dict:
     by_subfolder: Dict[str, dict] = {}
     total_bronze_only = 0
     total_silver_only = 0
-    for _, silver_folder, _ in _FINANCE_SUBFOLDERS:
+    for silver_folder in _FINANCE_SUBFOLDERS:
         bronze_symbols = bronze.get(silver_folder, set())
         silver_symbols = silver.get(silver_folder, set())
         bronze_only = sorted(bronze_symbols - silver_symbols)
@@ -123,6 +110,8 @@ def _build_report() -> dict:
 
 def main() -> int:
     mdc.log_environment_diagnostics()
+    bronze_bucketing.bronze_layout_mode()
+    layer_bucketing.silver_layout_mode()
     try:
         report = _build_report()
         mdc.save_common_json_content(report, _COMMON_REPORT_PATH)
