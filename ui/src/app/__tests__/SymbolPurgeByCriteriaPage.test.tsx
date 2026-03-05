@@ -361,7 +361,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
     await previewCandidates();
 
     const copyButton = screen.getByRole('button', { name: /copy selected/i });
-    expect(copyButton).toBeEnabled();
+    await waitFor(() => {
+      expect(copyButton).toBeEnabled();
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /clear all/i }));
     expect(copyButton).toBeDisabled();
