@@ -466,6 +466,7 @@ def test_write_alpha26_market_buckets_enforces_typed_schema_for_empty_buckets(mo
         captured[str(path)] = df.copy()
 
     monkeypatch.setattr(delta_core, "store_delta", _fake_store_delta)
+    monkeypatch.setattr(delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ["A", "C"])
     monkeypatch.setattr(
         silver.layer_bucketing,
@@ -524,6 +525,7 @@ def test_write_alpha26_market_buckets_partial_update_preserves_untouched_symbol_
         captured_paths.append(str(path))
 
     monkeypatch.setattr(delta_core, "store_delta", _fake_store_delta)
+    monkeypatch.setattr(delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ["A", "C"])
     monkeypatch.setattr(
         silver.layer_bucketing,

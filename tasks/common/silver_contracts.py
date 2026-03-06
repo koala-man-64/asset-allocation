@@ -102,26 +102,15 @@ def align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd.
     Align a dataframe to an existing Delta table schema if one already exists.
     This keeps historical column order stable and minimizes schema drift failures.
     """
-    existing_cols = delta_core.get_delta_schema_columns(container, path)
-    if not existing_cols:
-        return df.reset_index(drop=True)
+    from tasks.common.delta_write_policy import prepare_delta_write_frame
 
-    normalized_existing: list[str] = []
-    seen: set[str] = set()
-    for col in existing_cols:
-        normalized = _to_snake_case(col)
-        if normalized in seen:
-            continue
-        normalized_existing.append(normalized)
-        seen.add(normalized)
-
-    out = normalize_columns_to_snake_case(df)
-    for col in normalized_existing:
-        if col not in out.columns:
-            out[col] = pd.NA
-
-    ordered_cols = normalized_existing + [col for col in out.columns if col not in normalized_existing]
-    return out[ordered_cols].reset_index(drop=True)
+    decision = prepare_delta_write_frame(
+        df,
+        container=container,
+        path=path,
+        skip_empty_without_schema=False,
+    )
+    return decision.frame
 
 
 def assert_no_unexpected_mixed_empty(df: pd.DataFrame, *, context: str, alias: str = "Date") -> pd.DataFrame:

@@ -23,6 +23,7 @@ from tasks.common.watermarks import (
     save_watermarks,
     should_process_blob_since_last_success,
 )
+from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
@@ -334,7 +335,6 @@ def _write_alpha26_earnings_buckets(bucket_frames: dict[str, list[pd.DataFrame]]
     symbol_to_bucket: dict[str, str] = {}
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         bucket_path = DataPaths.get_silver_earnings_bucket_path(bucket)
-        existing_cols = delta_core.get_delta_schema_columns(cfg.AZURE_CONTAINER_SILVER, bucket_path)
         parts = bucket_frames.get(bucket, [])
         if parts:
             df_bucket = pd.concat(parts, ignore_index=True)
@@ -352,13 +352,23 @@ def _write_alpha26_earnings_buckets(bucket_frames: dict[str, list[pd.DataFrame]]
                 df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
         else:
             df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
-        if df_bucket.empty and not existing_cols:
+        write_decision = prepare_delta_write_frame(
+            df_bucket.reset_index(drop=True),
+            container=cfg.AZURE_CONTAINER_SILVER,
+            path=bucket_path,
+        )
+        mdc.write_line(
+            "delta_write_decision layer=silver domain=earnings "
+            f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+            f"reason={write_decision.reason} path={bucket_path}"
+        )
+        if write_decision.action == "skip_empty_no_schema":
             mdc.write_line(
                 f"Skipping Silver earnings empty bucket write for {bucket_path}: no existing Delta schema."
             )
             continue
         delta_core.store_delta(
-            df_bucket.reset_index(drop=True),
+            write_decision.frame,
             cfg.AZURE_CONTAINER_SILVER,
             bucket_path,
             mode="overwrite",

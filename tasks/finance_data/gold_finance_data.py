@@ -9,7 +9,8 @@ import pandas as pd
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
-from tasks.common.silver_contracts import align_to_existing_schema, normalize_columns_to_snake_case
+from tasks.common.delta_write_policy import prepare_delta_write_frame
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
@@ -1083,19 +1084,24 @@ def _run_alpha26_finance_gold(
         bucket_failed = False
         writes_completed = 0
         for gold_path in gold_paths:
-            existing_cols = delta_core.get_delta_schema_columns(gold_container, gold_path)
-            if df_gold_bucket.empty and not existing_cols and not template_schema_available:
+            write_decision = prepare_delta_write_frame(
+                df_gold_bucket.reset_index(drop=True),
+                container=gold_container,
+                path=gold_path,
+                skip_empty_without_schema=not template_schema_available,
+            )
+            mdc.write_line(
+                "delta_write_decision layer=gold domain=finance "
+                f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+                f"reason={write_decision.reason} path={gold_path}"
+            )
+            if write_decision.action == "skip_empty_no_schema":
                 mdc.write_line(
                     f"Skipping Gold finance empty bucket write for {gold_path}: no existing Delta schema."
                 )
                 continue
-            df_to_store = align_to_existing_schema(
-                df_gold_bucket.reset_index(drop=True),
-                container=gold_container,
-                path=gold_path,
-            )
             try:
-                delta_core.store_delta(df_to_store, gold_container, gold_path, mode="overwrite")
+                delta_core.store_delta(write_decision.frame, gold_container, gold_path, mode="overwrite")
                 if backfill_start is not None:
                     delta_core.vacuum_delta_table(
                         gold_container,

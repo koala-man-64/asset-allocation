@@ -25,6 +25,7 @@ from tasks.common.watermarks import (
     save_watermarks,
     should_process_blob_since_last_success,
 )
+from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import (
     ContractViolation,
     align_to_existing_schema,
@@ -491,7 +492,6 @@ def _write_alpha26_finance_silver_buckets(
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
         for bucket in layer_bucketing.ALPHABET_BUCKETS:
             silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
-            existing_cols = delta_core.get_delta_schema_columns(cfg.AZURE_CONTAINER_SILVER, silver_bucket_path)
             parts = bucket_frames.get((sub_domain, bucket), [])
             if parts:
                 df_bucket = pd.concat(parts, ignore_index=True)
@@ -511,20 +511,24 @@ def _write_alpha26_finance_silver_buckets(
             else:
                 df_bucket = pd.DataFrame(columns=["date", "symbol"])
 
-            if df_bucket.empty and not existing_cols:
+            write_decision = prepare_delta_write_frame(
+                df_bucket.reset_index(drop=True),
+                container=cfg.AZURE_CONTAINER_SILVER,
+                path=silver_bucket_path,
+            )
+            mdc.write_line(
+                "delta_write_decision layer=silver domain=finance "
+                f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+                f"reason={write_decision.reason} path={silver_bucket_path}"
+            )
+            if write_decision.action == "skip_empty_no_schema":
                 mdc.write_line(
                     f"Skipping Silver finance empty bucket write for {silver_bucket_path}: no existing Delta schema."
                 )
                 continue
 
-            # Keep bucket-table writes schema-compatible even when no rows are staged.
-            df_bucket = _align_to_existing_schema(
-                df_bucket.reset_index(drop=True),
-                cfg.AZURE_CONTAINER_SILVER,
-                silver_bucket_path,
-            )
             delta_core.store_delta(
-                df_bucket,
+                write_decision.frame,
                 cfg.AZURE_CONTAINER_SILVER,
                 silver_bucket_path,
                 mode="overwrite",

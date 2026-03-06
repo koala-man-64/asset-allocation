@@ -28,6 +28,7 @@ from tasks.technical_analysis.technical_indicators import (
     add_heikin_ashi_and_ichimoku,
 )
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     enforce_backfill_cutoff_on_bucket_tables,
@@ -705,9 +706,39 @@ def _run_alpha26_market_gold(
             else:
                 df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
 
+        write_decision = prepare_delta_write_frame(
+            df_gold_bucket.reset_index(drop=True),
+            container=gold_container,
+            path=gold_path,
+        )
+        mdc.write_line(
+            "delta_write_decision layer=gold domain=market "
+            f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+            f"reason={write_decision.reason} path={gold_path}"
+        )
+        if write_decision.action == "skip_empty_no_schema":
+            mdc.write_line(f"Skipping Gold market empty bucket write for {gold_path}: no existing Delta schema.")
+            mdc.write_line(
+                f"layer_handoff_status transition=silver_to_gold status=skipped bucket={bucket} "
+                "reason=empty_bucket_no_existing_schema symbols_in=0 symbols_out=0 failures=0"
+            )
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=market bucket={bucket} "
+                "status=blocked reason=empty_bucket_no_existing_schema"
+            )
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="skipped_empty_no_schema",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
+            )
+            continue
+
         # Persist bucket output and watermark after successful write.
         try:
-            delta_core.store_delta(df_gold_bucket, gold_container, gold_path, mode="overwrite")
+            delta_core.store_delta(write_decision.frame, gold_container, gold_path, mode="overwrite")
             if backfill_start is not None:
                 delta_core.vacuum_delta_table(
                     gold_container,

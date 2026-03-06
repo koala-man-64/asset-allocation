@@ -143,4 +143,4 @@ def test_run_alpha26_earnings_gold_writes_empty_bucket_when_schema_exists(monkey
     df_written = captured["df"]
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
-    assert list(df_written.columns) == ["date", "symbol"]
+    assert list(df_written.columns) == existing_cols

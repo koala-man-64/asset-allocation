@@ -4,6 +4,7 @@ import pandas as pd
 
 from core import core as core_module
 from core import delta_core as delta_core_module
+from core.pipeline import DataPaths
 from tasks.market_data import gold_market_data as gold
 
 
@@ -116,6 +117,7 @@ def test_run_alpha26_market_gold_updates_only_successful_bucket_watermarks(monke
         )
 
     monkeypatch.setattr(delta_core_module, "get_delta_last_commit", _fake_last_commit)
+    monkeypatch.setattr(delta_core_module, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(delta_core_module, "load_delta", _fake_load_delta)
     monkeypatch.setattr(gold, "compute_features", _fake_compute_features)
     monkeypatch.setattr(
@@ -148,6 +150,164 @@ def test_run_alpha26_market_gold_updates_only_successful_bucket_watermarks(monke
     assert watermarks["bucket::A"]["silver_last_commit"] == 100.0
     assert captured_index["symbol_to_bucket"] == {"AAPL": "A", "MSFT": "B"}
     assert sorted(result.status for result in bucket_results) == ["failed_compute", "ok"]
+
+
+def test_run_alpha26_market_gold_skips_empty_bucket_without_existing_schema(monkeypatch):
+    target_path = DataPaths.get_gold_market_bucket_path("A")
+    captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", lambda *_args, **_kwargs: None)
+
+    def _fake_get_schema(_container: str, path: str):
+        captured["checked_paths"].append(path)
+        return None
+
+    def _fake_store(*_args, **_kwargs):
+        captured["store_calls"] = int(captured["store_calls"]) + 1
+
+    monkeypatch.setattr(delta_core_module, "get_delta_schema_columns", _fake_get_schema)
+    monkeypatch.setattr(delta_core_module, "store_delta", _fake_store)
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+        bucket_results,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 0
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 1
+    assert failed == 0
+    assert watermarks_dirty is False
+    assert alpha26_symbols == 0
+    assert index_path == "index"
+    assert captured["store_calls"] == 0
+    assert captured["checked_paths"] == [target_path]
+    assert len(bucket_results) == 1
+    assert bucket_results[0].status == "skipped_empty_no_schema"
+
+
+def test_run_alpha26_market_gold_aligns_empty_bucket_to_existing_schema(monkeypatch):
+    target_path = DataPaths.get_gold_market_bucket_path("A")
+    existing_cols = ["date", "symbol", "close", "return_1d"]
+    captured: dict[str, object] = {"store_calls": 0}
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        delta_core_module,
+        "get_delta_schema_columns",
+        lambda _container, path: existing_cols if path == target_path else None,
+    )
+
+    def _fake_store(df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite", **_kwargs):
+        captured["store_calls"] = int(captured["store_calls"]) + 1
+        captured["df"] = df.copy()
+        captured["path"] = path
+        captured["mode"] = mode
+
+    monkeypatch.setattr(delta_core_module, "store_delta", _fake_store)
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+        bucket_results,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks={},
+    )
+
+    assert processed == 1
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 1
+    assert failed == 0
+    assert watermarks_dirty is False
+    assert alpha26_symbols == 0
+    assert index_path == "index"
+    assert captured["store_calls"] == 1
+    assert captured["path"] == target_path
+    assert captured["mode"] == "overwrite"
+    assert captured["df"].empty
+    assert list(captured["df"].columns) == existing_cols
+    assert len(bucket_results) == 1
+    assert bucket_results[0].status == "ok"
+
+
+def test_run_alpha26_market_gold_does_not_advance_watermark_for_empty_bucket_without_schema(monkeypatch):
+    target_path = DataPaths.get_gold_market_bucket_path("A")
+    watermarks: dict = {}
+    captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
+
+    monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ["A"])
+    monkeypatch.setattr(gold.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
+    monkeypatch.setattr(gold.layer_bucketing, "load_layer_symbol_index", lambda **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    monkeypatch.setattr(delta_core_module, "get_delta_last_commit", lambda *_args, **_kwargs: 123.0)
+    monkeypatch.setattr(delta_core_module, "load_delta", lambda *_args, **_kwargs: _silver_bucket_df("AAPL"))
+    monkeypatch.setattr(gold, "compute_features", lambda *_args, **_kwargs: pd.DataFrame(columns=["date", "symbol"]))
+
+    def _fake_get_schema(_container: str, path: str):
+        captured["checked_paths"].append(path)
+        return None
+
+    def _fake_store(*_args, **_kwargs):
+        captured["store_calls"] = int(captured["store_calls"]) + 1
+
+    monkeypatch.setattr(delta_core_module, "get_delta_schema_columns", _fake_get_schema)
+    monkeypatch.setattr(delta_core_module, "store_delta", _fake_store)
+
+    (
+        processed,
+        skipped_unchanged,
+        skipped_missing_source,
+        failed,
+        watermarks_dirty,
+        alpha26_symbols,
+        index_path,
+        bucket_results,
+    ) = gold._run_alpha26_market_gold(
+        silver_container="silver",
+        gold_container="gold",
+        backfill_start_iso=None,
+        watermarks=watermarks,
+    )
+
+    assert processed == 0
+    assert skipped_unchanged == 0
+    assert skipped_missing_source == 0
+    assert failed == 0
+    assert watermarks_dirty is False
+    assert watermarks == {}
+    assert alpha26_symbols == 0
+    assert index_path == "index"
+    assert captured["store_calls"] == 0
+    assert captured["checked_paths"] == [target_path]
+    assert len(bucket_results) == 1
+    assert bucket_results[0].status == "skipped_empty_no_schema"
 
 
 def test_main_fails_closed_when_gold_reconciliation_fails(monkeypatch):

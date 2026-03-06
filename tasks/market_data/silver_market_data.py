@@ -24,6 +24,7 @@ from tasks.common.watermarks import (
     save_watermarks,
     should_process_blob_since_last_success,
 )
+from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
@@ -710,6 +711,7 @@ def _write_alpha26_market_buckets(
 
     touched_symbol_to_bucket: dict[str, str] = {}
     for bucket in sorted(selected_buckets):
+        silver_bucket_path = DataPaths.get_silver_market_bucket_path(bucket)
         parts = bucket_frames.get(bucket, [])
         if parts:
             df_bucket = pd.concat(parts, ignore_index=True)
@@ -721,10 +723,21 @@ def _write_alpha26_market_buckets(
         for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
             if symbol:
                 touched_symbol_to_bucket[symbol] = bucket
-        delta_core.store_delta(
+        write_decision = prepare_delta_write_frame(
             df_bucket.reset_index(drop=True),
+            container=cfg.AZURE_CONTAINER_SILVER,
+            path=silver_bucket_path,
+            skip_empty_without_schema=False,
+        )
+        mdc.write_line(
+            "delta_write_decision layer=silver domain=market "
+            f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+            f"reason={write_decision.reason} path={silver_bucket_path}"
+        )
+        delta_core.store_delta(
+            write_decision.frame,
             cfg.AZURE_CONTAINER_SILVER,
-            DataPaths.get_silver_market_bucket_path(bucket),
+            silver_bucket_path,
             mode="overwrite",
         )
         mdc.write_line(

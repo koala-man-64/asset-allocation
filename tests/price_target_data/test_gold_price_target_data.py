@@ -102,4 +102,4 @@ def test_run_alpha26_price_target_gold_writes_empty_bucket_when_schema_exists(mo
     df_written = captured["df"]
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
-    assert list(df_written.columns) == ["obs_date", "symbol"]
+    assert list(df_written.columns) == existing_cols

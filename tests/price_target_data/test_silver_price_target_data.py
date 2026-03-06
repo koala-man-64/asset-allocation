@@ -225,4 +225,4 @@ def test_write_alpha26_price_target_buckets_writes_empty_bucket_when_schema_exis
     df_written = captured["df"]
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
-    assert list(df_written.columns) == silver._ALPHA26_PRICE_TARGET_MIN_COLUMNS
+    assert list(df_written.columns) == existing_cols

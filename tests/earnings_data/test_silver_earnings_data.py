@@ -135,4 +135,4 @@ def test_write_alpha26_earnings_buckets_writes_empty_bucket_when_schema_exists(m
     df_written = captured["df"]
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
-    assert list(df_written.columns) == silver._ALPHA26_EARNINGS_MIN_COLUMNS
+    assert list(df_written.columns) == existing_cols
