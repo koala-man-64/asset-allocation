@@ -6,7 +6,6 @@ from typing import Any, Sequence
 import pandas as pd
 
 from core import core as mdc
-from core import delta_core
 
 
 class ContractViolation(ValueError):
