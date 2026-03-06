@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_bronze_earnings_symbols_from_blob_infos,
     collect_bronze_finance_symbols_from_blob_infos,
@@ -9,8 +10,8 @@ from tasks.common.market_reconciliation import (
     collect_bronze_price_target_symbols_from_blob_infos,
     collect_bronze_market_symbols_from_blob_infos,
     collect_delta_market_symbols,
-    enforce_backfill_cutoff_on_tables,
-    purge_orphan_market_tables,
+    enforce_backfill_cutoff_on_bucket_tables,
+    purge_orphan_rows_from_bucket_tables,
 )
 import tasks.common.market_reconciliation as reconciliation
 import pandas as pd
@@ -36,56 +37,69 @@ def test_collect_bronze_market_symbols_ignores_non_symbol_files(monkeypatch) -> 
     assert symbols == {"AAPL", "MSFT"}
 
 
-def test_collect_delta_market_symbols_extracts_from_delta_log_paths() -> None:
-    class _Client:
-        def list_blob_infos(self, *, name_starts_with: str) -> list[dict[str, Any]]:
-            assert name_starts_with == "market-data/"
-            return [
-                {"name": "market-data/AAPL/_delta_log/00000000000000000000.json"},
-                {"name": "market-data/AAPL/_delta_log/00000000000000000001.json"},
-                {"name": "market-data/MSFT/_delta_log/00000000000000000000.json"},
-                {"name": "market-data/README.txt"},
-            ]
+def test_collect_delta_market_symbols_reads_from_layer_index(monkeypatch) -> None:
+    monkeypatch.setattr(
+        layer_bucketing,
+        "load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: {"AAPL", "MSFT"}
+        if (layer, domain, sub_domain) == ("silver", "market", None)
+        else set(),
+    )
 
-    symbols = collect_delta_market_symbols(client=_Client(), root_prefix="market-data")
+    symbols = collect_delta_market_symbols(client=object(), root_prefix="market-data")
 
     assert symbols == {"AAPL", "MSFT"}
 
 
-def test_purge_orphan_market_tables_returns_deleted_blobs_total() -> None:
+def test_purge_orphan_rows_from_bucket_tables_rewrites_and_deletes() -> None:
+    saved: dict[str, pd.DataFrame] = {}
     deleted_paths: list[str] = []
 
     def _delete_prefix(path: str) -> int:
         deleted_paths.append(path)
         return 2
 
-    orphan_symbols, deleted_blobs = purge_orphan_market_tables(
-        upstream_symbols={"AAPL"},
-        downstream_symbols={"AAPL", "MSFT", "NVDA"},
-        downstream_path_builder=lambda symbol: f"market-data/{symbol}",
+    def _load_table(path: str) -> pd.DataFrame | None:
+        if path.endswith("/M"):
+            return pd.DataFrame({"symbol": ["META", "MSFT"], "date": [pd.Timestamp("2024-01-10")] * 2})
+        if path.endswith("/N"):
+            return pd.DataFrame({"symbol": ["NVDA"], "date": [pd.Timestamp("2024-01-10")]})
+        return None
+
+    def _store_table(df: pd.DataFrame, path: str) -> None:
+        saved[path] = df.copy()
+
+    orphan_symbols, stats = purge_orphan_rows_from_bucket_tables(
+        upstream_symbols={"AAPL", "META"},
+        downstream_symbols={"AAPL", "META", "MSFT", "NVDA"},
+        table_paths_for_symbol=lambda symbol: [f"market-data/buckets/{symbol[0]}"],
+        load_table=_load_table,
+        store_table=_store_table,
         delete_prefix=_delete_prefix,
+        symbol_column_candidates=("symbol",),
     )
 
     assert orphan_symbols == ["MSFT", "NVDA"]
-    assert deleted_paths == ["market-data/MSFT", "market-data/NVDA"]
-    assert deleted_blobs == 4
+    assert list(saved.keys()) == ["market-data/buckets/M"]
+    assert saved["market-data/buckets/M"]["symbol"].tolist() == ["META"]
+    assert deleted_paths == ["market-data/buckets/N"]
+    assert stats.tables_scanned == 2
+    assert stats.tables_rewritten == 1
+    assert stats.deleted_blobs == 2
+    assert stats.rows_deleted == 2
+    assert stats.errors == 0
 
 
-def test_collect_delta_silver_finance_symbols_extracts_union_of_subfolders() -> None:
-    class _Client:
-        def list_blob_infos(self, *, name_starts_with: str) -> list[dict[str, Any]]:
-            assert name_starts_with == "finance-data/"
-            return [
-                {"name": "finance-data/balance_sheet/AAPL_quarterly_balance-sheet/_delta_log/000.json"},
-                {"name": "finance-data/income_statement/MSFT_quarterly_financials/_delta_log/000.json"},
-                {"name": "finance-data/cash_flow/NVDA_quarterly_cash-flow/_delta_log/000.json"},
-                {"name": "finance-data/valuation/TSLA_quarterly_valuation_measures/_delta_log/000.json"},
-                {"name": "finance-data/valuation/README.md"},
-                {"name": "finance-data/valuation/BADTABLE/_delta_log/000.json"},
-                {"name": "finance-data/custom_folder/SHOP_custom/_delta_log/000.json"},
-            ]
+def test_collect_delta_silver_finance_symbols_reads_from_layer_index(monkeypatch) -> None:
+    monkeypatch.setattr(
+        layer_bucketing,
+        "load_layer_symbol_set",
+        lambda *, layer, domain, sub_domain=None: {"AAPL", "MSFT", "NVDA", "TSLA"}
+        if (layer, domain, sub_domain) == ("silver", "finance", None)
+        else set(),
+    )
 
-    symbols = collect_delta_silver_finance_symbols(client=_Client())
+    symbols = collect_delta_silver_finance_symbols(client=object())
 
     assert symbols == {"AAPL", "MSFT", "NVDA", "TSLA"}
 
@@ -145,23 +159,20 @@ def test_collect_bronze_finance_symbols_extracts_known_suffixes(monkeypatch) -> 
     assert symbols == {"AAPL", "MSFT", "NVDA"}
 
 
-def test_enforce_backfill_cutoff_on_tables_rewrites_and_deletes() -> None:
+def test_enforce_backfill_cutoff_on_bucket_tables_rewrites_and_deletes() -> None:
     saved: dict[str, pd.DataFrame] = {}
     deleted_paths: list[str] = []
     vacuumed_paths: list[str] = []
 
-    def _table_paths(symbol: str) -> list[str]:
-        return [f"market-data/{symbol}"]
-
     def _load_table(path: str) -> pd.DataFrame | None:
-        if path.endswith("AAPL"):
+        if path.endswith("/A"):
             return pd.DataFrame(
                 {
                     "Date": [pd.Timestamp("2015-12-31"), pd.Timestamp("2016-01-02")],
                     "value": [1, 2],
                 }
             )
-        if path.endswith("MSFT"):
+        if path.endswith("/M"):
             return pd.DataFrame({"Date": [pd.Timestamp("2015-12-30")], "value": [7]})
         return None
 
@@ -175,9 +186,8 @@ def test_enforce_backfill_cutoff_on_tables_rewrites_and_deletes() -> None:
     def _vacuum(path: str) -> None:
         vacuumed_paths.append(path)
 
-    stats = enforce_backfill_cutoff_on_tables(
-        symbols={"AAPL", "MSFT"},
-        table_paths_for_symbol=_table_paths,
+    stats = enforce_backfill_cutoff_on_bucket_tables(
+        table_paths=["market-data/buckets/A", "market-data/buckets/M"],
         load_table=_load_table,
         store_table=_store_table,
         delete_prefix=_delete_prefix,
@@ -193,16 +203,15 @@ def test_enforce_backfill_cutoff_on_tables_rewrites_and_deletes() -> None:
     assert stats.rows_dropped == 2
     assert stats.errors == 0
 
-    assert list(saved.keys()) == ["market-data/AAPL"]
-    assert pd.to_datetime(saved["market-data/AAPL"]["Date"]).min() == pd.Timestamp("2016-01-02")
-    assert deleted_paths == ["market-data/MSFT"]
-    assert vacuumed_paths == ["market-data/AAPL"]
+    assert list(saved.keys()) == ["market-data/buckets/A"]
+    assert pd.to_datetime(saved["market-data/buckets/A"]["Date"]).min() == pd.Timestamp("2016-01-02")
+    assert deleted_paths == ["market-data/buckets/M"]
+    assert vacuumed_paths == ["market-data/buckets/A"]
 
 
-def test_enforce_backfill_cutoff_on_tables_handles_missing_date_column() -> None:
-    stats = enforce_backfill_cutoff_on_tables(
-        symbols={"AAPL"},
-        table_paths_for_symbol=lambda _symbol: ["market-data/AAPL"],
+def test_enforce_backfill_cutoff_on_bucket_tables_handles_missing_date_column() -> None:
+    stats = enforce_backfill_cutoff_on_bucket_tables(
+        table_paths=["market-data/buckets/A"],
         load_table=lambda _path: pd.DataFrame({"close": [1.0, 2.0]}),
         store_table=lambda _df, _path: None,
         delete_prefix=lambda _path: 0,

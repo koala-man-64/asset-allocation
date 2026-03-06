@@ -107,7 +107,7 @@ The report is written to `system/reconciliation/finance_coverage/latest.json` in
 
 ## Gold Market By-Date View
 
-You can materialize a single by-date Gold market table (`market_by_date`) from per-symbol Gold tables (`market/<symbol>`):
+You can materialize a single by-date Gold market table (`market_by_date`) from bucketed Gold market tables (`market/buckets/<LETTER>`):
 
 ```bash
 python3 -m tasks.market_data.materialize_gold_market_by_date

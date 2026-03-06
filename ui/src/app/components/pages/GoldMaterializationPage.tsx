@@ -63,7 +63,7 @@ const KEY_DEFS: ConfigKeyDef[] = [
   {
     key: 'GOLD_MARKET_BY_DATE_ENABLED',
     label: 'Enable by-date materialization',
-    helper: 'When enabled, gold-market-job writes market_by_date after per-symbol feature generation.',
+    helper: 'When enabled, gold-market-job writes market_by_date after bucketed gold feature generation.',
     placeholder: 'false'
   },
   {
@@ -612,7 +612,7 @@ export function GoldMaterializationPage() {
                 className="min-h-[96px] font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                This field stays editable for manual tweaks. Leave blank to include all columns from per-symbol Gold
+                This field stays editable for manual tweaks. Leave blank to include all columns from bucketed Gold
                 tables.
               </p>
               {columnsPreview.length ? (

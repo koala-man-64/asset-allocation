@@ -5,7 +5,9 @@ from typing import Any, Callable
 import pandas as pd
 import pytest
 
+from core import delta_core
 from core.pipeline import DataPaths
+from tasks.common import layer_bucketing
 from tasks.earnings_data import gold_earnings_data as gold_earnings
 from tasks.earnings_data import silver_earnings_data as silver_earnings
 from tasks.finance_data import gold_finance_data as gold_finance
@@ -28,6 +30,10 @@ def _empty_cutoff_stats() -> Any:
             "errors": 0,
         },
     )()
+
+
+def _orphan_bucket_frame() -> pd.DataFrame:
+    return pd.DataFrame({"date": [pd.Timestamp("2024-01-10")], "symbol": ["MSFT"]})
 
 
 def _patch_gold_market_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,28 +111,41 @@ GOLD_CASES: list[dict[str, Any]] = [
         "module": gold_market,
         "run_name": "_run_market_reconciliation",
         "patch_symbols": _patch_gold_market_symbols,
-        "deleted_paths": [DataPaths.get_gold_features_path("MSFT")],
+        "deleted_paths": [DataPaths.get_gold_market_bucket_path("M")],
+        "cutoff_paths": layer_bucketing.all_gold_bucket_paths(domain="market"),
     },
     {
         "id": "finance",
         "module": gold_finance,
         "run_name": "_run_finance_reconciliation",
         "patch_symbols": _patch_gold_finance_symbols,
-        "deleted_paths": [DataPaths.get_gold_finance_path("MSFT")],
+        "deleted_paths": [
+            DataPaths.get_gold_finance_bucket_path("balance_sheet", "M"),
+            DataPaths.get_gold_finance_bucket_path("income_statement", "M"),
+            DataPaths.get_gold_finance_bucket_path("cash_flow", "M"),
+            DataPaths.get_gold_finance_bucket_path("valuation", "M"),
+        ],
+        "cutoff_paths": [
+            DataPaths.get_gold_finance_bucket_path(sub_domain, bucket)
+            for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation")
+            for bucket in layer_bucketing.ALPHABET_BUCKETS
+        ],
     },
     {
         "id": "earnings",
         "module": gold_earnings,
         "run_name": "_run_earnings_reconciliation",
         "patch_symbols": _patch_gold_earnings_symbols,
-        "deleted_paths": [DataPaths.get_gold_earnings_path("MSFT")],
+        "deleted_paths": [DataPaths.get_gold_earnings_bucket_path("M")],
+        "cutoff_paths": layer_bucketing.all_gold_bucket_paths(domain="earnings"),
     },
     {
         "id": "price-target",
         "module": gold_price_target,
         "run_name": "_run_price_target_reconciliation",
         "patch_symbols": _patch_gold_price_target_symbols,
-        "deleted_paths": [DataPaths.get_gold_price_targets_path("MSFT")],
+        "deleted_paths": [DataPaths.get_gold_price_targets_bucket_path("M")],
+        "cutoff_paths": layer_bucketing.all_gold_bucket_paths(domain="price-target"),
     },
 ]
 
@@ -137,7 +156,8 @@ SILVER_CASES: list[dict[str, Any]] = [
         "module": silver_market,
         "run_name": "_run_market_reconciliation",
         "patch_symbols": _patch_silver_market_symbols,
-        "deleted_paths": [DataPaths.get_market_data_path("MSFT")],
+        "deleted_paths": [DataPaths.get_silver_market_bucket_path("M")],
+        "cutoff_paths": layer_bucketing.all_silver_bucket_paths(domain="market"),
         "bronze_blob_list": [{"name": "market-data/AAPL.csv"}],
     },
     {
@@ -146,10 +166,15 @@ SILVER_CASES: list[dict[str, Any]] = [
         "run_name": "_run_finance_reconciliation",
         "patch_symbols": _patch_silver_finance_symbols,
         "deleted_paths": [
-            DataPaths.get_finance_path("balance_sheet", "MSFT", "quarterly_balance-sheet"),
-            DataPaths.get_finance_path("income_statement", "MSFT", "quarterly_financials"),
-            DataPaths.get_finance_path("cash_flow", "MSFT", "quarterly_cash-flow"),
-            DataPaths.get_finance_path("valuation", "MSFT", "quarterly_valuation_measures"),
+            DataPaths.get_silver_finance_bucket_path("balance_sheet", "M"),
+            DataPaths.get_silver_finance_bucket_path("income_statement", "M"),
+            DataPaths.get_silver_finance_bucket_path("cash_flow", "M"),
+            DataPaths.get_silver_finance_bucket_path("valuation", "M"),
+        ],
+        "cutoff_paths": [
+            DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+            for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation")
+            for bucket in layer_bucketing.ALPHABET_BUCKETS
         ],
         "bronze_blob_list": [{"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json"}],
     },
@@ -158,7 +183,8 @@ SILVER_CASES: list[dict[str, Any]] = [
         "module": silver_earnings,
         "run_name": "_run_earnings_reconciliation",
         "patch_symbols": _patch_silver_earnings_symbols,
-        "deleted_paths": [DataPaths.get_earnings_path("MSFT")],
+        "deleted_paths": [DataPaths.get_silver_earnings_bucket_path("M")],
+        "cutoff_paths": layer_bucketing.all_silver_bucket_paths(domain="earnings"),
         "bronze_blob_list": [{"name": "earnings-data/AAPL.json"}],
     },
     {
@@ -166,7 +192,8 @@ SILVER_CASES: list[dict[str, Any]] = [
         "module": silver_price_target,
         "run_name": "_run_price_target_reconciliation",
         "patch_symbols": _patch_silver_price_target_symbols,
-        "deleted_paths": [DataPaths.get_price_target_path("MSFT")],
+        "deleted_paths": [DataPaths.get_silver_price_target_bucket_path("M")],
+        "cutoff_paths": layer_bucketing.all_silver_bucket_paths(domain="price-target"),
         "bronze_blob_list": [{"name": "price-target-data/AAPL.parquet"}],
     },
 ]
@@ -201,6 +228,11 @@ def test_gold_reconciliation_contract_purges_orphans(case: dict[str, Any], monke
     _patch_gold_storage_clients(monkeypatch, fake_gold)
     patch_symbols(monkeypatch)
     monkeypatch.setattr(module, "get_backfill_range", lambda: (None, None))
+    monkeypatch.setattr(
+        delta_core,
+        "load_delta",
+        lambda _container, path: _orphan_bucket_frame().copy() if path in case["deleted_paths"] else None,
+    )
 
     orphan_count, deleted_blobs = run_fn(silver_container="silver", gold_container="gold")
 
@@ -224,14 +256,14 @@ def test_gold_reconciliation_contract_applies_cutoff_sweep(case: dict[str, Any],
     patch_symbols(monkeypatch)
     monkeypatch.setattr(
         module,
-        "enforce_backfill_cutoff_on_tables",
+        "enforce_backfill_cutoff_on_bucket_tables",
         lambda **kwargs: captured.update(kwargs) or _empty_cutoff_stats(),
     )
     monkeypatch.setattr(module, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
 
     run_fn(silver_container="silver", gold_container="gold")
 
-    assert captured["symbols"] == {"AAPL"}
+    assert captured["table_paths"] == case["cutoff_paths"]
     assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
 
 
@@ -266,6 +298,11 @@ def test_silver_reconciliation_contract_purges_orphans(case: dict[str, Any], mon
     monkeypatch.setattr(module, "silver_client", fake_silver)
     patch_symbols(monkeypatch)
     monkeypatch.setattr(module, "get_backfill_range", lambda: (None, None))
+    monkeypatch.setattr(
+        module.delta_core,
+        "load_delta",
+        lambda _container, path: _orphan_bucket_frame().copy() if path in case["deleted_paths"] else None,
+    )
 
     orphan_count, deleted_blobs = run_fn(bronze_blob_list=case["bronze_blob_list"])
 
@@ -289,14 +326,14 @@ def test_silver_reconciliation_contract_applies_cutoff_sweep(case: dict[str, Any
     patch_symbols(monkeypatch)
     monkeypatch.setattr(
         module,
-        "enforce_backfill_cutoff_on_tables",
+        "enforce_backfill_cutoff_on_bucket_tables",
         lambda **kwargs: captured.update(kwargs) or _empty_cutoff_stats(),
     )
     monkeypatch.setattr(module, "get_backfill_range", lambda: (pd.Timestamp("2016-01-01"), None))
 
     run_fn(bronze_blob_list=case["bronze_blob_list"])
 
-    assert captured["symbols"] == {"AAPL"}
+    assert captured["table_paths"] == case["cutoff_paths"]
     assert captured["backfill_start"] == pd.Timestamp("2016-01-01")
 
 

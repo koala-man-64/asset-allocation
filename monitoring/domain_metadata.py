@@ -136,7 +136,7 @@ def _layer_container_env(layer: LayerKey) -> str:
 
 
 def _delta_table_path(layer: LayerKey, domain: DomainKey) -> Optional[str]:
-    # Domain metadata now operates on regular per-symbol prefixes.
+    # Domain metadata now operates on regular bucket prefixes.
     return None
 
 

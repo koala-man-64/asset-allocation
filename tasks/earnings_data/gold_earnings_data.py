@@ -13,8 +13,8 @@ from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_rang
 from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
-    enforce_backfill_cutoff_on_tables,
-    purge_orphan_tables,
+    enforce_backfill_cutoff_on_bucket_tables,
+    purge_orphan_rows_from_bucket_tables,
 )
 
 
@@ -283,25 +283,39 @@ def _run_earnings_reconciliation(*, silver_container: str, gold_container: str) 
 
     silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix="earnings-data")
     gold_symbols = collect_delta_market_symbols(client=gold_client, root_prefix="earnings")
-    orphan_symbols, deleted_blobs = purge_orphan_tables(
+    orphan_symbols, purge_stats = purge_orphan_rows_from_bucket_tables(
         upstream_symbols=silver_symbols,
         downstream_symbols=gold_symbols,
-        downstream_path_builder=DataPaths.get_gold_earnings_path,
+        table_paths_for_symbol=lambda symbol: [
+            DataPaths.get_gold_earnings_bucket_path(layer_bucketing.bucket_letter(symbol))
+        ],
+        load_table=lambda path: delta_core.load_delta(gold_container, path),
+        store_table=lambda df, path: delta_core.store_delta(df, gold_container, path, mode="overwrite"),
         delete_prefix=gold_client.delete_prefix,
+        vacuum_table=lambda path: delta_core.vacuum_delta_table(
+            gold_container,
+            path,
+            retention_hours=0,
+            dry_run=False,
+            enforce_retention_duration=False,
+            full=True,
+        ),
     )
+    deleted_blobs = purge_stats.deleted_blobs
     if orphan_symbols:
         mdc.write_line(
             "Gold earnings reconciliation purged orphan symbols: "
-            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs} "
+            f"tables_rewritten={purge_stats.tables_rewritten} rows_deleted={purge_stats.rows_deleted}"
         )
     else:
         mdc.write_line("Gold earnings reconciliation: no orphan symbols detected.")
+    if purge_stats.errors > 0:
+        mdc.write_warning(f"Gold earnings orphan purge encountered errors={purge_stats.errors}.")
 
     backfill_start, _ = get_backfill_range()
-    cutoff_symbols = gold_symbols.difference(set(orphan_symbols))
-    cutoff_stats = enforce_backfill_cutoff_on_tables(
-        symbols=cutoff_symbols,
-        table_paths_for_symbol=lambda symbol: [DataPaths.get_gold_earnings_path(symbol)],
+    cutoff_stats = enforce_backfill_cutoff_on_bucket_tables(
+        table_paths=layer_bucketing.all_gold_bucket_paths(domain="earnings"),
         load_table=lambda path: delta_core.load_delta(gold_container, path),
         store_table=lambda df, path: delta_core.store_delta(df, gold_container, path, mode="overwrite"),
         delete_prefix=gold_client.delete_prefix,

@@ -102,7 +102,7 @@ def _normalize_domain(raw: Optional[str]) -> str:
 
 
 def _build_config(argv: Optional[Sequence[str]]) -> MaterializeConfig:
-    parser = argparse.ArgumentParser(description="Materialize a by-date Gold view from per-symbol Gold tables.")
+    parser = argparse.ArgumentParser(description="Materialize a by-date Gold view from bucketed Gold tables.")
     parser.add_argument("--container", default=None, help="Gold container name (defaults to AZURE_CONTAINER_GOLD).")
     parser.add_argument("--domain", default=None, help="Gold domain key (market|finance|earnings|price-target).")
     parser.add_argument("--target-path", default=None, help="By-date table path (default: market_by_date).")

@@ -243,7 +243,7 @@ async def process_batch_bronze(
     }
     batch_summary.update(_empty_coverage_summary())
     async with semaphore:
-        # Determine stale symbols and per-symbol incremental start windows.
+        # Determine stale symbols and symbol-level incremental start windows.
         stale_symbols: List[str] = []
         symbol_start_dates: Dict[str, date] = {}
         symbol_has_existing_blob: Dict[str, bool] = {}
@@ -384,7 +384,7 @@ async def process_batch_bronze(
                     _delete_price_target_blob_for_cutoff(sym, min_date=symbol_min, summary=batch_summary)
                     continue
                 batch_summary["filtered_missing"] += 1
-                # Incremental no-op: no rows newer than per-symbol watermark.
+                # Incremental no-op: no rows newer than the symbol-level watermark.
                 if bool(symbol_has_existing_blob.get(sym)) or symbol_min > PRICE_TARGET_FULL_HISTORY_START_DATE:
                     list_manager.add_to_whitelist(sym)
                     continue

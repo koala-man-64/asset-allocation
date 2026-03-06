@@ -1184,7 +1184,7 @@ async def main_async() -> int:
             )
         except Exception as exc:
             mdc.write_warning(
-                f"Massive unified snapshot prefetch failed; falling back to per-symbol daily fetches. ({exc})"
+                f"Massive unified snapshot prefetch failed; falling back to symbol-level daily fetches. ({exc})"
             )
             snapshot_rows_by_symbol = {}
 

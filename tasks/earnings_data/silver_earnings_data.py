@@ -35,8 +35,8 @@ from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
     collect_bronze_earnings_symbols_from_blob_infos,
     collect_delta_market_symbols,
-    enforce_backfill_cutoff_on_tables,
-    purge_orphan_tables,
+    enforce_backfill_cutoff_on_bucket_tables,
+    purge_orphan_rows_from_bucket_tables,
 )
 
 # Initialize Clients
@@ -49,6 +49,27 @@ _ALPHA26_EARNINGS_MIN_COLUMNS = [
     "eps_estimate",
     "surprise",
 ]
+
+
+def _split_earnings_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if df_bucket is None or df_bucket.empty:
+        empty = pd.DataFrame()
+        return empty, empty
+
+    out = df_bucket.copy()
+    if "Date" in out.columns:
+        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    elif "date" in out.columns:
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out = out.rename(columns={"date": "Date"})
+    if "Symbol" not in out.columns and "symbol" in out.columns:
+        out = out.rename(columns={"symbol": "Symbol"})
+    if "Symbol" not in out.columns:
+        out["Symbol"] = pd.NA
+    out["Symbol"] = out["Symbol"].astype("string").str.upper()
+    symbol = str(ticker or "").strip().upper()
+    symbol_mask = out["Symbol"] == symbol
+    return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
 
 
 def process_file(blob_name: str) -> bool:
@@ -69,7 +90,8 @@ def _process_symbol_frame(
     persist: bool = True,
     alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
-    cloud_path = DataPaths.get_earnings_path(ticker)
+    bucket = layer_bucketing.bucket_letter(ticker)
+    cloud_path = DataPaths.get_silver_earnings_bucket_path(bucket)
     out = df_new.copy()
     out = out.drop(columns=["source_hash", "ingested_at", "symbol"], errors="ignore")
     out = out.drop(columns=[col for col in out.columns if "Unnamed" in col], errors="ignore")
@@ -109,11 +131,14 @@ def _process_symbol_frame(
         latest_date = out["Date"].max()
         out = out[out["Date"] == latest_date].copy()
 
-    df_history = (
+    existing_bucket = (
         delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
-        if include_history
+        if (persist or include_history)
         else None
     )
+    df_history, df_other_symbols = _split_earnings_bucket_rows(existing_bucket, ticker=ticker)
+    if not include_history:
+        df_history = pd.DataFrame()
     if df_history is None or df_history.empty:
         df_merged = out
     else:
@@ -139,14 +164,29 @@ def _process_symbol_frame(
         if not persist:
             return "ok"
         if silver_client is not None:
-            deleted = silver_client.delete_prefix(cloud_path)
-            mdc.write_line(
-                f"Silver earnings backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
-                f"deleted {deleted} blob(s) under {cloud_path}."
-            )
+            df_remaining = normalize_columns_to_snake_case(df_other_symbols)
+            if "symbol" in df_remaining.columns:
+                df_remaining["symbol"] = df_remaining["symbol"].astype("string").str.upper()
+            if df_remaining.empty:
+                deleted = silver_client.delete_prefix(cloud_path)
+                mdc.write_line(
+                    f"Silver earnings backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                    f"deleted {deleted} blob(s) under {cloud_path}."
+                )
+            else:
+                delta_core.store_delta(df_remaining.reset_index(drop=True), cfg.AZURE_CONTAINER_SILVER, cloud_path)
+                delta_core.vacuum_delta_table(
+                    cfg.AZURE_CONTAINER_SILVER,
+                    cloud_path,
+                    retention_hours=0,
+                    dry_run=False,
+                    enforce_retention_duration=False,
+                    full=True,
+                )
+                mdc.write_line(f"Silver earnings backfill purge for {ticker}: removed symbol rows from {cloud_path}.")
             return "ok"
         mdc.write_warning(
-            f"Silver earnings backfill purge for {ticker} could not delete {cloud_path}: storage client unavailable."
+            f"Silver earnings backfill purge for {ticker} could not update {cloud_path}: storage client unavailable."
         )
         return "failed"
 
@@ -162,10 +202,13 @@ def _process_symbol_frame(
         if not persist:
             if alpha26_bucket_frames is None:
                 raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
-            bucket = layer_bucketing.bucket_letter(ticker)
             alpha26_bucket_frames.setdefault(bucket, []).append(df_merged.copy())
         else:
-            delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, cloud_path)
+            df_other_symbols = normalize_columns_to_snake_case(df_other_symbols)
+            if "symbol" in df_other_symbols.columns:
+                df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
+            df_bucket_to_store = pd.concat([df_other_symbols, df_merged], ignore_index=True).reset_index(drop=True)
+            delta_core.store_delta(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, cloud_path)
             if backfill_start is not None:
                 delta_core.vacuum_delta_table(
                     cfg.AZURE_CONTAINER_SILVER,
@@ -184,7 +227,7 @@ def _process_symbol_frame(
         return "failed"
 
     if persist:
-        mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+        mdc.write_line(f"Updated Silver Delta bucket {cloud_path} for {ticker} (rows={len(df_merged)})")
     return "ok"
 
 
@@ -335,25 +378,39 @@ def _run_earnings_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, 
     bronze_symbols = collect_bronze_earnings_symbols_from_blob_infos(bronze_blob_list)
     earnings_prefix = str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/")
     silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix=earnings_prefix)
-    orphan_symbols, deleted_blobs = purge_orphan_tables(
+    orphan_symbols, purge_stats = purge_orphan_rows_from_bucket_tables(
         upstream_symbols=bronze_symbols,
         downstream_symbols=silver_symbols,
-        downstream_path_builder=DataPaths.get_earnings_path,
+        table_paths_for_symbol=lambda symbol: [
+            DataPaths.get_silver_earnings_bucket_path(layer_bucketing.bucket_letter(symbol))
+        ],
+        load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
+        store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
         delete_prefix=silver_client.delete_prefix,
+        vacuum_table=lambda path: delta_core.vacuum_delta_table(
+            cfg.AZURE_CONTAINER_SILVER,
+            path,
+            retention_hours=0,
+            dry_run=False,
+            enforce_retention_duration=False,
+            full=True,
+        ),
     )
+    deleted_blobs = purge_stats.deleted_blobs
     if orphan_symbols:
         mdc.write_line(
             "Silver earnings reconciliation purged orphan symbols: "
-            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs} "
+            f"tables_rewritten={purge_stats.tables_rewritten} rows_deleted={purge_stats.rows_deleted}"
         )
     else:
         mdc.write_line("Silver earnings reconciliation: no orphan symbols detected.")
+    if purge_stats.errors > 0:
+        mdc.write_warning(f"Silver earnings orphan purge encountered errors={purge_stats.errors}.")
 
     backfill_start, _ = get_backfill_range()
-    cutoff_symbols = silver_symbols.difference(set(orphan_symbols))
-    cutoff_stats = enforce_backfill_cutoff_on_tables(
-        symbols=cutoff_symbols,
-        table_paths_for_symbol=lambda symbol: [DataPaths.get_earnings_path(symbol)],
+    cutoff_stats = enforce_backfill_cutoff_on_bucket_tables(
+        table_paths=layer_bucketing.all_silver_bucket_paths(domain="earnings"),
         load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
         store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
         delete_prefix=silver_client.delete_prefix,

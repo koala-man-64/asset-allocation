@@ -26,16 +26,8 @@ class DataPaths:
         return str(folder or "").strip().lower().replace(" ", "_")
 
     @staticmethod
-    def get_market_data_path(ticker: str) -> str:
-        return f"market-data/{ticker.replace('.', '-')}"
-
-    @staticmethod
     def get_silver_market_bucket_path(bucket: str) -> str:
         return f"market-data/buckets/{str(bucket).strip().upper()}"
-
-    @staticmethod
-    def get_gold_features_path(ticker: str) -> str:
-        return f"market/{ticker}"
 
     @staticmethod
     def get_gold_market_bucket_path(bucket: str) -> str:
@@ -51,17 +43,8 @@ class DataPaths:
         return f"technical-analysis/{ticker}"
 
     @staticmethod
-    def get_gold_earnings_path(ticker: str) -> str:
-
-        return f"earnings/{ticker}"
-
-    @staticmethod
     def get_gold_earnings_bucket_path(bucket: str) -> str:
         return f"earnings/buckets/{str(bucket).strip().upper()}"
-
-    @staticmethod
-    def get_gold_finance_path(ticker: str) -> str:
-        return f"finance/{ticker}"
 
     @staticmethod
     def get_gold_finance_bucket_path(folder: str, bucket: str) -> str:
@@ -85,40 +68,18 @@ class DataPaths:
         return f"finance/buckets/{str(bucket).strip().upper()}"
 
     @staticmethod
-    def get_gold_price_targets_path(ticker: str) -> str:
-        return f"targets/{ticker}"
-
-    @staticmethod
     def get_gold_price_targets_bucket_path(bucket: str) -> str:
         return f"targets/buckets/{str(bucket).strip().upper()}"
-
-    @staticmethod
-    def get_price_target_path(ticker: str) -> str:
-        return f"price-target-data/{ticker}"
 
     @staticmethod
     def get_silver_price_target_bucket_path(bucket: str) -> str:
         return f"price-target-data/buckets/{str(bucket).strip().upper()}"
 
     @staticmethod
-    def get_earnings_path(ticker: str) -> str:
-        from core import config as cfg
-        prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")
-        return f"{prefix}/{ticker}"
-
-    @staticmethod
     def get_silver_earnings_bucket_path(bucket: str) -> str:
         from core import config as cfg
         prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")
         return f"{prefix}/buckets/{str(bucket).strip().upper()}"
-
-    @staticmethod
-    def get_finance_path(folder: str, ticker: str, file_suffix: str) -> str:
-        """
-        folder: e.g. 'Balance Sheet' -> 'balance_sheet'
-        """
-        clean_folder = DataPaths._normalize_finance_folder(folder)
-        return f"finance-data/{clean_folder}/{ticker}_{file_suffix}"
 
     @staticmethod
     def get_silver_finance_bucket_path(folder: str, bucket: str) -> str:

@@ -37,7 +37,7 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
 
     monkeypatch.setattr(delta_core, "write_deltalake", fake_write_deltalake)
 
-    def _fake_enforce_backfill_cutoff_on_tables(**kwargs):
+    def _fake_enforce_backfill_cutoff_on_bucket_tables(**kwargs):
         dirty = pd.DataFrame(
             {
                 "date": [pd.Timestamp("2024-01-10")],
@@ -47,14 +47,18 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
             }
         )
         dirty.index = pd.Index([11])
-        kwargs["store_table"](dirty, DataPaths.get_gold_features_path("AAPL"))
+        kwargs["store_table"](dirty, DataPaths.get_gold_market_bucket_path("A"))
         return type(
             "_Stats",
             (),
             {"tables_scanned": 1, "tables_rewritten": 1, "deleted_blobs": 0, "rows_dropped": 1, "errors": 0},
         )()
 
-    monkeypatch.setattr(gold, "enforce_backfill_cutoff_on_tables", _fake_enforce_backfill_cutoff_on_tables)
+    monkeypatch.setattr(
+        gold,
+        "enforce_backfill_cutoff_on_bucket_tables",
+        _fake_enforce_backfill_cutoff_on_bucket_tables,
+    )
 
     gold._run_market_reconciliation(silver_container="silver", gold_container="gold")
 

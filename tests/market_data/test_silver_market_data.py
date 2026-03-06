@@ -46,7 +46,7 @@ def test_silver_processing(unique_ticker):
         path = args[2]
         
         assert container == cfg.AZURE_CONTAINER_SILVER
-        assert path == DataPaths.get_market_data_path(symbol)
+        assert path == DataPaths.get_silver_market_bucket_path(symbol[0])
         assert len(df_saved) == 1
         assert df_saved.iloc[0]["close"] == 102
 
@@ -263,7 +263,7 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
 
     monkeypatch.setattr(delta_core, "write_deltalake", fake_write_deltalake)
 
-    def _fake_enforce_backfill_cutoff_on_tables(**kwargs):
+    def _fake_enforce_backfill_cutoff_on_bucket_tables(**kwargs):
         dirty = pd.DataFrame(
             {
                 "date": [pd.Timestamp("2024-01-10")],
@@ -273,14 +273,18 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
             }
         )
         dirty.index = pd.Index([12])
-        kwargs["store_table"](dirty, DataPaths.get_market_data_path("AAPL"))
+        kwargs["store_table"](dirty, DataPaths.get_silver_market_bucket_path("A"))
         return type(
             "_Stats",
             (),
             {"tables_scanned": 1, "tables_rewritten": 1, "deleted_blobs": 0, "rows_dropped": 1, "errors": 0},
         )()
 
-    monkeypatch.setattr(silver, "enforce_backfill_cutoff_on_tables", _fake_enforce_backfill_cutoff_on_tables)
+    monkeypatch.setattr(
+        silver,
+        "enforce_backfill_cutoff_on_bucket_tables",
+        _fake_enforce_backfill_cutoff_on_bucket_tables,
+    )
 
     silver._run_market_reconciliation(bronze_blob_list=[{"name": "market-data/AAPL.csv"}])
 

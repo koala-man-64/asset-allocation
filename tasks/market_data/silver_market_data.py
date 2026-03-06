@@ -29,8 +29,8 @@ from tasks.common.silver_precision import apply_precision_policy
 from tasks.common.market_reconciliation import (
     collect_bronze_market_symbols_from_blob_infos,
     collect_delta_market_symbols,
-    enforce_backfill_cutoff_on_tables,
-    purge_orphan_market_tables,
+    enforce_backfill_cutoff_on_bucket_tables,
+    purge_orphan_rows_from_bucket_tables,
 )
 
 # Suppress warnings
@@ -127,6 +127,24 @@ def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
     if bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
         return None
     return bucket
+
+
+def _split_market_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if df_bucket is None or df_bucket.empty:
+        empty = pd.DataFrame()
+        return empty, empty
+
+    out = _rename_market_columns(df_bucket)
+    out = _drop_removed_market_columns(out)
+    out = _ensure_numeric_market_columns(out)
+    if "Date" in out.columns:
+        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    if "Symbol" not in out.columns:
+        out["Symbol"] = pd.NA
+    out["Symbol"] = out["Symbol"].astype("string").str.upper()
+    symbol = str(ticker or "").strip().upper()
+    symbol_mask = out["Symbol"] == symbol
+    return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
 
 
 def _load_existing_silver_symbol_to_bucket_map() -> dict[str, str]:
@@ -363,7 +381,8 @@ def _process_symbol_frame(
     persist: bool = True,
     alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
-    silver_path = DataPaths.get_market_data_path(ticker.replace(".", "-"))
+    bucket = layer_bucketing.bucket_letter(ticker)
+    silver_bucket_path = DataPaths.get_silver_market_bucket_path(bucket)
     out = df_new.copy()
     out = out.drop(columns=["source_hash", "ingested_at"], errors="ignore")
 
@@ -397,7 +416,7 @@ def _process_symbol_frame(
         latest_only = get_latest_only_flag("MARKET", default=True)
 
     if not include_history:
-        # Alpha26 rebuild mode writes full per-symbol slices into bucket tables.
+        # Alpha26 rebuild mode writes full symbol slices into bucket tables.
         latest_only = False
 
     if latest_only and "Date" in out.columns and not out.empty:
@@ -405,20 +424,20 @@ def _process_symbol_frame(
         out = out[out["Date"] == latest_date].copy()
 
     out["Symbol"] = ticker
-    df_history = (
-        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, silver_path)
-        if include_history
+    existing_bucket = (
+        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, silver_bucket_path)
+        if (persist or include_history)
         else None
     )
+    df_history, df_other_symbols = _split_market_bucket_rows(existing_bucket, ticker=ticker)
+    if not include_history:
+        df_history = pd.DataFrame()
 
     if df_history is None or df_history.empty:
         df_merged = out
     else:
-        df_history = _rename_market_columns(df_history)
-        df_history = _drop_removed_market_columns(df_history)
-        df_history = _ensure_numeric_market_columns(df_history)
         if "Date" in df_history.columns:
-            df_history["Date"] = pd.to_datetime(df_history["Date"])
+            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
         df_merged = pd.concat([df_history, out], ignore_index=True)
 
     df_merged = df_merged.sort_values(by=["Date", "Symbol", "Volume"], ascending=[True, True, False])
@@ -450,14 +469,32 @@ def _process_symbol_frame(
         if not persist:
             return "ok"
         if silver_client is not None:
-            deleted = silver_client.delete_prefix(silver_path)
-            mdc.write_line(
-                f"Silver market backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
-                f"deleted {deleted} blob(s) under {silver_path}."
-            )
+            df_remaining = normalize_columns_to_snake_case(df_other_symbols)
+            df_remaining = _repair_symbol_column_aliases(df_remaining, ticker=ticker)
+            df_remaining = _drop_index_artifact_columns(df_remaining)
+            df_remaining = _coerce_alpha26_market_bucket_frame(df_remaining)
+            if df_remaining.empty:
+                deleted = silver_client.delete_prefix(silver_bucket_path)
+                mdc.write_line(
+                    f"Silver market backfill purge for {ticker}: no rows >= {backfill_start.date().isoformat()}, "
+                    f"deleted {deleted} blob(s) under {silver_bucket_path}."
+                )
+            else:
+                delta_core.store_delta(df_remaining, cfg.AZURE_CONTAINER_SILVER, silver_bucket_path, mode="overwrite")
+                delta_core.vacuum_delta_table(
+                    cfg.AZURE_CONTAINER_SILVER,
+                    silver_bucket_path,
+                    retention_hours=0,
+                    dry_run=False,
+                    enforce_retention_duration=False,
+                    full=True,
+                )
+                mdc.write_line(
+                    f"Silver market backfill purge for {ticker}: removed symbol rows from {silver_bucket_path}."
+                )
             return "ok"
         mdc.write_warning(
-            f"Silver market backfill purge for {ticker} could not delete {silver_path}: storage client unavailable."
+            f"Silver market backfill purge for {ticker} could not update {silver_bucket_path}: storage client unavailable."
         )
         return "failed"
 
@@ -475,14 +512,18 @@ def _process_symbol_frame(
         if not persist:
             if alpha26_bucket_frames is None:
                 raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
-            bucket = layer_bucketing.bucket_letter(ticker)
             alpha26_bucket_frames.setdefault(bucket, []).append(df_merged.copy())
         else:
-            delta_core.store_delta(df_merged, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
+            df_other_symbols = normalize_columns_to_snake_case(df_other_symbols)
+            df_other_symbols = _repair_symbol_column_aliases(df_other_symbols, ticker=ticker)
+            df_other_symbols = _drop_index_artifact_columns(df_other_symbols)
+            df_bucket_to_store = pd.concat([df_other_symbols, df_merged], ignore_index=True)
+            df_bucket_to_store = _coerce_alpha26_market_bucket_frame(df_bucket_to_store)
+            delta_core.store_delta(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, silver_bucket_path, mode="overwrite")
             if backfill_start is not None:
                 delta_core.vacuum_delta_table(
                     cfg.AZURE_CONTAINER_SILVER,
-                    silver_path,
+                    silver_bucket_path,
                     retention_hours=0,
                     dry_run=False,
                     enforce_retention_duration=False,
@@ -499,7 +540,7 @@ def _process_symbol_frame(
         return "failed"
 
     if persist:
-        mdc.write_line(f"Updated Silver Delta for {ticker} (Total rows: {len(df_merged)})")
+        mdc.write_line(f"Updated Silver Delta bucket {silver_bucket_path} for {ticker} (rows={len(df_merged)})")
     return "ok"
 
 
@@ -743,25 +784,39 @@ def _run_market_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, in
 
     bronze_symbols = collect_bronze_market_symbols_from_blob_infos(bronze_blob_list)
     silver_symbols = collect_delta_market_symbols(client=silver_client, root_prefix="market-data")
-    orphan_symbols, deleted_blobs = purge_orphan_market_tables(
+    orphan_symbols, purge_stats = purge_orphan_rows_from_bucket_tables(
         upstream_symbols=bronze_symbols,
         downstream_symbols=silver_symbols,
-        downstream_path_builder=DataPaths.get_market_data_path,
+        table_paths_for_symbol=lambda symbol: [
+            DataPaths.get_silver_market_bucket_path(layer_bucketing.bucket_letter(symbol))
+        ],
+        load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
+        store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
         delete_prefix=silver_client.delete_prefix,
+        vacuum_table=lambda path: delta_core.vacuum_delta_table(
+            cfg.AZURE_CONTAINER_SILVER,
+            path,
+            retention_hours=0,
+            dry_run=False,
+            enforce_retention_duration=False,
+            full=True,
+        ),
     )
+    deleted_blobs = purge_stats.deleted_blobs
     if orphan_symbols:
         mdc.write_line(
             "Silver market reconciliation purged orphan symbols: "
-            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs}"
+            f"count={len(orphan_symbols)} deleted_blobs={deleted_blobs} "
+            f"tables_rewritten={purge_stats.tables_rewritten} rows_deleted={purge_stats.rows_deleted}"
         )
     else:
         mdc.write_line("Silver market reconciliation: no orphan symbols detected.")
+    if purge_stats.errors > 0:
+        mdc.write_warning(f"Silver market orphan purge encountered errors={purge_stats.errors}.")
 
     backfill_start, _ = get_backfill_range()
-    cutoff_symbols = silver_symbols.difference(set(orphan_symbols))
-    cutoff_stats = enforce_backfill_cutoff_on_tables(
-        symbols=cutoff_symbols,
-        table_paths_for_symbol=lambda symbol: [DataPaths.get_market_data_path(symbol)],
+    cutoff_stats = enforce_backfill_cutoff_on_bucket_tables(
+        table_paths=layer_bucketing.all_silver_bucket_paths(domain="market"),
         load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
         store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
         delete_prefix=silver_client.delete_prefix,
