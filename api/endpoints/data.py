@@ -602,6 +602,7 @@ def get_adls_file_preview(
     layer: str = Query(default="gold", description="Storage layer: bronze|silver|gold|platinum"),
     path: str = Query(..., description="Blob path to preview."),
     max_bytes: int = Query(default=262144, ge=1024, le=1048576, description="Max bytes returned in preview."),
+    max_delta_files: int = Query(default=0, ge=0, le=99, description="Max Delta log files processed when deriving a Delta preview."),
 ) -> Dict[str, Any]:
     """Return plaintext preview for an ADLS blob when content is text-like."""
     validate_auth(request)
@@ -610,6 +611,7 @@ def get_adls_file_preview(
             layer=layer,
             path=path,
             max_bytes=max_bytes,
+            max_delta_files=max_delta_files,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

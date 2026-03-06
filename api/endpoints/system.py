@@ -3481,20 +3481,6 @@ def _remove_symbol_from_layer_storage(
             (
                 {
                     "layer": layer,
-                    "domain": "finance",
-                    "container": container,
-                    "path": DataPaths.get_gold_finance_bucket_path(bucket),
-                    "operation": "row_delete",
-                },
-                lambda path=DataPaths.get_gold_finance_bucket_path(bucket): _remove_symbol_from_delta_bucket(
-                    container=container,
-                    path=path,
-                    symbol=normalized_symbol,
-                ),
-            ),
-            (
-                {
-                    "layer": layer,
                     "domain": "earnings",
                     "container": container,
                     "path": DataPaths.get_gold_earnings_bucket_path(bucket),
@@ -3522,6 +3508,24 @@ def _remove_symbol_from_layer_storage(
             ),
         ]
     )
+    for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation"):
+        finance_bucket_path = DataPaths.get_gold_finance_bucket_path(sub_domain, bucket)
+        alpha26_tasks.append(
+            (
+                {
+                    "layer": layer,
+                    "domain": "finance",
+                    "container": container,
+                    "path": finance_bucket_path,
+                    "operation": "row_delete",
+                },
+                lambda path=finance_bucket_path: _remove_symbol_from_delta_bucket(
+                    container=container,
+                    path=path,
+                    symbol=normalized_symbol,
+                ),
+            )
+        )
     worker_count = _resolve_purge_symbol_target_workers(len(alpha26_tasks))
     return _run_symbol_cleanup_tasks(
         alpha26_tasks,

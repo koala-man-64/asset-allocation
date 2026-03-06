@@ -55,7 +55,7 @@ import {
 } from '@/app/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { DomainListViewerSheet, type DomainListViewerTarget } from './DomainListViewerSheet';
-import { JobKillSwitchInline, type ManagedContainerJob } from './JobKillSwitchPanel';
+import type { ManagedContainerJob } from './JobKillSwitchPanel';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import {
@@ -396,6 +396,11 @@ export function DomainLayerComparisonPanel({
     for (const key of LAYER_ORDER) {
       const layer = layersByKey.get(key);
       if (!layer) continue;
+      const hasDomains = (layer.domains || []).some((domain) => {
+        const domainName = String(domain?.name || '').trim();
+        return Boolean(normalizeDomainKey(domainName));
+      });
+      if (!hasDomains) continue;
       columns.push({ key, label: String(layer.name || key).trim() || key });
     }
     return columns;
@@ -550,7 +555,7 @@ export function DomainLayerComparisonPanel({
     metadataSnapshotQuery.isFetching ||
     refreshingCells.size > 0;
   const isPanelActionBusy =
-    isRefreshingPanelCounts || isResettingAllLists || isResettingLists || isResettingCheckpoints;
+    isAnyRefreshInProgress || isResettingAllLists || isResettingLists || isResettingCheckpoints;
 
   const filteredDomainRows = useMemo(() => {
     return domainRows.filter((row) => Boolean(domainsByLayer.get(row.key)));
@@ -978,6 +983,24 @@ export function DomainLayerComparisonPanel({
     snapshotQueryKey
   ]);
 
+  const refreshPanelCoverage = useCallback(async () => {
+    const statusRefreshPromise = onRefresh
+      ? Promise.resolve(onRefresh())
+      : queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
+
+    if (queryPairs.length > 0) {
+      const [, statusResult] = await Promise.allSettled([refreshAllPanelCounts(), statusRefreshPromise]);
+      if (statusResult.status === 'rejected') {
+        console.error('[DomainLayerComparisonPanel] status refresh failed', {
+          error: formatSystemStatusText(statusResult.reason)
+        });
+      }
+      return;
+    }
+
+    await statusRefreshPromise;
+  }, [onRefresh, queryClient, queryPairs.length, refreshAllPanelCounts]);
+
   const confirmResetAllPanelLists = useCallback(async () => {
     if (
       queryPairs.length === 0 ||
@@ -1255,17 +1278,14 @@ export function DomainLayerComparisonPanel({
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
-            {managedContainerJobs.length > 0 ? (
-              <JobKillSwitchInline jobs={managedContainerJobs} />
-            ) : null}
-
-            {onRefresh ? (
+            {onRefresh || queryPairs.length > 0 ? (
               <Button
                 variant="outline"
                 size="sm"
                 className="h-9 px-3.5 text-[11px]"
-                onClick={onRefresh}
-                disabled={!onRefresh || isAnyRefreshInProgress}
+                aria-label="Refresh domain layer coverage"
+                onClick={() => void refreshPanelCoverage()}
+                disabled={isPanelActionBusy}
               >
                 {isAnyRefreshInProgress ? (
                   <span className="inline-flex items-center gap-2">
@@ -1275,7 +1295,7 @@ export function DomainLayerComparisonPanel({
                 ) : (
                   <>
                     <RefreshCw className="h-4 w-4" />
-                    Refresh health
+                    Refresh
                   </>
                 )}
               </Button>
@@ -1283,27 +1303,6 @@ export function DomainLayerComparisonPanel({
 
             {queryPairs.length > 0 ? (
               <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-9 px-3.5 text-[11px]"
-                  onClick={() => void refreshAllPanelCounts()}
-                  disabled={isPanelActionBusy}
-                >
-                  {isRefreshingPanelCounts ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Refreshing counts...
-                    </span>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4" />
-                      Refresh counts
-                    </>
-                  )}
-                </Button>
-
                 <Button
                   type="button"
                   variant="destructive"

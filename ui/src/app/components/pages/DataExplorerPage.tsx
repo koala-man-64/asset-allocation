@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Label } from '@/app/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { DataService } from '@/services/DataService';
 import type { AdlsFilePreviewResponse, AdlsHierarchyEntry } from '@/services/apiService';
-import { Button } from '@/app/components/ui/button';
-import { ChevronDown, ChevronRight, Database, File, FileText, Folder, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Database, File, FileText, Folder } from 'lucide-react';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
+import { formatPreviewContent } from '@/utils/formatPreviewContent';
 
 const TEXT_FILE_EXTENSIONS = new Set([
   'txt',
@@ -63,6 +65,75 @@ const isLikelyTextFile = (name: string): boolean => {
 };
 
 type LayerKey = 'bronze' | 'silver' | 'gold' | 'platinum';
+type DomainKey = 'market' | 'finance' | 'earnings' | 'price-target';
+
+const CONTAINER_OPTIONS: Array<{ value: LayerKey; label: string }> = [
+  { value: 'bronze', label: 'Bronze' },
+  { value: 'silver', label: 'Silver' },
+  { value: 'gold', label: 'Gold' },
+  { value: 'platinum', label: 'Platinum' }
+];
+
+const DOMAIN_OPTIONS: Array<{ value: DomainKey; label: string }> = [
+  { value: 'market', label: 'Market' },
+  { value: 'finance', label: 'Finance' },
+  { value: 'earnings', label: 'Earnings' },
+  { value: 'price-target', label: 'Targets' }
+];
+
+const EXPLORER_ROOT_PATHS: Record<LayerKey, Record<DomainKey, string>> = {
+  bronze: {
+    market: 'market-data/',
+    finance: 'finance-data/',
+    earnings: 'earnings-data/',
+    'price-target': 'price-target-data/'
+  },
+  silver: {
+    market: 'market-data/buckets/',
+    finance: 'finance-data/',
+    earnings: 'earnings-data/buckets/',
+    'price-target': 'price-target-data/buckets/'
+  },
+  gold: {
+    market: 'market/buckets/',
+    finance: 'finance/',
+    earnings: 'earnings/buckets/',
+    'price-target': 'targets/buckets/'
+  },
+  platinum: {
+    market: 'market/buckets/',
+    finance: 'finance/',
+    earnings: 'earnings/buckets/',
+    'price-target': 'targets/buckets/'
+  }
+};
+
+const DELTA_PREVIEW_FILE_OPTIONS = [
+  { value: '0', label: '0' },
+  ...Array.from({ length: 25 }, (_, index) => {
+    const value = String(index + 1).padStart(2, '0');
+    return { value, label: value };
+  })
+];
+
+const formatTwoDigitCount = (value?: number | null): string => {
+  const normalized = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return String(Math.max(0, Math.floor(normalized))).padStart(2, '0');
+};
+
+const formatPreviewTableCell = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+};
 
 type TreeMeta = {
   container: string;
@@ -72,10 +143,11 @@ type TreeMeta = {
 
 export const DataExplorerPage: React.FC = () => {
   const [layer, setLayer] = useState<LayerKey>('gold');
-  const [pathInput, setPathInput] = useState<string>('');
-  const [rootPath, setRootPath] = useState<string>('');
-  const [scanLimit, setScanLimit] = useState<number>(5000);
-  const [previewMaxBytes, setPreviewMaxBytes] = useState<number>(262144);
+  const [domain, setDomain] = useState<DomainKey>('market');
+  const [maxDeltaFiles, setMaxDeltaFiles] = useState<string>('0');
+  const rootPath = useMemo(() => normalizeFolderPath(EXPLORER_ROOT_PATHS[layer][domain]), [domain, layer]);
+  const scanLimit = 5000;
+  const previewMaxBytes = 262144;
 
   const [treeByPath, setTreeByPath] = useState<Record<string, AdlsHierarchyEntry[]>>({});
   const [treeMetaByPath, setTreeMetaByPath] = useState<Record<string, TreeMeta>>({});
@@ -88,9 +160,6 @@ export const DataExplorerPage: React.FC = () => {
 
   const [error, setError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-
-  const controlClass =
-    'h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/40';
 
   const loadFolder = useCallback(
     async (folderPath: string, force: boolean = false) => {
@@ -124,7 +193,7 @@ export const DataExplorerPage: React.FC = () => {
   );
 
   const loadPreview = useCallback(
-    async (filePath: string) => {
+    async (filePath: string, options?: { maxDeltaFiles?: number }) => {
       const normalized = normalizeFilePath(filePath);
       if (!normalized) {
         return;
@@ -139,7 +208,8 @@ export const DataExplorerPage: React.FC = () => {
         const result = await DataService.getAdlsFilePreview({
           layer,
           path: normalized,
-          maxBytes: previewMaxBytes
+          maxBytes: previewMaxBytes,
+          maxDeltaFiles: options?.maxDeltaFiles ?? Number(maxDeltaFiles)
         });
         setPreview(result);
       } catch (err) {
@@ -148,7 +218,7 @@ export const DataExplorerPage: React.FC = () => {
         setPreviewLoading(false);
       }
     },
-    [layer, previewMaxBytes]
+    [layer, maxDeltaFiles, previewMaxBytes]
   );
 
   useEffect(() => {
@@ -171,26 +241,6 @@ export const DataExplorerPage: React.FC = () => {
     setExpandedFolders((prev) => ({ ...prev, [normalized]: shouldExpand }));
     if (shouldExpand && !treeByPath[normalized]) {
       void loadFolder(normalized);
-    }
-  };
-
-  const applyPathFilter = () => {
-    setRootPath(normalizeFolderPath(pathInput));
-  };
-
-  const refreshTree = () => {
-    setTreeByPath({});
-    setTreeMetaByPath({});
-    setExpandedFolders({});
-    setSelectedFilePath(null);
-    setPreview(null);
-    setPreviewError(null);
-    void loadFolder(rootPath, true);
-  };
-
-  const handlePathInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      applyPathFilter();
     }
   };
 
@@ -280,83 +330,92 @@ export const DataExplorerPage: React.FC = () => {
     return selectedFilePath.split('/').pop() || selectedFilePath;
   }, [selectedFilePath]);
 
+  const formattedPreviewContent = useMemo(() => {
+    return formatPreviewContent(preview?.contentPreview, {
+      path: selectedFilePath,
+      contentType: preview?.contentType
+    });
+  }, [preview?.contentPreview, preview?.contentType, selectedFilePath]);
+
+  const isTablePreview = preview?.previewMode === 'delta-table' || preview?.previewMode === 'parquet-table';
+  const previewTableColumns = preview?.tableColumns ?? [];
+  const previewTableRows = preview?.tableRows ?? [];
+  const previewRowCount = preview?.tableRowCount ?? previewTableRows.length;
+  const previewRowLimit = preview?.tablePreviewLimit ?? previewTableRows.length;
+  const displayedPreviewRows = Math.min(previewRowCount, previewRowLimit);
+
   return (
     <div className="page-shell">
-      <div className="page-header">
-        <p className="page-kicker">Live Operations</p>
-        <h1 className="page-title flex items-center gap-2">
-          <Database className="h-5 w-5 text-mcm-teal" />
-          Data Explorer
-        </h1>
-        <p className="page-subtitle">
-          Browse ADLS folders/files and preview plaintext blobs in a dedicated side panel.
-        </p>
-      </div>
+      <div className="page-header-row items-start gap-6">
+        <div className="page-header min-w-0 flex-1">
+          <p className="page-kicker">Live Operations</p>
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-end md:gap-4">
+            <h1 className="page-title flex items-center gap-2">
+              <Database className="h-5 w-5 text-mcm-teal" />
+              Data Explorer
+            </h1>
+            <p className="page-subtitle max-w-none md:pb-0.5">
+              Browse ADLS folders/files and preview plaintext blobs in a dedicated side panel.
+            </p>
+          </div>
+        </div>
 
-      <div className="mcm-panel p-4 sm:p-5">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[160px_1fr_150px_170px_auto_auto] lg:items-end">
+        <div className="grid w-full max-w-[40rem] gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem]">
           <div className="space-y-2">
-            <label htmlFor="adls-layer">Layer</label>
-            <select
-              id="adls-layer"
-              value={layer}
-              onChange={(event) => setLayer(event.target.value as LayerKey)}
-              className={controlClass}
+            <Label htmlFor="data-explorer-container">Container</Label>
+            <Select value={layer} onValueChange={(value) => setLayer(value as LayerKey)}>
+              <SelectTrigger id="data-explorer-container" className="font-mono uppercase">
+                <SelectValue placeholder="Select container" />
+              </SelectTrigger>
+              <SelectContent>
+                {CONTAINER_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="data-explorer-domain">Domain</Label>
+            <Select value={domain} onValueChange={(value) => setDomain(value as DomainKey)}>
+              <SelectTrigger id="data-explorer-domain" className="font-mono uppercase">
+                <SelectValue placeholder="Select domain" />
+              </SelectTrigger>
+              <SelectContent>
+                {DOMAIN_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="data-explorer-delta-files">Delta Files</Label>
+            <Select
+              value={maxDeltaFiles}
+              onValueChange={(value) => {
+                setMaxDeltaFiles(value);
+                if (selectedFilePath) {
+                  void loadPreview(selectedFilePath, { maxDeltaFiles: Number(value) });
+                }
+              }}
             >
-              <option value="bronze">BRONZE</option>
-              <option value="silver">SILVER</option>
-              <option value="gold">GOLD</option>
-              <option value="platinum">PLATINUM</option>
-            </select>
+              <SelectTrigger id="data-explorer-delta-files" className="font-mono">
+                <SelectValue placeholder="0" />
+              </SelectTrigger>
+              <SelectContent>
+                {DELTA_PREVIEW_FILE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-
-          <div className="space-y-2">
-            <label htmlFor="adls-root-path">Root Path (optional)</label>
-            <input
-              id="adls-root-path"
-              type="text"
-              value={pathInput}
-              onChange={(event) => setPathInput(event.target.value)}
-              onKeyDown={handlePathInputKeyDown}
-              className={controlClass}
-              placeholder="market/buckets/"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="adls-scan-limit">Scan Limit</label>
-            <input
-              id="adls-scan-limit"
-              type="number"
-              min={1}
-              max={100000}
-              value={scanLimit}
-              onChange={(event) => setScanLimit(Math.max(1, Number(event.target.value) || 1))}
-              className={controlClass}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="adls-preview-max-bytes">Preview Bytes</label>
-            <input
-              id="adls-preview-max-bytes"
-              type="number"
-              min={1024}
-              max={1048576}
-              value={previewMaxBytes}
-              onChange={(event) => setPreviewMaxBytes(Math.max(1024, Number(event.target.value) || 1024))}
-              className={controlClass}
-            />
-          </div>
-
-          <Button onClick={applyPathFilter} className="h-10 px-6">
-            Apply Path
-          </Button>
-
-          <Button onClick={refreshTree} className="h-10 gap-2 px-6" variant="outline" disabled={rootLoading}>
-            {rootLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Refresh
-          </Button>
         </div>
       </div>
 
@@ -407,6 +466,82 @@ export const DataExplorerPage: React.FC = () => {
               <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 font-mono text-sm text-destructive">
                 <strong>Error:</strong> {previewError}
               </div>
+            ) : preview && isTablePreview ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-muted-foreground">
+                  <span>{preview.previewMode === 'delta-table' ? 'delta snapshot' : 'parquet preview'}</span>
+                  {preview.resolvedTablePath ? <span>table={preview.resolvedTablePath}</span> : null}
+                  {preview.tableVersion !== null && preview.tableVersion !== undefined ? (
+                    <span>version={preview.tableVersion}</span>
+                  ) : (
+                    <span>version=latest</span>
+                  )}
+                  {preview.processedDeltaFiles !== null && preview.processedDeltaFiles !== undefined ? (
+                    <span>commits={formatTwoDigitCount(preview.processedDeltaFiles)}</span>
+                  ) : null}
+                  <span>
+                    rows={displayedPreviewRows.toLocaleString()}
+                    {previewRowCount > 0 ? `/${previewRowCount.toLocaleString()}` : ''}
+                  </span>
+                  {preview.deltaLogPath ? <span>log={preview.deltaLogPath}</span> : null}
+                </div>
+
+                {previewTableColumns.length ? (
+                  <div className="max-h-[60vh] overflow-auto rounded-md border border-border/60 bg-background">
+                    <table className="min-w-full border-collapse font-mono text-xs">
+                      <thead className="sticky top-0 z-10 bg-mcm-paper">
+                        <tr className="border-b border-border/60">
+                          <th className="w-12 border-r border-border/50 px-3 py-2 text-right text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                            #
+                          </th>
+                          {previewTableColumns.map((column) => (
+                            <th
+                              key={column}
+                              className="border-r border-border/50 px-3 py-2 text-left text-[10px] uppercase tracking-[0.2em] text-muted-foreground last:border-r-0"
+                            >
+                              {column}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewTableRows.length ? (
+                          previewTableRows.map((row, rowIndex) => (
+                            <tr key={`${selectedFilePath}-${rowIndex}`} className="border-b border-border/40 align-top last:border-b-0">
+                              <td className="border-r border-border/40 px-3 py-2 text-right text-muted-foreground">
+                                {rowIndex + 1}
+                              </td>
+                              {previewTableColumns.map((column) => {
+                                const displayValue = formatPreviewTableCell(row[column]);
+                                return (
+                                  <td
+                                    key={`${selectedFilePath}-${rowIndex}-${column}`}
+                                    className="max-w-[18rem] border-r border-border/40 px-3 py-2 last:border-r-0"
+                                    title={displayValue}
+                                  >
+                                    <div className="truncate">{displayValue}</div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td
+                              colSpan={previewTableColumns.length + 1}
+                              className="px-3 py-6 text-center text-muted-foreground"
+                            >
+                              Delta preview returned no rows.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="font-mono text-sm text-muted-foreground">Preview returned no table columns.</div>
+                )}
+              </div>
             ) : preview && !preview.isPlainText ? (
               <div className="space-y-2 font-mono text-sm text-muted-foreground">
                 <div>This file does not appear to be plaintext and cannot be rendered as text preview.</div>
@@ -415,13 +550,19 @@ export const DataExplorerPage: React.FC = () => {
               </div>
             ) : preview ? (
               <div className="space-y-2">
+                {preview.previewMode === 'delta-log' ? (
+                  <div className="font-mono text-xs text-mcm-olive">
+                    delta-log preview from {preview.deltaLogPath || '_delta_log/'} | files=
+                    {formatTwoDigitCount(preview.processedDeltaFiles ?? Number(maxDeltaFiles))}
+                  </div>
+                ) : null}
                 <div className="font-mono text-xs text-muted-foreground">
                   encoding={preview.encoding || 'unknown'}
                   {preview.contentType ? ` | contentType=${preview.contentType}` : ''}
                   {preview.truncated ? ` | truncated at ${preview.maxBytes.toLocaleString()} bytes` : ''}
                 </div>
                 <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background p-3 font-mono text-xs leading-5">
-                  {preview.contentPreview || ''}
+                  {formattedPreviewContent}
                 </pre>
               </div>
             ) : null}

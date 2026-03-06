@@ -122,8 +122,31 @@ def test_finance_subdomain_reads_gold_alpha26_bucket(monkeypatch):
 
     rows = DataService.get_finance_data("gold", "balance_sheet", ticker="AAPL")
 
-    assert rows == [{"symbol": "AAPL", "date": "2026-02-01", "value": 1.2}]
-    assert calls == [DataPaths.get_gold_finance_bucket_path("A")]
+    assert rows == [{"symbol": "AAPL", "date": "2026-02-01", "value": 1.2, "sub_domain": "balance_sheet"}]
+    assert calls == [DataPaths.get_gold_finance_bucket_path("balance_sheet", "A")]
+
+
+def test_finance_subdomain_falls_back_to_legacy_gold_bucket(monkeypatch):
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_silver_alpha26_mode", lambda: False)
+    monkeypatch.setattr(data_service_module.layer_bucketing, "is_gold_alpha26_mode", lambda: True)
+
+    calls: list[str] = []
+
+    def fake_read_delta(_container: str, path: str, limit=None):
+        calls.append(path)
+        if path == DataPaths.get_gold_finance_bucket_path("balance_sheet", "A"):
+            raise FileNotFoundError("missing migrated path")
+        return [{"symbol": "AAPL", "date": "2026-02-01", "value": 1.2}]
+
+    monkeypatch.setattr(DataService, "_read_delta", staticmethod(fake_read_delta))
+
+    rows = DataService.get_finance_data("gold", "balance_sheet", ticker="AAPL")
+
+    assert rows == [{"symbol": "AAPL", "date": "2026-02-01", "value": 1.2, "sub_domain": "balance_sheet"}]
+    assert calls == [
+        DataPaths.get_gold_finance_bucket_path("balance_sheet", "A"),
+        DataPaths.get_legacy_gold_finance_bucket_path("A"),
+    ]
 
 
 def test_market_sorts_by_date_desc_before_limit(monkeypatch):

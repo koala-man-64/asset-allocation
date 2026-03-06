@@ -14,6 +14,17 @@ class DataPaths:
     Centralized configuration for data storage paths.
     """
 
+    _FINANCE_ALPHA26_SUBDOMAINS = (
+        "balance_sheet",
+        "income_statement",
+        "cash_flow",
+        "valuation",
+    )
+
+    @staticmethod
+    def _normalize_finance_folder(folder: str) -> str:
+        return str(folder or "").strip().lower().replace(" ", "_")
+
     @staticmethod
     def get_market_data_path(ticker: str) -> str:
         return f"market-data/{ticker.replace('.', '-')}"
@@ -53,7 +64,24 @@ class DataPaths:
         return f"finance/{ticker}"
 
     @staticmethod
-    def get_gold_finance_bucket_path(bucket: str) -> str:
+    def get_gold_finance_bucket_path(folder: str, bucket: str) -> str:
+        clean_folder = DataPaths._normalize_finance_folder(folder)
+        return f"finance/{clean_folder}/buckets/{str(bucket).strip().upper()}"
+
+    @staticmethod
+    def get_gold_finance_domain_path(folder: str) -> str:
+        clean_folder = DataPaths._normalize_finance_folder(folder)
+        return f"finance/{clean_folder}"
+
+    @staticmethod
+    def get_gold_finance_bucket_paths(bucket: str) -> list[str]:
+        return [
+            DataPaths.get_gold_finance_bucket_path(folder, bucket)
+            for folder in DataPaths._FINANCE_ALPHA26_SUBDOMAINS
+        ]
+
+    @staticmethod
+    def get_legacy_gold_finance_bucket_path(bucket: str) -> str:
         return f"finance/buckets/{str(bucket).strip().upper()}"
 
     @staticmethod
@@ -89,12 +117,12 @@ class DataPaths:
         """
         folder: e.g. 'Balance Sheet' -> 'balance_sheet'
         """
-        clean_folder = folder.lower().replace(' ', '_')
+        clean_folder = DataPaths._normalize_finance_folder(folder)
         return f"finance-data/{clean_folder}/{ticker}_{file_suffix}"
 
     @staticmethod
     def get_silver_finance_bucket_path(folder: str, bucket: str) -> str:
-        clean_folder = str(folder or "").strip().lower().replace(" ", "_")
+        clean_folder = DataPaths._normalize_finance_folder(folder)
         return f"finance-data/{clean_folder}/buckets/{str(bucket).strip().upper()}"
 
 

@@ -71,6 +71,20 @@ function makeLayers(): DataLayer[] {
   ];
 }
 
+function makeLayersWithEmptyPlatinum(): DataLayer[] {
+  return [
+    ...makeLayers(),
+    {
+      name: 'Platinum',
+      description: 'Serving layer',
+      status: 'healthy',
+      lastUpdated: NOW,
+      refreshFrequency: 'daily',
+      domains: []
+    }
+  ];
+}
+
 function makeJobs(): JobRun[] {
   return [
     {
@@ -192,8 +206,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     });
   });
 
-  it('refreshes panel counts with live metadata and updates zero counts', async () => {
+  it('refreshes merged header coverage action with live metadata and updates zero counts', async () => {
     const user = userEvent.setup();
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
     vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
       layer: 'bronze',
       domain: 'market',
@@ -209,15 +224,18 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         overall="healthy"
         dataLayers={makeLayers()}
         recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onRefresh={onRefresh}
         isRefreshing={false}
         isFetching={false}
       />
     );
 
-    const refreshCountsButton = await screen.findByRole('button', { name: 'Refresh counts' });
-    await user.click(refreshCountsButton);
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh domain layer coverage' });
+    await user.click(refreshButton);
 
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
     await waitFor(() => {
       expect(DataService.getDomainMetadata).toHaveBeenCalledWith('bronze', 'market', {
         refresh: true
@@ -226,5 +244,21 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     await waitFor(() => {
       expect(screen.getAllByText('0 symbols').length).toBeGreaterThan(0);
     });
+  });
+
+  it('omits empty medallion layer columns', async () => {
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayersWithEmptyPlatinum()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect(await screen.findAllByText('Bronze')).not.toHaveLength(0);
+    expect(screen.queryByText('Platinum')).not.toBeInTheDocument();
   });
 });

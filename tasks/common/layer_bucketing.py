@@ -83,7 +83,7 @@ def silver_bucket_path(*, domain: str, bucket: str, finance_sub_domain: Optional
     raise ValueError(f"Unsupported silver bucket domain={domain!r}")
 
 
-def gold_bucket_path(*, domain: str, bucket: str) -> str:
+def gold_bucket_path(*, domain: str, bucket: str, finance_sub_domain: Optional[str] = None) -> str:
     b = str(bucket or "").strip().upper()
     d = str(domain or "").strip().lower().replace("_", "-")
     if b not in ALPHABET_BUCKETS:
@@ -95,7 +95,10 @@ def gold_bucket_path(*, domain: str, bucket: str) -> str:
     if d == "price-target":
         return f"targets/buckets/{b}"
     if d == "finance":
-        return f"finance/buckets/{b}"
+        sub = str(finance_sub_domain or "").strip().lower().replace("-", "_")
+        if not sub:
+            raise ValueError("finance_sub_domain is required for gold finance buckets.")
+        return f"finance/{sub}/buckets/{b}"
     raise ValueError(f"Unsupported gold bucket domain={domain!r}")
 
 
@@ -103,8 +106,11 @@ def all_silver_bucket_paths(*, domain: str, finance_sub_domain: Optional[str] = 
     return [silver_bucket_path(domain=domain, bucket=b, finance_sub_domain=finance_sub_domain) for b in ALPHABET_BUCKETS]
 
 
-def all_gold_bucket_paths(*, domain: str) -> list[str]:
-    return [gold_bucket_path(domain=domain, bucket=b) for b in ALPHABET_BUCKETS]
+def all_gold_bucket_paths(*, domain: str, finance_sub_domain: Optional[str] = None) -> list[str]:
+    return [
+        gold_bucket_path(domain=domain, bucket=b, finance_sub_domain=finance_sub_domain)
+        for b in ALPHABET_BUCKETS
+    ]
 
 
 def _index_path(*, layer: str, domain: str) -> str:

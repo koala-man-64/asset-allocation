@@ -587,6 +587,7 @@ def load_delta(
     version: int = None,
     columns: Optional[List[str]] = None,
     filters: Any = None,
+    log_buffer_size: Optional[int] = None,
 ) -> Optional[pd.DataFrame]:
     """
     Reads a Delta table from Azure into a pandas DataFrame.
@@ -596,7 +597,7 @@ def load_delta(
         uri = get_delta_table_uri(container, path)
         opts = get_delta_storage_options(container)
         
-        dt = DeltaTable(uri, version=version, storage_options=opts)
+        dt = DeltaTable(uri, version=version, storage_options=opts, log_buffer_size=log_buffer_size)
         return dt.to_pandas(columns=columns, filters=filters)
     except Exception as e:
         if _is_missing_delta_table_error(e):

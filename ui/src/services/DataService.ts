@@ -250,6 +250,7 @@ export const DataService = {
       layer: 'bronze' | 'silver' | 'gold' | 'platinum';
       path: string;
       maxBytes?: number;
+      maxDeltaFiles?: number;
     },
     signal?: AbortSignal
   ): Promise<AdlsFilePreviewResponse> {

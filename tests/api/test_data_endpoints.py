@@ -209,3 +209,50 @@ async def test_validation_endpoint_rejects_invalid_ticker():
 
     assert resp.status_code == 400
     assert "Invalid ticker format" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_adls_file_preview_endpoint_forwards_max_delta_files(monkeypatch):
+    calls = []
+
+    def fake_get_adls_file_preview(*, layer: str, path: str, max_bytes: int | None = None, max_delta_files: int | None = None):
+        calls.append((layer, path, max_bytes, max_delta_files))
+        return {
+            "layer": layer,
+            "container": "gold",
+            "path": path,
+            "isPlainText": False,
+            "encoding": None,
+            "truncated": False,
+            "maxBytes": max_bytes or 262144,
+            "contentType": "application/x-delta-table-preview",
+            "contentPreview": None,
+            "previewMode": "delta-table",
+            "processedDeltaFiles": None,
+            "maxDeltaFiles": max_delta_files,
+            "deltaLogPath": "market/buckets/A/_delta_log/",
+            "tableColumns": ["symbol", "close"],
+            "tableRows": [{"symbol": "AAPL", "close": 101.25}],
+            "tableRowCount": 1,
+            "tablePreviewLimit": 100,
+            "tableTruncated": False,
+            "resolvedTablePath": "market/buckets/A",
+            "tableVersion": None,
+        }
+
+    monkeypatch.setattr(data_endpoints.DataService, "get_adls_file_preview", fake_get_adls_file_preview)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get(
+            "/api/data/adls/file-preview",
+            params={
+                "layer": "gold",
+                "path": "market/buckets/A/part-00000.snappy.parquet",
+                "max_bytes": 262144,
+                "max_delta_files": 9,
+            },
+        )
+
+    assert resp.status_code == 200
+    assert calls == [("gold", "market/buckets/A/part-00000.snappy.parquet", 262144, 9)]

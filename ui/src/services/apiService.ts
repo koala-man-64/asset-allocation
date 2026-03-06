@@ -708,6 +708,17 @@ export interface AdlsFilePreviewResponse {
   maxBytes: number;
   contentType?: string | null;
   contentPreview?: string | null;
+  previewMode?: 'blob' | 'delta-log' | 'delta-table' | 'parquet-table';
+  processedDeltaFiles?: number | null;
+  maxDeltaFiles?: number | null;
+  deltaLogPath?: string | null;
+  tableColumns?: string[] | null;
+  tableRows?: Record<string, unknown>[] | null;
+  tableRowCount?: number | null;
+  tablePreviewLimit?: number | null;
+  tableTruncated?: boolean | null;
+  resolvedTablePath?: string | null;
+  tableVersion?: number | null;
 }
 
 export interface ContainerAppHealthCheck {
@@ -991,6 +1002,7 @@ export const apiService = {
       layer: 'bronze' | 'silver' | 'gold' | 'platinum';
       path: string;
       maxBytes?: number;
+      maxDeltaFiles?: number;
     },
     signal?: AbortSignal
   ): Promise<AdlsFilePreviewResponse> {
@@ -998,7 +1010,8 @@ export const apiService = {
       params: {
         layer: params.layer,
         path: params.path,
-        max_bytes: params.maxBytes
+        max_bytes: params.maxBytes,
+        max_delta_files: params.maxDeltaFiles
       },
       signal
     });

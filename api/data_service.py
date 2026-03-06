@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import json
 from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -28,11 +28,15 @@ _FINANCE_SUBDOMAIN_TO_REPORT_TYPE: dict[str, str] = {
     "cash_flow": "cash_flow",
     "valuation": "overview",
 }
+_GOLD_FINANCE_PRIMARY_SUBDOMAIN = "balance_sheet"
 
 _ADLS_TREE_SCAN_LIMIT_DEFAULT = 5_000
 _ADLS_TREE_SCAN_LIMIT_MAX = 100_000
 _ADLS_PREVIEW_MAX_BYTES_DEFAULT = 256 * 1024
 _ADLS_PREVIEW_MAX_BYTES_MAX = 1_048_576
+_ADLS_PREVIEW_MAX_DELTA_FILES_DEFAULT = 0
+_ADLS_PREVIEW_MAX_DELTA_FILES_MAX = 99
+_ADLS_TABLE_PREVIEW_ROW_LIMIT = 100
 _PLAINTEXT_EXTENSIONS = {
     ".txt",
     ".csv",
@@ -332,6 +336,18 @@ class DataService:
         return min(parsed, maximum)
 
     @staticmethod
+    def _coerce_non_negative_limit(raw: Optional[int], *, default: int, maximum: int) -> int:
+        if raw is None:
+            return default
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            return default
+        if parsed < 0:
+            return default
+        return min(parsed, maximum)
+
+    @staticmethod
     def list_adls_tree(
         *,
         layer: str,
@@ -438,6 +454,7 @@ class DataService:
         layer: str,
         path: str,
         max_bytes: Optional[int] = None,
+        max_delta_files: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return a bounded plaintext preview for a blob path in ADLS."""
         resolved_layer = str(layer or "").strip().lower()
@@ -448,11 +465,49 @@ class DataService:
             default=_ADLS_PREVIEW_MAX_BYTES_DEFAULT,
             maximum=_ADLS_PREVIEW_MAX_BYTES_MAX,
         )
+        delta_file_limit = DataService._coerce_non_negative_limit(
+            max_delta_files,
+            default=_ADLS_PREVIEW_MAX_DELTA_FILES_DEFAULT,
+            maximum=_ADLS_PREVIEW_MAX_DELTA_FILES_MAX,
+        )
 
         client = DataService._require_storage_client(container)
         blob_client = client.container_client.get_blob_client(blob_path)
         if not blob_client.exists():
             raise FileNotFoundError(f"Blob not found: {container}/{blob_path}")
+
+        table_preview = DataService._build_delta_table_preview(
+            client=client,
+            container=container,
+            layer=resolved_layer,
+            selected_path=blob_path,
+            preview_limit=preview_limit,
+            max_delta_files=delta_file_limit,
+        )
+        if table_preview is not None:
+            return table_preview
+
+        parquet_preview = DataService._build_parquet_table_preview(
+            blob_client=blob_client,
+            container=container,
+            layer=resolved_layer,
+            selected_path=blob_path,
+            preview_limit=preview_limit,
+            max_delta_files=delta_file_limit,
+        )
+        if parquet_preview is not None:
+            return parquet_preview
+
+        delta_preview = DataService._build_delta_log_preview(
+            client=client,
+            container=container,
+            layer=resolved_layer,
+            selected_path=blob_path,
+            preview_limit=preview_limit,
+            max_delta_files=delta_file_limit,
+        )
+        if delta_preview is not None:
+            return delta_preview
 
         payload = blob_client.download_blob(offset=0, length=preview_limit + 1).readall()
         truncated = len(payload) > preview_limit
@@ -479,6 +534,10 @@ class DataService:
                 "maxBytes": preview_limit,
                 "contentType": content_type,
                 "contentPreview": None,
+                "previewMode": "blob",
+                "processedDeltaFiles": None,
+                "maxDeltaFiles": delta_file_limit,
+                "deltaLogPath": None,
             }
 
         decoded = payload.decode("utf-8", errors="replace")
@@ -492,6 +551,342 @@ class DataService:
             "maxBytes": preview_limit,
             "contentType": content_type,
             "contentPreview": decoded,
+            "previewMode": "blob",
+            "processedDeltaFiles": None,
+            "maxDeltaFiles": delta_file_limit,
+            "deltaLogPath": None,
+        }
+
+    @staticmethod
+    def _parse_delta_log_version(path: str) -> Optional[int]:
+        normalized = str(path or "").strip().strip("/")
+        if "/_delta_log/" not in normalized or not normalized.lower().endswith(".json"):
+            return None
+
+        stem = normalized.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        return int(stem) if stem.isdigit() else None
+
+    @staticmethod
+    def _resolve_delta_log_prefix(path: str) -> Optional[str]:
+        normalized = str(path or "").strip().strip("/")
+        if not normalized:
+            return None
+
+        marker = "/_delta_log/"
+        if marker in normalized:
+            table_root = normalized.split(marker, 1)[0].strip("/")
+            return f"{table_root}/_delta_log/" if table_root else None
+
+        lowered = normalized.lower()
+        if lowered.endswith(".parquet"):
+            parts = normalized.rsplit("/", 1)
+            if len(parts) == 2 and parts[0]:
+                return f"{parts[0]}/_delta_log/"
+
+        return None
+
+    @staticmethod
+    def _list_delta_log_json_paths(client: Any, prefix: str) -> List[str]:
+        normalized_prefix = str(prefix or "").strip().strip("/")
+        if not normalized_prefix:
+            return []
+        if not normalized_prefix.endswith("/"):
+            normalized_prefix = f"{normalized_prefix}/"
+
+        discovered: List[str] = []
+        list_files = getattr(client, "list_files", None)
+        if callable(list_files):
+            discovered = [str(name) for name in list_files(name_starts_with=normalized_prefix)]
+        else:
+            container_client = getattr(client, "container_client", None)
+            if container_client is not None and hasattr(container_client, "list_blobs"):
+                discovered = [
+                    str(getattr(blob, "name", ""))
+                    for blob in container_client.list_blobs(name_starts_with=normalized_prefix)
+                ]
+
+        return sorted(
+            name
+            for name in discovered
+            if name and name.startswith(normalized_prefix) and name.lower().endswith(".json")
+        )
+
+    @staticmethod
+    def _resolve_delta_table_root(client: Any, path: str) -> Optional[str]:
+        normalized = str(path or "").strip().strip("/")
+        if not normalized:
+            return None
+
+        marker = "/_delta_log/"
+        if marker in normalized:
+            table_root = normalized.split(marker, 1)[0].strip("/")
+            return table_root or None
+
+        if not normalized.lower().endswith(".parquet"):
+            return None
+
+        parts = normalized.split("/")
+        for depth in range(len(parts) - 1, 0, -1):
+            candidate = "/".join(parts[:depth]).strip("/")
+            if not candidate:
+                continue
+            delta_log_prefix = f"{candidate}/_delta_log/"
+            if DataService._list_delta_log_json_paths(client, delta_log_prefix):
+                return candidate
+
+        return None
+
+    @staticmethod
+    def _extract_delta_log_versions(paths: List[str]) -> List[int]:
+        versions = {
+            version
+            for version in (DataService._parse_delta_log_version(path) for path in paths)
+            if version is not None
+        }
+        return sorted(versions)
+
+    @staticmethod
+    def _resolve_delta_preview_version(
+        available_paths: List[str],
+        *,
+        selected_path: str,
+        max_delta_files: int,
+    ) -> Tuple[Optional[int], Optional[int]]:
+        versions = DataService._extract_delta_log_versions(available_paths)
+        if not versions:
+            return DataService._parse_delta_log_version(selected_path), None
+
+        selected_version = DataService._parse_delta_log_version(selected_path)
+        upper_bound_version = selected_version if selected_version is not None else versions[-1]
+        eligible_versions = [version for version in versions if version <= upper_bound_version]
+        if not eligible_versions:
+            return selected_version, None
+
+        if max_delta_files <= 0:
+            return eligible_versions[-1], len(eligible_versions)
+
+        applied_versions = eligible_versions[:max_delta_files]
+        return applied_versions[-1], len(applied_versions)
+
+    @staticmethod
+    def _build_tabular_preview_response(
+        *,
+        container: str,
+        layer: str,
+        selected_path: str,
+        preview_limit: int,
+        max_delta_files: int,
+        preview_mode: str,
+        df: pd.DataFrame,
+        content_type: str,
+        resolved_table_path: Optional[str],
+        table_version: Optional[int],
+        delta_log_path: Optional[str],
+        processed_delta_files: Optional[int],
+    ) -> Dict[str, Any]:
+        total_rows = int(len(df))
+        preview_rows = DataService._df_to_records_json_safe(df, limit=_ADLS_TABLE_PREVIEW_ROW_LIMIT)
+
+        return {
+            "layer": layer,
+            "container": container,
+            "path": selected_path,
+            "isPlainText": False,
+            "encoding": None,
+            "truncated": False,
+            "maxBytes": preview_limit,
+            "contentType": content_type,
+            "contentPreview": None,
+            "previewMode": preview_mode,
+            "processedDeltaFiles": processed_delta_files,
+            "maxDeltaFiles": max_delta_files,
+            "deltaLogPath": delta_log_path,
+            "tableColumns": [str(column) for column in df.columns],
+            "tableRows": preview_rows,
+            "tableRowCount": total_rows,
+            "tablePreviewLimit": _ADLS_TABLE_PREVIEW_ROW_LIMIT,
+            "tableTruncated": total_rows > _ADLS_TABLE_PREVIEW_ROW_LIMIT,
+            "resolvedTablePath": resolved_table_path,
+            "tableVersion": table_version,
+        }
+
+    @staticmethod
+    def _build_delta_table_preview(
+        *,
+        client: Any,
+        container: str,
+        layer: str,
+        selected_path: str,
+        preview_limit: int,
+        max_delta_files: int,
+    ) -> Optional[Dict[str, Any]]:
+        table_root = DataService._resolve_delta_table_root(client, selected_path)
+        if not table_root:
+            return None
+
+        delta_log_prefix = f"{table_root}/_delta_log/"
+        available_delta_paths = DataService._list_delta_log_json_paths(client, delta_log_prefix)
+        table_version, processed_delta_files = DataService._resolve_delta_preview_version(
+            available_delta_paths,
+            selected_path=selected_path,
+            max_delta_files=max_delta_files,
+        )
+        df = delta_core.load_delta(
+            container,
+            table_root,
+            version=table_version,
+        )
+        if df is None:
+            return None
+
+        return DataService._build_tabular_preview_response(
+            container=container,
+            layer=layer,
+            selected_path=selected_path,
+            preview_limit=preview_limit,
+            max_delta_files=max_delta_files,
+            preview_mode="delta-table",
+            df=df,
+            content_type="application/x-delta-table-preview",
+            resolved_table_path=table_root,
+            table_version=table_version,
+            delta_log_path=delta_log_prefix,
+            processed_delta_files=processed_delta_files,
+        )
+
+    @staticmethod
+    def _build_parquet_table_preview(
+        *,
+        blob_client: Any,
+        container: str,
+        layer: str,
+        selected_path: str,
+        preview_limit: int,
+        max_delta_files: int,
+    ) -> Optional[Dict[str, Any]]:
+        if not str(selected_path or "").strip().lower().endswith(".parquet"):
+            return None
+
+        try:
+            payload = blob_client.download_blob().readall()
+            df = pd.read_parquet(BytesIO(payload))
+        except Exception:
+            return None
+
+        return DataService._build_tabular_preview_response(
+            container=container,
+            layer=layer,
+            selected_path=selected_path,
+            preview_limit=preview_limit,
+            max_delta_files=max_delta_files,
+            preview_mode="parquet-table",
+            df=df,
+            content_type="application/x-parquet-preview",
+            resolved_table_path=None,
+            table_version=None,
+            delta_log_path=None,
+            processed_delta_files=None,
+        )
+
+    @staticmethod
+    def _select_delta_log_preview_paths(
+        available_paths: List[str],
+        *,
+        selected_path: str,
+        max_delta_files: int,
+    ) -> List[str]:
+        if not available_paths:
+            return []
+
+        selected_version = DataService._parse_delta_log_version(selected_path)
+        versions_by_path = [
+            (path, DataService._parse_delta_log_version(path))
+            for path in available_paths
+        ]
+        eligible_paths = [
+            path
+            for path, version in versions_by_path
+            if version is not None and (selected_version is None or version <= selected_version)
+        ]
+
+        if not eligible_paths:
+            return []
+
+        return eligible_paths[:max_delta_files]
+
+    @staticmethod
+    def _build_delta_log_preview(
+        *,
+        client: Any,
+        container: str,
+        layer: str,
+        selected_path: str,
+        preview_limit: int,
+        max_delta_files: int,
+    ) -> Optional[Dict[str, Any]]:
+        if max_delta_files <= 0:
+            return None
+
+        delta_log_prefix = DataService._resolve_delta_log_prefix(selected_path)
+        if not delta_log_prefix:
+            return None
+
+        preview_paths = DataService._select_delta_log_preview_paths(
+            DataService._list_delta_log_json_paths(client, delta_log_prefix),
+            selected_path=selected_path,
+            max_delta_files=max_delta_files,
+        )
+        if not preview_paths:
+            return None
+
+        container_client = getattr(client, "container_client", None)
+        if container_client is None or not hasattr(container_client, "get_blob_client"):
+            return None
+
+        combined = bytearray()
+        truncated = False
+        processed_paths: List[str] = []
+
+        for candidate_path in preview_paths:
+            if combined and not combined.endswith(b"\n"):
+                if len(combined) >= preview_limit:
+                    truncated = True
+                    break
+                combined.extend(b"\n")
+
+            remaining = preview_limit - len(combined)
+            if remaining <= 0:
+                truncated = True
+                break
+
+            delta_blob_client = container_client.get_blob_client(candidate_path)
+            payload = delta_blob_client.download_blob(offset=0, length=remaining + 1).readall()
+            if len(payload) > remaining:
+                combined.extend(payload[:remaining])
+                truncated = True
+                processed_paths.append(candidate_path)
+                break
+
+            combined.extend(payload)
+            processed_paths.append(candidate_path)
+
+        if not processed_paths:
+            return None
+
+        return {
+            "layer": layer,
+            "container": container,
+            "path": selected_path,
+            "isPlainText": True,
+            "encoding": "utf-8",
+            "truncated": truncated,
+            "maxBytes": preview_limit,
+            "contentType": "application/x-ndjson",
+            "contentPreview": combined.decode("utf-8", errors="replace"),
+            "previewMode": "delta-log",
+            "processedDeltaFiles": len(processed_paths),
+            "maxDeltaFiles": max_delta_files,
+            "deltaLogPath": delta_log_prefix,
         }
 
     @staticmethod
@@ -557,6 +952,35 @@ class DataService:
         return DataService._frames_to_records(frames, limit=limit)
 
     @staticmethod
+    def _read_cross_section_from_prefixes(
+        container: str,
+        prefixes: Sequence[str],
+        *,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        for prefix in prefixes:
+            paths = DataService._discover_delta_table_paths(container, prefix)
+            if not paths:
+                continue
+            frames = DataService._collect_delta_frames(container, paths, limit=limit)
+            return DataService._frames_to_records(frames, limit=limit)
+        return []
+
+    @staticmethod
+    def _read_delta_from_paths(
+        container: str,
+        paths: Sequence[str],
+        *,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        for path in paths:
+            try:
+                return DataService._read_delta(container, path, limit=limit)
+            except FileNotFoundError:
+                continue
+        return []
+
+    @staticmethod
     def _read_silver_finance_regular(
         *,
         container: str,
@@ -585,6 +1009,35 @@ class DataService:
 
         frames = DataService._collect_delta_frames(container, paths, limit=limit, enrich=_enrich)
         return DataService._frames_to_records(frames, limit=limit)
+
+    @staticmethod
+    def _read_gold_finance_regular(
+        *,
+        container: str,
+        ticker: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        symbol = str(ticker or "").strip().upper()
+        if symbol:
+            bucket = layer_bucketing.bucket_letter(symbol)
+            rows = DataService._read_delta_from_paths(
+                container,
+                [
+                    DataPaths.get_gold_finance_bucket_path(_GOLD_FINANCE_PRIMARY_SUBDOMAIN, bucket),
+                    DataPaths.get_legacy_gold_finance_bucket_path(bucket),
+                ],
+                limit=None,
+            )
+            return [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
+
+        return DataService._read_cross_section_from_prefixes(
+            container,
+            [
+                DataPaths.get_gold_finance_domain_path(_GOLD_FINANCE_PRIMARY_SUBDOMAIN),
+                "finance/buckets",
+            ],
+            limit=limit,
+        )
     
     @staticmethod
     def get_data(
@@ -660,12 +1113,11 @@ class DataService:
                     limit=downstream_limit,
                 )
                 return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
-            if symbol:
-                path = DataPaths.get_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol))
-                rows = DataService._read_delta(container, path, limit=None)
-                rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
-                return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
-            rows = DataService._read_cross_section_from_prefix(container, "finance/buckets", limit=downstream_limit)
+            rows = DataService._read_gold_finance_regular(
+                container=container,
+                ticker=symbol or None,
+                limit=downstream_limit,
+            )
             return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
         if resolved_domain == "earnings":
@@ -760,8 +1212,17 @@ class DataService:
                 raise ValueError("ticker is required for Gold finance data.")
             layer_bucketing.gold_layout_mode()
             symbol = str(ticker).strip().upper()
-            path = DataPaths.get_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol))
-            rows = DataService._read_delta(container, path, limit=None)
+            rows = DataService._read_delta_from_paths(
+                container,
+                [
+                    DataPaths.get_gold_finance_bucket_path(resolved_sub, layer_bucketing.bucket_letter(symbol)),
+                    DataPaths.get_legacy_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol)),
+                ],
+                limit=None,
+            )
+            for row in rows:
+                if "sub_domain" not in row:
+                    row["sub_domain"] = resolved_sub
             rows = [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
             return DataService._finalize_rows(rows, limit=limit, sort_by_date=resolved_sort)
 
