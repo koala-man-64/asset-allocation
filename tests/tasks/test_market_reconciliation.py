@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_bronze_earnings_symbols_from_blob_infos,
