@@ -144,7 +144,6 @@ def test_remove_symbol_from_layer_storage_covers_all_medallion_domain_folders(mo
         "finance-data/balance_sheet/buckets/A",
         "finance-data/income_statement/buckets/A",
         "finance-data/cash_flow/buckets/A",
-        "finance-data/valuation/buckets/A",
         "earnings-data/buckets/A",
         "price-target-data/buckets/A",
     }
@@ -156,7 +155,7 @@ def test_remove_symbol_from_layer_storage_covers_all_medallion_domain_folders(mo
         "earnings/buckets/A",
         "targets/buckets/A",
     }
-    assert len(delta_calls) == 11
+    assert len(delta_calls) == 10
     assert all(call["symbol"] == "AAPL" for call in delta_calls)
 
 
@@ -180,7 +179,7 @@ def test_remove_symbol_from_layer_storage_uses_row_delete_in_silver_alpha26(monk
         layer="silver",
     )
 
-    assert len(outcomes) == 7
+    assert len(outcomes) == 6
     assert all(item.get("operation") == "row_delete" for item in outcomes)
     assert {str(item["path"]) for item in outcomes} == {
         "market-data/buckets/A",
@@ -189,9 +188,8 @@ def test_remove_symbol_from_layer_storage_uses_row_delete_in_silver_alpha26(monk
         "finance-data/balance_sheet/buckets/A",
         "finance-data/income_statement/buckets/A",
         "finance-data/cash_flow/buckets/A",
-        "finance-data/valuation/buckets/A",
     }
-    assert len(calls) == 7
+    assert len(calls) == 6
     assert all(call["symbol"] == "AAPL" for call in calls)
 
 
@@ -313,7 +311,7 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
             ("bronze", "earnings"): 1,
             ("bronze", "price-target"): 1,
             ("silver", "market"): 1,
-            ("silver", "finance"): 4,
+            ("silver", "finance"): 3,
             ("silver", "earnings"): 1,
             ("silver", "price-target"): 1,
             ("gold", "market"): 1,
@@ -323,9 +321,9 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
         }
     )
 
-    assert result["totalDeleted"] == 15
+    assert result["totalDeleted"] == 14
     assert len(bronze_bucket_calls) == 4
-    assert len(delta_bucket_calls) == 11
+    assert len(delta_bucket_calls) == 10
 
     bronze_finance_paths = sorted(
         item["path"]

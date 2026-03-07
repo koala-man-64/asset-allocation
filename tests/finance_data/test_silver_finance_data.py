@@ -6,6 +6,79 @@ import pandas as pd
 from tasks.finance_data import silver_finance_data as silver
 
 
+def test_read_finance_json_projects_only_piotroski_columns() -> None:
+    payload = {
+        "quarterlyReports": [
+            {
+                "fiscalDateEnding": "2024-03-31",
+                "totalAssets": "1000",
+                "totalCurrentAssets": "250",
+                "totalCurrentLiabilities": "125",
+                "commonStockSharesOutstanding": "50",
+                "longTermDebt": "300",
+                "reportedCurrency": "USD",
+            }
+        ]
+    }
+
+    out = silver._read_finance_json(
+        json.dumps(payload).encode("utf-8"),
+        ticker="AAPL",
+        suffix="quarterly_balance-sheet",
+    )
+
+    assert list(out.columns) == [
+        "Date",
+        "Symbol",
+        "long_term_debt",
+        "total_assets",
+        "current_assets",
+        "current_liabilities",
+        "shares_outstanding",
+    ]
+    assert out.loc[0, "Symbol"] == "AAPL"
+    assert out.loc[0, "total_assets"] == 1000.0
+    assert "reportedCurrency" not in out.columns
+
+
+def test_process_alpha26_bucket_blob_skips_overview_rows_for_piotroski_only_contract(monkeypatch) -> None:
+    blob_name = "finance-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": datetime(2026, 3, 4, 1, 0, tzinfo=timezone.utc),
+    }
+    bucket_df = pd.DataFrame(
+        [
+            {
+                "symbol": "AAPL",
+                "report_type": "overview",
+                "payload_json": json.dumps({"Symbol": "AAPL", "MarketCapitalization": "100"}),
+            }
+        ]
+    )
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(
+        silver.mdc,
+        "read_raw_bytes",
+        lambda _name, client=None: bucket_df.to_parquet(index=False),
+    )
+
+    results = silver.process_alpha26_bucket_blob(
+        blob,
+        desired_end=pd.Timestamp("2026-03-04"),
+        backfill_start=None,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "skipped"
+    assert blob_name in watermarks
+
+
 def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks(monkeypatch):
     blobs = [
         {
@@ -92,12 +165,12 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
                 )
                 continue
             results.append(
-                silver.BlobProcessResult(
-                    blob_name=name,
-                    silver_path="finance-data/valuation/buckets/F",
-                    ticker="FAIL",
-                    status="failed",
-                    error="simulated failure",
+                    silver.BlobProcessResult(
+                        blob_name=name,
+                        silver_path="finance-data/cash_flow/buckets/F",
+                        ticker="FAIL",
+                        status="failed",
+                        error="simulated failure",
                 )
             )
         return results, 0.01
@@ -170,7 +243,7 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     )
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", _fake_list)
     monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index", 41))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index", 11))
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 3)
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
@@ -195,7 +268,7 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     assert saved_last_success["metadata"]["new_blobs_discovered_after_first_pass"] == 1
     assert saved_last_success["metadata"]["lag_candidate_count"] == 0
     assert saved_last_success["metadata"]["catchup_passes"] >= 2
-    assert saved_last_success["metadata"]["column_count"] == 41
+    assert saved_last_success["metadata"]["column_count"] == 11
     assert saved_watermarks["key"] == "bronze_finance_data"
 
 
@@ -225,7 +298,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
             [
                 silver.BlobProcessResult(
                     blob_name=candidate_blobs[0]["name"],
-                    silver_path="finance-data/valuation/buckets/A",
+                    silver_path="finance-data/cash_flow/buckets/A",
                     ticker="A",
                     status="ok",
                     rows_written=1,
@@ -239,7 +312,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
             0.01,
         ),
     )
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index", 41))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index", 11))
     monkeypatch.setattr(
         silver,
         "save_last_success",
@@ -254,7 +327,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
     assert saved_last_success["metadata"]["source"] == "alpha26-bucket-listing"
     assert saved_last_success["metadata"]["manifest_run_id"] is None
     assert saved_last_success["metadata"]["manifest_path"] is None
-    assert saved_last_success["metadata"]["column_count"] == 41
+    assert saved_last_success["metadata"]["column_count"] == 11
 
 
 def test_silver_finance_select_initial_source_uses_unacked_manifest(monkeypatch):
@@ -317,7 +390,7 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-05"))
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([], 0))
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index", 41))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index", 11))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
@@ -338,11 +411,11 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     assert exit_code == 0
     assert len(ack_calls) == 1
     assert ack_calls[0]["run_id"].endswith("abcd1234")
-    assert ack_calls[0]["metadata"]["column_count"] == 41
+    assert ack_calls[0]["metadata"]["column_count"] == 11
     assert saved_last_success["metadata"]["source"] == "bronze-manifest"
     assert saved_last_success["metadata"]["manifest_run_id"].endswith("abcd1234")
     assert saved_last_success["metadata"]["manifest_path"].endswith("run.json")
-    assert saved_last_success["metadata"]["column_count"] == 41
+    assert saved_last_success["metadata"]["column_count"] == 11
 
 
 def test_silver_finance_main_does_not_ack_manifest_when_failed(monkeypatch):
@@ -464,14 +537,14 @@ def test_write_alpha26_finance_silver_buckets_skips_empty_bucket_without_existin
 
 def test_write_alpha26_finance_silver_buckets_writes_sub_domain_indexes(monkeypatch):
     balance_df = pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["AAPL"]})
-    valuation_df = pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["MSFT"]})
+    cash_flow_df = pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["MSFT"]})
     bucket_frames = {
         ("balance_sheet", "A"): [balance_df],
-        ("valuation", "A"): [valuation_df],
+        ("cash_flow", "A"): [cash_flow_df],
     }
     index_calls: list[dict] = []
 
-    monkeypatch.setattr(silver, "_FINANCE_ALPHA26_SUBDOMAINS", ("balance_sheet", "valuation"))
+    monkeypatch.setattr(silver, "_FINANCE_ALPHA26_SUBDOMAINS", ("balance_sheet", "cash_flow"))
     monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: ["date", "symbol"])
     monkeypatch.setattr(silver.delta_core, "store_delta", lambda *_args, **_kwargs: None)
@@ -489,7 +562,7 @@ def test_write_alpha26_finance_silver_buckets_writes_sub_domain_indexes(monkeypa
     aggregate = [call for call in index_calls if call.get("sub_domain") is None][0]
     assert aggregate["symbol_to_bucket"] == {"AAPL": "A", "MSFT": "A"}
     sub_domains = sorted(call.get("sub_domain") for call in index_calls if call.get("sub_domain"))
-    assert sub_domains == ["balance_sheet", "valuation"]
+    assert sub_domains == ["balance_sheet", "cash_flow"]
 
 
 def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_watermark(monkeypatch):

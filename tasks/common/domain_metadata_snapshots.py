@@ -131,6 +131,9 @@ def build_domain_metadata_snapshot_metadata_from_artifact(
     column_count = artifact.get("columnCount")
     if not isinstance(column_count, int):
         column_count = len(columns)
+    total_bytes = artifact.get("totalBytes")
+    if not isinstance(total_bytes, int):
+        total_bytes = None
 
     warnings = artifact.get("warnings")
     if not isinstance(warnings, list):
@@ -155,11 +158,47 @@ def build_domain_metadata_snapshot_metadata_from_artifact(
         "columnCount": column_count,
         "totalRows": None,
         "fileCount": None,
-        "totalBytes": None,
+        "totalBytes": total_bytes,
         "deltaVersion": None,
         "metadataPath": artifact.get("artifactPath") or artifact.get("metadataPath"),
         "metadataSource": "artifact",
         "warnings": [str(item) for item in warnings if str(item or "").strip()],
+    }
+
+
+def build_domain_metadata_snapshot_metadata_for_purge(
+    *,
+    layer: str,
+    domain: str,
+    container: Optional[str] = None,
+    computed_at: Optional[str] = None,
+) -> dict[str, Any]:
+    normalized_layer = normalize_layer(layer)
+    normalized_domain = normalize_domain(domain)
+    purge_time = str(computed_at or _utc_now_iso())
+
+    return {
+        "layer": normalized_layer,
+        "domain": normalized_domain,
+        "container": str(container or "").strip() or _container_name_for_layer(normalized_layer),
+        "type": "blob",
+        "prefix": _blob_prefix(normalized_layer, normalized_domain),
+        "tablePath": None,
+        "computedAt": purge_time,
+        "folderLastModified": None,
+        "symbolCount": 0,
+        "financeSubfolderSymbolCounts": None,
+        "blacklistedSymbolCount": 0,
+        "dateRange": None,
+        "columns": [],
+        "columnCount": 0,
+        "totalRows": None,
+        "fileCount": 0,
+        "totalBytes": 0,
+        "deltaVersion": None,
+        "metadataPath": None,
+        "metadataSource": "scan",
+        "warnings": [],
     }
 
 
@@ -291,3 +330,19 @@ def refresh_domain_metadata_snapshots_from_saved_artifact(
     if not isinstance(artifact, dict):
         return None
     return update_domain_metadata_snapshots_from_artifact(layer=layer, domain=domain, artifact=artifact)
+
+
+def mark_domain_metadata_snapshot_purged(
+    *,
+    layer: str,
+    domain: str,
+    container: Optional[str] = None,
+    computed_at: Optional[str] = None,
+) -> dict[str, Any]:
+    metadata = build_domain_metadata_snapshot_metadata_for_purge(
+        layer=layer,
+        domain=domain,
+        container=container,
+        computed_at=computed_at,
+    )
+    return write_domain_metadata_snapshot_documents(layer=layer, domain=domain, metadata=metadata)

@@ -117,6 +117,7 @@ def test_run_purge_operation_parallel_preserves_target_order(monkeypatch: pytest
 
     monkeypatch.setenv("PURGE_SCOPE_MAX_WORKERS", "3")
     monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
+    monkeypatch.setattr(system, "_mark_purged_domain_metadata_snapshots", lambda targets: None)
 
     class _FakeBlobStorageClient:
         def __init__(self, container_name: str, ensure_container_exists: bool = False):
@@ -177,6 +178,7 @@ def test_run_purge_operation_appends_gold_checkpoint_resets(monkeypatch: pytest.
     }
 
     monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
+    monkeypatch.setattr(system, "_mark_purged_domain_metadata_snapshots", lambda targets: None)
 
     class _FakeBlobStorageClient:
         def __init__(self, container_name: str, ensure_container_exists: bool = False):
@@ -198,6 +200,112 @@ def test_run_purge_operation_appends_gold_checkpoint_resets(monkeypatch: pytest.
         "system/watermarks/gold_market_features.json",
     ]
     assert result["totalDeleted"] == 4
+
+
+def test_run_purge_operation_marks_layer_domain_metadata_purged(monkeypatch: pytest.MonkeyPatch) -> None:
+    targets = [{"layer": "gold", "domain": "market", "container": "gold-container", "prefix": "market/"}]
+    metadata_targets: list[dict[str, str]] = []
+
+    monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
+    monkeypatch.setattr(system, "_build_silver_checkpoint_reset_targets", lambda targets: [])
+    monkeypatch.setattr(system, "_build_gold_checkpoint_reset_targets", lambda targets: [])
+    monkeypatch.setattr(
+        system,
+        "_mark_purged_domain_metadata_snapshots",
+        lambda targets: metadata_targets.extend(dict(item) for item in targets),
+    )
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False):
+            self.container_name = container_name
+
+        def has_blobs(self, prefix):
+            return True
+
+        def delete_prefix(self, prefix):
+            return 1
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = system.PurgeRequest(scope="layer-domain", layer="gold", domain="market", confirm=True)
+    system._run_purge_operation(payload)
+
+    assert metadata_targets == [{"layer": "gold", "domain": "market", "container": "gold-container"}]
+
+
+def test_run_purge_operation_marks_all_layer_metadata_purged(monkeypatch: pytest.MonkeyPatch) -> None:
+    targets = [{"layer": "silver", "domain": None, "container": "silver-container", "prefix": None}]
+    metadata_targets: list[dict[str, str]] = []
+
+    monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
+    monkeypatch.setattr(system, "_build_silver_checkpoint_reset_targets", lambda targets: [])
+    monkeypatch.setattr(system, "_build_gold_checkpoint_reset_targets", lambda targets: [])
+    monkeypatch.setattr(
+        system,
+        "_mark_purged_domain_metadata_snapshots",
+        lambda targets: metadata_targets.extend(dict(item) for item in targets),
+    )
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False):
+            self.container_name = container_name
+
+        def has_blobs(self, prefix):
+            return True
+
+        def delete_prefix(self, prefix):
+            return 4
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = system.PurgeRequest(scope="layer", layer="silver", confirm=True)
+    system._run_purge_operation(payload)
+
+    assert metadata_targets == [
+        {"layer": "silver", "domain": "market", "container": "silver-container"},
+        {"layer": "silver", "domain": "finance", "container": "silver-container"},
+        {"layer": "silver", "domain": "earnings", "container": "silver-container"},
+        {"layer": "silver", "domain": "price-target", "container": "silver-container"},
+    ]
+
+
+def test_run_purge_operation_marks_all_domain_metadata_purged(monkeypatch: pytest.MonkeyPatch) -> None:
+    targets = [
+        {"layer": "bronze", "domain": "market", "container": "bronze-container", "prefix": "market-data/"},
+        {"layer": "silver", "domain": "market", "container": "silver-container", "prefix": "market-data/"},
+        {"layer": "gold", "domain": "market", "container": "gold-container", "prefix": "market/"},
+    ]
+    metadata_targets: list[dict[str, str]] = []
+
+    monkeypatch.setattr(system, "_resolve_purge_targets", lambda scope, layer, domain: [dict(t) for t in targets])
+    monkeypatch.setattr(system, "_build_silver_checkpoint_reset_targets", lambda targets: [])
+    monkeypatch.setattr(system, "_build_gold_checkpoint_reset_targets", lambda targets: [])
+    monkeypatch.setattr(
+        system,
+        "_mark_purged_domain_metadata_snapshots",
+        lambda targets: metadata_targets.extend(dict(item) for item in targets),
+    )
+
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False):
+            self.container_name = container_name
+
+        def has_blobs(self, prefix):
+            return True
+
+        def delete_prefix(self, prefix):
+            return 2
+
+    monkeypatch.setattr(system, "BlobStorageClient", _FakeBlobStorageClient)
+
+    payload = system.PurgeRequest(scope="domain", domain="market", confirm=True)
+    system._run_purge_operation(payload)
+
+    assert metadata_targets == [
+        {"layer": "bronze", "domain": "market", "container": "bronze-container"},
+        {"layer": "silver", "domain": "market", "container": "silver-container"},
+        {"layer": "gold", "domain": "market", "container": "gold-container"},
+    ]
 
 
 def test_run_purge_symbol_operation_parallel_preserves_layer_order(monkeypatch: pytest.MonkeyPatch) -> None:

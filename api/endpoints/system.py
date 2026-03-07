@@ -51,6 +51,8 @@ from core.runtime_config import (
 )
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common import domain_metadata_snapshots
+from tasks.common.finance_contracts import PIOTROSKI_FINANCE_SUBDOMAINS
 from tasks.common.domain_metadata_snapshots import build_snapshot_miss_payload
 from tasks.common import layer_bucketing
 from core.purge_rules import (
@@ -3445,7 +3447,7 @@ def _remove_symbol_from_layer_storage(
                 ),
             ]
         )
-        for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation"):
+        for sub_domain in PIOTROSKI_FINANCE_SUBDOMAINS:
             finance_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
             alpha26_tasks.append(
                 (
@@ -3679,8 +3681,58 @@ def _build_gold_checkpoint_reset_targets(targets: List[Dict[str, Optional[str]]]
     return checkpoint_targets
 
 
+def _collect_purged_domain_metadata_targets(
+    targets: List[Dict[str, Optional[str]]],
+) -> List[Dict[str, str]]:
+    collected: List[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for target in targets:
+        layer = _normalize_layer(str(target.get("layer") or ""))
+        if not layer or layer not in _DOMAIN_PREFIXES:
+            continue
+
+        supported_domains = _DOMAIN_PREFIXES.get(layer, {})
+        raw_domain = target.get("domain")
+        domain_candidates = [raw_domain] if raw_domain is not None else list(supported_domains.keys())
+        container = str(target.get("container") or "").strip()
+
+        for raw_domain_name in domain_candidates:
+            domain = _normalize_domain(str(raw_domain_name or "")) if raw_domain_name is not None else ""
+            if not domain or domain not in supported_domains:
+                continue
+            dedupe_key = (layer, domain)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            collected.append(
+                {
+                    "layer": layer,
+                    "domain": domain,
+                    "container": container,
+                }
+            )
+
+    return collected
+
+
+def _mark_purged_domain_metadata_snapshots(targets: List[Dict[str, str]]) -> None:
+    if not targets:
+        return
+
+    for target in targets:
+        domain_metadata_snapshots.mark_domain_metadata_snapshot_purged(
+            layer=str(target.get("layer") or ""),
+            domain=str(target.get("domain") or ""),
+            container=str(target.get("container") or "").strip() or None,
+        )
+
+    _invalidate_domain_metadata_document_cache()
+
+
 def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
     targets = _resolve_purge_targets(payload.scope, payload.layer, payload.domain)
+    metadata_targets = _collect_purged_domain_metadata_targets(targets)
     targets = [
         *targets,
         *_build_silver_checkpoint_reset_targets(targets),
@@ -3834,6 +3886,21 @@ def _run_purge_operation(payload: PurgeRequest) -> Dict[str, Any]:
             result = delete_results_by_index[idx]
             results.append(result)
             total_deleted += int(result.get("deleted") or 0)
+
+    try:
+        _mark_purged_domain_metadata_snapshots(metadata_targets)
+    except Exception as exc:
+        logger.exception(
+            "Purge metadata refresh failed: scope=%s layer=%s domain=%s targets=%s",
+            payload.scope,
+            payload.layer,
+            payload.domain,
+            len(metadata_targets),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Purge completed but metadata refresh failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
     logger.warning(
         "Purge completed: scope=%s layer=%s domain=%s targets=%s deleted=%s",

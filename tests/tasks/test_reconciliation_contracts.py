@@ -163,11 +163,10 @@ SILVER_CASES: list[dict[str, Any]] = [
             DataPaths.get_silver_finance_bucket_path("balance_sheet", "M"),
             DataPaths.get_silver_finance_bucket_path("income_statement", "M"),
             DataPaths.get_silver_finance_bucket_path("cash_flow", "M"),
-            DataPaths.get_silver_finance_bucket_path("valuation", "M"),
         ],
         "cutoff_paths": [
             DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
-            for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation")
+            for sub_domain in ("balance_sheet", "income_statement", "cash_flow")
             for bucket in layer_bucketing.ALPHABET_BUCKETS
         ],
         "bronze_blob_list": [{"name": "finance-data/Balance Sheet/AAPL_quarterly_balance-sheet.json"}],

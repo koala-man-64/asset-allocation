@@ -13,6 +13,7 @@ from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
+from tasks.common.finance_contracts import PIOTROSKI_FINANCE_SUBDOMAINS
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     collect_delta_silver_finance_symbols,
@@ -40,45 +41,34 @@ _EV_EBITDA_DERIVATION_LABEL = (
     "ev_ebitda missing in source; derivable via enterprise_value/ebitda or ev_revenue*revenue/ebitda"
 )
 _REQUIRED_FEATURE_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
-    "revenue": ("Total Revenue", "Revenue"),
-    "gross_profit": ("Gross Profit",),
-    "operating_income": ("Operating Income", "Operating Income or Loss"),
-    "net_income": ("Net Income", "Net Income Common Stockholders"),
-    "free_cash_flow": ("Free Cash Flow",),
+    "revenue": ("total_revenue", "Total Revenue", "Revenue"),
+    "gross_profit": ("gross_profit", "Gross Profit"),
+    "net_income": ("net_income", "Net Income", "Net Income Common Stockholders"),
     "operating_cash_flow": (
+        "operating_cash_flow",
         "Operating Cash Flow",
         "Total Cash From Operating Activities",
         "Cash Flow From Continuing Operating Activities",
         "Net Cash Provided by Operating Activities",
     ),
-    "total_debt": ("Total Debt",),
     "long_term_debt": (
+        "long_term_debt",
         "Long Term Debt",
         "Long Term Debt And Capital Lease Obligation",
         "Long Term Debt & Capital Lease Obligation",
         "Long-term Debt",
         "Long-Term Debt",
     ),
-    "total_assets": ("Total Assets",),
-    "current_assets": ("Current Assets", "Total Current Assets"),
-    "current_liabilities": ("Current Liabilities", "Total Current Liabilities"),
+    "total_assets": ("total_assets", "Total Assets"),
+    "current_assets": ("current_assets", "Current Assets", "Total Current Assets"),
+    "current_liabilities": ("current_liabilities", "Current Liabilities", "Total Current Liabilities"),
     "shares_outstanding": (
+        "shares_outstanding",
         "Shares Outstanding",
         "Common Stock Shares Outstanding",
         "Common Shares Outstanding",
         "Ordinary Shares Number",
         "Share Issued",
-    ),
-    "pe_ratio": ("Trailing P/E", "PE Ratio (TTM)", "P/E Ratio", "P/E", "PE Ratio"),
-    "ev_ebitda": ("Enterprise Value/EBITDA", "EV/EBITDA", "EV / EBITDA"),
-    "market_cap": ("Market Cap", "Market Cap (intraday)"),
-    "ebitda": ("EBITDA", "Normalized EBITDA"),
-    "forward_pe": ("Forward P/E", "Forward PE"),
-    "ev_revenue": ("Enterprise Value/Revenue", "EV/Revenue", "EV / Revenue"),
-    "cash_and_equivalents": (
-        "Cash And Cash Equivalents",
-        "Cash & Cash Equivalents",
-        "Cash and Cash Equivalents",
     ),
 }
 _CAPITAL_EXPENDITURES_ALIASES: Tuple[str, ...] = (
@@ -101,12 +91,7 @@ _CASH_AND_EQUIVALENTS_FALLBACK_ALIASES: Tuple[str, ...] = (
     "Cash And Short Term Investments",
     "Cash and Short Term Investments",
 )
-_GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = (
-    "balance_sheet",
-    "income_statement",
-    "cash_flow",
-    "valuation",
-)
+_GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = PIOTROSKI_FINANCE_SUBDOMAINS
 _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
     "date",
     "symbol",
@@ -456,31 +441,8 @@ def _prepare_table(df: Optional[pd.DataFrame], ticker: str, *, source_label: str
 def _preflight_feature_schema(df: pd.DataFrame) -> Dict[str, Any]:
     out = _snake_case_columns(df)
     missing_requirements: List[str] = []
-    recoverable_drift: List[str] = []
-
-    derivable_requirements = {
-        "free_cash_flow",
-        "total_debt",
-        "cash_and_equivalents",
-        "ev_ebitda",
-    }
-    derivation_checks = (
-        (_derive_free_cash_flow_if_missing, _FREE_CASH_FLOW_DERIVATION_LABEL),
-        (_derive_total_debt_if_missing, _TOTAL_DEBT_DERIVATION_LABEL),
-        (_derive_cash_and_equivalents_if_missing, _CASH_AND_EQUIVALENTS_DERIVATION_LABEL),
-        (_derive_ev_ebitda_if_missing, _EV_EBITDA_DERIVATION_LABEL),
-    )
-    for derive_fn, label in derivation_checks:
-        try:
-            _, derived = derive_fn(out)
-            if derived:
-                _append_unique(recoverable_drift, label)
-        except ValueError as exc:
-            _append_unique(missing_requirements, str(exc))
 
     for label, candidates in _REQUIRED_FEATURE_COLUMN_ALIASES.items():
-        if label in derivable_requirements:
-            continue
         if _resolve_column(out, candidates) is None:
             _append_unique(
                 missing_requirements,
@@ -489,14 +451,13 @@ def _preflight_feature_schema(df: pd.DataFrame) -> Dict[str, Any]:
 
     return {
         "missing_requirements": missing_requirements,
-        "recoverable_drift": recoverable_drift,
+        "recoverable_drift": [],
         "available_columns": sorted(str(col) for col in out.columns),
     }
 
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = _snake_case_columns(df)
-
     required = {"date", "symbol"}
     missing = required.difference(out.columns)
     if missing:
@@ -514,24 +475,17 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     gross_profit_col = _require_column(
         out, label="gross_profit", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["gross_profit"]
     )
-    operating_income_col = _require_column(
-        out,
-        label="operating_income",
-        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["operating_income"],
-    )
     net_income_col = _require_column(
         out,
         label="net_income",
         candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["net_income"],
     )
-    free_cash_flow_col, _ = _derive_free_cash_flow_if_missing(out)
     operating_cash_flow_col = _require_column(
         out,
         label="operating_cash_flow",
         candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["operating_cash_flow"],
     )
 
-    total_debt_col, _ = _derive_total_debt_if_missing(out)
     long_term_debt_col = _require_column(
         out,
         label="long_term_debt",
@@ -554,95 +508,36 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["shares_outstanding"],
     )
 
-    pe_ratio_col = _require_column(
-        out,
-        label="pe_ratio",
-        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["pe_ratio"],
-    )
-    ev_ebitda_col, _ = _derive_ev_ebitda_if_missing(out)
-    market_cap_col = _require_column(
-        out, label="market_cap", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["market_cap"]
-    )
-    ebitda_col = _require_column(
-        out, label="ebitda", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["ebitda"]
-    )
-    forward_pe_col = _require_column(
-        out, label="forward_pe", candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["forward_pe"]
-    )
-    ev_revenue_col = _require_column(
-        out,
-        label="ev_revenue",
-        candidates=_REQUIRED_FEATURE_COLUMN_ALIASES["ev_revenue"],
-    )
-    cash_and_equivalents_col, _ = _derive_cash_and_equivalents_if_missing(out)
-
     revenue = _coerce_numeric(out[revenue_col])
     gross_profit = _coerce_numeric(out[gross_profit_col])
-    operating_income = _coerce_numeric(out[operating_income_col])
     net_income = _coerce_numeric(out[net_income_col])
-    free_cash_flow = _coerce_numeric(out[free_cash_flow_col])
     operating_cash_flow = _coerce_numeric(out[operating_cash_flow_col])
-    ebitda = _coerce_numeric(out[ebitda_col])
-    forward_pe = _coerce_numeric(out[forward_pe_col])
-    ev_revenue = _coerce_numeric(out[ev_revenue_col])
 
     out[revenue_col] = revenue
     out[gross_profit_col] = gross_profit
-    out[operating_income_col] = operating_income
     out[net_income_col] = net_income
-    out[free_cash_flow_col] = free_cash_flow
     out[operating_cash_flow_col] = operating_cash_flow
 
-    total_debt = _coerce_numeric(out[total_debt_col])
     long_term_debt = _coerce_numeric(out[long_term_debt_col])
     total_assets = _coerce_numeric(out[total_assets_col])
     current_assets = _coerce_numeric(out[current_assets_col])
     current_liabilities = _coerce_numeric(out[current_liabilities_col])
     shares_outstanding = _coerce_numeric(out[shares_outstanding_col])
-    cash_and_equivalents = _coerce_numeric(out[cash_and_equivalents_col])
 
-    out[total_debt_col] = total_debt
     out[long_term_debt_col] = long_term_debt
     out[total_assets_col] = total_assets
     out[current_assets_col] = current_assets
     out[current_liabilities_col] = current_liabilities
     out[shares_outstanding_col] = shares_outstanding
 
-    pe_ratio = _coerce_numeric(out[pe_ratio_col])
-    ev_ebitda = _coerce_numeric(out[ev_ebitda_col])
-    market_cap = _coerce_numeric(out[market_cap_col])
-
     out["rev_qoq"] = _safe_div(revenue, revenue.groupby(symbol_key, sort=False).shift(1)) - 1.0
     out["rev_yoy"] = _safe_div(revenue, revenue.groupby(symbol_key, sort=False).shift(4)) - 1.0
     out["net_inc_yoy"] = _safe_div(net_income, net_income.groupby(symbol_key, sort=False).shift(4)) - 1.0
-    out["fcf_yoy"] = _safe_div(free_cash_flow, free_cash_flow.groupby(symbol_key, sort=False).shift(4)) - 1.0
-    
-    # Slopes (6q window)
-    out["rev_growth_slope_6q"] = revenue.groupby(symbol_key, sort=False, group_keys=False).apply(
-        lambda x: _rolling_slope(x, 6)
-    )
-    out["fcf_slope_6q"] = free_cash_flow.groupby(symbol_key, sort=False, group_keys=False).apply(
-        lambda x: _rolling_slope(x, 6)
-    )
-
     out["gross_margin"] = _safe_div(gross_profit, revenue)
-    out["op_margin"] = _safe_div(operating_income, revenue)
-    out["fcf_margin"] = _safe_div(free_cash_flow, revenue)
-    out["ebitda_margin"] = _safe_div(ebitda, revenue)
-    
-    # Margin delta QoQ (using gross margin)
     out["margin_delta_qoq"] = out["gross_margin"] - out["gross_margin"].groupby(symbol_key, sort=False).shift(1)
-
-    out["debt_to_assets"] = _safe_div(total_debt, total_assets)
     out["current_ratio"] = _safe_div(current_assets, current_liabilities)
-    out["net_debt"] = total_debt - cash_and_equivalents
     out["shares_change_yoy"] = _safe_div(shares_outstanding, shares_outstanding.groupby(symbol_key, sort=False).shift(4)) - 1.0
 
-    # ------------------------------------------------------------------
-    # Fundamentals: Piotroski F-score (aligned to canonical definitions)
-    # - Uses trailing-4-quarter (TTM) values for income/cashflow metrics.
-    # - Compares against the same quarter 1 year ago (shift=4).
-    # ------------------------------------------------------------------
     net_income_ttm = net_income.groupby(symbol_key, sort=False).transform(
         lambda series: series.rolling(window=4, min_periods=4).sum()
     )
@@ -693,15 +588,6 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         "piotroski_asset_turnover_increase",
     ]
     out["piotroski_f_score"] = out[piotroski_components].sum(axis=1)
-
-    out["pe_ratio"] = pe_ratio
-    out["ev_ebitda"] = ev_ebitda
-    out["market_cap"] = market_cap
-    out["fpe"] = forward_pe
-    out["ev_rev"] = ev_revenue
-
-    rev_yoy_positive = out["rev_yoy"].where(out["rev_yoy"] > 0)
-    out["peg_proxy"] = _safe_div(out["pe_ratio"], rev_yoy_positive)
 
     out = out.replace([np.inf, -np.inf], np.nan)
     return out
@@ -763,12 +649,6 @@ def _project_gold_finance_piotroski_frame(df: pd.DataFrame) -> pd.DataFrame:
             projected[column] = pd.Series([pd.NA] * len(out), dtype="Int64")
 
     return projected[list(_GOLD_FINANCE_PIOTROSKI_COLUMNS)].reset_index(drop=True)
-
-
-def _deprecated_gold_finance_bucket_paths(bucket: str) -> list[str]:
-    from core.pipeline import DataPaths
-
-    return [DataPaths.get_gold_finance_bucket_path(sub_domain, bucket) for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS]
 
 
 def _gold_finance_alpha26_bucket_path(bucket: str) -> str:
@@ -836,39 +716,6 @@ def _load_gold_finance_bucket_template(
             continue
         return _project_gold_finance_piotroski_frame(df_existing).iloc[0:0].copy(), True
     return _empty_gold_finance_bucket_frame(), False
-
-
-def _load_existing_gold_finance_bucket(
-    *,
-    container: str,
-    candidate_paths: Sequence[str],
-) -> tuple[pd.DataFrame, Optional[str]]:
-    from core import delta_core
-
-    for path in candidate_paths:
-        try:
-            df_existing = delta_core.load_delta(container, path)
-        except Exception:
-            continue
-        if df_existing is None:
-            continue
-        return _project_gold_finance_piotroski_frame(df_existing), path
-    return _empty_gold_finance_bucket_frame(), None
-
-
-def _delete_deprecated_gold_finance_bucket_paths(*, client: Any, bucket: str) -> list[tuple[str, int]]:
-    if client is None or not hasattr(client, "delete_prefix"):
-        return []
-
-    deleted: list[tuple[str, int]] = []
-    for path in _deprecated_gold_finance_bucket_paths(bucket):
-        try:
-            deleted_blobs = int(client.delete_prefix(path) or 0)
-        except Exception:
-            continue
-        if deleted_blobs > 0:
-            deleted.append((path, deleted_blobs))
-    return deleted
 
 
 def _run_finance_reconciliation(*, silver_container: str, gold_container: str) -> tuple[int, int]:
@@ -961,40 +808,26 @@ def _run_alpha26_finance_gold(
 
     force_rebuild = layer_bucketing.gold_alpha26_force_rebuild()
     backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
-    gold_client = mdc.get_storage_client(gold_container)
     processed = 0
     skipped_unchanged = 0
     skipped_missing_source = 0
     failed = 0
     watermarks_dirty = False
     symbol_to_bucket = _load_existing_gold_finance_symbol_to_bucket_map()
-    cleanup_buckets: set[str] = set()
 
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         from core.pipeline import DataPaths
 
         silver_paths = {
-            "income_statement": DataPaths.get_silver_finance_bucket_path("income_statement", bucket),
-            "balance_sheet": DataPaths.get_silver_finance_bucket_path("balance_sheet", bucket),
-            "cash_flow": DataPaths.get_silver_finance_bucket_path("cash_flow", bucket),
-            "valuation": DataPaths.get_silver_finance_bucket_path("valuation", bucket),
+            sub_domain: DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+            for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS
         }
         gold_path = _gold_finance_alpha26_bucket_path(bucket)
-        deprecated_gold_paths = _deprecated_gold_finance_bucket_paths(bucket)
         commits = [
-            delta_core.get_delta_last_commit(silver_container, silver_paths["income_statement"]),
-            delta_core.get_delta_last_commit(silver_container, silver_paths["balance_sheet"]),
-            delta_core.get_delta_last_commit(silver_container, silver_paths["cash_flow"]),
-            delta_core.get_delta_last_commit(silver_container, silver_paths["valuation"]),
+            delta_core.get_delta_last_commit(silver_container, path) for path in silver_paths.values()
         ]
         silver_commit = max([c for c in commits if c is not None], default=None)
         gold_commit = delta_core.get_delta_last_commit(gold_container, gold_path)
-        deprecated_gold_commits = {
-            path: delta_core.get_delta_last_commit(gold_container, path) for path in deprecated_gold_paths
-        }
-        deprecated_template_paths = [
-            path for path, commit in deprecated_gold_commits.items() if commit is not None
-        ]
         watermark_key = f"bucket::{bucket}"
         prior = watermarks.get(watermark_key, {})
         skip_due_watermark = (
@@ -1005,44 +838,15 @@ def _run_alpha26_finance_gold(
         )
         if skip_due_watermark and gold_commit is not None:
             skipped_unchanged += 1
-            cleanup_buckets.add(bucket)
             continue
 
         df_gold_bucket: Optional[pd.DataFrame] = None
         bucket_symbol_to_bucket: dict[str, str] = {}
         template_schema_available = False
-        migrated_from_deprecated = False
-
-        if skip_due_watermark and gold_commit is None and deprecated_template_paths:
-            try:
-                df_gold_bucket, migrated_path = _load_existing_gold_finance_bucket(
-                    container=gold_container,
-                    candidate_paths=deprecated_template_paths,
-                )
-                template_schema_available = migrated_path is not None
-                migrated_from_deprecated = migrated_path is not None
-                if migrated_from_path := migrated_path:
-                    mdc.write_line(
-                        "Gold finance alpha26 migrating deprecated sub-domain bucket "
-                        f"to unified path bucket={bucket} source={migrated_from_path} target={gold_path}"
-                    )
-                if "symbol" in df_gold_bucket.columns:
-                    bucket_symbol_to_bucket = {
-                        str(symbol).strip().upper(): bucket
-                        for symbol in df_gold_bucket["symbol"].dropna().astype(str).tolist()
-                        if str(symbol).strip()
-                    }
-            except Exception as exc:
-                failed += 1
-                mdc.write_warning(f"Gold finance alpha26 deprecated-path migration failed bucket={bucket}: {exc}")
-                continue
 
         if df_gold_bucket is None and silver_commit is None:
             skipped_missing_source += 1
-            template_candidates: list[str] = []
-            if gold_commit is not None:
-                template_candidates.append(gold_path)
-            template_candidates.extend(deprecated_template_paths)
+            template_candidates: list[str] = [gold_path] if gold_commit is not None else []
             df_gold_bucket, template_schema_available = _load_gold_finance_bucket_template(
                 container=gold_container,
                 candidate_paths=template_candidates,
@@ -1083,18 +887,13 @@ def _run_alpha26_finance_gold(
                         ticker,
                         source_label="cash_flow",
                     )
-                    df_valuation = _prepare_table(
-                        tables.get("valuation", pd.DataFrame()).query("symbol == @ticker").copy(),
-                        ticker,
-                        source_label="valuation",
-                    )
                 except Exception as exc:
                     failed += 1
                     mdc.write_warning(f"Gold finance alpha26 source failed for {ticker}: {exc}")
                     continue
 
                 base_dates = []
-                for table in (df_income, df_balance, df_cashflow, df_valuation):
+                for table in (df_income, df_balance, df_cashflow):
                     base_dates.append(table[["date", "symbol"]])
                 keys = pd.concat(base_dates, ignore_index=True).drop_duplicates(
                     subset=["symbol", "date"], keep="last"
@@ -1105,7 +904,6 @@ def _run_alpha26_finance_gold(
                     (df_income, "_is"),
                     (df_balance, "_bs"),
                     (df_cashflow, "_cf"),
-                    (df_valuation, "_val"),
                 ):
                     merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
 
@@ -1151,10 +949,7 @@ def _run_alpha26_finance_gold(
                     pd.concat(symbol_frames, ignore_index=True)
                 )
             else:
-                template_candidates = []
-                if gold_commit is not None:
-                    template_candidates.append(gold_path)
-                template_candidates.extend(deprecated_template_paths)
+                template_candidates = [gold_path] if gold_commit is not None else []
                 if template_candidates:
                     df_gold_bucket, template_schema_available = _load_gold_finance_bucket_template(
                         container=gold_container,
@@ -1223,13 +1018,12 @@ def _run_alpha26_finance_gold(
             touched_bucket=bucket,
             touched_symbol_to_bucket=bucket_symbol_to_bucket,
         )
-        if silver_commit is not None and not migrated_from_deprecated:
+        if silver_commit is not None:
             watermarks[watermark_key] = {
                 "silver_last_commit": silver_commit,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             watermarks_dirty = True
-        cleanup_buckets.add(bucket)
 
     index_path = layer_bucketing.write_layer_symbol_index(
         layer="gold",
@@ -1248,19 +1042,6 @@ def _run_alpha26_finance_gold(
             )
         except Exception as exc:
             mdc.write_warning(f"Gold finance metadata artifact write failed: {exc}")
-        for bucket in sorted(cleanup_buckets):
-            for path, deleted_blobs in _delete_deprecated_gold_finance_bucket_paths(
-                client=gold_client,
-                bucket=bucket,
-            ):
-                mdc.write_line(
-                    "Gold finance alpha26 removed deprecated sub-domain bucket path "
-                    f"{path}: deleted_blobs={deleted_blobs}"
-                )
-    elif cleanup_buckets:
-        mdc.write_warning(
-            "Gold finance alpha26 skipped deprecated bucket cleanup because the unified symbol index was not written."
-        )
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

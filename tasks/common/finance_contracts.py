@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+PIOTROSKI_FINANCE_SUBDOMAINS: tuple[str, ...] = (
+    "balance_sheet",
+    "income_statement",
+    "cash_flow",
+)
+
+SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN: dict[str, tuple[str, ...]] = {
+    "balance_sheet": (
+        "date",
+        "symbol",
+        "long_term_debt",
+        "total_assets",
+        "current_assets",
+        "current_liabilities",
+        "shares_outstanding",
+    ),
+    "income_statement": (
+        "date",
+        "symbol",
+        "total_revenue",
+        "gross_profit",
+        "net_income",
+    ),
+    "cash_flow": (
+        "date",
+        "symbol",
+        "operating_cash_flow",
+    ),
+}
+
+SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]] = {
+    "balance_sheet": {
+        "long_term_debt": (
+            "long_term_debt",
+            "longTermDebt",
+            "Long Term Debt",
+            "long_term_debt_and_capital_lease_obligation",
+            "longTermDebtAndCapitalLeaseObligation",
+            "Long Term Debt And Capital Lease Obligation",
+            "long_term_debt_capital_lease_obligation",
+            "Long Term Debt & Capital Lease Obligation",
+            "long_term_debt_noncurrent",
+            "longTermDebtNoncurrent",
+        ),
+        "total_assets": (
+            "total_assets",
+            "totalAssets",
+            "Total Assets",
+        ),
+        "current_assets": (
+            "current_assets",
+            "currentAssets",
+            "Current Assets",
+            "total_current_assets",
+            "totalCurrentAssets",
+            "Total Current Assets",
+        ),
+        "current_liabilities": (
+            "current_liabilities",
+            "currentLiabilities",
+            "Current Liabilities",
+            "total_current_liabilities",
+            "totalCurrentLiabilities",
+            "Total Current Liabilities",
+        ),
+        "shares_outstanding": (
+            "shares_outstanding",
+            "sharesOutstanding",
+            "Shares Outstanding",
+            "common_stock_shares_outstanding",
+            "commonStockSharesOutstanding",
+            "Common Stock Shares Outstanding",
+            "common_shares_outstanding",
+            "Common Shares Outstanding",
+            "ordinary_shares_number",
+            "ordinarySharesNumber",
+            "Ordinary Shares Number",
+            "share_issued",
+            "shareIssued",
+            "Share Issued",
+        ),
+    },
+    "income_statement": {
+        "total_revenue": (
+            "total_revenue",
+            "totalRevenue",
+            "Total Revenue",
+            "revenue",
+            "Revenue",
+        ),
+        "gross_profit": (
+            "gross_profit",
+            "grossProfit",
+            "Gross Profit",
+        ),
+        "net_income": (
+            "net_income",
+            "netIncome",
+            "Net Income",
+            "net_income_common_stockholders",
+            "netIncomeCommonStockholders",
+            "Net Income Common Stockholders",
+        ),
+    },
+    "cash_flow": {
+        "operating_cash_flow": (
+            "operating_cash_flow",
+            "operatingCashFlow",
+            "operatingCashflow",
+            "Operating Cash Flow",
+            "total_cash_from_operating_activities",
+            "totalCashFromOperatingActivities",
+            "Total Cash From Operating Activities",
+            "cash_flow_from_continuing_operating_activities",
+            "cashFlowFromContinuingOperatingActivities",
+            "Cash Flow From Continuing Operating Activities",
+            "net_cash_provided_by_operating_activities",
+            "netCashProvidedByOperatingActivities",
+            "Net Cash Provided by Operating Activities",
+        ),
+    },
+}
+
+PIOTROSKI_ALPHA26_REPORT_LAYOUTS: dict[str, tuple[str, str]] = {
+    "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
+    "income_statement": ("Income Statement", "quarterly_financials"),
+    "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
+}
+
+SKIPPED_PIOTROSKI_ALPHA26_REPORT_TYPES: frozenset[str] = frozenset({"overview", "valuation"})

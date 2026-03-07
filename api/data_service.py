@@ -14,9 +14,10 @@ from core import delta_core
 from core.pipeline import DataPaths
 from tasks.common import bronze_bucketing
 from tasks.common import layer_bucketing
+from tasks.common.finance_contracts import PIOTROSKI_FINANCE_SUBDOMAINS
 
 
-_FINANCE_SILVER_FOLDERS: dict[str, tuple[str, str]] = {
+_FINANCE_BRONZE_FOLDERS: dict[str, tuple[str, str]] = {
     "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
     "income_statement": ("Income Statement", "quarterly_financials"),
     "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
@@ -27,6 +28,9 @@ _FINANCE_SUBDOMAIN_TO_REPORT_TYPE: dict[str, str] = {
     "income_statement": "income_statement",
     "cash_flow": "cash_flow",
     "valuation": "overview",
+}
+_FINANCE_PIOTROSKI_FOLDERS: dict[str, tuple[str, str]] = {
+    sub_domain: _FINANCE_BRONZE_FOLDERS[sub_domain] for sub_domain in PIOTROSKI_FINANCE_SUBDOMAINS
 }
 
 _ADLS_TREE_SCAN_LIMIT_DEFAULT = 5_000
@@ -991,7 +995,7 @@ class DataService:
             bucket = layer_bucketing.bucket_letter(symbol)
             paths = [
                 DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
-                for sub_domain in _FINANCE_SILVER_FOLDERS.keys()
+                for sub_domain in _FINANCE_PIOTROSKI_FOLDERS.keys()
             ]
         else:
             paths = DataService._discover_delta_table_paths(container, "finance-data")
@@ -1168,7 +1172,7 @@ class DataService:
                     "Set Azure storage env vars to enable Bronze exploration."
                 )
 
-            if resolved_sub not in _FINANCE_SILVER_FOLDERS:
+            if resolved_sub not in _FINANCE_BRONZE_FOLDERS:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
 
             report_type = _FINANCE_SUBDOMAIN_TO_REPORT_TYPE.get(resolved_sub)
@@ -1187,7 +1191,7 @@ class DataService:
         if resolved_layer == "silver":
             if not ticker:
                 raise ValueError("ticker is required for Silver finance data.")
-            if resolved_sub not in _FINANCE_SILVER_FOLDERS:
+            if resolved_sub not in _FINANCE_PIOTROSKI_FOLDERS:
                 raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
 
             layer_bucketing.silver_layout_mode()
@@ -1203,6 +1207,8 @@ class DataService:
         if resolved_layer == "gold":
             if not ticker:
                 raise ValueError("ticker is required for Gold finance data.")
+            if resolved_sub not in _FINANCE_PIOTROSKI_FOLDERS:
+                raise ValueError(f"Unknown finance sub-domain: {sub_domain}")
             layer_bucketing.gold_layout_mode()
             symbol = str(ticker).strip().upper()
             rows = DataService._read_delta(

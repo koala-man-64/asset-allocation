@@ -58,6 +58,7 @@ function primeSnapshot(entry: {
   computedAt: string;
   symbolCount: number;
   columnCount?: number;
+  totalBytes?: number;
   warnings: string[];
 }) {
   const key = `${entry.layer}/${entry.domain}`;
@@ -267,6 +268,33 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     expect((await screen.findAllByText('9 cols')).length).toBeGreaterThan(0);
+  });
+
+  it('shows the storage size in the medallion-domain coverage panel', async () => {
+    primeSnapshot({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      symbolCount: 123,
+      columnCount: 9,
+      totalBytes: 2048,
+      warnings: []
+    });
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect((await screen.findAllByText('9 cols • 2.0 KB')).length).toBeGreaterThan(0);
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {

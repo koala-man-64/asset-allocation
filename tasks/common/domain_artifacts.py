@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
@@ -11,6 +12,8 @@ from core.blob_storage import BlobStorageClient
 from tasks.common import bronze_bucketing
 from tasks.common import domain_metadata_snapshots
 
+
+logger = logging.getLogger(__name__)
 
 ARTIFACT_VERSION = 1
 DATE_RANGE_SOURCE = "artifact"
@@ -75,6 +78,15 @@ def root_prefix(*, layer: str, domain: str) -> str:
     if not prefix:
         raise ValueError(f"Unsupported layer/domain for metadata artifacts: layer={layer!r} domain={domain!r}")
     return prefix
+
+
+def _storage_listing_prefix(*, layer: str, domain: str, sub_domain: Optional[str] = None) -> str:
+    prefix = root_prefix(layer=layer, domain=domain).rstrip("/")
+    normalized_domain = normalize_domain(domain)
+    normalized_sub_domain = normalize_sub_domain(sub_domain)
+    if normalized_domain == "finance" and normalized_sub_domain:
+        prefix = f"{prefix}/{normalized_sub_domain}"
+    return f"{prefix}/"
 
 
 def domain_artifact_path(*, layer: str, domain: str, sub_domain: Optional[str] = None) -> str:
@@ -310,6 +322,7 @@ def _finance_subdomain_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
         "symbolCount": payload.get("symbolCount"),
         "columns": _normalize_columns(payload.get("columns") or []),
         "columnCount": extract_column_count(payload) or 0,
+        "totalBytes": payload.get("totalBytes"),
         "dateRange": payload.get("dateRange"),
         "artifactPath": payload.get("artifactPath"),
         "updatedAt": payload.get("updatedAt"),
@@ -329,6 +342,40 @@ def extract_column_count(payload: Optional[dict[str, Any]]) -> Optional[int]:
         return len(_normalize_columns(columns))
 
     return None
+
+
+def _measure_domain_storage_bytes(
+    client: Optional[BlobStorageClient],
+    *,
+    layer: str,
+    domain: str,
+    sub_domain: Optional[str] = None,
+) -> Optional[int]:
+    if client is None:
+        return None
+
+    container_client = getattr(client, "container_client", None)
+    if container_client is None:
+        return None
+
+    total_bytes = 0
+    prefix = _storage_listing_prefix(layer=layer, domain=domain, sub_domain=sub_domain)
+    try:
+        for blob in container_client.list_blobs(name_starts_with=prefix):
+            size = getattr(blob, "size", None)
+            if isinstance(size, int):
+                total_bytes += size
+    except Exception as exc:
+        logger.warning(
+            "Failed to measure domain storage bytes for artifact payload: layer=%s domain=%s prefix=%s err=%s",
+            layer,
+            domain,
+            prefix,
+            exc,
+        )
+        return None
+
+    return total_bytes
 
 
 def write_bucket_artifact(
@@ -476,6 +523,12 @@ def write_domain_artifact(
         domain=normalized_domain,
         sub_domain=normalized_sub_domain or None,
     )
+    total_bytes = _measure_domain_storage_bytes(
+        storage_client,
+        layer=normalized_layer,
+        domain=normalized_domain,
+        sub_domain=normalized_sub_domain or None,
+    )
     now = _utc_now_iso()
     payload: dict[str, Any] = {
         "version": ARTIFACT_VERSION,
@@ -490,6 +543,7 @@ def write_domain_artifact(
         "producerJobName": str(job_name or "").strip() or None,
         "jobRunId": str(job_run_id or "").strip() or None,
         "symbolIndexPath": str(symbol_index_path or "").strip() or None,
+        "totalBytes": total_bytes,
         **summary,
     }
     if normalized_domain == "finance" and not normalized_sub_domain:

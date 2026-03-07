@@ -1,32 +1,85 @@
 # Contributing
 
-## Development setup
+## Development Setup
+
+### Python
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install -r requirements.txt -r requirements-dev.txt
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+python3 -m pip install -r requirements-dev.txt
 ```
 
-## Running tests
+### UI
+
 ```bash
-pytest -q
+cd ui
+pnpm install
 ```
 
-## Updating dependency lockfiles
-Docker images install from `requirements.lock.txt`, and CI installs from `requirements-dev.lock.txt`.
+## Day-to-Day Checks
 
-If you change `requirements.txt` or `requirements-dev.txt`, regenerate lockfiles:
+### Backend
+
 ```bash
-virtualenv -p python3 /tmp/assetallocation-lock
-/tmp/assetallocation-lock/bin/python -m pip install -r requirements.txt
-/tmp/assetallocation-lock/bin/python -m pip freeze --exclude-editable > requirements.lock.txt
-/tmp/assetallocation-lock/bin/python -m pip install -r requirements-dev.txt
-/tmp/assetallocation-lock/bin/python -m pip freeze --exclude-editable > requirements-dev.lock.txt
-rm -rf /tmp/assetallocation-lock
+python3 -m ruff check .
+python3 -m pytest -q
 ```
 
+### UI
 
+```bash
+cd ui
+pnpm lint
+pnpm exec vitest run --coverage
+pnpm build
+```
 
-## Pull requests
-- Keep changes scoped and add tests for any new behavior.
-- Update config examples/docs when changing config schema or artifacts.
+CI runs the UI checks in a Node 20 container and the backend checks on Python 3.10.
+
+## Dependency Governance
+
+- Runtime dependency source of truth is `pyproject.toml` under `[project].dependencies`.
+- Regenerate `requirements.txt` and `requirements.lock.txt` from `pyproject.toml` with:
+
+```bash
+python3 scripts/dependency_governance.py sync
+```
+
+- Validate runtime and dev dependency alignment with:
+
+```bash
+python3 scripts/dependency_governance.py check --report artifacts/dependency_governance_report.json
+```
+
+- If you change `requirements-dev.txt`, keep `requirements-dev.lock.txt` aligned in the same change. CI installs the dev lockfile when it is present.
+
+## Docs and Config Changes
+
+- Update `.env.template` when you add, rename, or remove environment variables.
+- Update the root docs and targeted runbooks when you change application behavior, deployment knobs, or operator workflows.
+- Treat `/api/docs` and `/api/openapi.json` as the source of truth for live API routes.
+- If you add, remove, or rename repo-local agents under `.codex/skills`, update `AGENTS.md` in the same change.
+
+## Pull Requests
+
+- Keep changes scoped.
+- Add or update tests for behavior changes.
+- Call out secret, auth, data migration, or deployment impacts when you touch `deploy/`, runtime config, auth, or provider integration code.
+
+## Evidence
+
+- `pyproject.toml`
+- `requirements.txt`
+- `requirements.lock.txt`
+- `requirements-dev.txt`
+- `requirements-dev.lock.txt`
+- `scripts/dependency_governance.py`
+- `.github/workflows/run_tests.yml`
+- `.github/workflows/dependency_governance.yml`
+- `pytest.ini`
+- `.env.template`
+- `api/service/app.py`
+- `ui/package.json`

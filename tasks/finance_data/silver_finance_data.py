@@ -16,6 +16,13 @@ from core.pipeline import DataPaths
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
+from tasks.common.finance_contracts import (
+    PIOTROSKI_ALPHA26_REPORT_LAYOUTS,
+    PIOTROSKI_FINANCE_SUBDOMAINS,
+    SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN,
+    SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN,
+    SKIPPED_PIOTROSKI_ALPHA26_REPORT_TYPES,
+)
 from tasks.common import run_manifests
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import (
@@ -72,30 +79,11 @@ class _ManifestSelection:
 
 
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
-_ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = {
-    "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
-    "income_statement": ("Income Statement", "quarterly_financials"),
-    "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
-    "overview": ("Valuation", "quarterly_valuation_measures"),
-    "valuation": ("Valuation", "quarterly_valuation_measures"),
-}
+_ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = dict(PIOTROSKI_ALPHA26_REPORT_LAYOUTS)
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
 _DEFAULT_CATCHUP_MAX_PASSES = 3
-_FINANCE_VALUATION_CALCULATED_COLUMNS = {
-    "market_cap",
-    "pe_ratio",
-    "forward_pe",
-    "ev_ebitda",
-    "ev_revenue",
-    "shares_outstanding",
-}
-_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = (
-    "balance_sheet",
-    "income_statement",
-    "cash_flow",
-    "valuation",
-)
+_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = PIOTROSKI_FINANCE_SUBDOMAINS
 
 
 def _get_positive_int_env(name: str, default: int) -> int:
@@ -242,136 +230,54 @@ def _try_parse_float(value: Any) -> Optional[float]:
         return None
 
 
-def _get_first_float(payload: dict[str, Any], candidates: list[str]) -> Optional[float]:
+def _get_first_value(payload: dict[str, Any], candidates: tuple[str, ...]) -> Any:
     normalized = {_normalize_key(k): v for k, v in payload.items()}
     for candidate in candidates:
         value = normalized.get(_normalize_key(candidate))
-        parsed = _try_parse_float(value)
-        if parsed is not None:
-            return parsed
+        if value is not None:
+            return value
     return None
-
-
-def _load_close_prices(ticker: str) -> pd.DataFrame:
-    """
-    Load close price series for valuation approximation from Silver market Delta only.
-    Fallback sources are intentionally disabled.
-    """
-    symbol = str(ticker or "").strip().upper()
-    if not symbol:
-        return pd.DataFrame()
-
-    layer_bucketing.silver_layout_mode()
-    market_path = DataPaths.get_silver_market_bucket_path(layer_bucketing.bucket_letter(symbol))
-    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["date", "close", "symbol"])
-    if df is not None and not df.empty and "symbol" in df.columns:
-        df = df[df["symbol"].astype(str).str.upper() == symbol]
-
-    if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
-        return pd.DataFrame()
-
-    out = df[["date", "close"]].copy()
-    out = out.rename(columns={"date": "Date", "close": "Close"})
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-    out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
-    out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
-    return out
-
-
-def _build_valuation_timeseries_from_overview(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
-    """
-    Alpha Vantage does not provide a full historical valuation time series. We approximate it by
-    scaling "current" ratios from `OVERVIEW` by historical close prices.
-
-    This yields a best-effort daily valuation series that is consistent on the latest close date
-    (i.e., latest date matches the overview ratio).
-    """
-    df_prices = _load_close_prices(ticker)
-
-    market_cap_now = _get_first_float(payload, ["MarketCapitalization", "Market Cap", "MarketCap"])
-    pe_now = _get_first_float(payload, ["PERatio", "P/E", "PE Ratio"])
-    forward_pe_now = _get_first_float(payload, ["ForwardPE", "Forward P/E", "Forward PE"])
-    ev_ebitda_now = _get_first_float(payload, ["EVToEBITDA", "EV/EBITDA", "EV To EBITDA"])
-    ev_revenue_now = _get_first_float(payload, ["EVToRevenue", "EV/Revenue", "EV To Revenue"])
-    shares_outstanding_now = _get_first_float(payload, ["SharesOutstanding", "Shares Outstanding"])
-    ebitda_now = _get_first_float(payload, ["EBITDA"])
-
-    if df_prices is None or df_prices.empty:
-        return pd.DataFrame()
-
-    close_now = float(df_prices["Close"].iloc[-1])
-    if close_now <= 0:
-        return pd.DataFrame()
-
-    scale = df_prices["Close"] / close_now
-
-    shares_outstanding = shares_outstanding_now
-    if shares_outstanding is None and market_cap_now is not None:
-        shares_outstanding = market_cap_now / close_now
-
-    out = pd.DataFrame({"Date": df_prices["Date"], "Symbol": ticker})
-
-    if shares_outstanding is not None:
-        out["shares_outstanding"] = float(shares_outstanding)
-
-    if market_cap_now is not None:
-        if shares_outstanding is not None:
-            out["market_cap"] = df_prices["Close"] * float(shares_outstanding)
-        else:
-            out["market_cap"] = float(market_cap_now) * scale
-
-    if pe_now is not None:
-        out["pe_ratio"] = float(pe_now) * scale
-    if forward_pe_now is not None:
-        out["forward_pe"] = float(forward_pe_now) * scale
-    if ev_ebitda_now is not None:
-        out["ev_ebitda"] = float(ev_ebitda_now) * scale
-    if ev_revenue_now is not None:
-        out["ev_revenue"] = float(ev_revenue_now) * scale
-    if ebitda_now is not None:
-        out["ebitda"] = float(ebitda_now)
-
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-    out = out.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
-    return out
 
 
 def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.DataFrame:
     payload = json.loads(raw_bytes.decode("utf-8"))
 
-    # Fundamentals endpoints return quarterlyReports/annualReports; OVERVIEW is a flat dict.
-    if suffix in {"quarterly_balance-sheet", "quarterly_cash-flow", "quarterly_financials"}:
-        reports = payload.get("quarterlyReports") or []
-        if not isinstance(reports, list) or not reports:
-            return pd.DataFrame()
+    suffix_to_sub_domain = {
+        report_suffix: sub_domain
+        for sub_domain, (_folder_name, report_suffix) in PIOTROSKI_ALPHA26_REPORT_LAYOUTS.items()
+    }
+    sub_domain = suffix_to_sub_domain.get(suffix)
+    if sub_domain is None:
+        return pd.DataFrame()
 
-        rows = []
-        for item in reports:
-            if not isinstance(item, dict):
-                continue
-            date_raw = item.get("fiscalDateEnding")
-            if not date_raw:
-                continue
-            row = {"Date": str(date_raw).strip(), "Symbol": ticker}
-            for k, v in item.items():
-                if k == "fiscalDateEnding":
-                    continue
-                # Keep values as strings for downstream Delta writes (avoids mixed object types).
-                row[str(k)] = "" if v is None else str(v)
-            rows.append(row)
+    reports = payload.get("quarterlyReports") or []
+    if not isinstance(reports, list) or not reports:
+        return pd.DataFrame()
 
-        df = pd.DataFrame(rows)
-        if df.empty:
-            return df
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
-        df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
+    alias_map = SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN[sub_domain]
+    expected_columns = SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN[sub_domain]
+    rows = []
+    for item in reports:
+        if not isinstance(item, dict):
+            continue
+        date_raw = item.get("fiscalDateEnding")
+        if not date_raw:
+            continue
+        row: dict[str, Any] = {"Date": str(date_raw).strip(), "Symbol": ticker}
+        for column in expected_columns[2:]:
+            row[column] = _try_parse_float(_get_first_value(item, alias_map[column]))
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
         return df
 
-    # "Valuation" bucket: approximate a daily valuation series from OVERVIEW + historical closes.
-    if suffix == "quarterly_valuation_measures" and isinstance(payload, dict):
-        return _build_valuation_timeseries_from_overview(payload, ticker=ticker)
-
-    return pd.DataFrame()
+    for column in expected_columns[2:]:
+        if column not in df.columns:
+            df[column] = pd.Series(dtype="float64")
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
+    return df[["Date", "Symbol", *expected_columns[2:]]]
 
 
 def _utc_today() -> pd.Timestamp:
@@ -809,13 +715,10 @@ def _process_finance_frame(
         df_clean["symbol"] = df_clean["symbol"].astype("string").str.upper()
         df_clean = df_clean.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
         df_clean = df_clean.reset_index(drop=True)
-    applied_calculated_columns: set[str] = set()
-    if suffix == "quarterly_valuation_measures":
-        applied_calculated_columns = {col for col in _FINANCE_VALUATION_CALCULATED_COLUMNS if col in df_clean.columns}
     df_clean = apply_precision_policy(
         df_clean,
         price_columns=set(),
-        calculated_columns=applied_calculated_columns,
+        calculated_columns=set(),
         price_scale=2,
         calculated_scale=4,
     )
@@ -854,10 +757,9 @@ def _process_finance_frame(
                 enforce_retention_duration=False,
                 full=True,
             )
-    calc_cols_str = ",".join(sorted(applied_calculated_columns)) if applied_calculated_columns else "none"
     mdc.write_line(
         "precision_policy_applied domain=finance "
-        f"ticker={ticker} report_suffix={suffix} price_cols=none calc_cols={calc_cols_str} rows={len(df_clean)}"
+        f"ticker={ticker} report_suffix={suffix} price_cols=none calc_cols=none rows={len(df_clean)}"
     )
     if persist:
         mdc.write_line(f"Updated Silver {silver_path}")
@@ -918,6 +820,8 @@ def process_alpha26_bucket_blob(
             continue
         mapped = _ALPHA26_REPORT_TYPE_TO_TABLE.get(report_type)
         if not mapped:
+            if report_type in SKIPPED_PIOTROSKI_ALPHA26_REPORT_TYPES:
+                continue
             results.append(
                 BlobProcessResult(
                     blob_name=blob_name,

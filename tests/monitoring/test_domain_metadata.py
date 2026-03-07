@@ -322,9 +322,6 @@ def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) 
                     "finance-data/income_statement/AAPL_quarterly_financials/_delta_log/00000000000000000000.json", 11
                 ),
                 _Blob("finance-data/cash_flow/MSFT_quarterly_cash-flow/_delta_log/00000000000000000000.json", 12),
-                _Blob(
-                    "finance-data/valuation/MSFT_quarterly_valuation_measures/_delta_log/00000000000000000000.json", 13
-                ),
             ]
 
     class _FakeBlobStorageClient:
@@ -354,7 +351,6 @@ def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) 
         "balance_sheet": 1,
         "income_statement": 1,
         "cash_flow": 1,
-        "valuation": 1,
     }
 
 
@@ -666,6 +662,7 @@ def test_collect_domain_metadata_prefers_writer_artifact(monkeypatch) -> None:
             "symbolCount": 4,
             "columns": ["date", "symbol", "close"],
             "columnCount": 3,
+            "totalBytes": 2048,
             "dateRange": {
                 "min": "2026-01-01T00:00:00+00:00",
                 "max": "2026-03-01T00:00:00+00:00",
@@ -682,6 +679,7 @@ def test_collect_domain_metadata_prefers_writer_artifact(monkeypatch) -> None:
     assert payload["columns"] == ["date", "symbol", "close"]
     assert payload["columnCount"] == 3
     assert payload["dateRange"]["source"] == "artifact"
+    assert payload["totalBytes"] == 2048
     assert payload["metadataPath"] == "market-data/_metadata/domain.json"
     assert payload["metadataSource"] == "artifact"
     assert payload["fileCount"] is None

@@ -228,6 +228,20 @@ function formatColumnCount(value: number | null | undefined): string {
   return `${numberFormatter.format(value)} cols`;
 }
 
+function formatStorageBytes(value: number | null | undefined): string {
+  if (!hasFiniteNumber(value)) return 'size n/a';
+  if (value === 0) return '0 B';
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB'] as const;
+  let size = value / 1024;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
 function compareSymbols(
   current: DomainMetadata,
   previous: DomainMetadata
@@ -1681,6 +1695,14 @@ export function DomainLayerComparisonPanel({
                         ? summarizeBlacklistCount(metadata)
                         : { text: 'blacklist n/a', className: 'text-mcm-walnut/70' };
                       const columnCount = resolveColumnCount(metadata);
+                      const storageBytes = metadata?.totalBytes;
+                      const columnStorageSummary =
+                        [
+                          columnCount !== null ? formatColumnCount(columnCount) : null,
+                          hasFiniteNumber(storageBytes) ? formatStorageBytes(storageBytes) : null
+                        ]
+                          .filter((value): value is string => Boolean(value))
+                          .join(' • ') || null;
                       const financeSubfolderCounts =
                         row.key === 'finance' && metadata
                           ? FINANCE_SUBFOLDER_ITEMS.map((item) => ({
@@ -1736,6 +1758,7 @@ export function DomainLayerComparisonPanel({
                         isPurgingThisTarget,
                         symbolComparison,
                         columnCount,
+                        columnStorageSummary,
                         previousLabel,
                         blacklistSummary,
                         financeSubfolderCounts,
@@ -1829,9 +1852,9 @@ export function DomainLayerComparisonPanel({
                                   >
                                     {formatSymbolCount(model.metadata?.symbolCount)}
                                   </span>
-                                  {model.columnCount !== null ? (
+                                  {model.columnStorageSummary ? (
                                     <div className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}>
-                                      {formatColumnCount(model.columnCount)}
+                                      {model.columnStorageSummary}
                                     </div>
                                   ) : null}
                                   {model.metadataUpdatedAt ? (
@@ -1941,9 +1964,9 @@ export function DomainLayerComparisonPanel({
                                           >
                                             {formatSymbolCount(model.metadata?.symbolCount)}
                                           </div>
-                                          {model.columnCount !== null ? (
+                                          {model.columnStorageSummary ? (
                                             <div className={`${StatusTypos.MONO} mt-0.5 text-[11px] text-mcm-walnut/70`}>
-                                              {formatColumnCount(model.columnCount)}
+                                              {model.columnStorageSummary}
                                             </div>
                                           ) : null}
                                         </div>

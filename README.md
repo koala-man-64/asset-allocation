@@ -1,134 +1,126 @@
 # AssetAllocation
 
-Python project for market/finance data pipelines, system monitoring, and a backtest framework.
+AssetAllocation is an Azure-oriented market data and operations platform. The repo combines Python ETL jobs, a FastAPI control and data service, and a React/Vite UI. It ingests market, finance, earnings, and price-target data into bronze, silver, and gold Delta tables on Azure Data Lake Storage, exposes inspection and admin APIs, and stores runtime controls such as debug symbols, runtime config overrides, and strategy definitions in Postgres.
+
+## What Runs Here
+
+- Data pipelines in `tasks/` materialize Bronze, Silver, and Gold datasets for the market, finance, earnings, and price-target domains.
+- The FastAPI app in `api/service/app.py` serves `/api/data`, `/api/system`, `/api/strategies`, provider gateway endpoints, Swagger/OpenAPI, `/config.js`, and the realtime websocket.
+- The React UI in `ui/` is the operator control plane for system health, data exploration, data quality, runtime config, debug symbols, symbol purge, gold materialization, Postgres exploration, and strategy configuration.
+- Strategy definitions are persisted in Postgres; the current `Live Trading` page is a monitoring placeholder and explicitly says live trading is not enabled in this deployment.
+- Azure deployment uses one Container App with API and UI sidecars plus scheduled Container App Jobs under `deploy/job_*.yaml`.
 
 ## Quickstart
 
 ### Prerequisites
-- Python 3.10 (matches Docker/CI) and `pip`
 
-### Setup
+- Python 3.10 or newer
+- Node.js and `pnpm` (the UI workspace pins `pnpm@10.28.1`)
+- Azure Storage credentials and provider API keys if you want to run ETL jobs against real services
+- `POSTGRES_DSN` if you want runtime config, debug-symbol, Postgres explorer, or strategy features
+
+### Backend Setup
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install -r requirements-dev.txt
+python3 -m pip install --upgrade pip
 python3 -m pip install -e .
+python3 -m pip install -r requirements-dev.txt
+cp .env.template .env
 ```
 
-### Configure environment
-- Copy `.env.template` to `.env` and fill required values, or run the interactive setup:
-  - `pwsh scripts/setup-env.ps1`
-- Reconciliation cutoff default is `BACKFILL_START_DATE=2016-01-01` (set as a GitHub Variable in deployed environments).
+### Run the API Locally
 
-### Run tests
 ```bash
-python3 -m pytest -q
+python3 scripts/run_api_dev.py
 ```
 
+Then open:
 
+- `http://127.0.0.1:8000/api/docs`
+- `http://127.0.0.1:8000/api/openapi.json`
+- `http://127.0.0.1:8000/config.js`
 
-## UI (Vite) local dev
+### Run the UI Locally
 
-### Prerequisites
-- Node.js + `pnpm` (see `ui/package.json` `packageManager`)
-
-### Run UI only
 ```bash
 cd ui
 pnpm install
 pnpm dev
 ```
 
-### Run UI + API (VS Code)
-- Run the task `dev: ui+api` (it runs `pnpm install` for the UI first).
+The UI proxies API calls to `VITE_API_PROXY_TARGET`, which defaults to `http://127.0.0.1:8000` in `.env.template`.
 
-### Troubleshooting
-- If you see `'vite' is not recognized...`, run `pnpm install` in `ui/` (or delete `ui/node_modules` and reinstall).
-- If UI loads but API calls do not respond, check for API port conflicts:
-  - `python3 scripts/run_api_dev.py` (or use VS Code task `api: dev`).
-  - If it reports `Port ... is already in use`, free that port or set matching values for `API_PORT` and `VITE_API_PROXY_TARGET` in `.env` / `.env.local`.
+## Common Workflows
 
-## Backend API (UI)
+### Run Backend Tests
 
-The UI calls the FastAPI service under `/api/*` (see `api/API_ENDPOINTS.md`). Common endpoints:
+```bash
+python3 -m pytest -q
+```
 
-- `GET /api/data/{layer}/market?ticker={ticker}` (layer: `silver|gold`)
-- `GET /api/data/{layer}/finance/{sub_domain}?ticker={ticker}` (layer: `silver|gold`)
-- `GET /api/system/health`
-- `WS /api/ws/updates`
+### Run UI Checks
 
-Swagger/OpenAPI docs in browser:
-- `GET /api/docs` (Swagger UI)
-- `GET /api/openapi.json` (OpenAPI spec)
-- `GET /docs` (redirects to the active API docs path)
+```bash
+cd ui
+pnpm lint
+pnpm exec vitest run --coverage
+pnpm build
+```
 
-## Runtime Config & Debug Symbols (DB-Backed)
-
-This repo supports DB-backed runtime configuration so operational knobs can be changed without redeploying.
-
-- **Debug symbols** live in Postgres table `core.debug_symbols` (migration `deploy/sql/postgres/migrations/0009_debug_symbols_config.sql`).
-- **Runtime config overrides** live in Postgres table `core.runtime_config` (migration `deploy/sql/postgres/migrations/0010_runtime_config.sql`).
-
-**ETL jobs** apply both at startup via `core/core.py` → `log_environment_diagnostics()`:
-- `core/runtime_config.py` loads allowlisted overrides (scope precedence: `job:<CONTAINER_APP_JOB_NAME>` then `global`) and applies them to `os.environ`.
-- `core/debug_symbols.py` refreshes debug symbols from Postgres and updates `core.config.DEBUG_SYMBOLS` for debug filtering.
- - `core/config.py` `reload_settings()` re-reads `AppSettings` after overrides so downstream code sees updated `core.config.*` values.
-
-**API service** applies runtime config once on startup. Ongoing refreshes are manual-only.
-
-**UI pages** (served by the UI app) for updates:
-- `/debug-symbols` for the `core.debug_symbols` allowlist and enable/disable flag.
-- `/runtime-config` for allowlisted runtime config keys (global scope today; job scopes supported in schema).
-
-The runtime-config allowlist includes common pipeline knobs (backfills/materialization), system-health probes, and selected non-secret ingestion tunables (e.g., Alpha Vantage rate limits/timeouts).
-
-Alpha Vantage Bronze jobs use per-job locks. Finance Bronze/Silver additionally support a shared cross-layer lock (`FINANCE_PIPELINE_SHARED_LOCK_NAME`) to prevent overlap during handoff windows.
-
-## Finance Bronze -> Silver Handoff
-
-Finance ingestion includes convergence and handoff controls to reduce Bronze/Silver symbol drift:
-
-- `SILVER_FINANCE_CATCHUP_MAX_PASSES` controls bounded relist/catch-up passes per Silver run.
-- `FINANCE_RUN_MANIFESTS_ENABLED=true` enables Bronze finance run manifests in `AZURE_CONTAINER_COMMON` under `system/run-manifests/`.
-- `SILVER_FINANCE_USE_BRONZE_MANIFEST=true` makes Silver finance consume the latest unacknowledged Bronze manifest first.
-- On successful Silver completion (including zero-candidate manifest runs), Silver writes a manifest acknowledgment under `system/run-manifests/silver_finance/`.
-- `BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS` / `SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS` tune shared-lock wait behavior.
-
-## Gold Market By-Date View
-
-You can materialize a single by-date Gold market table (`market_by_date`) from bucketed Gold market tables (`market/buckets/<LETTER>`):
+### Materialize the Gold Market By-Date Table
 
 ```bash
 python3 -m tasks.market_data.materialize_gold_market_by_date
 ```
 
-Column projection is configurable:
-- `GOLD_BY_DATE_DOMAIN=market|finance|earnings|price-target`
-- `GOLD_MARKET_BY_DATE_COLUMNS=close,volume,return_1d,vol_20d` (always includes `date` and `symbol`)
-- `MATERIALIZE_YEAR_MONTH=YYYY-MM` for a single-month partial rebuild
-- `MATERIALIZE_YEAR_MONTH=YYYY-MM..YYYY-MM` for a month-range partial rebuild
+Relevant environment variables:
 
-To run this as part of the regular Gold market job, set:
-- `GOLD_MARKET_BY_DATE_ENABLED=true`
+- `GOLD_BY_DATE_DOMAIN`
+- `GOLD_MARKET_BY_DATE_COLUMNS`
+- `MATERIALIZE_YEAR_MONTH`
+- `GOLD_MARKET_BY_DATE_ENABLED`
+
+### Refresh Runtime Dependency Manifests
+
+```bash
+python3 scripts/dependency_governance.py sync
+python3 scripts/dependency_governance.py check --report artifacts/dependency_governance_report.json
+```
+
+## Runtime and Data Model
+
+- `core.runtime_config` and `core.debug_symbols` Postgres tables let operators change allowlisted runtime overrides and debug filters without rebuilding the containers.
+- The API applies runtime config at startup; ETL jobs apply runtime config and debug symbols during job startup.
+- System health surfaces live under `/api/system/health`, `/healthz`, `/readyz`, and `/api/ws/updates`.
+- `/config.js` publishes the UI auth mode and API base URL that the frontend reads at runtime.
+
+## Current API Scope
+
+The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies`, `providers/alpha-vantage`, and `providers/massive`. Historical backtest naming still appears in compatibility surfaces such as `backtestApiBaseUrl` in `/config.js`, so treat `/api/docs` and `/api/openapi.json` as the authoritative route map.
 
 ## Deployment
 
-Azure deployment is driven by `.github/workflows/deploy.yml` and manifests under `deploy/`.
+- `.github/workflows/deploy.yml` builds and deploys the repo to Azure.
+- `deploy/app_api.yaml` is the active unified API and UI Container App manifest.
+- `deploy/app_ui.yaml` is explicitly marked legacy.
+- Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
 
-## Dependency lockfiles
-- Runtime source-of-truth is `pyproject.toml` `[project].dependencies`.
-- `requirements.txt` and `requirements.lock.txt` are synchronized from `pyproject.toml` via:
-  - `python3 scripts/dependency_governance.py sync`
-- Validate dependency governance locally:
-  - `python3 scripts/dependency_governance.py check --report artifacts/dependency_governance_report.json`
-- `requirements.lock.txt` is used by Docker builds for reproducible images.
-- `requirements-dev.lock.txt` is used by CI for reproducible test installs.
-- Full runbook: `docs/dependency_governance.md`.
+## Evidence
 
-## Docs
-- `api/API_ENDPOINTS.md`
-- `docs/alpha_vantage_fair_rate_limiting.md`
-- `docs/api_background_workers_runbook.md`
-- `docs/config_js_contract.md`
-- `docs/strategy_pipeline_layer_domain_bindings.md`
-
+- `pyproject.toml`
+- `.env.template`
+- `api/service/app.py`
+- `api/service/settings.py`
+- `core/runtime_config.py`
+- `core/debug_symbols.py`
+- `core/strategy_repository.py`
+- `tasks/market_data/gold_market_data.py`
+- `ui/src/app/App.tsx`
+- `ui/src/app/components/pages/LiveTradingPage.tsx`
+- `.github/workflows/deploy.yml`
+- `deploy/app_api.yaml`
+- `deploy/app_ui.yaml`
+- `tests/api/test_swagger_docs.py`
+- `tests/api/test_config_js_contract.py`
