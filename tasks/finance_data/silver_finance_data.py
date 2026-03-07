@@ -17,11 +17,11 @@ from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.finance_contracts import (
-    PIOTROSKI_ALPHA26_REPORT_LAYOUTS,
-    PIOTROSKI_FINANCE_SUBDOMAINS,
-    SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN,
-    SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN,
-    SKIPPED_PIOTROSKI_ALPHA26_REPORT_TYPES,
+    SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS,
+    SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN,
+    SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT,
+    SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN,
+    SILVER_FINANCE_SUBDOMAINS,
 )
 from tasks.common import run_manifests
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
@@ -79,11 +79,16 @@ class _ManifestSelection:
 
 
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
-_ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = dict(PIOTROSKI_ALPHA26_REPORT_LAYOUTS)
+_ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = dict(SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT)
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
 _DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS = 3600.0
 _DEFAULT_CATCHUP_MAX_PASSES = 3
-_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = PIOTROSKI_FINANCE_SUBDOMAINS
+_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
+_FINANCE_VALUATION_CALCULATED_COLUMNS = {
+    "market_cap",
+    "pe_ratio",
+    "forward_pe",
+}
 
 
 def _get_positive_int_env(name: str, default: int) -> int:
@@ -239,23 +244,91 @@ def _get_first_value(payload: dict[str, Any], candidates: tuple[str, ...]) -> An
     return None
 
 
+def _get_first_float(payload: dict[str, Any], candidates: tuple[str, ...]) -> Optional[float]:
+    value = _get_first_value(payload, candidates)
+    return _try_parse_float(value)
+
+
+def _load_close_prices(ticker: str) -> pd.DataFrame:
+    symbol = str(ticker or "").strip().upper()
+    if not symbol:
+        return pd.DataFrame()
+
+    layer_bucketing.silver_layout_mode()
+    market_path = DataPaths.get_silver_market_bucket_path(layer_bucketing.bucket_letter(symbol))
+    df = delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, market_path, columns=["date", "close", "symbol"])
+    if df is not None and not df.empty and "symbol" in df.columns:
+        df = df[df["symbol"].astype(str).str.upper() == symbol]
+
+    if df is None or df.empty or not {"date", "close"}.issubset(df.columns):
+        return pd.DataFrame()
+
+    out = df[["date", "close"]].copy()
+    out = out.rename(columns={"date": "Date", "close": "Close"})
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
+    out = out.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
+    return out
+
+
+def _build_valuation_timeseries_from_overview(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
+    df_prices = _load_close_prices(ticker)
+    if df_prices.empty:
+        return pd.DataFrame()
+
+    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN["valuation"]
+    market_cap_now = _get_first_float(payload, alias_map["market_cap"])
+    pe_ratio_now = _get_first_float(payload, alias_map["pe_ratio"])
+    forward_pe_now = _get_first_float(payload, alias_map["forward_pe"])
+    shares_outstanding_now = _get_first_float(payload, ("SharesOutstanding", "Shares Outstanding"))
+
+    close_now = float(df_prices["Close"].iloc[-1])
+    if close_now <= 0:
+        return pd.DataFrame()
+
+    scale = df_prices["Close"] / close_now
+    out = pd.DataFrame({"Date": df_prices["Date"], "Symbol": ticker})
+
+    if shares_outstanding_now is not None:
+        out["market_cap"] = df_prices["Close"] * float(shares_outstanding_now)
+    elif market_cap_now is not None:
+        out["market_cap"] = float(market_cap_now) * scale
+
+    if pe_ratio_now is not None:
+        out["pe_ratio"] = float(pe_ratio_now) * scale
+    if forward_pe_now is not None:
+        out["forward_pe"] = float(forward_pe_now) * scale
+
+    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:]
+    for column in expected_columns:
+        if column not in out.columns:
+            out[column] = pd.Series(dtype="float64")
+
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce", utc=True).dt.tz_convert(None)
+    out = out.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
+    return out[["Date", "Symbol", *expected_columns]]
+
+
 def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.DataFrame:
     payload = json.loads(raw_bytes.decode("utf-8"))
 
     suffix_to_sub_domain = {
         report_suffix: sub_domain
-        for sub_domain, (_folder_name, report_suffix) in PIOTROSKI_ALPHA26_REPORT_LAYOUTS.items()
+        for sub_domain, (_folder_name, report_suffix) in SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS.items()
     }
     sub_domain = suffix_to_sub_domain.get(suffix)
     if sub_domain is None:
         return pd.DataFrame()
 
+    if sub_domain == "valuation" and isinstance(payload, dict):
+        return _build_valuation_timeseries_from_overview(payload, ticker=ticker)
+
     reports = payload.get("quarterlyReports") or []
     if not isinstance(reports, list) or not reports:
         return pd.DataFrame()
 
-    alias_map = SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN[sub_domain]
-    expected_columns = SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN[sub_domain]
+    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN[sub_domain]
+    expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN[sub_domain]
     rows = []
     for item in reports:
         if not isinstance(item, dict):
@@ -715,10 +788,15 @@ def _process_finance_frame(
         df_clean["symbol"] = df_clean["symbol"].astype("string").str.upper()
         df_clean = df_clean.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last")
         df_clean = df_clean.reset_index(drop=True)
+    applied_calculated_columns = set()
+    if suffix == "quarterly_valuation_measures":
+        applied_calculated_columns = {
+            col for col in _FINANCE_VALUATION_CALCULATED_COLUMNS if col in df_clean.columns
+        }
     df_clean = apply_precision_policy(
         df_clean,
         price_columns=set(),
-        calculated_columns=set(),
+        calculated_columns=applied_calculated_columns,
         price_scale=2,
         calculated_scale=4,
     )
@@ -759,7 +837,9 @@ def _process_finance_frame(
             )
     mdc.write_line(
         "precision_policy_applied domain=finance "
-        f"ticker={ticker} report_suffix={suffix} price_cols=none calc_cols=none rows={len(df_clean)}"
+        f"ticker={ticker} report_suffix={suffix} "
+        f"price_cols=none calc_cols={','.join(sorted(applied_calculated_columns)) if applied_calculated_columns else 'none'} "
+        f"rows={len(df_clean)}"
     )
     if persist:
         mdc.write_line(f"Updated Silver {silver_path}")
@@ -820,8 +900,6 @@ def process_alpha26_bucket_blob(
             continue
         mapped = _ALPHA26_REPORT_TYPE_TO_TABLE.get(report_type)
         if not mapped:
-            if report_type in SKIPPED_PIOTROSKI_ALPHA26_REPORT_TYPES:
-                continue
             results.append(
                 BlobProcessResult(
                     blob_name=blob_name,

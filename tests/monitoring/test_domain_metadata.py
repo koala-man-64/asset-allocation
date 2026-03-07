@@ -351,6 +351,7 @@ def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) 
         "balance_sheet": 1,
         "income_statement": 1,
         "cash_flow": 1,
+        "valuation": 0,
     }
 
 

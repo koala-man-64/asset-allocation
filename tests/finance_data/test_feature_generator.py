@@ -44,6 +44,19 @@ def test_compute_features_adds_expected_columns() -> None:
     assert len(out) == 8
 
 
+def test_compute_features_preserves_optional_valuation_metrics() -> None:
+    df = _make_finance_df(8)
+    df["market_cap"] = np.linspace(1_000_000, 1_100_000, len(df))
+    df["pe_ratio"] = np.linspace(20.0, 21.0, len(df))
+    df["forward_pe"] = np.linspace(18.0, 19.0, len(df))
+
+    out = compute_features(df)
+
+    assert out.iloc[-1]["market_cap"] == pytest.approx(1_100_000.0)
+    assert out.iloc[-1]["pe_ratio"] == pytest.approx(21.0)
+    assert out.iloc[-1]["forward_pe"] == pytest.approx(19.0)
+
+
 def test_piotroski_score_calculation() -> None:
     dates = pd.date_range("2020-01-01", periods=8, freq="3MS")
     df = pd.DataFrame(

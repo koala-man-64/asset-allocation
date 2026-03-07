@@ -41,7 +41,39 @@ def test_read_finance_json_projects_only_piotroski_columns() -> None:
     assert "reportedCurrency" not in out.columns
 
 
-def test_process_alpha26_bucket_blob_skips_overview_rows_for_piotroski_only_contract(monkeypatch) -> None:
+def test_read_finance_json_projects_requested_valuation_columns(monkeypatch) -> None:
+    monkeypatch.setattr(
+        silver.delta_core,
+        "load_delta",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {"date": "2024-03-30", "close": 95.0, "symbol": "AAPL"},
+                {"date": "2024-03-31", "close": 100.0, "symbol": "AAPL"},
+            ]
+        ),
+    )
+
+    out = silver._read_finance_json(
+        json.dumps(
+            {
+                "MarketCapitalization": "1000",
+                "PERatio": "20",
+                "ForwardPE": "18",
+                "SharesOutstanding": "10",
+            }
+        ).encode("utf-8"),
+        ticker="AAPL",
+        suffix="quarterly_valuation_measures",
+    )
+
+    assert list(out.columns) == ["Date", "Symbol", "market_cap", "pe_ratio", "forward_pe"]
+    assert out.loc[0, "market_cap"] == 950.0
+    assert out.loc[1, "market_cap"] == 1000.0
+    assert out.loc[1, "pe_ratio"] == 20.0
+    assert out.loc[1, "forward_pe"] == 18.0
+
+
+def test_process_alpha26_bucket_blob_processes_overview_rows_into_valuation_bucket(monkeypatch) -> None:
     blob_name = "finance-data/buckets/A.parquet"
     blob = {
         "name": blob_name,
@@ -64,6 +96,16 @@ def test_process_alpha26_bucket_blob_skips_overview_rows_for_piotroski_only_cont
         "read_raw_bytes",
         lambda _name, client=None: bucket_df.to_parquet(index=False),
     )
+    monkeypatch.setattr(
+        silver.delta_core,
+        "load_delta",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {"date": "2026-03-03", "close": 95.0, "symbol": "AAPL"},
+                {"date": "2026-03-04", "close": 100.0, "symbol": "AAPL"},
+            ]
+        ),
+    )
 
     results = silver.process_alpha26_bucket_blob(
         blob,
@@ -75,7 +117,8 @@ def test_process_alpha26_bucket_blob_skips_overview_rows_for_piotroski_only_cont
     )
 
     assert len(results) == 1
-    assert results[0].status == "skipped"
+    assert results[0].status == "ok"
+    assert results[0].silver_path == "finance-data/valuation/buckets/A"
     assert blob_name in watermarks
 
 
@@ -243,7 +286,7 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     )
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", _fake_list)
     monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index", 11))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index", 14))
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 3)
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
@@ -268,7 +311,7 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     assert saved_last_success["metadata"]["new_blobs_discovered_after_first_pass"] == 1
     assert saved_last_success["metadata"]["lag_candidate_count"] == 0
     assert saved_last_success["metadata"]["catchup_passes"] >= 2
-    assert saved_last_success["metadata"]["column_count"] == 11
+    assert saved_last_success["metadata"]["column_count"] == 14
     assert saved_watermarks["key"] == "bronze_finance_data"
 
 
@@ -312,7 +355,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
             0.01,
         ),
     )
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index", 11))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index", 14))
     monkeypatch.setattr(
         silver,
         "save_last_success",
@@ -327,7 +370,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
     assert saved_last_success["metadata"]["source"] == "alpha26-bucket-listing"
     assert saved_last_success["metadata"]["manifest_run_id"] is None
     assert saved_last_success["metadata"]["manifest_path"] is None
-    assert saved_last_success["metadata"]["column_count"] == 11
+    assert saved_last_success["metadata"]["column_count"] == 14
 
 
 def test_silver_finance_select_initial_source_uses_unacked_manifest(monkeypatch):
@@ -390,7 +433,7 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-05"))
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([], 0))
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index", 11))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index", 14))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
@@ -411,11 +454,11 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     assert exit_code == 0
     assert len(ack_calls) == 1
     assert ack_calls[0]["run_id"].endswith("abcd1234")
-    assert ack_calls[0]["metadata"]["column_count"] == 11
+    assert ack_calls[0]["metadata"]["column_count"] == 14
     assert saved_last_success["metadata"]["source"] == "bronze-manifest"
     assert saved_last_success["metadata"]["manifest_run_id"].endswith("abcd1234")
     assert saved_last_success["metadata"]["manifest_path"].endswith("run.json")
-    assert saved_last_success["metadata"]["column_count"] == 11
+    assert saved_last_success["metadata"]["column_count"] == 14
 
 
 def test_silver_finance_main_does_not_ack_manifest_when_failed(monkeypatch):

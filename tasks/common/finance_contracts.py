@@ -6,7 +6,12 @@ PIOTROSKI_FINANCE_SUBDOMAINS: tuple[str, ...] = (
     "cash_flow",
 )
 
-SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN: dict[str, tuple[str, ...]] = {
+SILVER_FINANCE_SUBDOMAINS: tuple[str, ...] = (
+    *PIOTROSKI_FINANCE_SUBDOMAINS,
+    "valuation",
+)
+
+SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN: dict[str, tuple[str, ...]] = {
     "balance_sheet": (
         "date",
         "symbol",
@@ -28,9 +33,16 @@ SILVER_FINANCE_PIOTROSKI_COLUMNS_BY_SUBDOMAIN: dict[str, tuple[str, ...]] = {
         "symbol",
         "operating_cash_flow",
     ),
+    "valuation": (
+        "date",
+        "symbol",
+        "market_cap",
+        "pe_ratio",
+        "forward_pe",
+    ),
 }
 
-SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]] = {
+SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[str, ...]]] = {
     "balance_sheet": {
         "long_term_debt": (
             "long_term_debt",
@@ -121,6 +133,26 @@ SILVER_FINANCE_PIOTROSKI_SOURCE_ALIASES_BY_SUBDOMAIN: dict[str, dict[str, tuple[
             "Net Cash Provided by Operating Activities",
         ),
     },
+    "valuation": {
+        "market_cap": (
+            "market_cap",
+            "MarketCapitalization",
+            "Market Cap",
+            "MarketCap",
+        ),
+        "pe_ratio": (
+            "pe_ratio",
+            "PERatio",
+            "P/E",
+            "PE Ratio",
+        ),
+        "forward_pe": (
+            "forward_pe",
+            "ForwardPE",
+            "Forward P/E",
+            "Forward PE",
+        ),
+    },
 }
 
 PIOTROSKI_ALPHA26_REPORT_LAYOUTS: dict[str, tuple[str, str]] = {
@@ -129,4 +161,15 @@ PIOTROSKI_ALPHA26_REPORT_LAYOUTS: dict[str, tuple[str, str]] = {
     "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
 }
 
-SKIPPED_PIOTROSKI_ALPHA26_REPORT_TYPES: frozenset[str] = frozenset({"overview", "valuation"})
+SILVER_FINANCE_ALPHA26_REPORT_LAYOUTS: dict[str, tuple[str, str]] = {
+    **PIOTROSKI_ALPHA26_REPORT_LAYOUTS,
+    "valuation": ("Valuation", "quarterly_valuation_measures"),
+}
+
+SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT: dict[str, tuple[str, str]] = {
+    "balance_sheet": ("Balance Sheet", "quarterly_balance-sheet"),
+    "income_statement": ("Income Statement", "quarterly_financials"),
+    "cash_flow": ("Cash Flow", "quarterly_cash-flow"),
+    "overview": ("Valuation", "quarterly_valuation_measures"),
+    "valuation": ("Valuation", "quarterly_valuation_measures"),
+}

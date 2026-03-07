@@ -14,7 +14,7 @@ from core import delta_core
 from deltalake import DeltaTable
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
-from tasks.common.finance_contracts import PIOTROSKI_FINANCE_SUBDOMAINS
+from tasks.common.finance_contracts import SILVER_FINANCE_SUBDOMAINS
 from tasks.common.domain_metadata_snapshots import build_domain_metadata_snapshot_metadata_from_artifact
 from tasks.common import layer_bucketing
 
@@ -945,7 +945,7 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
                     if layer_key == "silver":
                         finance_subfolder_symbol_counts = {
                             key: int(finance_subfolder_symbol_counts.get(key, 0))
-                            for key in PIOTROSKI_FINANCE_SUBDOMAINS
+                            for key in SILVER_FINANCE_SUBDOMAINS
                         }
                     if not prefix_is_empty and sum(int(v) for v in finance_subfolder_symbol_counts.values()) == 0:
                         finance_subfolder_symbol_counts = None

@@ -52,7 +52,7 @@ from core.runtime_config import (
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
 from tasks.common import domain_metadata_snapshots
-from tasks.common.finance_contracts import PIOTROSKI_FINANCE_SUBDOMAINS
+from tasks.common.finance_contracts import SILVER_FINANCE_SUBDOMAINS
 from tasks.common.domain_metadata_snapshots import build_snapshot_miss_payload
 from tasks.common import layer_bucketing
 from core.purge_rules import (
@@ -3447,7 +3447,7 @@ def _remove_symbol_from_layer_storage(
                 ),
             ]
         )
-        for sub_domain in PIOTROSKI_FINANCE_SUBDOMAINS:
+        for sub_domain in SILVER_FINANCE_SUBDOMAINS:
             finance_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
             alpha26_tasks.append(
                 (

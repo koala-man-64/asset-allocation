@@ -31,7 +31,8 @@ Scope notes:
 | Silver | finance / `balance_sheet` | `finance-data/balance_sheet/buckets/{bucket}` | `symbol` + `date` | Daily forward-filled balance-sheet subset for Piotroski inputs. |
 | Silver | finance / `income_statement` | `finance-data/income_statement/buckets/{bucket}` | `symbol` + `date` | Daily forward-filled income-statement subset for Piotroski inputs. |
 | Silver | finance / `cash_flow` | `finance-data/cash_flow/buckets/{bucket}` | `symbol` + `date` | Daily forward-filled cash-flow subset for Piotroski inputs. |
-| Gold | finance | `finance/buckets/{bucket}` | `symbol` + `date` | Piotroski F-score output only. |
+| Silver | finance / `valuation` | `finance-data/valuation/buckets/{bucket}` | `symbol` + `date` | Daily forward-filled valuation snapshot built from `overview` plus Silver close prices. |
+| Gold | finance | `finance/buckets/{bucket}` | `symbol` + `date` | Piotroski components and F-score plus selected valuation metrics. |
 | Bronze | earnings | `earnings-data/buckets/{bucket}` | `symbol` + `date` | Raw quarterly earnings observations normalized to canonical columns. |
 | Silver | earnings | `earnings-data/buckets/{bucket}` | `symbol` + `date` | Canonical earnings history. |
 | Gold | earnings | `earnings/buckets/{bucket}` | `symbol` + `date` | Daily earnings-surprise features with days-since-event context. |
@@ -219,7 +220,7 @@ Evidence:
 
 Path: `finance-data/buckets/{bucket}`
 
-`report_type` values emitted by the Bronze job currently come from the configured report set: `balance_sheet`, `cash_flow`, `income_statement`, and `overview`. The `overview` payload is kept for legacy valuation-path continuity, but Silver and Gold only materialize the Piotroski subdomains (`balance_sheet`, `income_statement`, `cash_flow`).
+`report_type` values emitted by the Bronze job currently come from the configured report set: `balance_sheet`, `cash_flow`, `income_statement`, and `overview`. Silver materializes the three Piotroski source subdomains plus a slim `valuation` view sourced from `overview`; Gold merges those inputs into the unified finance feature bucket.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -273,16 +274,33 @@ Rows are extracted from Bronze JSON, reduced to the required Piotroski fields, t
 | `symbol` | string | Uppercased ticker symbol. |
 | `operating_cash_flow` | number | Operating cash flow input for cash-generation and accrual checks. |
 
+### Silver Finance: `valuation`
+
+Path: `finance-data/valuation/buckets/{bucket}`
+
+Rows are derived from Bronze `overview` payloads and Silver market close prices, then resampled to daily frequency with forward fill.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `date` | datetime | Daily as-of date after forward fill. |
+| `symbol` | string | Uppercased ticker symbol. |
+| `market_cap` | number | Approximate daily market capitalization derived from `overview` and close-price scaling. |
+| `pe_ratio` | number | Approximate daily trailing P/E ratio derived from `overview` and close-price scaling. |
+| `forward_pe` | number | Approximate daily forward P/E ratio derived from `overview` and close-price scaling. |
+
 ### Gold Finance
 
 Path: `finance/buckets/{bucket}`
 
-Gold finance computes a larger feature set internally, but the persisted table is the projected Piotroski output only.
+Gold finance computes a larger feature set internally, then persists the Piotroski output together with the selected valuation metrics carried from Silver.
 
 | Column | Type | Description |
 | --- | --- | --- |
 | `date` | datetime | Daily as-of date from the merged Silver finance inputs. |
 | `symbol` | string | Uppercased ticker symbol. |
+| `market_cap` | number | Daily market capitalization carried from Silver valuation. |
+| `pe_ratio` | number | Daily trailing P/E carried from Silver valuation. |
+| `forward_pe` | number | Daily forward P/E carried from Silver valuation. |
 | `piotroski_roa_pos` | nullable int | `1` when trailing-twelve-month ROA is positive. |
 | `piotroski_cfo_pos` | nullable int | `1` when trailing-twelve-month operating cash flow is positive. |
 | `piotroski_delta_roa_pos` | nullable int | `1` when trailing-twelve-month ROA improved versus four periods earlier. |

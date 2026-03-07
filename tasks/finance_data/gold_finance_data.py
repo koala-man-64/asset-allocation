@@ -13,7 +13,7 @@ from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
-from tasks.common.finance_contracts import PIOTROSKI_FINANCE_SUBDOMAINS
+from tasks.common.finance_contracts import SILVER_FINANCE_SUBDOMAINS
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     collect_delta_silver_finance_symbols,
@@ -91,10 +91,18 @@ _CASH_AND_EQUIVALENTS_FALLBACK_ALIASES: Tuple[str, ...] = (
     "Cash And Short Term Investments",
     "Cash and Short Term Investments",
 )
-_GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = PIOTROSKI_FINANCE_SUBDOMAINS
+_OPTIONAL_OUTPUT_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "market_cap": ("market_cap", "Market Cap", "MarketCapitalization"),
+    "pe_ratio": ("pe_ratio", "PE Ratio", "P/E", "PERatio"),
+    "forward_pe": ("forward_pe", "Forward PE", "Forward P/E", "ForwardPE"),
+}
+_GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
 _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
     "date",
     "symbol",
+    "market_cap",
+    "pe_ratio",
+    "forward_pe",
     "piotroski_roa_pos",
     "piotroski_cfo_pos",
     "piotroski_delta_roa_pos",
@@ -106,7 +114,14 @@ _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
     "piotroski_asset_turnover_increase",
     "piotroski_f_score",
 )
-_GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = _GOLD_FINANCE_PIOTROSKI_COLUMNS[2:]
+_GOLD_FINANCE_FLOAT_COLUMNS: Tuple[str, ...] = (
+    "market_cap",
+    "pe_ratio",
+    "forward_pe",
+)
+_GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = tuple(
+    column for column in _GOLD_FINANCE_PIOTROSKI_COLUMNS if column.startswith("piotroski_")
+)
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -438,6 +453,12 @@ def _prepare_table(df: Optional[pd.DataFrame], ticker: str, *, source_label: str
     return out
 
 
+def _prepare_optional_table(df: Optional[pd.DataFrame], ticker: str, *, source_label: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["date", "symbol"])
+    return _prepare_table(df, ticker, source_label=source_label)
+
+
 def _preflight_feature_schema(df: pd.DataFrame) -> Dict[str, Any]:
     out = _snake_case_columns(df)
     missing_requirements: List[str] = []
@@ -613,6 +634,8 @@ def _empty_gold_finance_bucket_frame() -> pd.DataFrame:
         "date": pd.Series(dtype="datetime64[ns]"),
         "symbol": pd.Series(dtype="string"),
     }
+    for column in _GOLD_FINANCE_FLOAT_COLUMNS:
+        data[column] = pd.Series(dtype="float64")
     for column in _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS:
         data[column] = pd.Series(dtype="Int64")
     return pd.DataFrame(data, columns=_GOLD_FINANCE_PIOTROSKI_COLUMNS)
@@ -620,6 +643,10 @@ def _empty_gold_finance_bucket_frame() -> pd.DataFrame:
 
 def _coerce_nullable_int(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").astype("Int64")
+
+
+def _coerce_nullable_float(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").astype("float64")
 
 
 def _project_gold_finance_piotroski_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -641,6 +668,13 @@ def _project_gold_finance_piotroski_frame(df: pd.DataFrame) -> pd.DataFrame:
         projected["symbol"] = out["symbol"].astype("string")
     else:
         projected["symbol"] = pd.Series([pd.NA] * len(out), dtype="string")
+
+    for column, candidates in _OPTIONAL_OUTPUT_COLUMN_ALIASES.items():
+        resolved = _resolve_column(out, candidates)
+        if resolved:
+            projected[column] = _coerce_nullable_float(out[resolved])
+        else:
+            projected[column] = pd.Series([np.nan] * len(out), dtype="float64")
 
     for column in _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS:
         if column in out.columns:
@@ -887,13 +921,20 @@ def _run_alpha26_finance_gold(
                         ticker,
                         source_label="cash_flow",
                     )
+                    df_valuation = _prepare_optional_table(
+                        tables.get("valuation", pd.DataFrame()).query("symbol == @ticker").copy(),
+                        ticker,
+                        source_label="valuation",
+                    )
                 except Exception as exc:
                     failed += 1
                     mdc.write_warning(f"Gold finance alpha26 source failed for {ticker}: {exc}")
                     continue
 
                 base_dates = []
-                for table in (df_income, df_balance, df_cashflow):
+                for table in (df_income, df_balance, df_cashflow, df_valuation):
+                    if table.empty:
+                        continue
                     base_dates.append(table[["date", "symbol"]])
                 keys = pd.concat(base_dates, ignore_index=True).drop_duplicates(
                     subset=["symbol", "date"], keep="last"
@@ -904,6 +945,7 @@ def _run_alpha26_finance_gold(
                     (df_income, "_is"),
                     (df_balance, "_bs"),
                     (df_cashflow, "_cf"),
+                    (df_valuation, "_val"),
                 ):
                     merged = merged.merge(table, on=["symbol", "date"], how="left", suffixes=("", suffix))
 
@@ -1002,7 +1044,7 @@ def _run_alpha26_finance_gold(
             mdc.write_line(
                 "gold_finance_alpha26_write_status "
                 f"bucket={bucket} path={gold_path} rows_out={len(write_decision.frame)} "
-                f"symbols_out={len(bucket_symbol_to_bucket)} schema=piotroski_only"
+                f"symbols_out={len(bucket_symbol_to_bucket)} schema=piotroski_plus_valuation"
             )
         except Exception as exc:
             bucket_failed = True
