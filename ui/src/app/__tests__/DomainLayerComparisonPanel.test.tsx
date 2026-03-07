@@ -369,6 +369,8 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     await user.click(refreshLayerButton);
 
     expect(await screen.findByTestId('domain-refresh-indicator-market')).toBeInTheDocument();
+    expect(screen.getByTestId('cell-refresh-icon-summary-market-bronze')).toBeInTheDocument();
+    expect(screen.getByTestId('cell-refresh-icon-detail-market-bronze')).toBeInTheDocument();
 
     resolveMetadata?.({
       layer: 'bronze',
@@ -383,6 +385,8 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('cell-refresh-icon-summary-market-bronze')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('cell-refresh-icon-detail-market-bronze')).not.toBeInTheDocument();
     });
   });
 

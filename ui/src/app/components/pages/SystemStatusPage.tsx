@@ -1,4 +1,4 @@
-import React, { useMemo, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
 import {
@@ -10,6 +10,7 @@ import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { PageLoader } from '@/app/components/common/PageLoader';
 import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
+import type { SystemHealth } from '@/types/strategy';
 
 // Lazy load components to reduce initial bundle size of the page
 const DomainLayerComparisonPanel = lazy(() =>
@@ -26,6 +27,19 @@ import {
 } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
+const JOB_STATUS_POLL_INTERVAL_MS = 10_000;
+
+type JobPollingSnapshot = Pick<SystemHealth, 'overall' | 'recentJobs' | 'resources'>;
+
+function pickJobPollingSnapshot(payload?: SystemHealth | null): JobPollingSnapshot | null {
+  if (!payload) return null;
+  return {
+    overall: payload.overall,
+    recentJobs: payload.recentJobs || [],
+    resources: payload.resources || []
+  };
+}
+
 export function SystemStatusPage() {
   const { data, isLoading, error, isFetching } = useSystemHealthQuery({
     autoRefresh: false
@@ -33,9 +47,58 @@ export function SystemStatusPage() {
   const jobOverrides = useSystemHealthJobOverrides();
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [jobPollingSnapshot, setJobPollingSnapshot] = useState<JobPollingSnapshot | null>(null);
+
+  useEffect(() => {
+    if (!data || error) {
+      setJobPollingSnapshot(null);
+      return;
+    }
+
+    let disposed = false;
+    let pollingInFlight = false;
+
+    const pollJobStatus = async () => {
+      if (pollingInFlight || disposed) return;
+      pollingInFlight = true;
+      try {
+        const fresh = await DataService.getSystemHealth({ refresh: true });
+        if (!disposed) {
+          setJobPollingSnapshot(pickJobPollingSnapshot(fresh));
+        }
+      } catch (err) {
+        if (!disposed) {
+          console.error('[SystemStatusPage] job status poll failed', err);
+        }
+      } finally {
+        pollingInFlight = false;
+      }
+    };
+
+    const handle = window.setInterval(() => {
+      void pollJobStatus();
+    }, JOB_STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(handle);
+    };
+  }, [data, error]);
+
+  const systemHealthWithPolledJobs = useMemo<SystemHealth | undefined>(() => {
+    if (!data) return data;
+    if (!jobPollingSnapshot) return data;
+    return {
+      ...data,
+      overall: jobPollingSnapshot.overall,
+      recentJobs: jobPollingSnapshot.recentJobs,
+      resources: jobPollingSnapshot.resources
+    };
+  }, [data, jobPollingSnapshot]);
+
   const systemHealth = useMemo(
-    () => mergeSystemHealthWithJobOverrides(data, jobOverrides.data),
-    [data, jobOverrides.data]
+    () => mergeSystemHealthWithJobOverrides(systemHealthWithPolledJobs, jobOverrides.data),
+    [systemHealthWithPolledJobs, jobOverrides.data]
   );
 
   const displayDataLayers = useMemo(() => {
@@ -86,6 +149,7 @@ export function SystemStatusPage() {
     try {
       const fresh = await DataService.getSystemHealth({ refresh: true });
       queryClient.setQueryData(queryKeys.systemHealth(), fresh);
+      setJobPollingSnapshot(pickJobPollingSnapshot(fresh));
     } catch (err) {
       console.error('[SystemStatusPage] refresh failed', err);
     } finally {

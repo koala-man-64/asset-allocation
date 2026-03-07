@@ -1771,41 +1771,46 @@ export function DomainLayerComparisonPanel({
                                     </div>
                                   ) : null}
                                 </div>
-                                <div className="flex flex-col items-end gap-1">
-                                  <span
-                                    tabIndex={0}
-                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
-                                    style={{
-                                      backgroundColor: model.dataConfig.bg,
-                                      color: model.dataConfig.text,
-                                      borderColor: model.dataConfig.border
-                                    }}
-                                  >
-                                    <DataIcon className="h-3 w-3" />
-                                    {model.dataLabel}
-                                  </span>
-                                  <span
-                                    tabIndex={0}
-                                    className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
-                                    style={{
-                                      backgroundColor: model.jobConfig.bg,
-                                      color: model.jobConfig.text,
-                                      borderColor: model.jobConfig.border
-                                    }}
-                                  >
-                                    <JobIcon className="h-3 w-3" />
-                                    {model.jobLabel}
-                                  </span>
+                                <div className="flex items-center gap-2 self-center">
+                                  {model.isCellRefreshing ? (
+                                    <span
+                                      data-testid={`cell-refresh-icon-summary-${row.key}-${model.layerColumn.key}`}
+                                      aria-label={`${model.layerColumn.label} ${row.label} subpanel refreshing`}
+                                      title="Refreshing metadata and job state"
+                                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-mcm-teal/35 bg-mcm-teal/10 text-mcm-teal shadow-[0_0_0_1px_rgba(34,138,126,0.08)]"
+                                    >
+                                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                    </span>
+                                  ) : null}
+                                  <div className="flex flex-col items-end gap-1">
+                                    <span
+                                      tabIndex={0}
+                                      className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                      style={{
+                                        backgroundColor: model.dataConfig.bg,
+                                        color: model.dataConfig.text,
+                                        borderColor: model.dataConfig.border
+                                      }}
+                                    >
+                                      <DataIcon className="h-3 w-3" />
+                                      {model.dataLabel}
+                                    </span>
+                                    <span
+                                      tabIndex={0}
+                                      className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                      style={{
+                                        backgroundColor: model.jobConfig.bg,
+                                        color: model.jobConfig.text,
+                                        borderColor: model.jobConfig.border
+                                      }}
+                                    >
+                                      <JobIcon className="h-3 w-3" />
+                                      {model.jobLabel}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
-                              {model.isCellRefreshing ? (
-                                <div
-                                  className={`${StatusTypos.MONO} mt-1 inline-flex items-center gap-1 text-[11px] text-mcm-teal`}
-                                >
-                                  <RefreshCw className="h-3 w-3 animate-spin" />
-                                  refreshing...
-                                </div>
-                              ) : model.isPending ? (
+                              {model.isPending ? (
                                 <div
                                   className={`${StatusTypos.MONO} mt-1 text-[11px] text-mcm-walnut/70`}
                                 >
@@ -1889,6 +1894,16 @@ export function DomainLayerComparisonPanel({
                                             ) : null}
                                           </div>
                                           <div className="flex flex-col items-end gap-1">
+                                            {model.isCellRefreshing ? (
+                                              <span
+                                                data-testid={`cell-refresh-icon-detail-${row.key}-${model.layerColumn.key}`}
+                                                aria-label={`${model.layerColumn.label} ${row.label} detail subpanel refreshing`}
+                                                title="Refreshing metadata and job state"
+                                                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-mcm-teal/35 bg-mcm-paper/55 text-mcm-teal"
+                                              >
+                                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                              </span>
+                                            ) : null}
                                             <span
                                               className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
                                               style={{
@@ -1998,14 +2013,6 @@ export function DomainLayerComparisonPanel({
                                                   </span>
                                                 </div>
                                               ))}
-                                            </div>
-                                          ) : null}
-                                          {model.isCellRefreshing ? (
-                                            <div
-                                              className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-mcm-walnut/75`}
-                                            >
-                                              <RefreshCw className="h-3 w-3 animate-spin" />
-                                              refreshing...
                                             </div>
                                           ) : null}
                                         </div>

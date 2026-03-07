@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 
@@ -7,6 +7,7 @@ import { renderWithProviders } from '@/test/utils';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
 import { getDomainOrderEntries } from '@/app/components/pages/system-status/domainOrdering';
 import { queryKeys } from '@/hooks/useDataQueries';
+import { DataService } from '@/services/DataService';
 
 vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
@@ -160,6 +161,11 @@ vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
 }));
 
 describe('SystemStatusPage', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   const createQueryClient = () =>
     new QueryClient({
       defaultOptions: {
@@ -290,6 +296,76 @@ describe('SystemStatusPage', () => {
           jobName: 'aca-job-zeta',
           status: 'running',
           triggeredBy: 'manual'
+        })
+      ])
+    );
+    expect(coverageProps.managedContainerJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'aca-job-zeta',
+          runningState: 'Running'
+        })
+      ])
+    );
+  });
+
+  it('polls medallion-domain job status every 10 seconds without touching domain metadata queries', async () => {
+    vi.useFakeTimers();
+    domainLayerCoverageSpy.mockClear();
+
+    const now = new Date().toISOString();
+    const getSystemHealthSpy = vi.spyOn(DataService, 'getSystemHealth').mockResolvedValue({
+      overall: 'warning',
+      dataLayers: [],
+      recentJobs: [
+        {
+          jobName: 'aca-job-zeta',
+          jobType: 'data-ingest',
+          status: 'running',
+          startTime: now,
+          triggeredBy: 'azure'
+        }
+      ],
+      alerts: [],
+      resources: [
+        {
+          name: 'aca-job-zeta',
+          resourceType: 'Microsoft.App/jobs',
+          status: 'warning',
+          lastChecked: now,
+          runningState: 'Running',
+          lastModifiedAt: now
+        }
+      ]
+    });
+
+    renderWithProviders(<SystemStatusPage />);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(domainLayerCoverageSpy).toHaveBeenCalled();
+
+    expect(getSystemHealthSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(getSystemHealthSpy).toHaveBeenCalledWith({ refresh: true });
+
+    const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
+      overall: string;
+      jobStates: Record<string, string>;
+      recentJobs: Array<{ jobName: string; status: string }>;
+      managedContainerJobs: Array<{ name: string; runningState?: string | null }>;
+    };
+
+    expect(coverageProps.overall).toBe('warning');
+    expect(coverageProps.jobStates['aca-job-zeta']).toBe('Running');
+    expect(coverageProps.recentJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobName: 'aca-job-zeta',
+          status: 'running'
         })
       ])
     );
