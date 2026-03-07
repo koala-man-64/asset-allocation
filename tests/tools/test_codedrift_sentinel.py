@@ -100,3 +100,55 @@ def test_detect_config_infra_drift_uses_config_file_removed_lines_only() -> None
     )
     config_change_gate = next(item for item in findings_config_gate if item.title == "Configuration/infra files changed")
     assert config_change_gate.severity == "high"
+
+
+def test_detect_behavioral_and_test_drift_flags_speculative_null_guard() -> None:
+    sentinel = _load_sentinel_module()
+    diff_text = "\n".join(
+        [
+            "diff --git a/ui/src/example.tsx b/ui/src/example.tsx",
+            "--- a/ui/src/example.tsx",
+            "+++ b/ui/src/example.tsx",
+            "+const metadataUpdatedAt = metadata?.metadataSource === 'artifact' ? metadata.computedAt || null : null;",
+        ]
+    )
+
+    findings = sentinel.detect_behavioral_and_test_drift(
+        changed_files=["ui/src/example.tsx"],
+        quality_results=[],
+        compare_diff=diff_text,
+        detection_config=sentinel.DEFAULT_CONFIG.get("detection", {}),
+    )
+
+    safeguard_finding = next(
+        (item for item in findings if item.title == "Speculative safeguard or placeholder fallback introduced"),
+        None,
+    )
+    assert safeguard_finding is not None
+    assert "ui/src/example.tsx" in safeguard_finding.files
+
+
+def test_detect_behavioral_and_test_drift_flags_placeholder_fallback_literal() -> None:
+    sentinel = _load_sentinel_module()
+    diff_text = "\n".join(
+        [
+            "diff --git a/ui/src/example.tsx b/ui/src/example.tsx",
+            "--- a/ui/src/example.tsx",
+            "+++ b/ui/src/example.tsx",
+            "+const metadataUpdatedDisplay = metadataUpdatedAt ? formatMetadataTimestamp(metadataUpdatedAt) : 'N/A';",
+        ]
+    )
+
+    findings = sentinel.detect_behavioral_and_test_drift(
+        changed_files=["ui/src/example.tsx"],
+        quality_results=[],
+        compare_diff=diff_text,
+        detection_config=sentinel.DEFAULT_CONFIG.get("detection", {}),
+    )
+
+    safeguard_finding = next(
+        (item for item in findings if item.title == "Speculative safeguard or placeholder fallback introduced"),
+        None,
+    )
+    assert safeguard_finding is not None
+    assert any("N/A" in evidence for evidence in safeguard_finding.evidence)

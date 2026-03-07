@@ -7,6 +7,9 @@ import { DataService } from '@/services/DataService';
 import { renderWithProviders } from '@/test/utils';
 import type { DataLayer, JobRun } from '@/types/strategy';
 
+const setJobSuspendedMock = vi.fn().mockResolvedValue(undefined);
+const triggerJobMock = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -18,14 +21,14 @@ vi.mock('sonner', () => ({
 vi.mock('@/hooks/useJobSuspend', () => ({
   useJobSuspend: () => ({
     jobControl: null,
-    setJobSuspended: vi.fn().mockResolvedValue(undefined)
+    setJobSuspended: setJobSuspendedMock
   })
 }));
 
 vi.mock('@/hooks/useJobTrigger', () => ({
   useJobTrigger: () => ({
     triggeringJob: null,
-    triggerJob: vi.fn().mockResolvedValue(undefined)
+    triggerJob: triggerJobMock
   })
 }));
 
@@ -81,6 +84,45 @@ function makeLayersWithEmptyPlatinum(): DataLayer[] {
       lastUpdated: NOW,
       refreshFrequency: 'daily',
       domains: []
+    }
+  ];
+}
+
+function makeDomainTriggerLayers(): DataLayer[] {
+  return [
+    {
+      name: 'Bronze',
+      description: 'Raw ingestion',
+      status: 'healthy',
+      lastUpdated: NOW,
+      refreshFrequency: 'daily',
+      domains: [
+        {
+          name: 'market',
+          type: 'delta',
+          path: 'market-data',
+          lastUpdated: NOW,
+          status: 'healthy',
+          jobName: 'aca-job-market-bronze'
+        }
+      ]
+    },
+    {
+      name: 'Silver',
+      description: 'Normalized data',
+      status: 'healthy',
+      lastUpdated: NOW,
+      refreshFrequency: 'daily',
+      domains: [
+        {
+          name: 'market',
+          type: 'delta',
+          path: 'market-data',
+          lastUpdated: NOW,
+          status: 'healthy',
+          jobName: 'aca-job-market-silver'
+        }
+      ]
     }
   ];
 }
@@ -155,6 +197,57 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       });
     });
     expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
+  });
+
+  it('shows the metadata timestamp when cached entries only have computedAt', async () => {
+    vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      symbolCount: 123,
+      warnings: []
+    });
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
+  });
+
+  it('omits the timestamp line when metadata has no computedAt', async () => {
+    vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: '',
+      symbolCount: 123,
+      warnings: []
+    });
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect(await screen.findByText('123 symbols')).toBeInTheDocument();
+    expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();
   });
 
   it('shows a row-level refreshing indicator in the medallion-domain view during refresh', async () => {
@@ -254,5 +347,32 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
 
     expect(await screen.findAllByText('Bronze')).not.toHaveLength(0);
     expect(screen.queryByText('Platinum')).not.toBeInTheDocument();
+  });
+
+  it('triggers all configured jobs for a domain from the domain trigger rail', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeDomainTriggerLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    const domainTriggerButton = await screen.findByRole('button', { name: 'Trigger market domain' });
+    await waitFor(() => {
+      expect(domainTriggerButton).toBeEnabled();
+    });
+    await user.click(domainTriggerButton);
+
+    await waitFor(() => {
+      expect(triggerJobMock).toHaveBeenCalledTimes(2);
+    });
+    expect(triggerJobMock).toHaveBeenNthCalledWith(1, 'aca-job-market-bronze');
+    expect(triggerJobMock).toHaveBeenNthCalledWith(2, 'aca-job-market-silver');
   });
 });

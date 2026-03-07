@@ -110,7 +110,15 @@
     "detection": {
       "type": "object",
       "properties": {
-        "lookback_days": { "type": "integer", "minimum": 1 }
+        "lookback_days": { "type": "integer", "minimum": 1 },
+        "speculative_safeguards": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "patterns": { "$ref": "#/$defs/stringList" }
+          },
+          "additionalProperties": true
+        }
       },
       "additionalProperties": true
     }

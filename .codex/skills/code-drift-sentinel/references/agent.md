@@ -4,6 +4,8 @@
 
 Detect, explain, score, and remediate code drift across style, architecture, API, dependencies, behavior, performance, security, testing, documentation, and CI/config changes.
 
+Behavioral drift includes speculative safeguards and placeholder fallbacks that change semantics without an explicit requirement, such as precautionary `null` branches or UI copy like `N/A` / `unknown`.
+
 ## Required Outputs
 
 - `drift_report.md` with:

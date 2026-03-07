@@ -62,6 +62,9 @@ reporting:
 
 detection:
   lookback_days: number
+  speculative_safeguards:   # optional
+    enabled: boolean
+    patterns: [string]      # regexes matched against added code lines
 ```
 
 ## Baseline Priority
@@ -75,3 +78,4 @@ detection:
 - Configure `standards.*` commands as deterministic checks.
 - Use `auto_remediate.commands` (or `format_fix`/`lint_fix`) for mutating commands.
 - Keep `protected_globs` strict for auth/migrations/infra paths.
+- Use `detection.speculative_safeguards` to flag precautionary guard branches and placeholder fallbacks such as `: null`, `|| null`, `?? null`, or `: "N/A"` when those behaviors are not explicitly desired.

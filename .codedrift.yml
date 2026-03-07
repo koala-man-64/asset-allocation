@@ -91,3 +91,14 @@ detection:
   exclude_globs:
     - "artifacts/**"
     - "*.[mM][dD]"
+  speculative_safeguards:
+    enabled: true
+    patterns:
+      - '\?.*:\s*(?:None|null|False)\b'
+      - '\|\|\s*(?:null|undefined)\b'
+      - '\?\?\s*(?:null|undefined)\b'
+      - '\breturn\s+(?:None|null|False)\b'
+      - '\?.*:\s*[''"](?:N/?A|unknown|no data|no-data|unavailable|not available)[''"]'
+      - '\|\|\s*[''"](?:N/?A|unknown|no data|no-data|unavailable|not available)[''"]'
+      - '\?\?\s*[''"](?:N/?A|unknown|no data|no-data|unavailable|not available)[''"]'
+      - '\breturn\s+[''"](?:N/?A|unknown|no data|no-data|unavailable|not available)[''"]'

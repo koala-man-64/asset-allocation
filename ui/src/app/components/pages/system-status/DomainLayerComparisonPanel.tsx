@@ -332,6 +332,7 @@ export function DomainLayerComparisonPanel({
   const { triggeringJob, triggerJob } = useJobTrigger();
   const { jobControl, setJobSuspended } = useJobSuspend();
   const [refreshingCells, setRefreshingCells] = useState<Set<string>>(new Set());
+  const [triggeringDomainKeys, setTriggeringDomainKeys] = useState<Set<string>>(new Set());
   const [isRefreshingPanelCounts, setIsRefreshingPanelCounts] = useState(false);
   const [purgeTarget, setPurgeTarget] = useState<{
     layerKey: LayerKey;
@@ -611,6 +612,33 @@ export function DomainLayerComparisonPanel({
     return domainRows.filter((row) => Boolean(domainsByLayer.get(row.key)));
   }, [domainRows, domainsByLayer]);
 
+  const domainTriggerGroups = useMemo(() => {
+    return filteredDomainRows.map((row) => {
+      const jobNames = new Set<string>();
+      const layerLabels: string[] = [];
+
+      for (const layerColumn of layerColumns) {
+        const domainConfig = domainConfigByLayer.get(layerColumn.key)?.get(row.key);
+        if (!domainConfig) continue;
+
+        layerLabels.push(layerColumn.label);
+        const configuredJobName =
+          String(domainConfig.jobName || '').trim() || extractAzureJobName(domainConfig.jobUrl) || '';
+        const normalizedJobName = normalizeAzureJobName(configuredJobName);
+        if (normalizedJobName) {
+          jobNames.add(normalizedJobName);
+        }
+      }
+
+      return {
+        domainKey: row.key,
+        label: row.label,
+        layerLabels,
+        jobNames: Array.from(jobNames)
+      };
+    });
+  }, [domainConfigByLayer, filteredDomainRows, layerColumns]);
+
   const layerAggregateStatus = useMemo(() => {
     const byLayer = new Map<
       LayerKey,
@@ -779,6 +807,55 @@ export function DomainLayerComparisonPanel({
       isResettingLists,
       queryPairsByLayer,
       refreshDomainMetadataAndStatus
+    ]
+  );
+
+  const triggerDomainJobs = useCallback(
+    async (domainKey: string, domainLabel: string, jobNames: string[]) => {
+      if (
+        jobNames.length === 0 ||
+        isRefreshingPanelCounts ||
+        isResettingAllLists ||
+        isResettingLists ||
+        isResettingCheckpoints ||
+        Boolean(jobControl) ||
+        Boolean(triggeringJob) ||
+        triggeringDomainKeys.has(domainKey)
+      ) {
+        if (jobNames.length === 0) {
+          toast.warning(`No jobs configured for ${domainLabel}`);
+        }
+        return;
+      }
+
+      setTriggeringDomainKeys((previous) => {
+        const next = new Set(previous);
+        next.add(domainKey);
+        return next;
+      });
+
+      try {
+        for (const jobName of jobNames) {
+          await triggerJob(jobName);
+        }
+      } finally {
+        setTriggeringDomainKeys((previous) => {
+          if (!previous.has(domainKey)) return previous;
+          const next = new Set(previous);
+          next.delete(domainKey);
+          return next;
+        });
+      }
+    },
+    [
+      isRefreshingPanelCounts,
+      isResettingAllLists,
+      isResettingCheckpoints,
+      isResettingLists,
+      jobControl,
+      triggerJob,
+      triggeringDomainKeys,
+      triggeringJob
     ]
   );
 
@@ -1416,6 +1493,59 @@ export function DomainLayerComparisonPanel({
           </div>
         ) : (
           <div className="rounded-[1.2rem] border border-mcm-walnut/20 bg-mcm-cream/30">
+            <div className="border-b border-mcm-walnut/15 bg-mcm-paper/45 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`${StatusTypos.MONO} text-[10px] font-semibold uppercase tracking-[0.18em] text-mcm-walnut/65`}
+                >
+                  Domain triggers
+                </span>
+                {domainTriggerGroups.map((domain) => {
+                  const isTriggeringDomain = triggeringDomainKeys.has(domain.domainKey);
+                  const isDisabled =
+                    domain.jobNames.length === 0 ||
+                    isPanelActionBusy ||
+                    Boolean(jobControl) ||
+                    Boolean(triggeringJob) ||
+                    isTriggeringDomain;
+
+                  return (
+                    <Tooltip key={`domain-trigger-${domain.domainKey}`}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-2 rounded-full border-mcm-walnut/20 bg-mcm-paper/85 px-3 text-[11px] capitalize text-mcm-walnut shadow-[3px_3px_0px_0px_rgba(119,63,26,0.06)] hover:bg-mcm-cream/70"
+                          aria-label={`Trigger ${domain.label} domain`}
+                          disabled={isDisabled}
+                          onClick={() => {
+                            void triggerDomainJobs(domain.domainKey, domain.label, domain.jobNames);
+                          }}
+                        >
+                          {isTriggeringDomain ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                          {domain.label}
+                          <span
+                            className={`${StatusTypos.MONO} rounded-full border border-mcm-walnut/15 bg-mcm-cream/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-mcm-walnut/70`}
+                          >
+                            {domain.layerLabels.length}L
+                          </span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        {domain.jobNames.length === 0
+                          ? `No configured jobs for ${domain.label}`
+                          : `Trigger ${domain.jobNames.length} job${domain.jobNames.length === 1 ? '' : 's'} for ${domain.label} across ${domain.layerLabels.join(' • ')}`}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            </div>
             <div className="overflow-x-auto overflow-y-visible rounded-[1.2rem] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               <Table className="min-w-[1280px] border-collapse border-spacing-y-0">
                 <caption className="sr-only">
@@ -1615,11 +1745,7 @@ export function DomainLayerComparisonPanel({
                       const updatedLabel = domainConfig?.lastUpdated
                         ? `${updatedAgo} ago`
                         : 'unknown';
-                      const metadataUpdatedAt =
-                        metadata?.metadataSource === 'artifact' ? metadata.computedAt || null : null;
-                      const metadataUpdatedDisplay = metadataUpdatedAt
-                        ? formatMetadataTimestamp(metadataUpdatedAt)
-                        : 'N/A';
+                      const metadataUpdatedAt = metadata?.computedAt || null;
                       const adlsModifiedAt = metadata?.folderLastModified || null;
                       const adlsModifiedDisplay = adlsModifiedAt
                         ? formatTimeAgo(adlsModifiedAt)
@@ -1698,7 +1824,6 @@ export function DomainLayerComparisonPanel({
                         jobPortalUrl,
                         updatedLabel,
                         metadataUpdatedAt,
-                        metadataUpdatedDisplay,
                         adlsModifiedAt,
                         adlsModifiedDisplay,
                         isPurgingThisTarget,
@@ -1796,12 +1921,14 @@ export function DomainLayerComparisonPanel({
                                   >
                                     {formatSymbolCount(model.metadata?.symbolCount)}
                                   </span>
-                                  <div
-                                    className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
-                                    title={model.metadataUpdatedAt || undefined}
-                                  >
-                                    updated {model.metadataUpdatedDisplay}
-                                  </div>
+                                  {model.metadataUpdatedAt ? (
+                                    <div
+                                      className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
+                                      title={model.metadataUpdatedAt}
+                                    >
+                                      updated {formatMetadataTimestamp(model.metadataUpdatedAt)}
+                                    </div>
+                                  ) : null}
                                 </div>
                                 <div className="flex flex-col items-end gap-1">
                                   <span

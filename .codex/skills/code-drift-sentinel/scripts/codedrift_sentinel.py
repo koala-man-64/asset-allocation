@@ -108,6 +108,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "detection": {
         "lookback_days": 14,
         "exclude_globs": [],
+        "speculative_safeguards": {
+            "enabled": True,
+            "patterns": [
+                r"\?.*:\s*(?:None|null|False)\b",
+                r"\|\|\s*(?:null|undefined)\b",
+                r"\?\?\s*(?:null|undefined)\b",
+                r"\breturn\s+(?:None|null|False)\b",
+                r"\?.*:\s*['\"](?:N/?A|unknown|no data|no-data|unavailable|not available)['\"]",
+                r"\|\|\s*['\"](?:N/?A|unknown|no data|no-data|unavailable|not available)['\"]",
+                r"\?\?\s*['\"](?:N/?A|unknown|no data|no-data|unavailable|not available)['\"]",
+                r"\breturn\s+['\"](?:N/?A|unknown|no data|no-data|unavailable|not available)['\"]",
+            ],
+        },
     },
 }
 
@@ -678,6 +691,42 @@ def iter_removed_lines_by_file(
     return removed
 
 
+def iter_added_lines_by_file(
+    diff_text: str,
+    *,
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    added: list[tuple[str, str]] = []
+    current_file: str | None = None
+
+    for raw_line in diff_text.splitlines():
+        line = raw_line.rstrip("\n")
+        if line.startswith("diff --git "):
+            current_file = None
+            continue
+        if line.startswith("+++ "):
+            candidate = line[4:].strip()
+            if candidate.startswith("b/"):
+                candidate = candidate[2:]
+            if not candidate or candidate == "/dev/null":
+                current_file = None
+                continue
+            current_file = candidate
+            continue
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        if not current_file:
+            continue
+        if include_patterns and not path_matches(current_file, include_patterns):
+            continue
+        if exclude_patterns and path_matches(current_file, exclude_patterns):
+            continue
+        added.append((current_file, line))
+
+    return added
+
+
 def collect_recent_log(repo: pathlib.Path, lookback_days: int) -> str:
     return git_maybe_output(
         repo,
@@ -1031,6 +1080,7 @@ def detect_behavioral_and_test_drift(
     changed_files: list[str],
     quality_results: list[CommandResult],
     compare_diff: str,
+    detection_config: dict[str, Any] | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
 
@@ -1103,6 +1153,55 @@ def detect_behavioral_and_test_drift(
                 verification=["Run fast tests", "Review changed modules for edge cases"],
             )
         )
+
+    speculative_cfg = (detection_config or {}).get("speculative_safeguards", {}) or {}
+    speculative_enabled = speculative_cfg.get("enabled", True)
+    if speculative_enabled:
+        pattern_values = speculative_cfg.get("patterns") or DEFAULT_CONFIG["detection"]["speculative_safeguards"]["patterns"]
+        compiled_patterns: list[re.Pattern[str]] = []
+        for value in pattern_values:
+            pattern_text = str(value or "").strip()
+            if not pattern_text:
+                continue
+            try:
+                compiled_patterns.append(re.compile(pattern_text, re.IGNORECASE))
+            except re.error:
+                continue
+
+        suspicious_hits: list[str] = []
+        suspicious_files: set[str] = set()
+        for file_path, added_line in iter_added_lines_by_file(
+            compare_diff,
+            include_patterns=CODE_PATH_PATTERNS,
+            exclude_patterns=[*TEST_PATH_PATTERNS, *DOC_PATH_PATTERNS, *DEFAULT_EXCLUDED_PATH_PATTERNS],
+        ):
+            payload = added_line[1:].strip()
+            if not payload or re.match(r"^(#|//|/\*|\*)", payload):
+                continue
+            if any(pattern.search(payload) for pattern in compiled_patterns):
+                suspicious_files.add(file_path)
+                suspicious_hits.append(f"{file_path}: {payload[:180]}")
+
+        if suspicious_hits:
+            findings.append(
+                Finding(
+                    category="behavioral",
+                    severity="medium",
+                    confidence=0.78,
+                    title="Speculative safeguard or placeholder fallback introduced",
+                    expected="Behavior changes should be requirement-driven; avoid precautionary guards or placeholder fallbacks that alter semantics without explicit product intent.",
+                    observed="Added code introduces sentinel/null branches or placeholder fallback copy that can hide data or change behavior defensively.",
+                    files=sorted(suspicious_files),
+                    evidence=suspicious_hits[:12],
+                    remediation="Remove speculative safeguards unless the requirement explicitly calls for them. If missing-data behavior is required, use approved copy and cover it with tests.",
+                    risk="medium",
+                    verification=[
+                        "Review the requirement for missing-data behavior",
+                        "Add or update tests for the intended behavior",
+                        "Re-run the drift audit",
+                    ],
+                )
+            )
 
     return findings
 
@@ -1926,7 +2025,14 @@ def classify_all_drift(
     findings.extend(detect_architecture_drift(repo, changed_files, config.get("architecture", {}) or {}))
     findings.extend(detect_api_drift(repo, changed_files, compare_from, compare_to, config.get("api", {}) or {}))
     findings.extend(detect_dependency_drift(repo, changed_files, compare_from, config.get("dependencies", {}) or {}))
-    findings.extend(detect_behavioral_and_test_drift(changed_files, quality_results, combined_diff))
+    findings.extend(
+        detect_behavioral_and_test_drift(
+            changed_files,
+            quality_results,
+            combined_diff,
+            config.get("detection", {}) or {},
+        )
+    )
     findings.extend(detect_performance_drift(changed_files, combined_diff, quality_results))
     findings.extend(detect_security_drift(changed_files, combined_diff, quality_results, config.get("risk_controls", {}) or {}))
 
