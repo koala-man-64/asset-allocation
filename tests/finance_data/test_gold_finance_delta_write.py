@@ -5,6 +5,8 @@ from core import delta_core
 from core.pipeline import DataPaths
 from tasks.finance_data import gold_finance_data
 
+EXPECTED_GOLD_FINANCE_COLUMNS = list(gold_finance_data._GOLD_FINANCE_PIOTROSKI_COLUMNS)
+
 
 def test_build_job_config_reads_required_containers(monkeypatch):
     monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver")
@@ -22,7 +24,7 @@ def test_build_job_config_requires_containers(monkeypatch):
 
 
 def test_run_alpha26_finance_gold_skips_empty_bucket_without_existing_schema(monkeypatch):
-    target_paths = DataPaths.get_gold_finance_bucket_paths("A")
+    target_path = DataPaths.get_gold_finance_alpha26_bucket_path("A")
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
@@ -64,13 +66,12 @@ def test_run_alpha26_finance_gold_skips_empty_bucket_without_existing_schema(mon
     assert alpha26_symbols == 0
     assert index_path == "index"
     assert captured["store_calls"] == 0
-    assert captured["checked_paths"] == target_paths
+    assert captured["checked_paths"] == [target_path]
 
 
 def test_run_alpha26_finance_gold_writes_empty_bucket_when_schema_exists(monkeypatch):
-    target_paths = DataPaths.get_gold_finance_bucket_paths("A")
-    existing_cols = ["date", "symbol", "feature_x"]
-    target_path_set = set(target_paths)
+    target_path = DataPaths.get_gold_finance_alpha26_bucket_path("A")
+    existing_cols = EXPECTED_GOLD_FINANCE_COLUMNS
     captured: dict[str, object] = {"store_calls": 0, "paths": [], "frames": []}
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
@@ -79,24 +80,24 @@ def test_run_alpha26_finance_gold_writes_empty_bucket_when_schema_exists(monkeyp
     monkeypatch.setattr(
         delta_core,
         "get_delta_last_commit",
-        lambda _container, path: 1 if path in target_path_set else None,
+        lambda _container, path: 1 if path == target_path else None,
     )
     monkeypatch.setattr(
         delta_core,
         "get_delta_schema_columns",
-        lambda _container, path: existing_cols if path in target_path_set else None,
+        lambda _container, path: existing_cols if path == target_path else None,
     )
     monkeypatch.setattr(
         delta_core,
         "load_delta",
         lambda _container, path: pd.DataFrame(
-            {
+            {column: pd.Series(dtype="Int64") for column in EXPECTED_GOLD_FINANCE_COLUMNS[2:]}
+            | {
                 "date": pd.Series(dtype="datetime64[ns]"),
                 "symbol": pd.Series(dtype="string"),
-                "feature_x": pd.Series(dtype="float64"),
             }
         )
-        if path in target_path_set
+        if path == target_path
         else pd.DataFrame(),
     )
 
@@ -130,18 +131,18 @@ def test_run_alpha26_finance_gold_writes_empty_bucket_when_schema_exists(monkeyp
     assert watermarks_dirty is False
     assert alpha26_symbols == 0
     assert index_path == "index"
-    assert captured["store_calls"] == len(target_paths)
-    assert set(captured["paths"]) == target_path_set
+    assert captured["store_calls"] == 1
+    assert captured["paths"] == [target_path]
     assert captured["mode"] == "overwrite"
     for df_written in captured["frames"]:
         assert isinstance(df_written, pd.DataFrame)
         assert df_written.empty
-        assert list(df_written.columns) == ["date", "symbol", "feature_x"]
+        assert list(df_written.columns) == EXPECTED_GOLD_FINANCE_COLUMNS
 
 
-def test_run_alpha26_finance_gold_migrates_legacy_bucket_to_sub_domain_layout(monkeypatch):
-    target_paths = DataPaths.get_gold_finance_bucket_paths("A")
-    legacy_path = DataPaths.get_legacy_gold_finance_bucket_path("A")
+def test_run_alpha26_finance_gold_migrates_deprecated_sub_domain_bucket_to_unified_layout(monkeypatch):
+    target_path = DataPaths.get_gold_finance_alpha26_bucket_path("A")
+    deprecated_paths = DataPaths.get_gold_finance_bucket_paths("A")
     captured: dict[str, object] = {"paths": [], "deleted": []}
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
@@ -151,7 +152,7 @@ def test_run_alpha26_finance_gold_migrates_legacy_bucket_to_sub_domain_layout(mo
     def _fake_get_last_commit(_container: str, path: str):
         if "finance-data/" in path:
             return 5
-        if path == legacy_path:
+        if path in deprecated_paths:
             return 7
         return None
 
@@ -161,15 +162,32 @@ def test_run_alpha26_finance_gold_migrates_legacy_bucket_to_sub_domain_layout(mo
         delta_core,
         "load_delta",
         lambda _container, path: pd.DataFrame(
-            [{"date": "2024-01-01", "symbol": "AAPL", "piotroski_f_score": 8}]
+            [
+                {
+                    "date": "2024-01-01",
+                    "symbol": "AAPL",
+                    "piotroski_roa_pos": 1,
+                    "piotroski_cfo_pos": 1,
+                    "piotroski_delta_roa_pos": 1,
+                    "piotroski_accruals_pos": 1,
+                    "piotroski_leverage_decrease": 1,
+                    "piotroski_liquidity_increase": 1,
+                    "piotroski_no_new_shares": 1,
+                    "piotroski_gross_margin_increase": 1,
+                    "piotroski_asset_turnover_increase": 0,
+                    "piotroski_f_score": 8,
+                    "extra_metric": 999.0,
+                }
+            ]
         )
-        if path == legacy_path
+        if path in deprecated_paths
         else pd.DataFrame(),
     )
 
     def _fake_store(df: pd.DataFrame, _container: str, path: str, mode: str = "overwrite", **_kwargs) -> None:
         assert mode == "overwrite"
         captured["paths"] = [*list(captured["paths"]), path]
+        assert list(df.columns) == EXPECTED_GOLD_FINANCE_COLUMNS
         assert list(df["symbol"]) == ["AAPL"]
 
     monkeypatch.setattr(delta_core, "store_delta", _fake_store)
@@ -206,15 +224,47 @@ def test_run_alpha26_finance_gold_migrates_legacy_bucket_to_sub_domain_layout(mo
     assert watermarks_dirty is False
     assert alpha26_symbols == 1
     assert index_path == "index"
-    assert set(captured["paths"]) == set(target_paths)
-    assert captured["deleted"] == [legacy_path]
+    assert captured["paths"] == [target_path]
+    assert set(captured["deleted"]) == set(deprecated_paths)
+
+
+def test_project_gold_finance_piotroski_frame_limits_output_schema() -> None:
+    projected = gold_finance_data._project_gold_finance_piotroski_frame(
+        pd.DataFrame(
+            [
+                {
+                    "date": "2024-01-01",
+                    "symbol": "AAPL",
+                    "piotroski_roa_pos": 1,
+                    "piotroski_cfo_pos": 1,
+                    "piotroski_delta_roa_pos": 1,
+                    "piotroski_accruals_pos": 1,
+                    "piotroski_leverage_decrease": 1,
+                    "piotroski_liquidity_increase": 1,
+                    "piotroski_no_new_shares": 1,
+                    "piotroski_gross_margin_increase": 1,
+                    "piotroski_asset_turnover_increase": 0,
+                    "piotroski_f_score": 8,
+                    "shares_outstanding": 100,
+                }
+            ]
+        )
+    )
+
+    assert list(projected.columns) == EXPECTED_GOLD_FINANCE_COLUMNS
+    assert projected.loc[0, "piotroski_f_score"] == 8
+    assert "shares_outstanding" not in projected.columns
 
 
 def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(monkeypatch):
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
-    monkeypatch.setattr(delta_core, "get_delta_last_commit", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        delta_core,
+        "get_delta_last_commit",
+        lambda _container, path: 1 if "finance-data/" in path else None,
+    )
     monkeypatch.setattr(delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(delta_core, "store_delta", lambda *_args, **_kwargs: None)
 

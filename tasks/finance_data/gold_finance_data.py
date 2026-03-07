@@ -106,6 +106,21 @@ _GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = (
     "cash_flow",
     "valuation",
 )
+_GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
+    "date",
+    "symbol",
+    "piotroski_roa_pos",
+    "piotroski_cfo_pos",
+    "piotroski_delta_roa_pos",
+    "piotroski_accruals_pos",
+    "piotroski_leverage_decrease",
+    "piotroski_liquidity_increase",
+    "piotroski_no_new_shares",
+    "piotroski_gross_margin_increase",
+    "piotroski_asset_turnover_increase",
+    "piotroski_f_score",
+)
+_GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = _GOLD_FINANCE_PIOTROSKI_COLUMNS[2:]
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -707,24 +722,58 @@ def _build_job_config() -> FeatureJobConfig:
 
 
 def _empty_gold_finance_bucket_frame() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "date": pd.Series(dtype="datetime64[ns]"),
-            "symbol": pd.Series(dtype="string"),
-        }
-    )
+    data: dict[str, pd.Series] = {
+        "date": pd.Series(dtype="datetime64[ns]"),
+        "symbol": pd.Series(dtype="string"),
+    }
+    for column in _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS:
+        data[column] = pd.Series(dtype="Int64")
+    return pd.DataFrame(data, columns=_GOLD_FINANCE_PIOTROSKI_COLUMNS)
 
 
-def _gold_finance_bucket_paths(bucket: str) -> list[str]:
+def _coerce_nullable_int(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").astype("Int64")
+
+
+def _project_gold_finance_piotroski_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return _empty_gold_finance_bucket_frame()
+
+    out = normalize_columns_to_snake_case(df).reset_index(drop=True)
+    projected = pd.DataFrame(index=out.index)
+
+    if "date" in out.columns:
+        date_series = pd.to_datetime(out["date"], errors="coerce")
+        if hasattr(date_series.dtype, "tz") and date_series.dtype.tz is not None:
+            date_series = date_series.dt.tz_convert(None)
+        projected["date"] = date_series
+    else:
+        projected["date"] = pd.Series([pd.NaT] * len(out), dtype="datetime64[ns]")
+
+    if "symbol" in out.columns:
+        projected["symbol"] = out["symbol"].astype("string")
+    else:
+        projected["symbol"] = pd.Series([pd.NA] * len(out), dtype="string")
+
+    for column in _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS:
+        if column in out.columns:
+            projected[column] = _coerce_nullable_int(out[column])
+        else:
+            projected[column] = pd.Series([pd.NA] * len(out), dtype="Int64")
+
+    return projected[list(_GOLD_FINANCE_PIOTROSKI_COLUMNS)].reset_index(drop=True)
+
+
+def _deprecated_gold_finance_bucket_paths(bucket: str) -> list[str]:
     from core.pipeline import DataPaths
 
     return [DataPaths.get_gold_finance_bucket_path(sub_domain, bucket) for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS]
 
 
-def _legacy_gold_finance_bucket_path(bucket: str) -> str:
+def _gold_finance_alpha26_bucket_path(bucket: str) -> str:
     from core.pipeline import DataPaths
 
-    return DataPaths.get_legacy_gold_finance_bucket_path(bucket)
+    return DataPaths.get_gold_finance_alpha26_bucket_path(bucket)
 
 
 def _normalize_sub_domain(value: Any) -> str:
@@ -749,10 +798,7 @@ def _load_existing_gold_finance_symbol_to_bucket_map(*, sub_domain: Optional[str
 
     for idx, row in existing.iterrows():
         row_sub_domain = str(sub_domain_series.loc[idx] or "")
-        if expected_sub_domain:
-            if row_sub_domain != expected_sub_domain:
-                continue
-        elif row_sub_domain:
+        if expected_sub_domain and row_sub_domain != expected_sub_domain:
             continue
         symbol = str(row.get("symbol") or "").strip().upper()
         bucket = str(row.get("bucket") or "").strip().upper()
@@ -787,18 +833,41 @@ def _load_gold_finance_bucket_template(
             continue
         if df_existing is None:
             continue
-        return normalize_columns_to_snake_case(df_existing).iloc[0:0].copy(), True
+        return _project_gold_finance_piotroski_frame(df_existing).iloc[0:0].copy(), True
     return _empty_gold_finance_bucket_frame(), False
 
 
-def _delete_legacy_gold_finance_bucket(*, client: Any, bucket: str) -> int:
+def _load_existing_gold_finance_bucket(
+    *,
+    container: str,
+    candidate_paths: Sequence[str],
+) -> tuple[pd.DataFrame, Optional[str]]:
+    from core import delta_core
+
+    for path in candidate_paths:
+        try:
+            df_existing = delta_core.load_delta(container, path)
+        except Exception:
+            continue
+        if df_existing is None:
+            continue
+        return _project_gold_finance_piotroski_frame(df_existing), path
+    return _empty_gold_finance_bucket_frame(), None
+
+
+def _delete_deprecated_gold_finance_bucket_paths(*, client: Any, bucket: str) -> list[tuple[str, int]]:
     if client is None or not hasattr(client, "delete_prefix"):
-        return 0
-    legacy_path = _legacy_gold_finance_bucket_path(bucket)
-    try:
-        return int(client.delete_prefix(legacy_path) or 0)
-    except Exception:
-        return 0
+        return []
+
+    deleted: list[tuple[str, int]] = []
+    for path in _deprecated_gold_finance_bucket_paths(bucket):
+        try:
+            deleted_blobs = int(client.delete_prefix(path) or 0)
+        except Exception:
+            continue
+        if deleted_blobs > 0:
+            deleted.append((path, deleted_blobs))
+    return deleted
 
 
 def _run_finance_reconciliation(*, silver_container: str, gold_container: str) -> tuple[int, int]:
@@ -814,13 +883,12 @@ def _run_finance_reconciliation(*, silver_container: str, gold_container: str) -
         raise RuntimeError("Gold finance reconciliation requires gold storage client.")
 
     silver_symbols = collect_delta_silver_finance_symbols(client=silver_client)
-    gold_symbols = collect_delta_market_symbols(client=gold_client, root_prefix="finance")
+    gold_symbols = collect_delta_market_symbols(client=gold_client, root_prefix="finance/buckets")
     orphan_symbols, purge_stats = purge_orphan_rows_from_bucket_tables(
         upstream_symbols=silver_symbols,
         downstream_symbols=gold_symbols,
         table_paths_for_symbol=lambda symbol: [
-            DataPaths.get_gold_finance_bucket_path(sub_domain, layer_bucketing.bucket_letter(symbol))
-            for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS
+            DataPaths.get_gold_finance_alpha26_bucket_path(layer_bucketing.bucket_letter(symbol))
         ],
         load_table=lambda path: delta_core.load_delta(gold_container, path),
         store_table=lambda df, path: delta_core.store_delta(df, gold_container, path, mode="overwrite"),
@@ -849,8 +917,7 @@ def _run_finance_reconciliation(*, silver_container: str, gold_container: str) -
     backfill_start, _ = get_backfill_range()
     cutoff_stats = enforce_backfill_cutoff_on_bucket_tables(
         table_paths=[
-            DataPaths.get_gold_finance_bucket_path(sub_domain, bucket)
-            for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS
+            DataPaths.get_gold_finance_alpha26_bucket_path(bucket)
             for bucket in layer_bucketing.ALPHABET_BUCKETS
         ],
         load_table=lambda path: delta_core.load_delta(gold_container, path),
@@ -900,10 +967,7 @@ def _run_alpha26_finance_gold(
     failed = 0
     watermarks_dirty = False
     symbol_to_bucket = _load_existing_gold_finance_symbol_to_bucket_map()
-    symbols_by_sub_domain: dict[str, dict[str, str]] = {
-        sub_domain: _load_existing_gold_finance_symbol_to_bucket_map(sub_domain=sub_domain)
-        for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS
-    }
+    cleanup_buckets: set[str] = set()
 
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         from core.pipeline import DataPaths
@@ -914,8 +978,8 @@ def _run_alpha26_finance_gold(
             "cash_flow": DataPaths.get_silver_finance_bucket_path("cash_flow", bucket),
             "valuation": DataPaths.get_silver_finance_bucket_path("valuation", bucket),
         }
-        gold_paths = _gold_finance_bucket_paths(bucket)
-        legacy_gold_path = _legacy_gold_finance_bucket_path(bucket)
+        gold_path = _gold_finance_alpha26_bucket_path(bucket)
+        deprecated_gold_paths = _deprecated_gold_finance_bucket_paths(bucket)
         commits = [
             delta_core.get_delta_last_commit(silver_container, silver_paths["income_statement"]),
             delta_core.get_delta_last_commit(silver_container, silver_paths["balance_sheet"]),
@@ -923,9 +987,13 @@ def _run_alpha26_finance_gold(
             delta_core.get_delta_last_commit(silver_container, silver_paths["valuation"]),
         ]
         silver_commit = max([c for c in commits if c is not None], default=None)
-        gold_commits = {path: delta_core.get_delta_last_commit(gold_container, path) for path in gold_paths}
-        missing_gold_paths = [path for path, commit in gold_commits.items() if commit is None]
-        legacy_gold_commit = delta_core.get_delta_last_commit(gold_container, legacy_gold_path)
+        gold_commit = delta_core.get_delta_last_commit(gold_container, gold_path)
+        deprecated_gold_commits = {
+            path: delta_core.get_delta_last_commit(gold_container, path) for path in deprecated_gold_paths
+        }
+        deprecated_template_paths = [
+            path for path, commit in deprecated_gold_commits.items() if commit is not None
+        ]
         watermark_key = f"bucket::{bucket}"
         prior = watermarks.get(watermark_key, {})
         skip_due_watermark = (
@@ -934,28 +1002,29 @@ def _run_alpha26_finance_gold(
             and prior.get("silver_last_commit") is not None
             and prior.get("silver_last_commit") >= silver_commit
         )
-        if skip_due_watermark and not missing_gold_paths:
+        if skip_due_watermark and gold_commit is not None:
             skipped_unchanged += 1
-            deleted_legacy = _delete_legacy_gold_finance_bucket(client=gold_client, bucket=bucket)
-            if deleted_legacy > 0:
-                mdc.write_line(
-                    f"Gold finance alpha26 removed legacy bucket path {legacy_gold_path}: deleted_blobs={deleted_legacy}"
-                )
+            cleanup_buckets.add(bucket)
             continue
 
         df_gold_bucket: Optional[pd.DataFrame] = None
         bucket_symbol_to_bucket: dict[str, str] = {}
         template_schema_available = False
-        migrated_from_legacy = False
+        migrated_from_deprecated = False
 
-        if skip_due_watermark and missing_gold_paths and legacy_gold_commit is not None:
+        if skip_due_watermark and gold_commit is None and deprecated_template_paths:
             try:
-                df_gold_bucket = delta_core.load_delta(gold_container, legacy_gold_path)
-                if df_gold_bucket is None:
-                    df_gold_bucket = _empty_gold_finance_bucket_frame()
-                df_gold_bucket = normalize_columns_to_snake_case(df_gold_bucket)
-                template_schema_available = True
-                migrated_from_legacy = True
+                df_gold_bucket, migrated_path = _load_existing_gold_finance_bucket(
+                    container=gold_container,
+                    candidate_paths=deprecated_template_paths,
+                )
+                template_schema_available = migrated_path is not None
+                migrated_from_deprecated = migrated_path is not None
+                if migrated_from_path := migrated_path:
+                    mdc.write_line(
+                        "Gold finance alpha26 migrating deprecated sub-domain bucket "
+                        f"to unified path bucket={bucket} source={migrated_from_path} target={gold_path}"
+                    )
                 if "symbol" in df_gold_bucket.columns:
                     bucket_symbol_to_bucket = {
                         str(symbol).strip().upper(): bucket
@@ -964,14 +1033,15 @@ def _run_alpha26_finance_gold(
                     }
             except Exception as exc:
                 failed += 1
-                mdc.write_warning(f"Gold finance alpha26 legacy migration failed bucket={bucket}: {exc}")
+                mdc.write_warning(f"Gold finance alpha26 deprecated-path migration failed bucket={bucket}: {exc}")
                 continue
 
         if df_gold_bucket is None and silver_commit is None:
             skipped_missing_source += 1
-            template_candidates = [path for path, commit in gold_commits.items() if commit is not None]
-            if legacy_gold_commit is not None:
-                template_candidates.append(legacy_gold_path)
+            template_candidates: list[str] = []
+            if gold_commit is not None:
+                template_candidates.append(gold_path)
+            template_candidates.extend(deprecated_template_paths)
             df_gold_bucket, template_schema_available = _load_gold_finance_bucket_template(
                 container=gold_container,
                 candidate_paths=template_candidates,
@@ -1062,7 +1132,7 @@ def _run_alpha26_finance_gold(
                     )
                     if df_features is None or df_features.empty:
                         continue
-                    symbol_frames.append(df_features)
+                    symbol_frames.append(_project_gold_finance_piotroski_frame(df_features))
                     bucket_symbol_to_bucket[ticker] = bucket
                 except Exception as exc:
                     failed += 1
@@ -1076,46 +1146,61 @@ def _run_alpha26_finance_gold(
                 )
 
             if symbol_frames:
-                df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)
-                df_gold_bucket = normalize_columns_to_snake_case(df_gold_bucket)
+                df_gold_bucket = _project_gold_finance_piotroski_frame(
+                    pd.concat(symbol_frames, ignore_index=True)
+                )
             else:
-                df_gold_bucket = _empty_gold_finance_bucket_frame()
+                template_candidates = []
+                if gold_commit is not None:
+                    template_candidates.append(gold_path)
+                template_candidates.extend(deprecated_template_paths)
+                if template_candidates:
+                    df_gold_bucket, template_schema_available = _load_gold_finance_bucket_template(
+                        container=gold_container,
+                        candidate_paths=template_candidates,
+                    )
+                else:
+                    df_gold_bucket = _empty_gold_finance_bucket_frame()
 
         bucket_failed = False
         writes_completed = 0
-        for gold_path in gold_paths:
-            write_decision = prepare_delta_write_frame(
-                df_gold_bucket.reset_index(drop=True),
-                container=gold_container,
-                path=gold_path,
-                skip_empty_without_schema=not template_schema_available,
-            )
+        write_decision = prepare_delta_write_frame(
+            df_gold_bucket.reset_index(drop=True),
+            container=gold_container,
+            path=gold_path,
+            skip_empty_without_schema=not template_schema_available,
+        )
+        mdc.write_line(
+            "delta_write_decision layer=gold domain=finance "
+            f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+            f"reason={write_decision.reason} path={gold_path}"
+        )
+        if write_decision.action == "skip_empty_no_schema":
             mdc.write_line(
-                "delta_write_decision layer=gold domain=finance "
-                f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
-                f"reason={write_decision.reason} path={gold_path}"
+                f"Skipping Gold finance empty bucket write for {gold_path}: no existing Delta schema."
             )
-            if write_decision.action == "skip_empty_no_schema":
-                mdc.write_line(
-                    f"Skipping Gold finance empty bucket write for {gold_path}: no existing Delta schema."
+            continue
+        try:
+            delta_core.store_delta(write_decision.frame, gold_container, gold_path, mode="overwrite")
+            if backfill_start is not None:
+                delta_core.vacuum_delta_table(
+                    gold_container,
+                    gold_path,
+                    retention_hours=0,
+                    dry_run=False,
+                    enforce_retention_duration=False,
+                    full=True,
                 )
-                continue
-            try:
-                delta_core.store_delta(write_decision.frame, gold_container, gold_path, mode="overwrite")
-                if backfill_start is not None:
-                    delta_core.vacuum_delta_table(
-                        gold_container,
-                        gold_path,
-                        retention_hours=0,
-                        dry_run=False,
-                        enforce_retention_duration=False,
-                        full=True,
-                    )
-                writes_completed += 1
-            except Exception as exc:
-                bucket_failed = True
-                failed += 1
-                mdc.write_error(f"Gold finance alpha26 write failed bucket={bucket} path={gold_path}: {exc}")
+            writes_completed += 1
+            mdc.write_line(
+                "gold_finance_alpha26_write_status "
+                f"bucket={bucket} path={gold_path} rows_out={len(write_decision.frame)} "
+                f"symbols_out={len(bucket_symbol_to_bucket)} schema=piotroski_only"
+            )
+        except Exception as exc:
+            bucket_failed = True
+            failed += 1
+            mdc.write_error(f"Gold finance alpha26 write failed bucket={bucket} path={gold_path}: {exc}")
 
         if bucket_failed or writes_completed <= 0:
             continue
@@ -1126,39 +1211,33 @@ def _run_alpha26_finance_gold(
             touched_bucket=bucket,
             touched_symbol_to_bucket=bucket_symbol_to_bucket,
         )
-        for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS:
-            symbols_by_sub_domain[sub_domain] = _merge_symbol_to_bucket_map(
-                symbols_by_sub_domain[sub_domain],
-                touched_bucket=bucket,
-                touched_symbol_to_bucket=bucket_symbol_to_bucket,
-            )
-        if silver_commit is not None and not migrated_from_legacy:
+        if silver_commit is not None and not migrated_from_deprecated:
             watermarks[watermark_key] = {
                 "silver_last_commit": silver_commit,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             watermarks_dirty = True
-
-        deleted_legacy = _delete_legacy_gold_finance_bucket(client=gold_client, bucket=bucket)
-        if deleted_legacy > 0:
-            mdc.write_line(
-                f"Gold finance alpha26 removed legacy bucket path {legacy_gold_path}: deleted_blobs={deleted_legacy}"
-            )
+        cleanup_buckets.add(bucket)
 
     index_path = layer_bucketing.write_layer_symbol_index(
         layer="gold",
         domain="finance",
         symbol_to_bucket=symbol_to_bucket,
     )
-    for sub_domain in _GOLD_FINANCE_ALPHA26_SUBDOMAINS:
-        sub_index_path = layer_bucketing.write_layer_symbol_index(
-            layer="gold",
-            domain="finance",
-            symbol_to_bucket=symbols_by_sub_domain[sub_domain],
-            sub_domain=sub_domain,
+    if index_path:
+        for bucket in sorted(cleanup_buckets):
+            for path, deleted_blobs in _delete_deprecated_gold_finance_bucket_paths(
+                client=gold_client,
+                bucket=bucket,
+            ):
+                mdc.write_line(
+                    "Gold finance alpha26 removed deprecated sub-domain bucket path "
+                    f"{path}: deleted_blobs={deleted_blobs}"
+                )
+    elif cleanup_buckets:
+        mdc.write_warning(
+            "Gold finance alpha26 skipped deprecated bucket cleanup because the unified symbol index was not written."
         )
-        if sub_index_path:
-            index_path = sub_index_path
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

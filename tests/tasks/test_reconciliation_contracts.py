@@ -119,15 +119,9 @@ GOLD_CASES: list[dict[str, Any]] = [
         "module": gold_finance,
         "run_name": "_run_finance_reconciliation",
         "patch_symbols": _patch_gold_finance_symbols,
-        "deleted_paths": [
-            DataPaths.get_gold_finance_bucket_path("balance_sheet", "M"),
-            DataPaths.get_gold_finance_bucket_path("income_statement", "M"),
-            DataPaths.get_gold_finance_bucket_path("cash_flow", "M"),
-            DataPaths.get_gold_finance_bucket_path("valuation", "M"),
-        ],
+        "deleted_paths": [DataPaths.get_gold_finance_alpha26_bucket_path("M")],
         "cutoff_paths": [
-            DataPaths.get_gold_finance_bucket_path(sub_domain, bucket)
-            for sub_domain in ("balance_sheet", "income_statement", "cash_flow", "valuation")
+            DataPaths.get_gold_finance_alpha26_bucket_path(bucket)
             for bucket in layer_bucketing.ALPHABET_BUCKETS
         ],
     },

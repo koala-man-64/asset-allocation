@@ -152,14 +152,11 @@ def test_remove_symbol_from_layer_storage_covers_all_medallion_domain_folders(mo
     gold_paths = {str(item["path"]) for item in gold_outcomes}
     assert gold_paths == {
         "market/buckets/A",
-        "finance/balance_sheet/buckets/A",
-        "finance/income_statement/buckets/A",
-        "finance/cash_flow/buckets/A",
-        "finance/valuation/buckets/A",
+        "finance/buckets/A",
         "earnings/buckets/A",
         "targets/buckets/A",
     }
-    assert len(delta_calls) == 14
+    assert len(delta_calls) == 11
     assert all(call["symbol"] == "AAPL" for call in delta_calls)
 
 
@@ -218,18 +215,15 @@ def test_remove_symbol_from_layer_storage_uses_row_delete_in_gold_alpha26(monkey
         layer="gold",
     )
 
-    assert len(outcomes) == 7
+    assert len(outcomes) == 4
     assert all(item.get("operation") == "row_delete" for item in outcomes)
     assert {str(item["path"]) for item in outcomes} == {
         "market/buckets/A",
-        "finance/balance_sheet/buckets/A",
-        "finance/income_statement/buckets/A",
-        "finance/cash_flow/buckets/A",
-        "finance/valuation/buckets/A",
+        "finance/buckets/A",
         "earnings/buckets/A",
         "targets/buckets/A",
     }
-    assert len(calls) == 7
+    assert len(calls) == 4
     assert all(call["symbol"] == "AAPL" for call in calls)
 
 
@@ -323,15 +317,15 @@ def test_run_purge_symbol_operation_covers_all_jobs(monkeypatch) -> None:
             ("silver", "earnings"): 1,
             ("silver", "price-target"): 1,
             ("gold", "market"): 1,
-            ("gold", "finance"): 4,
+            ("gold", "finance"): 1,
             ("gold", "earnings"): 1,
             ("gold", "price-target"): 1,
         }
     )
 
-    assert result["totalDeleted"] == 18
+    assert result["totalDeleted"] == 15
     assert len(bronze_bucket_calls) == 4
-    assert len(delta_bucket_calls) == 14
+    assert len(delta_bucket_calls) == 11
 
     bronze_finance_paths = sorted(
         item["path"]

@@ -28,7 +28,6 @@ _FINANCE_SUBDOMAIN_TO_REPORT_TYPE: dict[str, str] = {
     "cash_flow": "cash_flow",
     "valuation": "overview",
 }
-_GOLD_FINANCE_PRIMARY_SUBDOMAIN = "balance_sheet"
 
 _ADLS_TREE_SCAN_LIMIT_DEFAULT = 5_000
 _ADLS_TREE_SCAN_LIMIT_MAX = 100_000
@@ -1020,22 +1019,16 @@ class DataService:
         symbol = str(ticker or "").strip().upper()
         if symbol:
             bucket = layer_bucketing.bucket_letter(symbol)
-            rows = DataService._read_delta_from_paths(
+            rows = DataService._read_delta(
                 container,
-                [
-                    DataPaths.get_gold_finance_bucket_path(_GOLD_FINANCE_PRIMARY_SUBDOMAIN, bucket),
-                    DataPaths.get_legacy_gold_finance_bucket_path(bucket),
-                ],
+                DataPaths.get_gold_finance_alpha26_bucket_path(bucket),
                 limit=None,
             )
             return [row for row in rows if str(row.get("symbol", "")).strip().upper() == symbol]
 
-        return DataService._read_cross_section_from_prefixes(
+        return DataService._read_cross_section_from_prefix(
             container,
-            [
-                DataPaths.get_gold_finance_domain_path(_GOLD_FINANCE_PRIMARY_SUBDOMAIN),
-                "finance/buckets",
-            ],
+            "finance/buckets",
             limit=limit,
         )
     
@@ -1212,12 +1205,9 @@ class DataService:
                 raise ValueError("ticker is required for Gold finance data.")
             layer_bucketing.gold_layout_mode()
             symbol = str(ticker).strip().upper()
-            rows = DataService._read_delta_from_paths(
+            rows = DataService._read_delta(
                 container,
-                [
-                    DataPaths.get_gold_finance_bucket_path(resolved_sub, layer_bucketing.bucket_letter(symbol)),
-                    DataPaths.get_legacy_gold_finance_bucket_path(layer_bucketing.bucket_letter(symbol)),
-                ],
+                DataPaths.get_gold_finance_alpha26_bucket_path(layer_bucketing.bucket_letter(symbol)),
                 limit=None,
             )
             for row in rows:
