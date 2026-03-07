@@ -9,6 +9,7 @@ from core import core as mdc
 from core import delta_core
 from core.pipeline import DataPaths
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.backfill import (
     apply_backfill_start_cutoff,
@@ -740,6 +741,18 @@ def _write_alpha26_market_buckets(
             silver_bucket_path,
             mode="overwrite",
         )
+        try:
+            domain_artifacts.write_bucket_artifact(
+                layer="silver",
+                domain="market",
+                bucket=bucket,
+                df=write_decision.frame,
+                date_column="date",
+                client=silver_client,
+                job_name="silver-market-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Silver market metadata bucket artifact write failed bucket={bucket}: {exc}")
         mdc.write_line(
             f"layer_handoff_status transition=bronze_to_silver status=ok bucket={bucket} "
             f"rows_out={len(df_bucket)} symbols_out={df_bucket['symbol'].nunique() if 'symbol' in df_bucket.columns else 0}"
@@ -755,6 +768,19 @@ def _write_alpha26_market_buckets(
         domain="market",
         symbol_to_bucket=symbol_to_bucket,
     )
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="silver",
+                domain="market",
+                date_column="date",
+                client=silver_client,
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="silver-market-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Silver market metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path
 
 

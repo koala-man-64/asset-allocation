@@ -58,6 +58,7 @@ function formatDate(value: string | null | undefined): string {
 
 function dateRangeUnavailableReason(metadata: {
   type?: string | null;
+  metadataSource?: string | null;
   dateRange?: { min?: string | null; max?: string | null; source?: string | null } | null;
   warnings?: Array<string> | null;
 }): string | null {
@@ -65,15 +66,21 @@ function dateRangeUnavailableReason(metadata: {
     return null;
   }
 
+  const hasBounds = Boolean(metadata.dateRange?.min) || Boolean(metadata.dateRange?.max);
+  if (hasBounds) {
+    return null;
+  }
+
+  if (metadata.metadataSource === 'artifact') {
+    return 'Writer-owned metadata has not published a date range yet.';
+  }
+
   if (metadata.type === 'blob') {
     return 'Date range is unavailable for blob-based domains.';
   }
 
   if (metadata.type === 'delta' && metadata.dateRange) {
-    const hasBounds = Boolean(metadata.dateRange.min) || Boolean(metadata.dateRange.max);
-    if (hasBounds) {
-      return null;
-    }
+    return null;
   }
 
   if (metadata.type !== 'delta') {
@@ -107,6 +114,8 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
     ? `${formatDate(metadata.dateRange.min)} → ${formatDate(metadata.dateRange.max)}`
     : '—';
   const dateRangeReason = metadata ? dateRangeUnavailableReason(metadata) : null;
+  const columnCount =
+    metadata?.columnCount ?? (Array.isArray(metadata?.columns) ? metadata?.columns.length : null);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -163,10 +172,10 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
                 <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-3">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-mcm-olive">
                     <Files className="h-3.5 w-3.5 text-mcm-walnut/60" />
-                    Rows
+                    Columns
                   </div>
                   <div className={`${StatusTypos.MONO} mt-1 text-lg font-black text-mcm-walnut`}>
-                    {formatInt(metadata.totalRows)}
+                    {formatInt(columnCount)}
                   </div>
                 </div>
                 <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-3">
@@ -202,6 +211,11 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
                       source: <span className={StatusTypos.MONO}>{metadata.dateRange.source}</span>
                     </div>
                   ) : null}
+                  {metadata.metadataSource ? (
+                    <div className="mt-1 text-[10px] text-mcm-walnut/50">
+                      metadata: <span className={StatusTypos.MONO}>{metadata.metadataSource}</span>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="rounded-xl border-2 border-mcm-walnut/15 bg-mcm-cream/60 p-3">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-mcm-olive">
@@ -222,6 +236,12 @@ export function DomainMetadataSheet({ target, open, onOpenChange }: DomainMetada
                   </div>
                 </div>
               </div>
+
+              {metadata.metadataPath ? (
+                <div className="rounded-xl border border-mcm-walnut/15 bg-mcm-cream/30 p-3 text-[11px] text-mcm-walnut/65">
+                  metadata path: <span className={StatusTypos.MONO}>{metadata.metadataPath}</span>
+                </div>
+              ) : null}
 
               {metadata.warnings && metadata.warnings.length > 0 ? (
                 <div className="rounded-xl border border-mcm-walnut/15 bg-mcm-cream/40 p-3 text-xs text-mcm-walnut/70">

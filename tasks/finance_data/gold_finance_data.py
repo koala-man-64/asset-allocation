@@ -11,6 +11,7 @@ from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.delta_write_policy import prepare_delta_write_frame
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
@@ -1192,6 +1193,17 @@ def _run_alpha26_finance_gold(
                     full=True,
                 )
             writes_completed += 1
+            try:
+                domain_artifacts.write_bucket_artifact(
+                    layer="gold",
+                    domain="finance",
+                    bucket=bucket,
+                    df=write_decision.frame,
+                    date_column="date",
+                    job_name="gold-finance-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold finance metadata bucket artifact write failed bucket={bucket}: {exc}")
             mdc.write_line(
                 "gold_finance_alpha26_write_status "
                 f"bucket={bucket} path={gold_path} rows_out={len(write_decision.frame)} "
@@ -1225,6 +1237,17 @@ def _run_alpha26_finance_gold(
         symbol_to_bucket=symbol_to_bucket,
     )
     if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="gold",
+                domain="finance",
+                date_column="date",
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="gold-finance-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Gold finance metadata artifact write failed: {exc}")
         for bucket in sorted(cleanup_buckets):
             for path, deleted_blobs in _delete_deprecated_gold_finance_bucket_paths(
                 client=gold_client,

@@ -14,6 +14,7 @@ from core import delta_core
 from tasks.finance_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common import run_manifests
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
@@ -533,11 +534,28 @@ def _write_alpha26_finance_silver_buckets(
                 silver_bucket_path,
                 mode="overwrite",
             )
-    index_path = layer_bucketing.write_layer_symbol_index(
+            try:
+                domain_artifacts.write_bucket_artifact(
+                    layer="silver",
+                    domain="finance",
+                    sub_domain=sub_domain,
+                    bucket=bucket,
+                    df=write_decision.frame,
+                    date_column="date",
+                    client=silver_client,
+                    job_name="silver-finance-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(
+                    f"Silver finance metadata bucket artifact write failed sub_domain={sub_domain} bucket={bucket}: {exc}"
+                )
+    root_index_path = layer_bucketing.write_layer_symbol_index(
         layer="silver",
         domain="finance",
         symbol_to_bucket=symbol_to_bucket,
     )
+    index_path = root_index_path
+    finance_subdomain_artifacts: dict[str, dict[str, Any]] = {}
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
         sub_index_path = layer_bucketing.write_layer_symbol_index(
             layer="silver",
@@ -546,7 +564,38 @@ def _write_alpha26_finance_silver_buckets(
             sub_domain=sub_domain,
         )
         if sub_index_path:
+            try:
+                payload = domain_artifacts.write_domain_artifact(
+                    layer="silver",
+                    domain="finance",
+                    sub_domain=sub_domain,
+                    date_column="date",
+                    client=silver_client,
+                    symbol_count_override=len(symbols_by_sub_domain.get(sub_domain, {})),
+                    symbol_index_path=sub_index_path,
+                    job_name="silver-finance-job",
+                )
+                if payload is not None:
+                    finance_subdomain_artifacts[sub_domain] = payload
+            except Exception as exc:
+                mdc.write_warning(
+                    f"Silver finance metadata artifact write failed for sub_domain={sub_domain}: {exc}"
+                )
             index_path = sub_index_path
+    if root_index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="silver",
+                domain="finance",
+                date_column="date",
+                client=silver_client,
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=root_index_path,
+                job_name="silver-finance-job",
+                finance_subdomains=finance_subdomain_artifacts,
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Silver finance metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path
 
 

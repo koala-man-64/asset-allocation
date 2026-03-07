@@ -6,6 +6,8 @@ import pytest
 
 from api import data_service
 from api.endpoints import system
+from api.service.app import create_app
+from tests.api._client import get_test_client
 
 
 def test_read_cached_domain_columns_returns_empty_when_missing(monkeypatch) -> None:
@@ -86,3 +88,31 @@ def test_run_with_timeout_raises_timeout_error() -> None:
             timeout_seconds=0.01,
             timeout_message="timed out",
         )
+
+
+@pytest.mark.asyncio
+async def test_get_domain_columns_prefers_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setattr(
+        system,
+        "_read_domain_columns_from_artifact",
+        lambda layer, domain: (["date", "symbol", "close"], "2026-03-06T20:00:00+00:00", True, "market-data/_metadata/domain.json"),
+    )
+    monkeypatch.setattr(
+        system,
+        "_read_cached_domain_columns",
+        lambda layer, domain: (_ for _ in ()).throw(AssertionError("cache path should not run")),
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/domain-columns?layer=silver&domain=market")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["columns"] == ["date", "symbol", "close"]
+    assert payload["found"] is True
+    assert payload["promptRetrieve"] is False
+    assert payload["source"] == "artifact"
+    assert payload["cachePath"] == "market-data/_metadata/domain.json"
+    assert payload["updatedAt"] == "2026-03-06T20:00:00+00:00"

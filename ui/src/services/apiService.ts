@@ -452,7 +452,7 @@ export interface DomainColumnsResponse {
   columns: string[];
   found: boolean;
   promptRetrieve: boolean;
-  source: 'common-file';
+  source: 'common-file' | 'artifact';
   cachePath: string;
   updatedAt?: string | null;
 }

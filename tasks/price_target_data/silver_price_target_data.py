@@ -9,6 +9,7 @@ from core import delta_core
 from tasks.price_target_data import config as cfg
 from core.pipeline import DataPaths
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common.watermarks import (
@@ -445,11 +446,36 @@ def _write_alpha26_price_target_buckets(bucket_frames: dict[str, list[pd.DataFra
             bucket_path,
             mode="overwrite",
         )
+        try:
+            domain_artifacts.write_bucket_artifact(
+                layer="silver",
+                domain="price-target",
+                bucket=bucket,
+                df=write_decision.frame,
+                date_column="obs_date",
+                client=silver_client,
+                job_name="silver-price-target-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Silver price-target metadata bucket artifact write failed bucket={bucket}: {exc}")
     index_path = layer_bucketing.write_layer_symbol_index(
         layer="silver",
         domain="price-target",
         symbol_to_bucket=symbol_to_bucket,
     )
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="silver",
+                domain="price-target",
+                date_column="obs_date",
+                client=silver_client,
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="silver-price-target-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Silver price-target metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path
 
 

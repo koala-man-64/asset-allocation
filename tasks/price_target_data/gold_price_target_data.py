@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from tasks.common.delta_write_policy import prepare_delta_write_frame
+from tasks.common import domain_artifacts
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
@@ -474,6 +475,17 @@ def _run_alpha26_price_target_gold(
                     enforce_retention_duration=False,
                     full=True,
                 )
+            try:
+                domain_artifacts.write_bucket_artifact(
+                    layer="gold",
+                    domain="price-target",
+                    bucket=bucket,
+                    df=write_decision.frame,
+                    date_column="obs_date",
+                    job_name="gold-price-target-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold price-target metadata bucket artifact write failed bucket={bucket}: {exc}")
             processed += 1
             if silver_commit is not None:
                 watermarks[watermark_key] = {
@@ -490,6 +502,18 @@ def _run_alpha26_price_target_gold(
         domain="price-target",
         symbol_to_bucket=symbol_to_bucket,
     )
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="gold",
+                domain="price-target",
+                date_column="obs_date",
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="gold-price-target-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Gold price-target metadata artifact write failed: {exc}")
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

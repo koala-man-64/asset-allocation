@@ -51,6 +51,7 @@ from core.runtime_config import (
     upsert_runtime_config,
 )
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from core.purge_rules import (
     PurgeRule,
@@ -504,7 +505,7 @@ class DomainDateRange(BaseModel):
     min: Optional[str] = None
     max: Optional[str] = None
     column: Optional[str] = None
-    source: Optional[Literal["partition", "stats"]] = None
+    source: Optional[Literal["partition", "stats", "artifact"]] = None
 
 
 class DomainMetadataResponse(BaseModel):
@@ -517,6 +518,8 @@ class DomainMetadataResponse(BaseModel):
     cachedAt: Optional[str] = None
     cacheSource: Optional[Literal["snapshot", "live-refresh"]] = None
     symbolCount: Optional[int] = None
+    columns: List[str] = Field(default_factory=list)
+    columnCount: Optional[int] = None
     financeSubfolderSymbolCounts: Optional[Dict[str, int]] = None
     dateRange: Optional[DomainDateRange] = None
     totalRows: Optional[int] = None
@@ -530,6 +533,8 @@ class DomainMetadataResponse(BaseModel):
     asOfCutoff: Optional[str] = None
     lagSymbolCount: Optional[int] = None
     coverageReportPath: Optional[str] = None
+    metadataPath: Optional[str] = None
+    metadataSource: Optional[Literal["artifact", "scan"]] = None
     warnings: List[str] = Field(default_factory=list)
 
 
@@ -853,6 +858,8 @@ def domain_metadata(
                 "cachedAt": None,
                 "cacheSource": "snapshot",
                 "symbolCount": None,
+                "columns": [],
+                "columnCount": None,
                 "dateRange": None,
                 "totalRows": None,
                 "fileCount": None,
@@ -865,6 +872,8 @@ def domain_metadata(
                 "asOfCutoff": None,
                 "lagSymbolCount": None,
                 "coverageReportPath": None,
+                "metadataPath": None,
+                "metadataSource": None,
                 "warnings": [missing_message],
             }
             return JSONResponse(
@@ -1088,7 +1097,7 @@ class DomainColumnsResponse(BaseModel):
     columns: List[str] = Field(default_factory=list)
     found: bool = False
     promptRetrieve: bool = False
-    source: Literal["common-file"] = "common-file"
+    source: Literal["common-file", "artifact"] = "common-file"
     cachePath: str
     updatedAt: Optional[str] = None
 
@@ -1182,6 +1191,21 @@ def _normalize_columns_list(values: Any) -> List[str]:
         seen.add(column)
         normalized.append(column)
     return normalized
+
+
+def _read_domain_columns_from_artifact(layer: str, domain: str) -> tuple[List[str], Optional[str], bool, Optional[str]]:
+    artifact = domain_artifacts.load_domain_artifact(layer=layer, domain=domain)
+    if not isinstance(artifact, dict):
+        return [], None, False, None
+    columns = _normalize_columns_list(artifact.get("columns"))
+    updated_at = artifact.get("updatedAt") or artifact.get("computedAt")
+    artifact_path = artifact.get("artifactPath")
+    return (
+        columns,
+        str(updated_at) if isinstance(updated_at, str) else None,
+        bool(columns),
+        str(artifact_path) if isinstance(artifact_path, str) and artifact_path.strip() else None,
+    )
 
 
 def _domain_columns_cache_key(layer: str, domain: str) -> str:
@@ -1361,6 +1385,37 @@ def get_domain_columns(
         raise HTTPException(status_code=400, detail="layer is required.")
     if not normalized_domain:
         raise HTTPException(status_code=400, detail="domain is required.")
+
+    try:
+        artifact_columns, artifact_updated_at, artifact_found, artifact_path = _read_domain_columns_from_artifact(
+            normalized_layer,
+            normalized_domain,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Domain columns artifact read failed: layer=%s domain=%s err=%s",
+            normalized_layer,
+            normalized_domain,
+            exc,
+        )
+        artifact_columns, artifact_updated_at, artifact_found, artifact_path = [], None, False, None
+
+    if artifact_found:
+        return JSONResponse(
+            {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "columns": artifact_columns,
+                "found": True,
+                "promptRetrieve": False,
+                "source": "artifact",
+                "cachePath": artifact_path
+                or domain_artifacts.domain_artifact_path(layer=normalized_layer, domain=normalized_domain),
+                "updatedAt": artifact_updated_at,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     _require_common_storage_for_domain_columns()
 
     read_timeout = _domain_columns_read_timeout_seconds()
@@ -1409,6 +1464,37 @@ def refresh_domain_columns(payload: DomainColumnsRefreshRequest, request: Reques
         raise HTTPException(status_code=400, detail="layer is required.")
     if not normalized_domain:
         raise HTTPException(status_code=400, detail="domain is required.")
+
+    try:
+        artifact_columns, artifact_updated_at, artifact_found, artifact_path = _read_domain_columns_from_artifact(
+            normalized_layer,
+            normalized_domain,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Domain columns artifact refresh read failed: layer=%s domain=%s err=%s",
+            normalized_layer,
+            normalized_domain,
+            exc,
+        )
+        artifact_columns, artifact_updated_at, artifact_found, artifact_path = [], None, False, None
+
+    if artifact_found:
+        return JSONResponse(
+            {
+                "layer": normalized_layer,
+                "domain": normalized_domain,
+                "columns": artifact_columns,
+                "found": True,
+                "promptRetrieve": False,
+                "source": "artifact",
+                "cachePath": artifact_path
+                or domain_artifacts.domain_artifact_path(layer=normalized_layer, domain=normalized_domain),
+                "updatedAt": artifact_updated_at,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     _require_common_storage_for_domain_columns()
 
     refresh_timeout = _domain_columns_refresh_timeout_seconds()

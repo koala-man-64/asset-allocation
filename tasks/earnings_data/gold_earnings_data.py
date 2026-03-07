@@ -11,6 +11,7 @@ from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
@@ -438,6 +439,17 @@ def _run_alpha26_earnings_gold(
                     enforce_retention_duration=False,
                     full=True,
                 )
+            try:
+                domain_artifacts.write_bucket_artifact(
+                    layer="gold",
+                    domain="earnings",
+                    bucket=bucket,
+                    df=write_decision.frame,
+                    date_column="date",
+                    job_name="gold-earnings-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold earnings metadata bucket artifact write failed bucket={bucket}: {exc}")
             processed += 1
             if silver_commit is not None:
                 watermarks[watermark_key] = {
@@ -454,6 +466,18 @@ def _run_alpha26_earnings_gold(
         domain="earnings",
         symbol_to_bucket=symbol_to_bucket,
     )
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="gold",
+                domain="earnings",
+                date_column="date",
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="gold-earnings-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Gold earnings metadata artifact write failed: {exc}")
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

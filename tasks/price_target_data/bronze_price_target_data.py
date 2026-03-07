@@ -12,6 +12,7 @@ from core import core as mdc
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
     load_coverage_marker,
@@ -197,11 +198,36 @@ def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) 
             df=frame,
             codec=bronze_bucketing.alpha26_codec(),
         )
+        try:
+            domain_artifacts.write_bucket_artifact(
+                layer="bronze",
+                domain="price-target",
+                bucket=bucket,
+                df=frame,
+                date_column="obs_date",
+                client=bronze_client,
+                job_name="bronze-price-target-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Bronze price-target metadata bucket artifact write failed bucket={bucket}: {exc}")
 
     index_path = bronze_bucketing.write_symbol_index(
         domain="price-target",
         symbol_to_bucket=symbol_to_bucket,
     )
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="bronze",
+                domain="price-target",
+                date_column="obs_date",
+                client=bronze_client,
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="bronze-price-target-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Bronze price-target metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path
 
 

@@ -22,6 +22,7 @@ from core.massive_gateway_client import (
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.market_data import config as cfg
 
 
@@ -607,11 +608,36 @@ def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tup
             df=frame,
             codec=bronze_bucketing.alpha26_codec(),
         )
+        try:
+            domain_artifacts.write_bucket_artifact(
+                layer="bronze",
+                domain="market",
+                bucket=bucket,
+                df=frame,
+                date_column="date",
+                client=bronze_client,
+                job_name="bronze-market-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Bronze market metadata bucket artifact write failed bucket={bucket}: {exc}")
 
     index_path = bronze_bucketing.write_symbol_index(
         domain="market",
         symbol_to_bucket=symbol_to_bucket,
     )
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="bronze",
+                domain="market",
+                date_column="date",
+                client=bronze_client,
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="bronze-market-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Bronze market metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path
 
 

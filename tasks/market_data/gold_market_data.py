@@ -22,6 +22,7 @@ import pandas as pd
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 from tasks.technical_analysis.technical_indicators import (
     add_candlestick_patterns,
@@ -748,6 +749,17 @@ def _run_alpha26_market_gold(
                     enforce_retention_duration=False,
                     full=True,
                 )
+            try:
+                domain_artifacts.write_bucket_artifact(
+                    layer="gold",
+                    domain="market",
+                    bucket=bucket,
+                    df=write_decision.frame,
+                    date_column="date",
+                    job_name="gold-market-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold market metadata bucket artifact write failed bucket={bucket}: {exc}")
             processed += 1
             symbol_to_bucket = _merge_symbol_to_bucket_map(
                 symbol_to_bucket,
@@ -814,6 +826,17 @@ def _run_alpha26_market_gold(
         mdc.write_error(f"Gold market symbol index write failed: {exc}")
 
     if index_path is not None:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="gold",
+                domain="market",
+                date_column="date",
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="gold-market-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Gold market metadata artifact write failed: {exc}")
         if pending_watermark_updates:
             watermarks.update(pending_watermark_updates)
             watermarks_dirty = True

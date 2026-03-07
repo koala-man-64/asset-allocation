@@ -14,6 +14,7 @@ from core import core as mdc
 from core import delta_core
 from deltalake import DeltaTable
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
 
 logger = logging.getLogger("asset_allocation.monitoring.domain_metadata")
@@ -237,6 +238,68 @@ def _load_alpha26_index_symbols(*, layer_key: str, domain_key: str) -> set[str]:
     if layer_key in {"silver", "gold"}:
         return layer_bucketing.load_layer_symbol_set(layer=layer_key, domain=domain_key)
     return set()
+
+
+def _normalize_finance_subfolder_counts(raw: Any) -> Optional[Dict[FinanceSubfolderKey, int]]:
+    if not isinstance(raw, dict):
+        return None
+    out: Dict[FinanceSubfolderKey, int] = {}
+    for key, value in raw.items():
+        normalized_key = domain_artifacts.normalize_sub_domain(str(key or ""))
+        if normalized_key not in _FINANCE_SUBFOLDER_KEYS:
+            continue
+        try:
+            out[normalized_key] = int(value)
+        except Exception:
+            continue
+    return out or None
+
+
+def _artifact_domain_metadata_payload(
+    *,
+    layer_key: str,
+    domain_key: str,
+    container: str,
+) -> Optional[Dict[str, Any]]:
+    artifact = domain_artifacts.load_domain_artifact(layer=layer_key, domain=domain_key)
+    if not isinstance(artifact, dict):
+        return None
+
+    computed_at = str(artifact.get("updatedAt") or artifact.get("computedAt") or _utc_now_iso())
+    prefix = _blob_prefix(layer_key, domain_key)
+    columns = artifact.get("columns")
+    if not isinstance(columns, list):
+        columns = []
+    column_count = artifact.get("columnCount")
+    if not isinstance(column_count, int):
+        column_count = len(columns)
+    return {
+        "layer": layer_key,
+        "domain": domain_key,
+        "container": container,
+        "type": "blob",
+        "prefix": prefix,
+        "tablePath": None,
+        "computedAt": computed_at,
+        "folderLastModified": computed_at,
+        "symbolCount": artifact.get("symbolCount"),
+        "financeSubfolderSymbolCounts": _normalize_finance_subfolder_counts(
+            artifact.get("financeSubfolderSymbolCounts")
+        ),
+        "blacklistedSymbolCount": None,
+        "dateRange": artifact.get("dateRange"),
+        "columns": columns,
+        "columnCount": column_count,
+        "totalRows": None,
+        "fileCount": None,
+        "totalBytes": None,
+        "deltaVersion": None,
+        "metadataPath": artifact.get("artifactPath")
+        or domain_artifacts.domain_artifact_path(layer=layer_key, domain=domain_key),
+        "metadataSource": "artifact",
+        "warnings": [],
+        **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
+    }
 
 
 def _extract_ticker_from_blob_name(layer: LayerKey, domain: DomainKey, blob_name: str) -> Optional[str]:
@@ -834,6 +897,27 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
     computed_at = _utc_now_iso()
     max_scanned_blobs = int(os.environ.get("DOMAIN_METADATA_MAX_SCANNED_BLOBS", "200000"))
 
+    artifact_payload = _artifact_domain_metadata_payload(
+        layer_key=layer_key,
+        domain_key=domain_key,
+        container=container,
+    )
+    if artifact_payload is not None:
+        warnings = artifact_payload.setdefault("warnings", [])
+        prefix = _blob_prefix(layer_key, domain_key)
+        if prefix:
+            client = BlobStorageClient(container_name=container, ensure_container_exists=False)
+            blacklist_path = _blacklist_path(layer_key, domain_key)
+            if blacklist_path:
+                try:
+                    blacklist_blob_bytes = client.download_data(blacklist_path)
+                    artifact_payload["blacklistedSymbolCount"] = _parse_list_size(blacklist_blob_bytes)
+                except Exception as exc:
+                    warnings.append(f"Unable to read blacklist.csv: {exc}")
+        artifact_payload["computedAt"] = artifact_payload.get("computedAt") or computed_at
+        _cache_domain_metadata(layer_key, domain_key, artifact_payload)
+        return artifact_payload
+
     delta_path = _delta_table_path(layer_key, domain_key)
     if delta_path:
         client = BlobStorageClient(container_name=container, ensure_container_exists=False)
@@ -864,7 +948,11 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "computedAt": computed_at,
             "folderLastModified": None,
             "symbolCount": symbol_count,
+            "columns": [],
+            "columnCount": None,
             "blacklistedSymbolCount": None,
+            "metadataPath": None,
+            "metadataSource": "scan",
             "warnings": warnings,
             **metrics,
             **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
@@ -957,10 +1045,14 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "computedAt": computed_at,
             "folderLastModified": folder_last_modified,
             "symbolCount": symbol_count,
+            "columns": [],
+            "columnCount": None,
             "financeSubfolderSymbolCounts": finance_subfolder_symbol_counts,
             "blacklistedSymbolCount": blacklisted_symbol_count,
             "fileCount": files,
             "totalBytes": total_bytes,
+            "metadataPath": None,
+            "metadataSource": "scan",
             "warnings": warnings,
             **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
         }

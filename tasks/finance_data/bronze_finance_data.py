@@ -30,6 +30,7 @@ from tasks.common.bronze_backfill_coverage import (
 )
 from tasks.common.run_manifests import create_bronze_finance_manifest
 from tasks.common import bronze_bucketing
+from tasks.common import domain_artifacts
 from tasks.finance_data import config as cfg
 
 
@@ -322,10 +323,35 @@ def _write_alpha26_finance_buckets(alpha26_rows: dict[tuple[str, str], dict[str,
             df=part,
             codec=bronze_bucketing.alpha26_codec(),
         )
+        try:
+            domain_artifacts.write_bucket_artifact(
+                layer="bronze",
+                domain="finance",
+                bucket=bucket,
+                df=part,
+                date_column="date",
+                client=bronze_client,
+                job_name="bronze-finance-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Bronze finance metadata bucket artifact write failed bucket={bucket}: {exc}")
 
     symbols = sorted({str(key[0]).upper() for key in alpha26_rows.keys()})
     symbol_to_bucket = {symbol: bronze_bucketing.bucket_letter(symbol) for symbol in symbols}
     index_path = bronze_bucketing.write_symbol_index(domain="finance", symbol_to_bucket=symbol_to_bucket)
+    if index_path:
+        try:
+            domain_artifacts.write_domain_artifact(
+                layer="bronze",
+                domain="finance",
+                date_column="date",
+                client=bronze_client,
+                symbol_count_override=len(symbol_to_bucket),
+                symbol_index_path=index_path,
+                job_name="bronze-finance-job",
+            )
+        except Exception as exc:
+            mdc.write_warning(f"Bronze finance metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path
 
 

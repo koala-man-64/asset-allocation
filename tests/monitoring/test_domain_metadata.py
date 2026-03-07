@@ -697,6 +697,45 @@ def test_collect_domain_metadata_uses_alpha26_index_for_silver_market(monkeypatc
     assert payload["symbolCount"] == 3
 
 
+def test_collect_domain_metadata_prefers_writer_artifact(monkeypatch) -> None:
+    class _FakeBlobStorageClient:
+        def __init__(self, container_name: str, ensure_container_exists: bool = False) -> None:
+            self.container_name = container_name
+            self.ensure_container_exists = ensure_container_exists
+
+        def download_data(self, _path: str):
+            return None
+
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setenv("DOMAIN_METADATA_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setattr("monitoring.domain_metadata.BlobStorageClient", _FakeBlobStorageClient)
+    monkeypatch.setattr(
+        "monitoring.domain_metadata.domain_artifacts.load_domain_artifact",
+        lambda *, layer, domain, client=None, sub_domain=None: {
+            "symbolCount": 4,
+            "columns": ["date", "symbol", "close"],
+            "columnCount": 3,
+            "dateRange": {
+                "min": "2026-01-01T00:00:00+00:00",
+                "max": "2026-03-01T00:00:00+00:00",
+                "column": "date",
+                "source": "artifact",
+            },
+            "artifactPath": "market-data/_metadata/domain.json",
+        },
+    )
+
+    payload = collect_domain_metadata(layer="silver", domain="market")
+
+    assert payload["symbolCount"] == 4
+    assert payload["columns"] == ["date", "symbol", "close"]
+    assert payload["columnCount"] == 3
+    assert payload["dateRange"]["source"] == "artifact"
+    assert payload["metadataPath"] == "market-data/_metadata/domain.json"
+    assert payload["metadataSource"] == "artifact"
+    assert payload["fileCount"] is None
+
+
 def test_collect_domain_metadata_reports_zero_symbols_when_target_prefix_is_empty(monkeypatch) -> None:
     class _ContainerClient:
         def list_blobs(self, *, name_starts_with: str):

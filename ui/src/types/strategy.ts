@@ -141,7 +141,7 @@ export interface DomainDateRange {
   min?: string | null;
   max?: string | null;
   column?: string | null;
-  source?: 'partition' | 'stats' | null;
+  source?: 'partition' | 'stats' | 'artifact' | null;
 }
 
 export interface DomainMetadata {
@@ -154,6 +154,8 @@ export interface DomainMetadata {
   cachedAt?: string | null;
   cacheSource?: 'snapshot' | 'live-refresh' | null;
   symbolCount?: number | null;
+  columns?: string[];
+  columnCount?: number | null;
   financeSubfolderSymbolCounts?: Record<
     'balance_sheet' | 'income_statement' | 'cash_flow' | 'valuation',
     number
@@ -163,6 +165,8 @@ export interface DomainMetadata {
   asOfCutoff?: string | null;
   lagSymbolCount?: number | null;
   coverageReportPath?: string | null;
+  metadataPath?: string | null;
+  metadataSource?: 'artifact' | 'scan' | null;
   dateRange?: DomainDateRange | null;
   totalRows?: number | null;
   fileCount?: number | null;
