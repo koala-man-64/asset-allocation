@@ -1,6 +1,11 @@
 location: East US
 name: gold-market-job
 type: Microsoft.App/jobs
+tags:
+  owner: ${RESOURCE_TAG_OWNER}
+  cost-center: ${RESOURCE_TAG_COST_CENTER}
+  workload: ${RESOURCE_TAG_WORKLOAD}
+  environment: ${RESOURCE_TAG_ENVIRONMENT}
 identity:
   type: UserAssigned
   userAssignedIdentities:

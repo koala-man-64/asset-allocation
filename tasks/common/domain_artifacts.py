@@ -9,6 +9,7 @@ import pandas as pd
 from core import core as mdc
 from core.blob_storage import BlobStorageClient
 from tasks.common import bronze_bucketing
+from tasks.common import domain_metadata_snapshots
 
 
 ARTIFACT_VERSION = 1
@@ -504,4 +505,10 @@ def write_domain_artifact(
         } or None
 
     mdc.save_json_content(payload, artifact_path, client=storage_client)
+    if not normalized_sub_domain:
+        domain_metadata_snapshots.update_domain_metadata_snapshots_from_artifact(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            artifact=payload,
+        )
     return payload

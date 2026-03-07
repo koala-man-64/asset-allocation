@@ -73,16 +73,11 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
     monkeypatch.setattr(
         system,
         "_read_cached_domain_metadata_snapshot",
-        lambda layer, domain: {
+        lambda layer, domain, force_refresh=False: {
             **_metadata_payload(layer=layer, domain=domain),
             "cachedAt": "2026-02-20T12:00:00+00:00",
             "cacheSource": "snapshot",
         },
-    )
-    monkeypatch.setattr(
-        system,
-        "collect_domain_metadata",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("collect_domain_metadata should not run")),
     )
 
     app = create_app()
@@ -99,24 +94,22 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_refresh_writes_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_domain_metadata_refresh_bypasses_document_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
 
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(
-        system,
-        "collect_domain_metadata",
-        lambda **kwargs: _metadata_payload(layer=str(kwargs.get("layer")), domain=str(kwargs.get("domain"))),
-    )
-
-    def _write(layer: str, domain: str, metadata: dict[str, object]) -> str:
+    def _read(layer: str, domain: str, force_refresh: bool = False) -> dict[str, object]:
         captured["layer"] = layer
         captured["domain"] = domain
-        captured["metadata"] = dict(metadata)
-        return "2026-02-20T13:00:00+00:00"
+        captured["force_refresh"] = force_refresh
+        return {
+            **_metadata_payload(layer=layer, domain=domain),
+            "cachedAt": "2026-02-20T13:00:00+00:00",
+            "cacheSource": "snapshot",
+        }
 
-    monkeypatch.setattr(system, "_write_cached_domain_metadata_snapshot", _write)
+    monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", _read)
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -126,24 +119,18 @@ async def test_domain_metadata_refresh_writes_snapshot(monkeypatch: pytest.Monke
     payload = response.json()
     assert payload["layer"] == "gold"
     assert payload["domain"] == "finance"
-    assert payload["cacheSource"] == "live-refresh"
+    assert payload["cacheSource"] == "snapshot"
     assert payload["cachedAt"] == "2026-02-20T13:00:00+00:00"
 
     assert captured["layer"] == "gold"
     assert captured["domain"] == "finance"
-    assert isinstance(captured["metadata"], dict)
-    assert captured["metadata"].get("cacheSource") == "live-refresh"
+    assert captured["force_refresh"] is True
 
 
 @pytest.mark.asyncio
 async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
-    monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", lambda layer, domain: None)
-    monkeypatch.setattr(
-        system,
-        "collect_domain_metadata",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("collect_domain_metadata should not run")),
-    )
+    monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", lambda layer, domain, force_refresh=False: None)
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -207,27 +194,13 @@ async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_snapshot_can_warm_fill_missing_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
         lambda force_refresh=False: {"version": 1, "updatedAt": None, "entries": {}},
     )
-
-    monkeypatch.setattr(
-        system,
-        "collect_domain_metadata",
-        lambda **kwargs: _metadata_payload(layer=str(kwargs.get("layer")), domain=str(kwargs.get("domain"))),
-    )
-
-    writes: list[tuple[str, str]] = []
-
-    def _write(layer: str, domain: str, metadata: dict[str, object]) -> str:
-        writes.append((layer, domain))
-        return "2026-02-20T13:00:00+00:00"
-
-    monkeypatch.setattr(system, "_write_cached_domain_metadata_snapshot", _write)
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -237,13 +210,8 @@ async def test_domain_metadata_snapshot_can_warm_fill_missing_entries(monkeypatc
 
     assert response.status_code == 200
     payload = response.json()
-    assert writes == [("bronze", "market")]
-    assert sorted(payload["entries"].keys()) == ["bronze/market"]
-    entry = payload["entries"]["bronze/market"]
-    assert entry["layer"] == "bronze"
-    assert entry["domain"] == "market"
-    assert entry["cacheSource"] == "snapshot"
-    assert entry["cachedAt"] == "2026-02-20T13:00:00+00:00"
+    assert payload["entries"] == {}
+    assert payload["warnings"] == []
 
 
 @pytest.mark.asyncio

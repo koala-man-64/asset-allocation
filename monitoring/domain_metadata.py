@@ -15,6 +15,7 @@ from core import delta_core
 from deltalake import DeltaTable
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.domain_metadata_snapshots import build_domain_metadata_snapshot_metadata_from_artifact
 from tasks.common import layer_bucketing
 
 logger = logging.getLogger("asset_allocation.monitoring.domain_metadata")
@@ -31,7 +32,6 @@ _FINANCE_SUBFOLDER_KEYS: Tuple[FinanceSubfolderKey, ...] = (
     "cash_flow",
     "valuation",
 )
-_FINANCE_COVERAGE_REPORT_PATH = "system/reconciliation/finance_coverage/latest.json"
 
 
 def _utc_now_iso() -> str:
@@ -264,42 +264,12 @@ def _artifact_domain_metadata_payload(
     artifact = domain_artifacts.load_domain_artifact(layer=layer_key, domain=domain_key)
     if not isinstance(artifact, dict):
         return None
-
-    computed_at = str(artifact.get("updatedAt") or artifact.get("computedAt") or _utc_now_iso())
-    prefix = _blob_prefix(layer_key, domain_key)
-    columns = artifact.get("columns")
-    if not isinstance(columns, list):
-        columns = []
-    column_count = artifact.get("columnCount")
-    if not isinstance(column_count, int):
-        column_count = len(columns)
-    return {
-        "layer": layer_key,
-        "domain": domain_key,
-        "container": container,
-        "type": "blob",
-        "prefix": prefix,
-        "tablePath": None,
-        "computedAt": computed_at,
-        "folderLastModified": computed_at,
-        "symbolCount": artifact.get("symbolCount"),
-        "financeSubfolderSymbolCounts": _normalize_finance_subfolder_counts(
-            artifact.get("financeSubfolderSymbolCounts")
-        ),
-        "blacklistedSymbolCount": None,
-        "dateRange": artifact.get("dateRange"),
-        "columns": columns,
-        "columnCount": column_count,
-        "totalRows": None,
-        "fileCount": None,
-        "totalBytes": None,
-        "deltaVersion": None,
-        "metadataPath": artifact.get("artifactPath")
-        or domain_artifacts.domain_artifact_path(layer=layer_key, domain=domain_key),
-        "metadataSource": "artifact",
-        "warnings": [],
-        **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
-    }
+    return build_domain_metadata_snapshot_metadata_from_artifact(
+        layer=layer_key,
+        domain=domain_key,
+        artifact=artifact,
+        container=container,
+    )
 
 
 def _extract_ticker_from_blob_name(layer: LayerKey, domain: DomainKey, blob_name: str) -> Optional[str]:
@@ -512,58 +482,6 @@ def _count_finance_symbols_from_listing(
 
     subfolder_counts = {key: len(by_subfolder[key]) for key in _FINANCE_SUBFOLDER_KEYS}
     return len(tickers), subfolder_counts, truncated
-
-
-def _load_finance_coverage_report() -> Optional[Dict[str, Any]]:
-    try:
-        payload = mdc.get_common_json_content(_FINANCE_COVERAGE_REPORT_PATH)
-    except Exception as exc:
-        logger.warning("Failed to load finance coverage report: %s", exc)
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return payload
-
-
-def _finance_coverage_fields(
-    *,
-    layer_key: str,
-    domain_key: str,
-) -> Dict[str, Any]:
-    if domain_key != "finance":
-        return {}
-    report = _load_finance_coverage_report()
-    if not isinstance(report, dict):
-        return {}
-
-    generated_at = str(report.get("generatedAt") or "").strip() or None
-    lag_count_raw = report.get("totalLagSymbolCount")
-    lag_count = int(lag_count_raw) if isinstance(lag_count_raw, int) else None
-    silver_only_raw = report.get("totalSilverOnlySymbolCount")
-    if isinstance(silver_only_raw, int):
-        silver_only_count = int(silver_only_raw)
-    elif silver_only_raw is None:
-        silver_only_count = 0
-    else:
-        silver_only_count = None
-    fields: Dict[str, Any] = {
-        "coverageReportPath": _FINANCE_COVERAGE_REPORT_PATH,
-        "asOfCutoff": generated_at,
-        "lagSymbolCount": lag_count,
-        "silverOnlySymbolCount": silver_only_count,
-    }
-    if layer_key == "silver":
-        if lag_count is None or silver_only_count is None:
-            fields["coverageStatus"] = "unknown"
-        elif lag_count == 0 and silver_only_count == 0:
-            fields["coverageStatus"] = "aligned"
-        elif lag_count == 0 and silver_only_count > 0:
-            fields["coverageStatus"] = "orphaned"
-        else:
-            fields["coverageStatus"] = "lagging"
-    elif layer_key == "bronze":
-        fields["coverageStatus"] = "source"
-    return fields
 
 
 def _summarize_blob_prefix(
@@ -955,7 +873,6 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "metadataSource": "scan",
             "warnings": warnings,
             **metrics,
-            **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
         }
         _cache_domain_metadata(layer_key, domain_key, payload)
         return payload
@@ -1054,7 +971,6 @@ def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
             "metadataPath": None,
             "metadataSource": "scan",
             "warnings": warnings,
-            **_finance_coverage_fields(layer_key=layer_key, domain_key=domain_key),
         }
         _cache_domain_metadata(layer_key, domain_key, payload)
         return payload

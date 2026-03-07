@@ -71,7 +71,6 @@ import type { DataDomain, JobRun } from '@/types/strategy';
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
 const CHECKPOINT_RESET_LAYERS = new Set<LayerKey>(['silver', 'gold']);
-const DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY = 'asset-allocation.domain-metadata-snapshot.v1';
 const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
 type LayerVisualConfig = {
@@ -205,49 +204,6 @@ function makeCellKey(layerKey: LayerKey, domainKey: string): string {
 
 function makeSnapshotKey(layerKey: LayerKey, domainKey: string): string {
   return `${layerKey}/${domainKey}`;
-}
-
-function loadPersistedSnapshot(): DomainMetadataSnapshotResponse | undefined {
-  if (typeof window === 'undefined') return undefined;
-  try {
-    const raw = window.localStorage.getItem(DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as DomainMetadataSnapshotResponse;
-    if (!parsed || typeof parsed !== 'object' || !parsed.entries) return undefined;
-    return parsed;
-  } catch {
-    return undefined;
-  }
-}
-
-function persistSnapshot(payload: DomainMetadataSnapshotResponse): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // best-effort browser persistence only
-  }
-}
-
-function mergeSnapshots(
-  remote: DomainMetadataSnapshotResponse | null,
-  live: DomainMetadataSnapshotResponse | null
-): DomainMetadataSnapshotResponse {
-  const remoteEntries = remote?.entries || {};
-  const liveEntries = live?.entries || {};
-  const warnings = [
-    ...((remote?.warnings || []).filter(Boolean) as string[]),
-    ...((live?.warnings || []).filter(Boolean) as string[])
-  ];
-  return {
-    version: live?.version || remote?.version || 1,
-    updatedAt: live?.updatedAt || remote?.updatedAt || null,
-    entries: {
-      ...remoteEntries,
-      ...liveEntries
-    },
-    warnings: Array.from(new Set(warnings))
-  };
 }
 
 function formatInt(value: number | null | undefined): string {
@@ -542,34 +498,7 @@ export function DomainLayerComparisonPanel({
 
   const metadataSnapshotQuery = useQuery({
     queryKey: snapshotQueryKey,
-    queryFn: async () => {
-      const [persistedResult, liveResult] = await Promise.allSettled([
-        DataService.getPersistedDomainMetadataSnapshotCache(),
-        DataService.getDomainMetadataSnapshot({ cacheOnly: true })
-      ]);
-
-      const persistedSnapshot =
-        persistedResult.status === 'fulfilled' ? persistedResult.value : null;
-      const liveSnapshot = liveResult.status === 'fulfilled' ? liveResult.value : null;
-
-      if (!persistedSnapshot && !liveSnapshot) {
-        const reason =
-          liveResult.status === 'rejected'
-            ? liveResult.reason
-            : persistedResult.status === 'rejected'
-              ? persistedResult.reason
-              : new Error('No domain metadata snapshot sources were available.');
-        throw reason instanceof Error ? reason : new Error(String(reason));
-      }
-
-      const merged = mergeSnapshots(persistedSnapshot, liveSnapshot);
-      persistSnapshot(merged);
-      void DataService.savePersistedDomainMetadataSnapshotCache(merged).catch(() => {
-        // best-effort persistence to common container
-      });
-      return merged;
-    },
-    initialData: loadPersistedSnapshot,
+    queryFn: () => DataService.getDomainMetadataSnapshot({ cacheOnly: true }),
     enabled: true,
     staleTime: 5 * 60 * 1000,
     refetchInterval: false,
@@ -726,7 +655,6 @@ export function DomainLayerComparisonPanel({
         const metadata = await DataService.getDomainMetadata(layerKey, domainKey, {
           refresh: true
         });
-        let snapshotToPersist: DomainMetadataSnapshotResponse | null = null;
         queryClient.setQueryData(queryKeys.domainMetadata(layerKey, domainKey), metadata);
         queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
           snapshotQueryKey,
@@ -735,22 +663,14 @@ export function DomainLayerComparisonPanel({
               ...(previous?.entries || {}),
               [makeSnapshotKey(layerKey, domainKey)]: metadata
             };
-            const nextPayload: DomainMetadataSnapshotResponse = {
+            return {
               version: previous?.version || 1,
               updatedAt: metadata.cachedAt || metadata.computedAt || previous?.updatedAt || null,
               entries: nextEntries,
               warnings: (previous?.warnings || []).filter(Boolean)
             };
-            persistSnapshot(nextPayload);
-            snapshotToPersist = nextPayload;
-            return nextPayload;
           }
         );
-        if (snapshotToPersist) {
-          void DataService.savePersistedDomainMetadataSnapshotCache(snapshotToPersist).catch(() => {
-            // best-effort persistence to common container
-          });
-        }
       } catch (error) {
         console.error('[DomainLayerComparisonPanel] cell refresh failed', {
           layerKey,
@@ -884,7 +804,6 @@ export function DomainLayerComparisonPanel({
         });
       }
 
-      let snapshotToPersist: DomainMetadataSnapshotResponse | null = null;
       queryClient.setQueryData<DomainMetadataSnapshotResponse | undefined>(
         snapshotQueryKey,
         (previous) => {
@@ -902,23 +821,14 @@ export function DomainLayerComparisonPanel({
             return previous;
           }
 
-          const nextPayload: DomainMetadataSnapshotResponse = {
+          return {
             version: previous?.version || 1,
             updatedAt: new Date().toISOString(),
             entries: nextEntries,
             warnings: (previous?.warnings || []).filter(Boolean)
           };
-          persistSnapshot(nextPayload);
-          snapshotToPersist = nextPayload;
-          return nextPayload;
         }
       );
-
-      if (snapshotToPersist) {
-        await DataService.savePersistedDomainMetadataSnapshotCache(snapshotToPersist).catch(() => {
-          // best-effort persistence to common container
-        });
-      }
     },
     [queryClient, snapshotQueryKey]
   );
@@ -1116,11 +1026,7 @@ export function DomainLayerComparisonPanel({
         warnings: (previousSnapshot?.warnings || []).filter(Boolean)
       };
 
-      persistSnapshot(snapshot);
       queryClient.setQueryData(snapshotQueryKey, snapshot);
-      void DataService.savePersistedDomainMetadataSnapshotCache(snapshot).catch(() => {
-        // best-effort persistence to common container
-      });
 
       toast.success(`Refreshed counts for ${refreshedCells}/${queryPairs.length} panel cells.`);
       if (failedCells > 0) {

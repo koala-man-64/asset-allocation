@@ -27,6 +27,7 @@ def test_summarize_frame_tracks_finance_subdomains() -> None:
 
 def test_write_domain_artifact_aggregates_bucket_sidecars(monkeypatch) -> None:
     storage: dict[str, dict] = {}
+    common_storage: dict[str, dict] = {}
     fake_client = object()
 
     monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
@@ -40,6 +41,16 @@ def test_write_domain_artifact_aggregates_bucket_sidecars(monkeypatch) -> None:
         domain_artifacts.mdc,
         "get_json_content",
         lambda file_path, client=None: storage.get(str(file_path)),
+    )
+    monkeypatch.setattr(
+        domain_artifacts.mdc,
+        "save_common_json_content",
+        lambda data, file_path: common_storage.__setitem__(str(file_path), dict(data)),
+    )
+    monkeypatch.setattr(
+        domain_artifacts.mdc,
+        "get_common_json_content",
+        lambda file_path: common_storage.get(str(file_path)),
     )
 
     domain_artifacts.write_bucket_artifact(
@@ -84,3 +95,13 @@ def test_write_domain_artifact_aggregates_bucket_sidecars(monkeypatch) -> None:
     assert payload["dateRange"]["min"].startswith("2026-01-01")
     assert payload["dateRange"]["max"].startswith("2026-01-03")
     assert payload["artifactPath"] == "market-data/_metadata/domain.json"
+    assert "metadata/domain-metadata.json" in common_storage
+    assert "metadata/ui-cache/domain-metadata-snapshot.json" in common_storage
+
+    snapshot_doc = common_storage["metadata/domain-metadata.json"]
+    snapshot_entry = snapshot_doc["entries"]["silver/market"]["metadata"]
+    assert snapshot_entry["symbolCount"] == 2
+    assert snapshot_entry["metadataSource"] == "artifact"
+
+    ui_snapshot_doc = common_storage["metadata/ui-cache/domain-metadata-snapshot.json"]
+    assert ui_snapshot_doc["entries"]["silver/market"]["cachedAt"]

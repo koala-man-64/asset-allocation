@@ -29,7 +29,6 @@ from api.service.dependencies import (
 from api.service.realtime import manager as realtime_manager
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
-from monitoring.domain_metadata import collect_domain_metadata
 from monitoring.log_analytics import AzureLogAnalyticsClient
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
@@ -52,6 +51,7 @@ from core.runtime_config import (
 )
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.domain_metadata_snapshots import build_snapshot_miss_payload
 from tasks.common import layer_bucketing
 from core.purge_rules import (
     PurgeRule,
@@ -529,10 +529,6 @@ class DomainMetadataResponse(BaseModel):
     tablePath: Optional[str] = None
     prefix: Optional[str] = None
     blacklistedSymbolCount: Optional[int] = None
-    coverageStatus: Optional[str] = None
-    asOfCutoff: Optional[str] = None
-    lagSymbolCount: Optional[int] = None
-    coverageReportPath: Optional[str] = None
     metadataPath: Optional[str] = None
     metadataSource: Optional[Literal["artifact", "scan"]] = None
     warnings: List[str] = Field(default_factory=list)
@@ -633,9 +629,14 @@ def _load_domain_metadata_document(force_refresh: bool = False) -> Dict[str, Any
     return payload
 
 
-def _read_cached_domain_metadata_snapshot(layer: str, domain: str) -> Optional[Dict[str, Any]]:
+def _read_cached_domain_metadata_snapshot(
+    layer: str,
+    domain: str,
+    *,
+    force_refresh: bool = False,
+) -> Optional[Dict[str, Any]]:
     key = _domain_metadata_cache_key(layer, domain)
-    payload = _load_domain_metadata_document()
+    payload = _load_domain_metadata_document(force_refresh=force_refresh)
     entries = payload.get("entries")
     if not isinstance(entries, dict):
         return None
@@ -806,11 +807,14 @@ def domain_metadata(
     request: Request,
     layer: str = Query(..., description="Medallion layer key (bronze|silver|gold|platinum)"),
     domain: str = Query(..., description="Domain key (market|finance|earnings|price-target|platinum)"),
-    refresh: bool = Query(default=False, description="When true, recompute metadata and update the snapshot cache."),
+    refresh: bool = Query(
+        default=False,
+        description="When true, bypass the in-process snapshot cache and reread persisted metadata.",
+    ),
     cache_only: bool = Query(
         default=False,
         alias="cacheOnly",
-        description="When true, return only cached snapshot data and never compute live metadata.",
+        description="Retained for backward compatibility. Domain metadata is always served from persisted snapshots.",
     ),
 ) -> JSONResponse:
     validate_auth(request)
@@ -821,101 +825,43 @@ def domain_metadata(
     if not normalized_domain:
         raise HTTPException(status_code=400, detail="domain is required.")
 
-    if not refresh:
-        try:
-            cached_payload = _read_cached_domain_metadata_snapshot(normalized_layer, normalized_domain)
-        except Exception as exc:
-            logger.warning(
-                "Domain metadata snapshot read failed. layer=%s domain=%s err=%s",
-                normalized_layer,
-                normalized_domain,
-                exc,
-            )
-            cached_payload = None
-        if cached_payload is not None:
-            headers: Dict[str, str] = {
-                "Cache-Control": "no-store",
-                "X-Domain-Metadata-Source": "snapshot",
-            }
-            cached_at = cached_payload.get("cachedAt")
-            if isinstance(cached_at, str) and cached_at.strip():
-                headers["X-Domain-Metadata-Cached-At"] = cached_at
-            return JSONResponse(cached_payload, headers=headers)
-        if cache_only:
-            missing_message = (
-                "No cached domain metadata snapshot found for "
-                f"layer={normalized_layer} domain={normalized_domain}."
-            )
-            now = _utc_timestamp()
-            # Cache-only mode must not trigger a live compute. Return a typed placeholder payload
-            # so UI consumers avoid noisy 404 spam while still receiving an explicit miss signal.
-            placeholder_payload: Dict[str, Any] = {
-                "layer": normalized_layer,
-                "domain": normalized_domain,
-                "container": "",
-                "type": "blob",
-                "computedAt": now,
-                "folderLastModified": None,
-                "cachedAt": None,
-                "cacheSource": "snapshot",
-                "symbolCount": None,
-                "columns": [],
-                "columnCount": None,
-                "dateRange": None,
-                "totalRows": None,
-                "fileCount": None,
-                "totalBytes": None,
-                "deltaVersion": None,
-                "tablePath": None,
-                "prefix": None,
-                "blacklistedSymbolCount": None,
-                "coverageStatus": None,
-                "asOfCutoff": None,
-                "lagSymbolCount": None,
-                "coverageReportPath": None,
-                "metadataPath": None,
-                "metadataSource": None,
-                "warnings": [missing_message],
-            }
-            return JSONResponse(
-                placeholder_payload,
-                headers={
-                    "Cache-Control": "no-store",
-                    "X-Domain-Metadata-Source": "snapshot-miss",
-                    "X-Domain-Metadata-Cache-Miss": "1",
-                },
-            )
-
     try:
-        payload = collect_domain_metadata(layer=normalized_layer, domain=normalized_domain)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Domain metadata collection failed: layer=%s domain=%s", normalized_layer, normalized_domain)
-        raise HTTPException(status_code=503, detail=f"Domain metadata unavailable: {exc}") from exc
-
-    payload_out = dict(payload)
-    payload_out["cacheSource"] = "live-refresh"
-    headers: Dict[str, str] = {
-        "Cache-Control": "no-store",
-        "X-Domain-Metadata-Source": payload_out["cacheSource"],
-    }
-    try:
-        cached_at = _write_cached_domain_metadata_snapshot(normalized_layer, normalized_domain, payload_out)
-        payload_out["cachedAt"] = cached_at
-        headers["X-Domain-Metadata-Cached-At"] = cached_at
+        payload = _read_cached_domain_metadata_snapshot(
+            normalized_layer,
+            normalized_domain,
+            force_refresh=bool(refresh),
+        )
     except Exception as exc:
         logger.warning(
-            "Domain metadata snapshot write failed. layer=%s domain=%s err=%s",
+            "Domain metadata snapshot read failed. layer=%s domain=%s err=%s",
             normalized_layer,
             normalized_domain,
             exc,
         )
-        warnings = payload_out.setdefault("warnings", [])
-        if isinstance(warnings, list):
-            warnings.append(f"Snapshot cache write failed: {exc}")
+        payload = None
 
-    return JSONResponse(payload_out, headers=headers)
+    if payload is None:
+        placeholder_payload = build_snapshot_miss_payload(
+            layer=normalized_layer,
+            domain=normalized_domain,
+        )
+        return JSONResponse(
+            placeholder_payload,
+            headers={
+                "Cache-Control": "no-store",
+                "X-Domain-Metadata-Source": "snapshot-miss",
+                "X-Domain-Metadata-Cache-Miss": "1",
+            },
+        )
+
+    headers: Dict[str, str] = {
+        "Cache-Control": "no-store",
+        "X-Domain-Metadata-Source": "snapshot",
+    }
+    cached_at = payload.get("cachedAt")
+    if isinstance(cached_at, str) and cached_at.strip():
+        headers["X-Domain-Metadata-Cached-At"] = cached_at
+    return JSONResponse(payload, headers=headers)
 
 
 @router.get("/domain-metadata/snapshot", response_model=DomainMetadataSnapshotResponse)
@@ -932,7 +878,7 @@ def domain_metadata_snapshot(
     cache_only: bool = Query(
         default=True,
         alias="cacheOnly",
-        description="When true, return only cached snapshot entries and do not compute missing metadata.",
+        description="Retained for backward compatibility. Batch metadata is always served from persisted snapshots.",
     ),
     refresh: bool = Query(
         default=False,
@@ -973,30 +919,6 @@ def domain_metadata_snapshot(
         if domain_filter is not None and domain not in domain_filter:
             continue
         filtered_entries[key] = metadata
-
-    # Optional warm-fill for known layer/domain combinations only.
-    if not cache_only and layer_filter and domain_filter:
-        for layer in sorted(layer_filter):
-            for domain in sorted(domain_filter):
-                key = _domain_metadata_cache_key(layer, domain)
-                if key in filtered_entries:
-                    continue
-                try:
-                    payload = collect_domain_metadata(layer=layer, domain=domain)
-                    payload_out = dict(payload)
-                    payload_out["cacheSource"] = "live-refresh"
-                    cached_at = _write_cached_domain_metadata_snapshot(layer, domain, payload_out)
-                    payload_out["cachedAt"] = cached_at
-                    payload_out["cacheSource"] = "snapshot"
-                    filtered_entries[key] = payload_out
-                except Exception as exc:
-                    warnings.append(f"Unable to compute metadata for {key}: {exc}")
-
-        # Refresh snapshot metadata after optional warm-fill writes.
-        try:
-            snapshot_doc = _load_domain_metadata_document(force_refresh=True)
-        except Exception:
-            pass
 
     response_payload: Dict[str, Any] = {
         "version": int(snapshot_doc.get("version") or 1),

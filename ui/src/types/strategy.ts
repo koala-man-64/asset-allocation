@@ -161,10 +161,6 @@ export interface DomainMetadata {
     number
   > | null;
   blacklistedSymbolCount?: number | null;
-  coverageStatus?: string | null;
-  asOfCutoff?: string | null;
-  lagSymbolCount?: number | null;
-  coverageReportPath?: string | null;
   metadataPath?: string | null;
   metadataSource?: 'artifact' | 'scan' | null;
   dateRange?: DomainDateRange | null;

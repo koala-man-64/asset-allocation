@@ -42,9 +42,7 @@ vi.mock('@/app/components/pages/system-status/JobKillSwitchPanel', () => ({
 
 vi.mock('@/services/DataService', () => ({
   DataService: {
-    getPersistedDomainMetadataSnapshotCache: vi.fn(),
     getDomainMetadataSnapshot: vi.fn(),
-    savePersistedDomainMetadataSnapshotCache: vi.fn(),
     getDomainMetadata: vi.fn(),
     invalidateSystemHealth: vi.fn()
   }
@@ -70,7 +68,6 @@ function primeSnapshot(entry: {
       [key]: entry
     }
   };
-  vi.mocked(DataService.getPersistedDomainMetadataSnapshotCache).mockResolvedValue(payload);
   vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue(payload);
 }
 
@@ -174,17 +171,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     vi.clearAllMocks();
     window.localStorage.clear();
 
-    vi.mocked(DataService.getPersistedDomainMetadataSnapshotCache).mockResolvedValue({
-      version: 1,
-      updatedAt: NOW,
-      entries: {}
-    });
     vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue({
-      version: 1,
-      updatedAt: NOW,
-      entries: {}
-    });
-    vi.mocked(DataService.savePersistedDomainMetadataSnapshotCache).mockResolvedValue({
       version: 1,
       updatedAt: NOW,
       entries: {}
@@ -305,7 +292,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     await waitFor(() => {
-      expect(DataService.getPersistedDomainMetadataSnapshotCache).toHaveBeenCalledTimes(1);
+      expect(DataService.getDomainMetadataSnapshot).toHaveBeenCalledTimes(1);
     });
     expect((await screen.findAllByText('market')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();

@@ -79,6 +79,10 @@ env:
   SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
   DEBUG_SYMBOLS: ${{ vars.DEBUG_SYMBOLS || ' ' }}
   LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
+  RESOURCE_TAG_OWNER: ${{ vars.RESOURCE_TAG_OWNER || 'rudy-prokes' }}
+  RESOURCE_TAG_COST_CENTER: ${{ vars.RESOURCE_TAG_COST_CENTER || 'aaa-ats' }}
+  RESOURCE_TAG_WORKLOAD: ${{ vars.RESOURCE_TAG_WORKLOAD || 'asset-allocation' }}
+  RESOURCE_TAG_ENVIRONMENT: ${{ vars.RESOURCE_TAG_ENVIRONMENT || 'production' }}
 
   # Alpha Vantage tunables (defaults match core/config.py)
   ALPHA_VANTAGE_RATE_LIMIT_PER_MIN: ${{ vars.ALPHA_VANTAGE_RATE_LIMIT_PER_MIN || '300' }}
@@ -346,7 +350,6 @@ jobs:
               - "tasks/finance_data/gold_finance_data.py"
               - "deploy/job_gold_finance_data.yaml"
               - ".github/workflows/deploy.yml"
-
       - name: Detect Earnings Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: earnings_changes
@@ -558,6 +561,47 @@ jobs:
 
           BRANCH_TAG="${{ steps.branch_tag.outputs.tag }}"
           REGISTRY="${{ env.ACR_NAME }}.azurecr.io"
+          should_build_tasks="false"
+          should_build_app="false"
+
+          any_job_missing="false"
+          for job_name in \
+            "${{ env.BRONZE_MARKET_JOB }}" \
+            "${{ env.SILVER_MARKET_JOB }}" \
+            "${{ env.GOLD_MARKET_JOB }}" \
+            "${{ env.BRONZE_FINANCE_JOB }}" \
+            "${{ env.SILVER_FINANCE_JOB }}" \
+            "${{ env.GOLD_FINANCE_JOB }}" \
+            "${{ env.BRONZE_PRICE_TARGET_JOB }}" \
+            "${{ env.SILVER_PRICE_TARGET_JOB }}" \
+            "${{ env.GOLD_PRICE_TARGET_JOB }}" \
+            "${{ env.BRONZE_EARNINGS_JOB }}" \
+            "${{ env.SILVER_EARNINGS_JOB }}" \
+            "${{ env.GOLD_EARNINGS_JOB }}"; do
+            if ! az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
+              any_job_missing="true"
+              break
+            fi
+          done
+
+          if ! az containerapp show --name "${{ env.API_APP_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
+            should_build_app="true"
+          fi
+          if ! az containerapp show --name "${{ env.UI_APP_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
+            should_build_app="true"
+          fi
+
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "$any_job_missing" = "true" ] || \
+             [ "${{ steps.market_changes.outputs.bronze_market }}" = "true" ] || [ "${{ steps.market_changes.outputs.silver_market }}" = "true" ] || [ "${{ steps.market_changes.outputs.gold_market }}" = "true" ] || \
+             [ "${{ steps.finance_changes.outputs.bronze_finance }}" = "true" ] || [ "${{ steps.finance_changes.outputs.silver_finance }}" = "true" ] || [ "${{ steps.finance_changes.outputs.gold_finance }}" = "true" ] || \
+             [ "${{ steps.price_target_changes.outputs.bronze_price_target }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.silver_price_target }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.gold_price_target }}" = "true" ] || \
+             [ "${{ steps.earnings_changes.outputs.bronze_earnings }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.silver_earnings }}" = "true" ] || [ "${{ steps.earnings_changes.outputs.gold_earnings }}" = "true" ]; then
+            should_build_tasks="true"
+          fi
+
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.api_app }}" = "true" ] || [ "${{ steps.app_changes.outputs.ui_app }}" = "true" ]; then
+            should_build_app="true"
+          fi
 
           build_and_push() {
             local image_name="$1"
@@ -581,9 +625,32 @@ jobs:
             fi
           }
 
-          build_and_push "${{ env.IMAGE_NAME }}" "." "Dockerfile"
-          build_and_push "${{ env.API_IMAGE_NAME }}" "." "Dockerfile.asset_allocation_api"
-          build_and_push "${{ env.UI_IMAGE_NAME }}" "ui" "ui/Dockerfile"
+          purge_sha_history() {
+            local image_name="$1"
+            local purge_cmd="acr purge --filter '${image_name}:^[0-9a-f]{40}$' --ago 0d --keep 3 --untagged"
+            echo "Pruning old SHA tags for $image_name"
+            az acr run \
+              --registry "${{ env.ACR_NAME }}" \
+              --cmd "$purge_cmd" \
+              /dev/null \
+              --only-show-errors
+          }
+
+          if [ "$should_build_tasks" = "true" ]; then
+            build_and_push "${{ env.IMAGE_NAME }}" "." "Dockerfile"
+            purge_sha_history "${{ env.IMAGE_NAME }}"
+          else
+            echo "Skipping tasks image build; no job image changes detected."
+          fi
+
+          if [ "$should_build_app" = "true" ]; then
+            build_and_push "${{ env.API_IMAGE_NAME }}" "." "Dockerfile.asset_allocation_api"
+            build_and_push "${{ env.UI_IMAGE_NAME }}" "ui" "ui/Dockerfile"
+            purge_sha_history "${{ env.API_IMAGE_NAME }}"
+            purge_sha_history "${{ env.UI_IMAGE_NAME }}"
+          else
+            echo "Skipping API/UI image builds; no unified app image changes detected."
+          fi
 
       - name: Set image env vars
         run: |
@@ -646,23 +713,23 @@ jobs:
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES || ' ' }}
           UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI || ' ' }}
           UI_API_BASE_URL: /api
-          SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS }}
-          SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB: ${{ vars.SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB }}
+          SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS || '5' }}
+          SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB: ${{ vars.SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB || '3' }}
           SYSTEM_HEALTH_VERBOSE_IDS: ${{ vars.SYSTEM_HEALTH_VERBOSE_IDS || ' ' }}
-          SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED }}
-          SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION }}
-          SYSTEM_HEALTH_MONITOR_METRICS_ENABLED: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_ENABLED }}
-          SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION }}
-          SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES }}
-          SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL }}
-          SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION }}
+          SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED || 'false' }}
+          SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION || '2022-10-01' }}
+          SYSTEM_HEALTH_MONITOR_METRICS_ENABLED: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_ENABLED || 'false' }}
+          SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION || '2018-01-01' }}
+          SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES || '15' }}
+          SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL || 'PT1M' }}
+          SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION || 'Average' }}
           SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS || ' ' }}
           SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS || ' ' }}
           SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON || ' ' }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED || 'false' }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID || ' ' }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS || '5' }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES || '15' }}
           SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON || ' ' }}
         run: |
           set -euo pipefail
@@ -1332,7 +1399,7 @@ jobs:
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp"
           fi
-      
+
       - name: Check Price Target Job Exists
         id: price_target_job_check
         run: |

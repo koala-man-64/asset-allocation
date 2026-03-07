@@ -45,6 +45,8 @@ param(
   [switch]$NonInteractive,
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
+  [ValidateRange(4, 730)]
+  [int]$LogAnalyticsRetentionInDays = 7,
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
   [switch]$CorrectApiStorageAuthMode,
   [ValidateSet("ManagedIdentity", "ConnectionString")]
@@ -746,6 +748,11 @@ if ($doLogAnalytics) {
     --resource-group $ResourceGroup `
     --workspace-name $LogAnalyticsWorkspaceName `
     --location $Location `
+    --only-show-errors 1>$null
+  az monitor log-analytics workspace update `
+    --resource-group $ResourceGroup `
+    --workspace-name $LogAnalyticsWorkspaceName `
+    --retention-time $LogAnalyticsRetentionInDays `
     --only-show-errors 1>$null
 }
 

@@ -94,17 +94,6 @@ Finance ingestion includes convergence and handoff controls to reduce Bronze/Sil
 - On successful Silver completion (including zero-candidate manifest runs), Silver writes a manifest acknowledgment under `system/run-manifests/silver_finance/`.
 - `BRONZE_FINANCE_SHARED_LOCK_WAIT_SECONDS` / `SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS` tune shared-lock wait behavior.
 
-You can run an explicit reconciliation report to audit current Bronze->Silver finance coverage:
-
-```bash
-python3 -m tasks.finance_data.reconcile_finance_coverage
-```
-
-The report is written to `system/reconciliation/finance_coverage/latest.json` in the common container and includes:
-- `totalBronzeOnlySymbolCount` / `bronzeOnlySymbolCount`: Bronze symbols missing in Silver (lag).
-- `totalSilverOnlySymbolCount` / `silverOnlySymbolCount`: Silver symbols not present in Bronze (orphans).
-- Coverage calculations are sourced from alpha26 Bronze bucket payloads and Silver finance symbol indexes, so this report is intended to be operationally authoritative.
-
 ## Gold Market By-Date View
 
 You can materialize a single by-date Gold market table (`market_by_date`) from bucketed Gold market tables (`market/buckets/<LETTER>`):

@@ -238,15 +238,15 @@ $Config += "SYSTEM_HEALTH_ARM_RESOURCE_GROUP=" + (Prompt-Var "SYSTEM_HEALTH_ARM_
 $Config += "SYSTEM_HEALTH_ARM_CONTAINERAPPS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_CONTAINERAPPS" "" "Optional: comma-separated Container Apps names.")
 $Config += "SYSTEM_HEALTH_ARM_JOBS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_JOBS" "" "Optional: comma-separated Job names (also used as job-start allowlist).")
 $Config += "SYSTEM_HEALTH_ARM_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_ARM_API_VERSION" "" "Optional: ARM API version (required if ARM probes enabled).")
-$Config += "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS" "" "Optional: ARM timeout seconds.")
-$Config += "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=" + (Prompt-Var "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB" "" "Optional: how many executions to return per job.")
+$Config += "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS" "5" "Optional: ARM timeout seconds.")
+$Config += "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=" + (Prompt-Var "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB" "3" "Optional: how many executions to return per job.")
 
 # Optional: Azure Resource Health (runtime availability)
-$Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED" "" "Optional: enable Azure Resource Health probes (true/false).")
+$Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED" "false" "Optional: enable Azure Resource Health probes (true/false).")
 $Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION" "" "Optional: Resource Health API version.")
 
 # Optional: Azure Monitor Metrics (runtime telemetry)
-$Config += "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED" "" "Optional: enable metrics probes (true/false).")
+$Config += "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED" "false" "Optional: enable metrics probes (true/false).")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION" "" "Optional: Metrics API version.")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES" "" "Optional: timespan minutes (e.g., 15).")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL" "" "Optional: interval (e.g., PT1M).")
@@ -256,10 +256,10 @@ $Config += "SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS=" + (Prompt-Var "SYSTEM_HE
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON" "" "Optional: JSON thresholds object.")
 
 # Optional: Azure Log Analytics (KQL aggregates + job execution log tails)
-$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED" "" "Optional: enable Log Analytics probes (true/false).")
+$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED" "false" "Optional: enable Log Analytics probes (true/false).")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID" "" "Optional: Log Analytics workspace ID.")
-$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS" "" "Optional: Log Analytics timeout seconds.")
-$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES" "" "Optional: timespan minutes (e.g., 15).")
+$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS" "5" "Optional: Log Analytics timeout seconds.")
+$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES" "15" "Optional: timespan minutes (e.g., 15).")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON" "" "Optional: JSON array of query specs.")
 
 # -------------------------------------------------------------------------
