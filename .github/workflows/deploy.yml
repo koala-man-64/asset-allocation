@@ -974,23 +974,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.BRONZE_MARKET_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.BRONZE_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.BRONZE_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1067,23 +1054,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.SILVER_MARKET_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.SILVER_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.SILVER_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1138,23 +1112,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.GOLD_MARKET_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.GOLD_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.GOLD_MARKET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1213,23 +1174,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.BRONZE_FINANCE_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.BRONZE_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.BRONZE_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1306,23 +1254,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.SILVER_FINANCE_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.SILVER_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.SILVER_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1377,23 +1312,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.GOLD_FINANCE_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.GOLD_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.GOLD_FINANCE_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1449,23 +1371,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1542,23 +1451,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1613,23 +1509,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1688,23 +1571,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.BRONZE_EARNINGS_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.BRONZE_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.BRONZE_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1781,23 +1651,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.SILVER_EARNINGS_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.SILVER_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.SILVER_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -1852,23 +1709,10 @@ jobs:
               --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
               --yaml "$tmp"
           else
-            echo "Ensuring managed identity is assigned (for ACR pull)..."
-            if ! az containerapp job identity show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} --query userAssignedIdentities -o json 2>/dev/null | grep -q "$ACR_PULL_IDENTITY_RESOURCE_ID"; then
-              az containerapp job identity assign \
-                --name ${{ env.GOLD_EARNINGS_JOB }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --user-assigned "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-                --only-show-errors
-            fi
-
-            echo "Ensuring job registry uses managed identity (clears username/password)..."
-            az containerapp job registry set \
-              --name ${{ env.GOLD_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --server "${{ env.ACR_NAME }}.azurecr.io" \
-              --identity "$ACR_PULL_IDENTITY_RESOURCE_ID" \
-              --only-show-errors
-
+            # Update the full job resource in one request so Azure validates the
+            # newly rendered image tag rather than any stale/purged tag on the
+            # existing job template.
+            echo "Updating job from YAML (image + identity + registry)..."
             az containerapp job update \
               --name ${{ env.GOLD_EARNINGS_JOB }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \

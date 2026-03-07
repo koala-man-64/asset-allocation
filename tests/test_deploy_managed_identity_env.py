@@ -26,12 +26,38 @@ def _assert_azure_client_id_env_present(doc: dict, *, source: str) -> None:
     raise AssertionError(f"{source}: missing env var AZURE_CLIENT_ID")
 
 
+def _assert_job_manifest_uses_managed_identity_for_acr_pull(doc: dict, *, source: str) -> None:
+    identity = doc.get("identity") or {}
+    assert identity.get("type") == "UserAssigned", (
+        f"{source}: expected top-level UserAssigned identity"
+    )
+    user_assigned = identity.get("userAssignedIdentities") or {}
+    assert "${ACR_PULL_IDENTITY_RESOURCE_ID}" in user_assigned, (
+        f"{source}: expected ACR pull identity placeholder in userAssignedIdentities"
+    )
+
+    configuration = (doc.get("properties") or {}).get("configuration") or {}
+    registries = configuration.get("registries") or []
+    assert registries, f"{source}: expected at least one registry entry"
+    assert any(
+        entry.get("identity") == "${ACR_PULL_IDENTITY_RESOURCE_ID}" for entry in registries
+    ), f"{source}: expected registry identity to use ACR_PULL_IDENTITY_RESOURCE_ID"
+
+
 def test_all_jobs_wire_user_assigned_identity_client_id() -> None:
     repo_root = _repo_root()
     for path in sorted((repo_root / "deploy").glob("job_*.yaml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert isinstance(doc, dict), f"{path}: expected YAML mapping"
         _assert_azure_client_id_env_present(doc, source=str(path))
+
+
+def test_all_jobs_use_manifest_managed_identity_for_acr_pull() -> None:
+    repo_root = _repo_root()
+    for path in sorted((repo_root / "deploy").glob("job_*.yaml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+        _assert_job_manifest_uses_managed_identity_for_acr_pull(doc, source=str(path))
 
 
 def test_api_manifest_wires_user_assigned_identity_client_id() -> None:
@@ -48,3 +74,18 @@ def test_deploy_workflow_exports_acr_pull_identity_client_id() -> None:
     text = deploy_workflow.read_text(encoding="utf-8")
     assert "ACR_PULL_IDENTITY_CLIENT_ID" in text, "deploy workflow must export ACR_PULL_IDENTITY_CLIENT_ID"
 
+
+def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identity() -> None:
+    repo_root = _repo_root()
+    deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
+    text = deploy_workflow.read_text(encoding="utf-8")
+
+    assert "az containerapp job identity assign" not in text, (
+        "deploy workflow should not mutate job identity before YAML update"
+    )
+    assert "az containerapp job registry set" not in text, (
+        "deploy workflow should not mutate job registry before YAML update"
+    )
+    assert "Updating job from YAML (image + identity + registry)..." in text, (
+        "deploy workflow should update jobs using the rendered manifest"
+    )
