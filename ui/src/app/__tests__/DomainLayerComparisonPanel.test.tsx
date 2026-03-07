@@ -225,6 +225,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {
+    const user = userEvent.setup();
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+
     vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
       layer: 'bronze',
       domain: 'market',
@@ -240,12 +243,23 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         overall="healthy"
         dataLayers={makeLayers()}
         recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onRefresh={onRefresh}
         isRefreshing={false}
         isFetching={false}
       />
     );
 
+    const refreshLayerButton = await screen.findByRole('button', { name: 'Refresh Bronze layer' });
+    await user.click(refreshLayerButton);
+
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(DataService.getDomainMetadata).toHaveBeenCalledWith('bronze', 'market', {
+        refresh: true
+      });
+    });
     expect(await screen.findByText('123 symbols')).toBeInTheDocument();
     expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();
   });
