@@ -35,7 +35,12 @@ from tasks.common.backfill import filter_by_date
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
-list_manager = ListManager(bronze_client, cfg.EARNINGS_DATA_PREFIX, auto_flush=False)
+list_manager = ListManager(
+    bronze_client,
+    cfg.EARNINGS_DATA_PREFIX,
+    auto_flush=False,
+    allow_blacklist_updates=False,
+)
 
 
 EARNINGS_STALE_DAYS = 7
@@ -568,8 +573,14 @@ async def main_async() -> int:
                         coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
             except AlphaVantageGatewayInvalidSymbolError:
                 list_manager.add_to_blacklist(symbol)
+                should_log = False
                 async with progress_lock:
                     progress["blacklisted"] += 1
+                    should_log = progress["blacklisted"] <= 20
+                if should_log:
+                    mdc.write_warning(
+                        f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
+                    )
             except AlphaVantageGatewayThrottleError as exc:
                 await record_failure(symbol, exc)
             except AlphaVantageGatewayError as exc:

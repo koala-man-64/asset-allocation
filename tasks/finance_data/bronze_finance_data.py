@@ -36,7 +36,7 @@ from tasks.finance_data import config as cfg
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
-list_manager = ListManager(bronze_client, "finance-data", auto_flush=False)
+list_manager = ListManager(bronze_client, "finance-data", auto_flush=False, allow_blacklist_updates=False)
 
 
 REPORTS = [
@@ -621,7 +621,8 @@ def fetch_and_save_raw(
     if _is_empty_finance_payload(payload, report_name=report_name):
         list_manager.add_to_blacklist(symbol)
         raise AlphaVantageGatewayInvalidSymbolError(
-            f"Alpha Vantage returned empty finance payload for {symbol} report={report_name}; blacklisting."
+            f"Alpha Vantage returned empty finance payload for {symbol} report={report_name}; "
+            "automatic blacklist updates are disabled."
         )
     source_earliest = _extract_source_earliest_finance_date(payload)
     payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=resolved_backfill_start)
@@ -976,10 +977,18 @@ async def main_async() -> int:
                 wrote, blacklisted, failures, coverage_summary = await loop.run_in_executor(executor, worker, symbol)
                 if blacklisted:
                     list_manager.add_to_blacklist(symbol)
+                    should_log = False
                     async with progress_lock:
                         progress["blacklisted"] += 1
+                        should_log = progress["blacklisted"] <= 20
                         for key in coverage_progress:
                             coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
+                    if should_log:
+                        report_name = failures[0][0] if failures else "unknown"
+                        mdc.write_warning(
+                            "Invalid finance payload for {symbol} report={report}; automatic blacklist updates "
+                            "are disabled for job runs.".format(symbol=symbol, report=report_name)
+                        )
                 elif failures:
                     async with progress_lock:
                         for key in coverage_progress:

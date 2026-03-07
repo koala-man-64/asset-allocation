@@ -24,7 +24,12 @@ from tasks.common.bronze_backfill_coverage import (
 # Initialize Client
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
 common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
-list_manager = ListManager(bronze_client, "price-target-data", auto_flush=False)
+list_manager = ListManager(
+    bronze_client,
+    "price-target-data",
+    auto_flush=False,
+    allow_blacklist_updates=False,
+)
 
 BATCH_SIZE = 50
 PRICE_TARGET_FULL_HISTORY_START_DATE = date(2020, 1, 1)
@@ -414,7 +419,9 @@ async def process_batch_bronze(
                 if bool(symbol_has_existing_blob.get(sym)) or symbol_min > PRICE_TARGET_FULL_HISTORY_START_DATE:
                     list_manager.add_to_whitelist(sym)
                     continue
-                mdc.write_line(f"No data for {sym}, blacklisting.")
+                mdc.write_line(
+                    f"No data for {sym}; automatic blacklist updates are disabled for job runs."
+                )
                 list_manager.add_to_blacklist(sym)
                 batch_summary["blacklisted"] += 1
                 continue

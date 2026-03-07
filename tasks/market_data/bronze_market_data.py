@@ -27,7 +27,7 @@ from tasks.market_data import config as cfg
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
-list_manager = ListManager(bronze_client, "market-data", auto_flush=False)
+list_manager = ListManager(bronze_client, "market-data", auto_flush=False, allow_blacklist_updates=False)
 
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume")
 _RECOVERY_MAX_ATTEMPTS = 3
@@ -1049,7 +1049,9 @@ def download_and_save_raw(
                 list_manager.add_to_whitelist(symbol)
                 return
             list_manager.add_to_blacklist(symbol)
-            raise MassiveGatewayNotFoundError(f"Massive returned header-only daily CSV for {symbol}; blacklisting.")
+            raise MassiveGatewayNotFoundError(
+                f"Massive returned header-only daily CSV for {symbol}; automatic blacklist updates are disabled."
+            )
 
     blob_path = f"market-data/{symbol}.csv"
 
@@ -1255,7 +1257,9 @@ async def main_async() -> int:
                     progress["blacklisted"] += 1
                     should_log = should_log or progress["blacklisted"] <= 20
                 if should_log:
-                    mdc.write_warning(f"Invalid symbol {symbol}; blacklisting. ({exc})")
+                    mdc.write_warning(
+                        f"Invalid symbol {symbol}; automatic blacklist updates are disabled for job runs. ({exc})"
+                    )
             except MassiveGatewayRateLimitError as exc:
                 should_log = debug_mode
                 async with progress_lock:

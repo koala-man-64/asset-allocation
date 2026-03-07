@@ -95,7 +95,14 @@ class ListManager:
     """
     Manages Whitelist and Blacklist for a specific scraper context.
     """
-    def __init__(self, client, folder: str = "", *, auto_flush: bool = True):
+    def __init__(
+        self,
+        client,
+        folder: str = "",
+        *,
+        auto_flush: bool = True,
+        allow_blacklist_updates: bool = True,
+    ):
         self.client = client
         self.whitelist_file = f"{folder}/whitelist.csv" if folder else "whitelist.csv"
         self.blacklist_file = f"{folder}/blacklist.csv" if folder else "blacklist.csv"
@@ -104,6 +111,7 @@ class ListManager:
         self.blacklist: Set[str] = set()
         self._loaded = False
         self.auto_flush = auto_flush
+        self.allow_blacklist_updates = allow_blacklist_updates
         self._dirty_whitelist = False
         self._dirty_blacklist = False
 
@@ -139,6 +147,8 @@ class ListManager:
             # If it was in blacklist, maybe remove it? Policy decision: Keep it simple for now.
 
     def add_to_blacklist(self, ticker: str):
+        if not self.allow_blacklist_updates:
+            return
         if ticker not in self.blacklist:
             self.blacklist.add(ticker)
             if self.auto_flush:
