@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
@@ -65,6 +66,37 @@ def _empty_coverage_summary() -> dict[str, int]:
         "coverage_marked_limited": 0,
         "coverage_skipped_limited_marker": 0,
     }
+
+
+def _format_payload_preview(payload: Any, *, max_chars: int = 500) -> Optional[str]:
+    if payload is None:
+        return None
+    try:
+        if isinstance(payload, (dict, list, tuple)):
+            text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        else:
+            text = str(payload)
+    except Exception:
+        try:
+            text = repr(payload)
+        except Exception:
+            return None
+    text = str(text).replace("\r", " ").replace("\n", " ").strip()
+    if not text:
+        return None
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+
+def _format_invalid_payload_warning(symbol: str, exc: BaseException) -> str:
+    message = (
+        f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
+    )
+    preview = _format_payload_preview(getattr(exc, "payload", None), max_chars=500)
+    if preview:
+        return f"{message} payload_preview={preview}"
+    return message
 
 
 def _mark_coverage(
@@ -395,7 +427,10 @@ def fetch_and_save_raw(
     df = _parse_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
     if df is None or df.empty:
         if not has_source_records:
-            raise AlphaVantageGatewayInvalidSymbolError("No quarterly earnings records found.")
+            raise AlphaVantageGatewayInvalidSymbolError(
+                "No quarterly earnings records found.",
+                payload=payload,
+            )
         if resolved_backfill_start is not None:
             if force_backfill:
                 _mark_coverage(
@@ -571,16 +606,14 @@ async def main_async() -> int:
                         progress["skipped"] += 1
                     for key in coverage_progress:
                         coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
-            except AlphaVantageGatewayInvalidSymbolError:
+            except AlphaVantageGatewayInvalidSymbolError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = False
                 async with progress_lock:
                     progress["blacklisted"] += 1
                     should_log = progress["blacklisted"] <= 20
                 if should_log:
-                    mdc.write_warning(
-                        f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
-                    )
+                    mdc.write_warning(_format_invalid_payload_warning(symbol, exc))
             except AlphaVantageGatewayThrottleError as exc:
                 await record_failure(symbol, exc)
             except AlphaVantageGatewayError as exc:

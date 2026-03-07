@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -66,6 +66,7 @@ import {
   normalizeAzureJobName,
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
+import { formatMetadataTimestamp } from './systemStatusClock';
 import type { DataDomain, JobRun } from '@/types/strategy';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
@@ -153,47 +154,6 @@ function toLayerKey(value: string): LayerKey | null {
 
 function getLayerVisual(layerKey: LayerKey): LayerVisualConfig {
   return LAYER_VISUALS[layerKey];
-}
-
-function resolveCentralTimeZoneLabel(date: Date): string {
-  const tzRaw =
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Chicago',
-      timeZoneName: 'short'
-    })
-      .formatToParts(date)
-      .find((part) => part.type === 'timeZoneName')?.value ?? '';
-
-  const value = String(tzRaw || '').trim();
-  if (!value) return 'CST';
-  if (value === 'CST' || value === 'CDT') return value;
-  if (/central.*daylight/i.test(value)) return 'CDT';
-  if (/central.*standard/i.test(value)) return 'CST';
-
-  const offsetMatch = value.match(/(?:GMT|UTC)([+-]\d{1,2})(?::?(\d{2}))?/i);
-  if (!offsetMatch) return 'CST';
-
-  const hours = Number.parseInt(offsetMatch[1] || '0', 10);
-  const minutes = Number.parseInt(offsetMatch[2] || '0', 10);
-  const total = hours * 60 + (hours < 0 ? -minutes : minutes);
-  if (total === -360) return 'CST';
-  if (total === -300) return 'CDT';
-  return 'CST';
-}
-
-function formatMetadataTimestamp(value?: string | null): string {
-  if (!value) return 'N/A';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'N/A';
-  const stamp = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(date);
-  return `${stamp} ${resolveCentralTimeZoneLabel(date)}`;
 }
 
 function hasFiniteNumber(value: number | null | undefined): value is number {
@@ -307,7 +267,7 @@ interface DomainLayerComparisonPanelProps {
 }
 
 export function DomainLayerComparisonPanel({
-  overall = 'unknown',
+  overall: _overall = 'unknown',
   dataLayers,
   recentJobs = [],
   jobStates,
@@ -353,62 +313,6 @@ export function DomainLayerComparisonPanel({
   const [resettingCellKey, setResettingCellKey] = useState<string | null>(null);
   const [resettingCheckpointCellKey, setResettingCheckpointCellKey] = useState<string | null>(null);
   const [expandedRowKey, setExpandedRowKey] = useState<string | null>(null);
-  const [clockNow, setClockNow] = useState(() => new Date());
-  const overallStatusConfig = getStatusConfig(overall);
-  const overallAnim =
-    overallStatusConfig.animation === 'spin'
-      ? 'animate-spin'
-      : overallStatusConfig.animation === 'pulse'
-        ? 'animate-pulse'
-        : '';
-  const overallLabel = String(overall || '')
-    .trim()
-    .toUpperCase();
-
-  useEffect(() => {
-    const handle = window.setInterval(() => setClockNow(new Date()), 1000);
-    return () => window.clearInterval(handle);
-  }, []);
-
-  const centralClock = (() => {
-    const now = clockNow;
-
-    const time = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Chicago',
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    }).format(now);
-
-    const tzRaw =
-      new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/Chicago',
-        timeZoneName: 'short'
-      })
-        .formatToParts(now)
-        .find((part) => part.type === 'timeZoneName')?.value ?? '';
-
-    const tz = (() => {
-      const value = String(tzRaw || '').trim();
-      if (!value) return 'CST';
-      if (value === 'CST' || value === 'CDT') return value;
-      if (/central.*daylight/i.test(value)) return 'CDT';
-      if (/central.*standard/i.test(value)) return 'CST';
-
-      const offsetMatch = value.match(/(?:GMT|UTC)([+-]\d{1,2})(?::?(\d{2}))?/i);
-      if (!offsetMatch) return 'CST';
-
-      const hours = Number.parseInt(offsetMatch[1] || '0', 10);
-      const minutes = Number.parseInt(offsetMatch[2] || '0', 10);
-      const total = hours * 60 + (hours < 0 ? -minutes : minutes);
-      if (total === -360) return 'CST';
-      if (total === -300) return 'CDT';
-      return 'CST';
-    })();
-
-    return { time, tz };
-  })();
 
   const layersByKey = useMemo(() => {
     const index = new Map<LayerKey, DataLayer>();
@@ -1336,43 +1240,9 @@ export function DomainLayerComparisonPanel({
       </AlertDialog>
 
       <CardHeader className="gap-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <GitCompareArrows className="h-5 w-5 shrink-0" />
-              <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
-            </div>
-            <div className="flex min-w-0 max-w-full flex-nowrap items-center gap-2 overflow-x-auto">
-              <div
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-                className="inline-flex items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]"
-              >
-                <span className="text-[12px] font-semibold text-mcm-walnut/85">System status</span>
-                <span
-                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest"
-                  style={{
-                    backgroundColor: overallStatusConfig.bg,
-                    color: overallStatusConfig.text,
-                    borderColor: overallStatusConfig.border
-                  }}
-                >
-                  <overallStatusConfig.icon className={`h-3 w-3 ${overallAnim}`} />
-                  {overallLabel || 'UNKNOWN'}
-                </span>
-              </div>
-
-              <div className="inline-flex min-w-[220px] items-center gap-2 rounded-full border-2 border-mcm-walnut/15 bg-mcm-cream/60 px-3 py-1 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)]">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-mcm-olive">
-                  Uptime clock
-                </span>
-                <span className={`${StatusTypos.MONO} text-sm text-mcm-walnut/85`}>
-                  {centralClock.time} {centralClock.tz}
-                </span>
-              </div>
-            </div>
-          </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <GitCompareArrows className="h-5 w-5 shrink-0" />
+          <CardTitle className="leading-tight">Domain Layer Coverage</CardTitle>
         </div>
       </CardHeader>
 

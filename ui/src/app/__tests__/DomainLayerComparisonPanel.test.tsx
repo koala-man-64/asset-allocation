@@ -244,6 +244,24 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
   });
 
+  it('keeps the panel header focused on the title without status badges', async () => {
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="critical"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect(await screen.findByText('Domain Layer Coverage')).toBeInTheDocument();
+    expect(screen.queryByText('Release')).not.toBeInTheDocument();
+    expect(screen.queryByText('System status')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Uptime clock/i)).not.toBeInTheDocument();
+  });
+
   it('shows the column count in the medallion-domain coverage panel', async () => {
     primeSnapshot({
       layer: 'bronze',

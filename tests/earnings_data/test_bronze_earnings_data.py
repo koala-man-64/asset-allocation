@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 import uuid
 import json
@@ -184,6 +185,25 @@ def test_fetch_and_save_raw_skips_write_when_no_new_earnings_dates(unique_ticker
         mock_list_manager.add_to_whitelist.assert_called_with(symbol)
 
 
+def test_fetch_and_save_raw_invalid_payload_attaches_payload(unique_ticker):
+    symbol = unique_ticker
+    payload = {
+        "symbol": symbol,
+        "quarterlyEarnings": [],
+        "note": "missing earnings history",
+    }
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = payload
+
+    with patch("tasks.earnings_data.bronze_earnings_data.list_manager") as mock_list_manager:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        with pytest.raises(bronze.AlphaVantageGatewayInvalidSymbolError) as exc_info:
+            bronze.fetch_and_save_raw(symbol, mock_av)
+
+    assert exc_info.value.payload == payload
+
+
 def test_fetch_and_save_raw_coverage_gap_overrides_freshness(unique_ticker):
     symbol = unique_ticker
     payload = {
@@ -347,3 +367,55 @@ def test_fetch_and_save_raw_marks_coverage_status_from_source_payload(
     _, kwargs = mock_mark_coverage.call_args
     assert kwargs["status"] == expected_status
     assert kwargs["earliest_available"] == expected_earliest
+
+
+def test_main_async_logs_invalid_payload_preview(unique_ticker):
+    symbol = unique_ticker
+    payload = {"detail": "X" * 700}
+    expected_preview = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)[:500] + "..."
+    mock_av = MagicMock()
+
+    async def run_test():
+        with patch(
+            "tasks.earnings_data.bronze_earnings_data._validate_environment"
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.get_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.bronze_bucketing.is_alpha26_mode",
+            return_value=False,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.resolve_backfill_start_date",
+            return_value=None,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.AlphaVantageGatewayClient.from_env",
+            return_value=mock_av,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.fetch_and_save_raw",
+            side_effect=bronze.AlphaVantageGatewayInvalidSymbolError("invalid", payload=payload),
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.write_warning"
+        ) as mock_write_warning, patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.write_line"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_list_manager.add_to_blacklist.assert_called_with(symbol)
+        warning_messages = [call.args[0] for call in mock_write_warning.call_args_list if call.args]
+        assert any(
+            message
+            == (
+                f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled "
+                f"for job runs. payload_preview={expected_preview}"
+            )
+            for message in warning_messages
+        )
+
+    asyncio.run(run_test())

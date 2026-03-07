@@ -137,7 +137,7 @@ export function SystemStatusPage() {
       <div className="flex justify-end border-t border-dashed border-zinc-800 pt-2 opacity-50">
         <div className="flex items-center gap-2 font-mono text-[10px]">
           <span
-            className={`w-2 h-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`}
+            className={`h-2 w-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`}
           />
           {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
         </div>

@@ -5,6 +5,7 @@ import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
+import { getCentralClockParts } from '@/app/components/pages/system-status/systemStatusClock';
 import {
   Tooltip,
   TooltipContent,
@@ -82,6 +83,7 @@ export function LeftNavigation() {
   const [collapsed, setCollapsed] = useState(false);
   const [pinnedPaths, setPinnedPaths] = useState<string[]>([]);
   const [isClient, setIsClient] = useState(false);
+  const [clockNow, setClockNow] = useState(() => new Date());
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -95,6 +97,13 @@ export function LeftNavigation() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    const handle = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(handle);
+  }, []);
+
+  const centralClock = getCentralClockParts(clockNow);
 
   const togglePin = (path: string) => {
     setPinnedPaths((prev) => {
@@ -248,8 +257,23 @@ export function LeftNavigation() {
       </div>
 
       {!collapsed && (
-        <div className="p-4 border-t text-xs text-muted-foreground text-center">v2.5.0-beta</div>
+        <div className="border-t px-4 py-3">
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className="flex flex-col gap-1 text-left text-muted-foreground/80"
+          >
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em]">
+              UPTIME CLOCK
+            </span>
+            <span className="font-mono text-xs text-foreground/75">
+              {centralClock.time} {centralClock.tz}
+            </span>
+          </div>
+        </div>
       )}
+
     </div>
   );
 }

@@ -55,6 +55,7 @@ describe('LeftNavigation', () => {
     expect(screen.getByText('Stock Explorer')).toBeDefined();
     expect(screen.getByText('Data Quality')).toBeDefined();
     expect(screen.getByText('System Status')).toBeDefined();
+    expect(screen.getByText('UPTIME CLOCK')).toBeDefined();
   });
 
   it('toggles collapsed state when clicking the button', () => {
