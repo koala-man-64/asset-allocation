@@ -271,7 +271,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     await waitFor(() => {
       expect(DataService.getPersistedDomainMetadataSnapshotCache).toHaveBeenCalledTimes(1);
     });
-    expect(await screen.findByText('market')).toBeInTheDocument();
+    expect((await screen.findAllByText('market')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();
   });
 
