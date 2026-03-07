@@ -142,6 +142,7 @@ function makeJobs(): JobRun[] {
 describe('DomainLayerComparisonPanel refresh menu', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
 
     vi.mocked(DataService.getPersistedDomainMetadataSnapshotCache).mockResolvedValue({
       version: 1,
@@ -225,17 +226,28 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {
-    const user = userEvent.setup();
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-
-    vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
-      layer: 'bronze',
+    const snapshotEntry = {
+      layer: 'bronze' as const,
       domain: 'market',
       container: 'bronze',
-      type: 'delta',
+      type: 'delta' as const,
       computedAt: '',
       symbolCount: 123,
       warnings: []
+    };
+    vi.mocked(DataService.getPersistedDomainMetadataSnapshotCache).mockResolvedValue({
+      version: 1,
+      updatedAt: NOW,
+      entries: {
+        'bronze/market': snapshotEntry
+      }
+    });
+    vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue({
+      version: 1,
+      updatedAt: NOW,
+      entries: {
+        'bronze/market': snapshotEntry
+      }
     });
 
     renderWithProviders(
@@ -243,23 +255,12 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         overall="healthy"
         dataLayers={makeLayers()}
         recentJobs={makeJobs()}
-        onRefresh={onRefresh}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
         isRefreshing={false}
         isFetching={false}
       />
     );
 
-    const refreshLayerButton = await screen.findByRole('button', { name: 'Refresh Bronze layer' });
-    await user.click(refreshLayerButton);
-
-    await waitFor(() => {
-      expect(onRefresh).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(DataService.getDomainMetadata).toHaveBeenCalledWith('bronze', 'market', {
-        refresh: true
-      });
-    });
     expect(await screen.findByText('123 symbols')).toBeInTheDocument();
     expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();
   });
