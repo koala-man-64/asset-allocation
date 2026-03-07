@@ -268,7 +268,10 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       />
     );
 
-    expect(await screen.findByText('123 symbols')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(DataService.getPersistedDomainMetadataSnapshotCache).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('market')).toBeInTheDocument();
     expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();
   });
 
