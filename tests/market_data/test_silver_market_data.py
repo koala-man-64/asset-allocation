@@ -332,6 +332,7 @@ def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
     assert saved_last_success.get("processed") == 0
     assert saved_last_success.get("alpha26_staged_rows") == 0
     assert saved_last_success.get("alpha26_symbols") == 0
+    assert saved_last_success.get("column_count") == len(silver._ALPHA26_MARKET_MIN_COLUMNS)
 
 
 def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeypatch):
@@ -391,6 +392,7 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
     assert saved_last_success.get("processed") == 1
     assert saved_last_success.get("alpha26_staged_rows") == 0
     assert saved_last_success.get("alpha26_symbols") == 0
+    assert saved_last_success.get("column_count") == len(silver._ALPHA26_MARKET_MIN_COLUMNS)
 
 
 def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
@@ -430,7 +432,7 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
         write_calls["count"] += 1
         assert "A" in frames
         assert touched_buckets == {"A"}
-        return 1, "system/silver-index/market/latest.parquet"
+        return 1, "system/silver-index/market/latest.parquet", 9
 
     monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
     monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
@@ -456,6 +458,7 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
     assert saved_last_success.get("processed") == 1
     assert saved_last_success.get("alpha26_staged_rows") == 1
     assert saved_last_success.get("alpha26_symbols") == 1
+    assert saved_last_success.get("column_count") == 9
 
 
 def test_write_alpha26_market_buckets_enforces_typed_schema_for_empty_buckets(monkeypatch):
@@ -493,7 +496,7 @@ def test_write_alpha26_market_buckets_enforces_typed_schema_for_empty_buckets(mo
         ]
     }
 
-    symbol_count, index_path = silver._write_alpha26_market_buckets(bucket_frames)
+    symbol_count, index_path, _column_count = silver._write_alpha26_market_buckets(bucket_frames)
 
     assert symbol_count == 1
     assert index_path == "system/silver-index/market/latest.parquet"
@@ -561,7 +564,7 @@ def test_write_alpha26_market_buckets_partial_update_preserves_untouched_symbol_
         ]
     }
 
-    symbol_count, index_path = silver._write_alpha26_market_buckets(
+    symbol_count, index_path, _column_count = silver._write_alpha26_market_buckets(
         bucket_frames,
         touched_buckets={"A"},
     )

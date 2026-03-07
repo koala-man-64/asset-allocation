@@ -1130,9 +1130,12 @@ def main() -> int:
     rows_written = sum(int(r.rows_written or 0) for r in all_results if r.status == "ok")
     alpha26_written_symbols = 0
     alpha26_index_path: Optional[str] = None
+    alpha26_column_count: Optional[int] = None
     if failed == 0:
         try:
-            alpha26_written_symbols, alpha26_index_path = _write_alpha26_finance_silver_buckets(alpha26_bucket_frames)
+            alpha26_written_symbols, alpha26_index_path, alpha26_column_count = (
+                _write_alpha26_finance_silver_buckets(alpha26_bucket_frames)
+            )
             mdc.write_line(
                 "Silver finance alpha26 buckets written: "
                 f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
@@ -1174,6 +1177,7 @@ def main() -> int:
                     "failed": total_failed,
                     "attempts": attempts,
                     "rows_written": rows_written,
+                    "column_count": alpha26_column_count,
                     "source": initial_source,
                 },
             )
@@ -1200,6 +1204,7 @@ def main() -> int:
             "rows_written": rows_written,
             "alpha26_symbols": alpha26_written_symbols,
             "alpha26_index_path": alpha26_index_path,
+            "column_count": alpha26_column_count,
             "elapsed_seconds": round(total_ingest_elapsed, 3),
             "catchup_passes": pass_count,
             "new_blobs_discovered_after_first_pass": len(newly_discovered_blob_names),

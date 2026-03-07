@@ -296,7 +296,9 @@ def _remove_alpha26_finance_row(
         alpha26_rows.pop(row_key, None)
 
 
-def _write_alpha26_finance_buckets(alpha26_rows: dict[tuple[str, str], dict[str, Any]]) -> tuple[int, Optional[str]]:
+def _write_alpha26_finance_buckets(
+    alpha26_rows: dict[tuple[str, str], dict[str, Any]]
+) -> tuple[int, Optional[str], Optional[int]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     if alpha26_rows:
         frame = pd.DataFrame(list(alpha26_rows.values()), columns=_BUCKET_COLUMNS)
@@ -339,9 +341,10 @@ def _write_alpha26_finance_buckets(alpha26_rows: dict[tuple[str, str], dict[str,
     symbols = sorted({str(key[0]).upper() for key in alpha26_rows.keys()})
     symbol_to_bucket = {symbol: bronze_bucketing.bucket_letter(symbol) for symbol in symbols}
     index_path = bronze_bucketing.write_symbol_index(domain="finance", symbol_to_bucket=symbol_to_bucket)
+    column_count: Optional[int] = len(_BUCKET_COLUMNS)
     if index_path:
         try:
-            domain_artifacts.write_domain_artifact(
+            payload = domain_artifacts.write_domain_artifact(
                 layer="bronze",
                 domain="finance",
                 date_column="date",
@@ -350,9 +353,10 @@ def _write_alpha26_finance_buckets(alpha26_rows: dict[tuple[str, str], dict[str,
                 symbol_index_path=index_path,
                 job_name="bronze-finance-job",
             )
+            column_count = domain_artifacts.extract_column_count(payload)
         except Exception as exc:
             mdc.write_warning(f"Bronze finance metadata artifact write failed: {exc}")
-    return len(symbol_to_bucket), index_path
+    return len(symbol_to_bucket), index_path, column_count
 
 
 def _delete_legacy_finance_symbol_blobs() -> int:
@@ -1016,9 +1020,10 @@ async def main_async() -> int:
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
 
+    alpha26_column_count: Optional[int] = len(_BUCKET_COLUMNS) if alpha26_mode else None
     if alpha26_mode:
         try:
-            written_symbols, index_path = _write_alpha26_finance_buckets(alpha26_rows)
+            written_symbols, index_path, alpha26_column_count = _write_alpha26_finance_buckets(alpha26_rows)
             legacy_deleted = _delete_legacy_finance_symbol_blobs()
             mdc.write_line(
                 "Bronze finance alpha26 buckets written: "
@@ -1064,6 +1069,7 @@ async def main_async() -> int:
                 "skipped": int(progress["skipped"]),
                 "blacklisted": int(progress["blacklisted"]),
                 "failed": int(progress["failed"]),
+                "column_count": alpha26_column_count,
             },
         )
         if manifest:

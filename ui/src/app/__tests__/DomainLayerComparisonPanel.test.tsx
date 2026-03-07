@@ -59,6 +59,7 @@ function primeSnapshot(entry: {
   type: 'delta' | 'blob';
   computedAt: string;
   symbolCount: number;
+  columnCount?: number;
   warnings: string[];
 }) {
   const key = `${entry.layer}/${entry.domain}`;
@@ -196,6 +197,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       computedAt: NOW,
       metadataSource: 'artifact',
       symbolCount: 123,
+      columnCount: 9,
       warnings: []
     });
   });
@@ -252,6 +254,32 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
+  });
+
+  it('shows the column count in the medallion-domain coverage panel', async () => {
+    primeSnapshot({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      symbolCount: 123,
+      columnCount: 9,
+      warnings: []
+    });
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect((await screen.findAllByText('9 cols')).length).toBeGreaterThan(0);
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {

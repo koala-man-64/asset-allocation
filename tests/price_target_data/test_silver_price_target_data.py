@@ -186,7 +186,7 @@ def test_write_alpha26_price_target_buckets_skips_empty_bucket_without_existing_
     monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", _fake_get_schema)
     monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
 
-    written_symbols, index_path = silver._write_alpha26_price_target_buckets({})
+    written_symbols, index_path, _column_count = silver._write_alpha26_price_target_buckets({})
 
     assert written_symbols == 0
     assert index_path == "index"
@@ -215,7 +215,7 @@ def test_write_alpha26_price_target_buckets_writes_empty_bucket_when_schema_exis
 
     monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
 
-    written_symbols, index_path = silver._write_alpha26_price_target_buckets({})
+    written_symbols, index_path, _column_count = silver._write_alpha26_price_target_buckets({})
 
     assert written_symbols == 0
     assert index_path == "index"

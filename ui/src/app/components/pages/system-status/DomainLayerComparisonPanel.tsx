@@ -260,6 +260,18 @@ function formatSymbolCount(value: number | null | undefined): string {
   return `${numberFormatter.format(value)} symbols`;
 }
 
+function resolveColumnCount(metadata?: DomainMetadata | null): number | null {
+  if (!metadata) return null;
+  if (hasFiniteNumber(metadata.columnCount)) return metadata.columnCount;
+  if (Array.isArray(metadata.columns)) return metadata.columns.length;
+  return null;
+}
+
+function formatColumnCount(value: number | null | undefined): string {
+  if (!hasFiniteNumber(value)) return 'cols n/a';
+  return `${numberFormatter.format(value)} cols`;
+}
+
 function compareSymbols(
   current: DomainMetadata,
   previous: DomainMetadata
@@ -1762,6 +1774,7 @@ export function DomainLayerComparisonPanel({
                       const blacklistSummary = metadata
                         ? summarizeBlacklistCount(metadata)
                         : { text: 'blacklist n/a', className: 'text-mcm-walnut/70' };
+                      const columnCount = resolveColumnCount(metadata);
                       const financeSubfolderCounts =
                         row.key === 'finance' && metadata
                           ? FINANCE_SUBFOLDER_ITEMS.map((item) => ({
@@ -1816,6 +1829,7 @@ export function DomainLayerComparisonPanel({
                         adlsModifiedDisplay,
                         isPurgingThisTarget,
                         symbolComparison,
+                        columnCount,
                         previousLabel,
                         blacklistSummary,
                         financeSubfolderCounts,
@@ -1909,6 +1923,11 @@ export function DomainLayerComparisonPanel({
                                   >
                                     {formatSymbolCount(model.metadata?.symbolCount)}
                                   </span>
+                                  {model.columnCount !== null ? (
+                                    <div className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}>
+                                      {formatColumnCount(model.columnCount)}
+                                    </div>
+                                  ) : null}
                                   {model.metadataUpdatedAt ? (
                                     <div
                                       className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
@@ -2016,6 +2035,11 @@ export function DomainLayerComparisonPanel({
                                           >
                                             {formatSymbolCount(model.metadata?.symbolCount)}
                                           </div>
+                                          {model.columnCount !== null ? (
+                                            <div className={`${StatusTypos.MONO} mt-0.5 text-[11px] text-mcm-walnut/70`}>
+                                              {formatColumnCount(model.columnCount)}
+                                            </div>
+                                          ) : null}
                                         </div>
                                         <div className="flex flex-col items-end gap-1">
                                           <span

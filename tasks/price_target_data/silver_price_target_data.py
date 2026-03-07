@@ -465,7 +465,7 @@ def _write_alpha26_price_target_buckets(
         domain="price-target",
         symbol_to_bucket=symbol_to_bucket,
     )
-    column_count: Optional[int] = None
+    column_count: Optional[int] = len(_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
     if index_path:
         try:
             payload = domain_artifacts.write_domain_artifact(
@@ -626,7 +626,7 @@ def main():
 
     alpha26_written_symbols = 0
     alpha26_index_path: Optional[str] = None
-    alpha26_column_count: Optional[int] = None
+    alpha26_column_count: Optional[int] = len(_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
     if failed == 0:
         try:
             alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_price_target_buckets(

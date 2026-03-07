@@ -768,7 +768,7 @@ def _write_alpha26_market_buckets(
         domain="market",
         symbol_to_bucket=symbol_to_bucket,
     )
-    column_count: Optional[int] = None
+    column_count: Optional[int] = len(_ALPHA26_MARKET_MIN_COLUMNS)
     if index_path:
         try:
             payload = domain_artifacts.write_domain_artifact(
@@ -987,7 +987,7 @@ def main():
 
     alpha26_written_symbols = 0
     alpha26_index_path: Optional[str] = None
-    alpha26_column_count: Optional[int] = None
+    alpha26_column_count: Optional[int] = len(_ALPHA26_MARKET_MIN_COLUMNS)
     alpha26_staged_rows = _count_staged_bucket_rows(alpha26_bucket_frames)
     if failed == 0:
         if alpha26_staged_rows == 0:

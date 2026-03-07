@@ -704,6 +704,7 @@ def _write_cached_domain_metadata_snapshot(layer: str, domain: str, metadata: Di
         {
             "timestamp": now,
             "symbolCount": metadata_payload.get("symbolCount"),
+            "columnCount": metadata_payload.get("columnCount"),
             "fileCount": metadata_payload.get("fileCount"),
             "totalRows": metadata_payload.get("totalRows"),
             "totalBytes": metadata_payload.get("totalBytes"),

@@ -15,6 +15,7 @@ def _metadata_payload(*, layer: str, domain: str) -> dict[str, object]:
         "type": "blob",
         "computedAt": "2026-02-20T00:00:00+00:00",
         "symbolCount": 101,
+        "columnCount": 9,
         "warnings": [],
     }
 
@@ -52,6 +53,7 @@ def test_write_and_read_cached_domain_metadata_snapshot_round_trip(monkeypatch: 
     history = entry.get("history")
     assert isinstance(history, list)
     assert history[-1].get("symbolCount") == 101
+    assert history[-1].get("columnCount") == 9
 
     monkeypatch.setattr(system.mdc, "get_common_json_content", lambda path: persisted)
     cached_payload = system._read_cached_domain_metadata_snapshot("silver", "market")
@@ -62,6 +64,7 @@ def test_write_and_read_cached_domain_metadata_snapshot_round_trip(monkeypatch: 
     assert cached_payload["cachedAt"] == cached_at
     assert cached_payload["cacheSource"] == "snapshot"
     assert cached_payload["symbolCount"] == 101
+    assert cached_payload["columnCount"] == 9
 
 
 @pytest.mark.asyncio

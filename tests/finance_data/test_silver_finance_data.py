@@ -37,7 +37,7 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
     monkeypatch.setattr(
         silver,
         "_write_alpha26_finance_silver_buckets",
-        lambda _frames: (0, "system/silver-index/finance/latest.parquet"),
+        lambda _frames: (0, "system/silver-index/finance/latest.parquet", None),
     )
 
     initial_watermarks = {"preexisting": {"etag": "keep"}}
@@ -170,7 +170,7 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     )
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", _fake_list)
     monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index"))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index", 41))
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 3)
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
@@ -195,6 +195,7 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     assert saved_last_success["metadata"]["new_blobs_discovered_after_first_pass"] == 1
     assert saved_last_success["metadata"]["lag_candidate_count"] == 0
     assert saved_last_success["metadata"]["catchup_passes"] >= 2
+    assert saved_last_success["metadata"]["column_count"] == 41
     assert saved_watermarks["key"] == "bronze_finance_data"
 
 
@@ -238,7 +239,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
             0.01,
         ),
     )
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index"))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index", 41))
     monkeypatch.setattr(
         silver,
         "save_last_success",
@@ -253,6 +254,7 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
     assert saved_last_success["metadata"]["source"] == "alpha26-bucket-listing"
     assert saved_last_success["metadata"]["manifest_run_id"] is None
     assert saved_last_success["metadata"]["manifest_path"] is None
+    assert saved_last_success["metadata"]["column_count"] == 41
 
 
 def test_silver_finance_select_initial_source_uses_unacked_manifest(monkeypatch):
@@ -315,7 +317,7 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 1)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-03-05"))
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: ([], 0))
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index"))
+    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (0, "index", 41))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *args, **kwargs: None)
@@ -336,9 +338,11 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     assert exit_code == 0
     assert len(ack_calls) == 1
     assert ack_calls[0]["run_id"].endswith("abcd1234")
+    assert ack_calls[0]["metadata"]["column_count"] == 41
     assert saved_last_success["metadata"]["source"] == "bronze-manifest"
     assert saved_last_success["metadata"]["manifest_run_id"].endswith("abcd1234")
     assert saved_last_success["metadata"]["manifest_path"].endswith("run.json")
+    assert saved_last_success["metadata"]["column_count"] == 41
 
 
 def test_silver_finance_main_does_not_ack_manifest_when_failed(monkeypatch):
@@ -416,7 +420,7 @@ def test_write_alpha26_finance_silver_buckets_aligns_empty_bucket_to_existing_sc
 
     monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
 
-    written_symbols, index_path = silver._write_alpha26_finance_silver_buckets({})
+    written_symbols, index_path, _column_count = silver._write_alpha26_finance_silver_buckets({})
 
     assert written_symbols == 0
     assert index_path == "index"
@@ -450,7 +454,7 @@ def test_write_alpha26_finance_silver_buckets_skips_empty_bucket_without_existin
 
     monkeypatch.setattr(silver.delta_core, "store_delta", _fake_store)
 
-    written_symbols, index_path = silver._write_alpha26_finance_silver_buckets({})
+    written_symbols, index_path, _column_count = silver._write_alpha26_finance_silver_buckets({})
 
     assert written_symbols == 0
     assert index_path == "index"
@@ -478,7 +482,7 @@ def test_write_alpha26_finance_silver_buckets_writes_sub_domain_indexes(monkeypa
 
     monkeypatch.setattr(silver.layer_bucketing, "write_layer_symbol_index", _fake_index)
 
-    written_symbols, index_path = silver._write_alpha26_finance_silver_buckets(bucket_frames)
+    written_symbols, index_path, _column_count = silver._write_alpha26_finance_silver_buckets(bucket_frames)
     assert written_symbols == 2
     assert index_path == "index"
     assert len(index_calls) == 3
