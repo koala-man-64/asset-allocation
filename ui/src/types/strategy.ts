@@ -77,12 +77,45 @@ export interface Trade {
   slippage: number;
   pnl?: number; // Realized P&L for this trade (for sells)
   pnlPercent?: number; // P&L as percentage of entry price
+  entryPrice?: number;
+  exitPrice?: number;
+  exitReason?: string;
+  exitRuleId?: string;
+  barsHeld?: number;
+  intrabarConflictCount?: number;
 }
 
 export interface Contribution {
   name: string; // symbol, sector, or factor
   type: 'symbol' | 'sector' | 'factor';
   contribution: number; // total P&L
+}
+
+export type ExitRuleType =
+  | 'stop_loss_fixed'
+  | 'take_profit_fixed'
+  | 'trailing_stop_pct'
+  | 'trailing_stop_atr'
+  | 'time_stop';
+
+export type ExitRuleScope = 'position';
+export type ExitRuleAction = 'exit_full';
+export type ExitRulePriceField = 'open' | 'high' | 'low' | 'close';
+export type ExitRuleReference = 'entry_price' | 'highest_since_entry';
+export type IntrabarConflictPolicy = 'stop_first' | 'take_profit_first' | 'priority_order';
+
+export interface ExitRule {
+  id: string;
+  enabled: boolean;
+  type: ExitRuleType;
+  scope: ExitRuleScope;
+  priceField?: ExitRulePriceField;
+  value?: number;
+  atrColumn?: string;
+  priority?: number;
+  action: ExitRuleAction;
+  minHoldBars: number;
+  reference?: ExitRuleReference;
 }
 
 export interface StrategyConfig {
@@ -93,6 +126,19 @@ export interface StrategyConfig {
   lookbackWindow: number;
   holdingPeriod: number;
   costModel: string;
+  intrabarConflictPolicy: IntrabarConflictPolicy;
+  exits: ExitRule[];
+}
+
+export interface StrategySummary {
+  name: string;
+  type: string;
+  description?: string;
+  updated_at?: string;
+}
+
+export interface StrategyDetail extends StrategySummary {
+  config: StrategyConfig;
 }
 
 export interface AuditTrail {

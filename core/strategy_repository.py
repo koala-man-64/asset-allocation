@@ -37,6 +37,33 @@ class StrategyRepository:
             logger.error(f"Failed to fetch strategy '{name}': {e}")
             raise
 
+    def get_strategy(self, name: str) -> Optional[Dict]:
+        """
+        Retrieves metadata and configuration for a strategy by name.
+        """
+        if not self.dsn:
+            return None
+
+        try:
+            with connect(self.dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT name, type, description, updated_at, config
+                        FROM {STRATEGIES_TABLE}
+                        WHERE name = %s
+                        """,
+                        (name,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    columns = ["name", "type", "description", "updated_at", "config"]
+                    return dict(zip(columns, row))
+        except Exception as e:
+            logger.error(f"Failed to fetch strategy detail '{name}': {e}")
+            raise
+
     def save_strategy(self, name: str, config: Dict, strategy_type: str = "configured", description: str = "") -> None:
         """
         Upserts a strategy configuration.

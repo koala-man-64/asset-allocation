@@ -28,6 +28,14 @@ MOCK_CONFIG = {
     "rebalance": "monthly"
 }
 
+MOCK_STRATEGY_DETAIL = {
+    "name": "test-strategy",
+    "type": "configured",
+    "description": "Test Description",
+    "updated_at": "2023-01-01T00:00:00Z",
+    "config": MOCK_CONFIG
+}
+
 @pytest.fixture
 def mock_repo():
     with patch("api.endpoints.strategies.StrategyRepository") as mock:
@@ -58,6 +66,8 @@ def test_get_strategy(client, mock_repo):
     response = client.get("/api/strategies/test-strategy")
     assert response.status_code == 200
     assert response.json()["universe"] == "SP500"
+    assert response.json()["intrabarConflictPolicy"] == "stop_first"
+    assert response.json()["exits"] == []
 
 def test_get_strategy_not_found(client, mock_repo):
     repo_instance = mock_repo.return_value
@@ -66,13 +76,27 @@ def test_get_strategy_not_found(client, mock_repo):
     response = client.get("/api/strategies/non-existent")
     assert response.status_code == 404
 
+def test_get_strategy_detail(client, mock_repo):
+    repo_instance = mock_repo.return_value
+    repo_instance.get_strategy.return_value = MOCK_STRATEGY_DETAIL
+
+    response = client.get("/api/strategies/test-strategy/detail")
+    assert response.status_code == 200
+    assert response.json()["name"] == "test-strategy"
+    assert response.json()["config"]["universe"] == "SP500"
+    assert response.json()["config"]["intrabarConflictPolicy"] == "stop_first"
+
 def test_save_strategy(client, mock_repo):
     repo_instance = mock_repo.return_value
     repo_instance.save_strategy.return_value = None
     
     payload = {
         "name": "new-strategy",
-        "config": {"universe": "NDX"},
+        "config": {
+            "universe": "NDX",
+            "rebalance": "weekly",
+            "exits": [{"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08}]
+        },
         "description": "New Strategy",
         "type": "configured"
     }
@@ -84,3 +108,31 @@ def test_save_strategy(client, mock_repo):
 
     assert response.status_code == 200
     repo_instance.save_strategy.assert_called_once()
+    saved_config = repo_instance.save_strategy.call_args.kwargs["config"]
+    assert saved_config["intrabarConflictPolicy"] == "stop_first"
+    assert saved_config["exits"][0]["enabled"] is True
+    assert saved_config["exits"][0]["priority"] == 0
+    assert saved_config["exits"][0]["priceField"] == "low"
+
+def test_save_strategy_rejects_duplicate_exit_rule_ids(client, mock_repo):
+    repo_instance = mock_repo.return_value
+    repo_instance.save_strategy.return_value = None
+
+    payload = {
+        "name": "new-strategy",
+        "description": "New Strategy",
+        "type": "configured",
+        "config": {
+            "universe": "NDX",
+            "rebalance": "weekly",
+            "exits": [
+                {"id": "dup", "type": "stop_loss_fixed", "value": 0.08},
+                {"id": "dup", "type": "take_profit_fixed", "value": 0.1},
+            ],
+        },
+    }
+
+    response = client.post("/api/strategies/", json=payload)
+
+    assert response.status_code == 422
+    repo_instance.save_strategy.assert_not_called()

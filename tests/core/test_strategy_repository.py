@@ -83,6 +83,36 @@ def test_save_strategy_writes_to_platinum_schema(monkeypatch) -> None:
     )
 
 
+def test_get_strategy_reads_metadata_and_config(monkeypatch) -> None:
+    cursor = _FakeCursor(
+        fetchone_result=(
+            "momentum",
+            "configured",
+            "Monthly momentum",
+            "2026-03-07T00:00:00Z",
+            {"rebalance": "monthly"},
+        )
+    )
+
+    monkeypatch.setattr(
+        "core.strategy_repository.connect",
+        lambda _dsn: _FakeConnection(cursor),
+    )
+
+    repo = StrategyRepository("postgresql://user:pass@localhost/db")
+
+    assert repo.get_strategy("momentum") == {
+        "name": "momentum",
+        "type": "configured",
+        "description": "Monthly momentum",
+        "updated_at": "2026-03-07T00:00:00Z",
+        "config": {"rebalance": "monthly"},
+    }
+    sql, params = cursor.execute_calls[0]
+    assert "SELECT name, type, description, updated_at, config" in sql
+    assert params == ("momentum",)
+
+
 def test_list_strategies_reads_from_platinum_schema(monkeypatch) -> None:
     cursor = _FakeCursor(
         fetchall_result=[

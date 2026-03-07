@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+ExitRuleType = Literal[
+    "stop_loss_fixed",
+    "take_profit_fixed",
+    "trailing_stop_pct",
+    "trailing_stop_atr",
+    "time_stop",
+]
+ExitScope = Literal["position"]
+ExitAction = Literal["exit_full"]
+PriceField = Literal["open", "high", "low", "close"]
+ExitReference = Literal["entry_price", "highest_since_entry"]
+IntrabarConflictPolicy = Literal["stop_first", "take_profit_first", "priority_order"]
+
+
+class ExitRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, max_length=128)
+    enabled: bool = True
+    type: ExitRuleType
+    scope: ExitScope = "position"
+    priceField: PriceField | None = None
+    value: float | None = None
+    atrColumn: str | None = Field(default=None, min_length=1, max_length=128)
+    priority: int | None = Field(default=None, ge=0)
+    action: ExitAction = "exit_full"
+    minHoldBars: int = Field(default=0, ge=0)
+    reference: ExitReference | None = None
+
+    @model_validator(mode="after")
+    def validate_rule(self) -> "ExitRule":
+        if self.type == "stop_loss_fixed":
+            self._require_positive_value()
+            self._default_reference("entry_price")
+            self._default_price_field("low")
+            self._reject_atr_column()
+        elif self.type == "take_profit_fixed":
+            self._require_positive_value()
+            self._default_reference("entry_price")
+            self._default_price_field("high")
+            self._reject_atr_column()
+        elif self.type == "trailing_stop_pct":
+            self._require_positive_value()
+            self._default_reference("highest_since_entry")
+            self._default_price_field("low")
+            self._reject_atr_column()
+        elif self.type == "trailing_stop_atr":
+            self._require_positive_value()
+            self._default_reference("highest_since_entry")
+            self._default_price_field("low")
+            if not self.atrColumn:
+                raise ValueError("trailing_stop_atr requires atrColumn.")
+        elif self.type == "time_stop":
+            self._require_positive_value(integer_only=True)
+            self._reject_reference()
+            self._reject_atr_column()
+            if self.priceField is None:
+                self.priceField = "close"
+            elif self.priceField != "close":
+                raise ValueError("time_stop only supports priceField='close'.")
+
+        return self
+
+    def _require_positive_value(self, *, integer_only: bool = False) -> None:
+        if self.value is None or self.value <= 0:
+            raise ValueError(f"{self.type} requires value > 0.")
+        if integer_only and not float(self.value).is_integer():
+            raise ValueError(f"{self.type} requires an integer value.")
+
+    def _default_reference(self, expected: ExitReference) -> None:
+        if self.reference is None:
+            self.reference = expected
+            return
+        if self.reference != expected:
+            raise ValueError(f"{self.type} only supports reference='{expected}'.")
+
+    def _default_price_field(self, expected: PriceField) -> None:
+        if self.priceField is None:
+            self.priceField = expected
+            return
+        if self.priceField not in {"open", "high", "low", "close"}:
+            raise ValueError(f"{self.type} received unsupported priceField='{self.priceField}'.")
+
+    def _reject_atr_column(self) -> None:
+        if self.atrColumn is not None:
+            raise ValueError(f"{self.type} does not support atrColumn.")
+
+    def _reject_reference(self) -> None:
+        if self.reference is not None:
+            raise ValueError(f"{self.type} does not support reference.")
+
+
+class StrategyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    universe: str = Field(default="SP500", min_length=1, max_length=128)
+    rebalance: str = Field(default="monthly", min_length=1, max_length=64)
+    longOnly: bool = True
+    topN: int = Field(default=20, ge=1)
+    lookbackWindow: int = Field(default=63, ge=1)
+    holdingPeriod: int = Field(default=21, ge=1)
+    costModel: str = Field(default="default", min_length=1, max_length=64)
+    intrabarConflictPolicy: IntrabarConflictPolicy = "stop_first"
+    exits: list[ExitRule] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def normalize_exits(self) -> "StrategyConfig":
+        seen_ids: set[str] = set()
+        for idx, rule in enumerate(self.exits):
+            if rule.id in seen_ids:
+                raise ValueError(f"Duplicate exit rule id '{rule.id}'.")
+            seen_ids.add(rule.id)
+            if rule.priority is None:
+                rule.priority = idx
+        return self

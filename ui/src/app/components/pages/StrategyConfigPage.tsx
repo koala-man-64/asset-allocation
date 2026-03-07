@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Strategy, strategyApi } from '@/services/strategyApi';
+import { strategyApi } from '@/services/strategyApi';
 import { DataTable } from '@/app/components/common/DataTable';
 import { StrategyEditor } from '@/app/components/pages/StrategyEditor';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { PageLoader } from '@/app/components/common/PageLoader';
+import type { StrategySummary } from '@/types/strategy';
 
 export function StrategyConfigPage() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategySummary | null>(null);
 
   const { data: strategies = [], isLoading } = useQuery({
     queryKey: ['strategies'],
@@ -22,7 +23,7 @@ export function StrategyConfigPage() {
     setIsEditorOpen(true);
   };
 
-  const handleRowClick = (strategy: Strategy) => {
+  const handleRowClick = (strategy: StrategySummary) => {
     setSelectedStrategy(strategy);
     setIsEditorOpen(true);
   };
