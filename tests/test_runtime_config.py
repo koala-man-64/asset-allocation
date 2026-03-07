@@ -21,6 +21,10 @@ def test_normalize_env_override_gold_market_by_date_bool():
     assert normalize_env_override("GOLD_MARKET_BY_DATE_ENABLED", "0") == "false"
 
 
+def test_normalize_env_override_debug_symbols_to_uppercase_csv():
+    assert normalize_env_override("DEBUG_SYMBOLS", '["aapl", " msft ", "NvDa"]') == "AAPL,MSFT,NVDA"
+
+
 def test_normalize_env_override_gold_by_date_domain_passthrough():
     assert normalize_env_override("GOLD_BY_DATE_DOMAIN", "finance") == "finance"
 
@@ -40,6 +44,15 @@ def test_normalize_env_override_required_nonempty_rejects_blank():
         assert "cannot be empty" in str(exc)
     else:
         raise AssertionError("Expected ValueError for empty SYSTEM_HEALTH_TTL_SECONDS")
+
+
+def test_normalize_env_override_debug_symbols_rejects_blank():
+    try:
+        normalize_env_override("DEBUG_SYMBOLS", "")
+    except ValueError as exc:
+        assert "cannot be empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for empty DEBUG_SYMBOLS")
 
 
 def test_normalize_env_override_unknown_key_passthrough():

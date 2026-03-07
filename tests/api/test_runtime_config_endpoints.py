@@ -30,6 +30,7 @@ async def test_runtime_config_catalog(monkeypatch):
     payload = resp.json()
     assert "items" in payload
     keys = [item.get("key") for item in payload["items"]]
+    assert "DEBUG_SYMBOLS" in keys
     assert "SILVER_LATEST_ONLY" in keys
 
 
@@ -114,3 +115,32 @@ async def test_set_runtime_config_normalizes_value_before_upsert(monkeypatch):
     payload = resp.json()
     assert payload["key"] == "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS"
     assert payload["value"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_set_runtime_config_normalizes_debug_symbols_before_upsert(monkeypatch):
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    def _fake_upsert(**kwargs):
+        assert kwargs["key"] == "DEBUG_SYMBOLS"
+        assert kwargs["value"] == "AAPL,MSFT,NVDA"
+        return _item(key=kwargs["key"], value=kwargs["value"], enabled=kwargs["enabled"], scope=kwargs["scope"])
+
+    with patch("api.endpoints.system.upsert_runtime_config", side_effect=_fake_upsert):
+        app = create_app()
+        async with get_test_client(app) as client:
+            resp = await client.post(
+                "/api/system/runtime-config",
+                json={
+                    "key": "DEBUG_SYMBOLS",
+                    "scope": "global",
+                    "enabled": True,
+                    "value": '["aapl", "msft", "nvda"]',
+                },
+            )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["key"] == "DEBUG_SYMBOLS"
+    assert payload["value"] == "AAPL,MSFT,NVDA"

@@ -91,7 +91,7 @@ python3 scripts/dependency_governance.py check --report artifacts/dependency_gov
 
 ## Runtime and Data Model
 
-- `core.runtime_config` and `core.debug_symbols` Postgres tables let operators change allowlisted runtime overrides and debug filters without rebuilding the containers.
+- `core.runtime_config` Postgres rows let operators change allowlisted runtime overrides, including debug-symbol filters, without rebuilding the containers.
 - The API applies runtime config at startup; ETL jobs apply runtime config and debug symbols during job startup.
 - System health surfaces live under `/api/system/health`, `/healthz`, `/readyz`, and `/api/ws/updates`.
 - `/config.js` publishes the UI auth mode and API base URL that the frontend reads at runtime.

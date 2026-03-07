@@ -146,7 +146,7 @@ def log_environment_diagnostics():
             preview = ", ".join(debug_symbols[:8])
             suffix = "..." if len(debug_symbols) > 8 else ""
             logger.info(
-                "Debug symbols loaded from Postgres (%s): %s%s",
+                "Debug symbols loaded from runtime config (%s): %s%s",
                 len(debug_symbols),
                 preview,
                 suffix,

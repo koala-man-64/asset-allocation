@@ -52,6 +52,8 @@ class RuntimeConfigItem:
 DEFAULT_ENV_OVERRIDE_KEYS: set[str] = {
     # Symbol universe refresh tuning (core/core.py).
     "SYMBOLS_REFRESH_INTERVAL_HOURS",
+    # Debug symbol filtering (core/debug_symbols.py + tasks/*).
+    "DEBUG_SYMBOLS",
     # Alpha Vantage tuning (alpha_vantage/* + tasks/*).
     "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN",
     "ALPHA_VANTAGE_TIMEOUT_SECONDS",
@@ -170,6 +172,7 @@ _BOOL_KEYS = {
     "MASSIVE_PREFER_OFFICIAL_SDK",
 }
 _REQUIRED_NONEMPTY_KEYS = {
+    "DEBUG_SYMBOLS",
     "SYSTEM_HEALTH_TTL_SECONDS",
     "SYSTEM_HEALTH_MAX_AGE_SECONDS",
     "DOMAIN_METADATA_MAX_SCANNED_BLOBS",
@@ -216,6 +219,11 @@ def normalize_env_override(key: str, value: object) -> str:
         if lowered in {"0", "false", "f", "no", "n", "off"}:
             return "false"
         raise ValueError(f"{resolved_key} must be a boolean (true/false).")
+
+    if resolved_key == "DEBUG_SYMBOLS":
+        from core.config import parse_debug_symbols
+
+        return ",".join(parse_debug_symbols(text))
 
     if resolved_key in _JSON_ARRAY_KEYS:
         if not text:

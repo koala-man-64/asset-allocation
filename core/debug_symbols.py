@@ -7,9 +7,21 @@ from datetime import datetime
 from typing import Optional
 
 from core.config import parse_debug_symbols
-from core.postgres import PostgresError, connect
+from core.postgres import PostgresError
+from core.runtime_config import (
+    default_scopes_by_precedence,
+    get_effective_runtime_config,
+    list_runtime_config,
+    upsert_runtime_config,
+)
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_SYMBOLS_SCOPE = "global"
+_DEBUG_SYMBOLS_KEY = "DEBUG_SYMBOLS"
+_DEBUG_SYMBOLS_DESCRIPTION = (
+    "Comma-separated allowlist of symbols applied when debug filtering is enabled."
+)
 
 
 @dataclass(frozen=True)
@@ -37,14 +49,8 @@ def read_debug_symbols_state(dsn: Optional[str] = None) -> DebugSymbolsState:
     if not resolved:
         raise PostgresError("POSTGRES_DSN is not configured.")
 
-    with connect(resolved) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT enabled, symbols, updated_at, updated_by FROM core.debug_symbols WHERE id=1;"
-            )
-            row = cur.fetchone()
-
-    if not row:
+    rows = list_runtime_config(resolved, scopes=[_DEBUG_SYMBOLS_SCOPE], keys=[_DEBUG_SYMBOLS_KEY])
+    if not rows:
         return DebugSymbolsState(
             enabled=False,
             symbols_raw="",
@@ -53,15 +59,16 @@ def read_debug_symbols_state(dsn: Optional[str] = None) -> DebugSymbolsState:
             updated_by=None,
         )
 
-    enabled = bool(row[0])
-    symbols_raw = str(row[1] or "")
+    row = rows[0]
+    enabled = bool(row.enabled)
+    symbols_raw = str(row.value or "")
     symbols = parse_debug_symbols(symbols_raw)
     return DebugSymbolsState(
         enabled=enabled,
         symbols_raw=symbols_raw,
         symbols=symbols,
-        updated_at=row[2],
-        updated_by=row[3],
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
     )
 
 
@@ -77,21 +84,15 @@ def update_debug_symbols_state(
         raise PostgresError("POSTGRES_DSN is not configured.")
 
     normalized = _normalize_symbols_text(symbols)
-
-    with connect(resolved) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO core.debug_symbols(id, enabled, symbols, updated_at, updated_by)
-                VALUES (1, %s, %s, now(), %s)
-                ON CONFLICT (id) DO UPDATE
-                SET enabled = EXCLUDED.enabled,
-                    symbols = EXCLUDED.symbols,
-                    updated_at=now(),
-                    updated_by=EXCLUDED.updated_by;
-                """,
-                (bool(enabled), normalized, actor),
-            )
+    upsert_runtime_config(
+        dsn=resolved,
+        scope=_DEBUG_SYMBOLS_SCOPE,
+        key=_DEBUG_SYMBOLS_KEY,
+        enabled=bool(enabled),
+        value=normalized,
+        description=_DEBUG_SYMBOLS_DESCRIPTION,
+        actor=actor,
+    )
 
     return read_debug_symbols_state(resolved)
 
@@ -103,12 +104,17 @@ def refresh_debug_symbols_from_db(dsn: Optional[str] = None) -> list[str]:
         return _apply_debug_symbols_from_env()
 
     try:
-        state = read_debug_symbols_state(resolved)
+        effective = get_effective_runtime_config(
+            resolved,
+            scopes_by_precedence=default_scopes_by_precedence(),
+            keys=[_DEBUG_SYMBOLS_KEY],
+        )
     except Exception as exc:
-        logger.warning("Failed to load debug symbols from Postgres; using env fallback. (%s)", exc)
+        logger.warning("Failed to load debug symbols from runtime config; using env fallback. (%s)", exc)
         return _apply_debug_symbols_from_env()
 
-    symbols = state.symbols if state.enabled else []
+    item = effective.get(_DEBUG_SYMBOLS_KEY)
+    symbols = parse_debug_symbols(item.value) if item else []
     _apply_debug_symbols_to_config(symbols)
     return symbols
 

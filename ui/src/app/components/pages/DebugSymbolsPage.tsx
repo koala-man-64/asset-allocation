@@ -111,7 +111,7 @@ export function DebugSymbolsPage() {
         <p className="page-kicker">Live Operations</p>
         <h1 className="page-title">Debug Symbols</h1>
         <p className="page-subtitle">
-          Control the symbol allowlist stored in Postgres and applied at ETL startup.
+          Control the symbol allowlist stored in Postgres runtime config and applied at ETL startup.
         </p>
       </div>
 
@@ -229,8 +229,8 @@ export function DebugSymbolsPage() {
               )}
             </div>
             <div className="rounded-lg border border-dashed border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
-              Jobs pull this list from Postgres on startup. Disabling debug mode keeps the list
-              stored but prevents filtering.
+              Jobs pull this list from Postgres runtime config on startup. Disabling debug mode
+              keeps the list stored but prevents filtering.
             </div>
           </CardContent>
         </Card>

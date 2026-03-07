@@ -17,8 +17,8 @@ API Root
     ├── /system
     │   ├── /health [GET] (system.system_health) - Returns overall system status, layer freshness, and active alerts :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /lineage [GET] (system.system_lineage) - Returns data lineage graph and dependencies :: api/endpoints/system.py <== ui/src/services/DataService.ts
-    │   ├── /debug-symbols [GET] (system.get_debug_symbols) - Returns debug-symbol config from Postgres :: api/endpoints/system.py <== ui/src/services/DataService.ts
-    │   ├── /debug-symbols [POST] (system.set_debug_symbols) - Updates debug-symbol config in Postgres :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /debug-symbols [GET] (system.get_debug_symbols) - Returns runtime-config-backed debug-symbol state :: api/endpoints/system.py <== ui/src/services/DataService.ts
+    │   ├── /debug-symbols [POST] (system.set_debug_symbols) - Updates runtime-config-backed debug-symbol state :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config/catalog [GET] (system.get_runtime_config_catalog) - Lists allowlisted runtime-config keys :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config [GET] (system.get_runtime_config) - Lists runtime-config overrides for a scope :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config [POST] (system.set_runtime_config) - Upserts a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts

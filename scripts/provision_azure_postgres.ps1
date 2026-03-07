@@ -741,6 +741,21 @@ if ($ApplyMigrations) {
 
   Write-Host "Dropping legacy migration ledger table..."
   Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", "DROP TABLE IF EXISTS public.schema_migrations;")
+
+  Write-Host "Verifying runtime-config debug-symbol schema state..."
+  $verificationSql = @'
+DO $$
+BEGIN
+  IF to_regclass('core.runtime_config') IS NULL THEN
+    RAISE EXCEPTION 'Expected core.runtime_config to exist after migrations.';
+  END IF;
+
+  IF to_regclass('core.debug_symbols') IS NOT NULL THEN
+    RAISE EXCEPTION 'Legacy table core.debug_symbols still exists after migrations.';
+  END IF;
+END $$;
+'@
+  Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", $verificationSql)
 }
 else {
   Write-Warning "Migrations were skipped. Runtime Python code no longer creates tables/schemas; run with -ApplyMigrations to provision DB objects."

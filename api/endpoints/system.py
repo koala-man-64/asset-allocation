@@ -4538,6 +4538,10 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Refresh symbol universe from NASDAQ/Alpha Vantage when older than this many hours (0 disables refresh).",
         "example": "24",
     },
+    "DEBUG_SYMBOLS": {
+        "description": "Comma-separated or JSON-array symbol allowlist applied when debug filtering is enabled.",
+        "example": "AAPL,MSFT,NVDA",
+    },
     "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN": {
         "description": "Alpha Vantage API rate limit per minute (integer).",
         "example": "300",
@@ -4965,7 +4969,9 @@ def remove_runtime_config(key: str, request: Request, scope: str = Query("global
 
 
 class DebugSymbolsUpdateRequest(BaseModel):
-    enabled: bool = Field(..., description="When true, apply debug symbols from Postgres to ETL jobs.")
+    enabled: bool = Field(
+        ..., description="When true, apply runtime-config-backed debug symbols to ETL jobs."
+    )
     symbols: Optional[str] = Field(
         default=None,
         description="Comma-separated list or JSON array. When omitted, keeps the stored symbols.",
