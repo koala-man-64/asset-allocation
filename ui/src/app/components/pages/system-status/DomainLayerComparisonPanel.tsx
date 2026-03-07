@@ -1427,56 +1427,6 @@ export function DomainLayerComparisonPanel({
               </div>
             </div>
           </div>
-
-          <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
-            {onRefresh || queryPairs.length > 0 ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 px-3.5 text-[11px]"
-                aria-label="Refresh domain layer coverage"
-                onClick={() => void refreshPanelCoverage()}
-                disabled={isPanelActionBusy}
-              >
-                {isAnyRefreshInProgress ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Refreshing...
-                  </span>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    Refresh
-                  </>
-                )}
-              </Button>
-            ) : null}
-
-            {queryPairs.length > 0 ? (
-              <>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  className="h-9 px-3.5 text-[11px]"
-                  onClick={() => setIsResetAllDialogOpen(true)}
-                  disabled={isPanelActionBusy}
-                >
-                  {isResettingAllLists ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Resetting lists...
-                    </span>
-                  ) : (
-                    <>
-                      <Trash2 className="h-4 w-4" />
-                      Reset lists
-                    </>
-                  )}
-                </Button>
-              </>
-            ) : null}
-          </div>
         </div>
       </CardHeader>
 
@@ -1503,7 +1453,60 @@ export function DomainLayerComparisonPanel({
                 <TableHeader>
                   <TableRow className="h-14">
                     <TableHead className="sticky left-0 top-0 z-30 w-[320px] border-b border-mcm-walnut/25 bg-mcm-cream/90">
-                      Domain
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Domain</span>
+                        <div className="flex items-center gap-1">
+                          {onRefresh || queryPairs.length > 0 ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0 rounded-full border border-transparent text-mcm-walnut/70 hover:border-mcm-walnut/20 hover:bg-mcm-paper/55 hover:text-mcm-walnut"
+                                  aria-label="Refresh domain layer coverage"
+                                  onClick={() => void refreshPanelCoverage()}
+                                  disabled={isPanelActionBusy}
+                                >
+                                  <RefreshCw className={`h-3.5 w-3.5 ${isAnyRefreshInProgress ? 'animate-spin' : ''}`} />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                {isAnyRefreshInProgress
+                                  ? 'Refreshing domain layer coverage'
+                                  : 'Refresh domain layer coverage'}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+
+                          {queryPairs.length > 0 ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0 rounded-full border border-transparent text-destructive/80 hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
+                                  aria-label="Reset lists for all configured domains"
+                                  onClick={() => setIsResetAllDialogOpen(true)}
+                                  disabled={isPanelActionBusy}
+                                >
+                                  {isResettingAllLists ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                {isResettingAllLists
+                                  ? 'Resetting all configured lists'
+                                  : 'Reset lists for all configured domains'}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+                        </div>
+                      </div>
                     </TableHead>
                     {layerColumns.map((layer) => {
                       const aggregate = layerAggregateStatus.get(layer.key);

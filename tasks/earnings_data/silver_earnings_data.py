@@ -332,7 +332,9 @@ def process_alpha26_bucket_blob(
     return "failed" if has_failed else "ok"
 
 
-def _write_alpha26_earnings_buckets(bucket_frames: dict[str, list[pd.DataFrame]]) -> tuple[int, Optional[str]]:
+def _write_alpha26_earnings_buckets(
+    bucket_frames: dict[str, list[pd.DataFrame]]
+) -> tuple[int, Optional[str], Optional[int]]:
     symbol_to_bucket: dict[str, str] = {}
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         bucket_path = DataPaths.get_silver_earnings_bucket_path(bucket)
@@ -391,9 +393,10 @@ def _write_alpha26_earnings_buckets(bucket_frames: dict[str, list[pd.DataFrame]]
         domain="earnings",
         symbol_to_bucket=symbol_to_bucket,
     )
+    column_count: Optional[int] = None
     if index_path:
         try:
-            domain_artifacts.write_domain_artifact(
+            payload = domain_artifacts.write_domain_artifact(
                 layer="silver",
                 domain="earnings",
                 date_column="date",
@@ -402,9 +405,10 @@ def _write_alpha26_earnings_buckets(bucket_frames: dict[str, list[pd.DataFrame]]
                 symbol_index_path=index_path,
                 job_name="silver-earnings-job",
             )
+            column_count = domain_artifacts.extract_column_count(payload)
         except Exception as exc:
             mdc.write_warning(f"Silver earnings metadata artifact write failed: {exc}")
-    return len(symbol_to_bucket), index_path
+    return len(symbol_to_bucket), index_path, column_count
 
 
 def _run_earnings_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
@@ -546,9 +550,12 @@ def main():
 
     alpha26_written_symbols = 0
     alpha26_index_path: Optional[str] = None
+    alpha26_column_count: Optional[int] = None
     if failed == 0:
         try:
-            alpha26_written_symbols, alpha26_index_path = _write_alpha26_earnings_buckets(alpha26_bucket_frames)
+            alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_earnings_buckets(
+                alpha26_bucket_frames
+            )
             mdc.write_line(
                 "Silver earnings alpha26 buckets written: "
                 f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
@@ -585,6 +592,7 @@ def main():
                 "skipped_other": skipped_other,
                 "alpha26_symbols": alpha26_written_symbols,
                 "alpha26_index_path": alpha26_index_path,
+                "column_count": alpha26_column_count,
                 "reconciled_orphans": reconciliation_orphans,
                 "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },

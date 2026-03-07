@@ -487,7 +487,7 @@ def _split_finance_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str
 
 def _write_alpha26_finance_silver_buckets(
     bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
-) -> tuple[int, Optional[str]]:
+) -> tuple[int, Optional[str], Optional[int]]:
     symbol_to_bucket: dict[str, str] = {}
     symbols_by_sub_domain: dict[str, dict[str, str]] = {key: {} for key in _FINANCE_ALPHA26_SUBDOMAINS}
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
@@ -555,6 +555,7 @@ def _write_alpha26_finance_silver_buckets(
         symbol_to_bucket=symbol_to_bucket,
     )
     index_path = root_index_path
+    column_count: Optional[int] = None
     finance_subdomain_artifacts: dict[str, dict[str, Any]] = {}
     for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
         sub_index_path = layer_bucketing.write_layer_symbol_index(
@@ -584,7 +585,7 @@ def _write_alpha26_finance_silver_buckets(
             index_path = sub_index_path
     if root_index_path:
         try:
-            domain_artifacts.write_domain_artifact(
+            payload = domain_artifacts.write_domain_artifact(
                 layer="silver",
                 domain="finance",
                 date_column="date",
@@ -594,9 +595,10 @@ def _write_alpha26_finance_silver_buckets(
                 job_name="silver-finance-job",
                 finance_subdomains=finance_subdomain_artifacts,
             )
+            column_count = domain_artifacts.extract_column_count(payload)
         except Exception as exc:
             mdc.write_warning(f"Silver finance metadata artifact write failed: {exc}")
-    return len(symbol_to_bucket), index_path
+    return len(symbol_to_bucket), index_path, column_count
 
 
 def _run_finance_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:

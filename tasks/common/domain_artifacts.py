@@ -308,11 +308,26 @@ def _finance_subdomain_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "symbolCount": payload.get("symbolCount"),
         "columns": _normalize_columns(payload.get("columns") or []),
-        "columnCount": int(payload.get("columnCount") or 0),
+        "columnCount": extract_column_count(payload) or 0,
         "dateRange": payload.get("dateRange"),
         "artifactPath": payload.get("artifactPath"),
         "updatedAt": payload.get("updatedAt"),
     }
+
+
+def extract_column_count(payload: Optional[dict[str, Any]]) -> Optional[int]:
+    if not isinstance(payload, dict):
+        return None
+
+    raw_count = payload.get("columnCount")
+    if isinstance(raw_count, int):
+        return raw_count
+
+    columns = payload.get("columns")
+    if isinstance(columns, list):
+        return len(_normalize_columns(columns))
+
+    return None
 
 
 def write_bucket_artifact(

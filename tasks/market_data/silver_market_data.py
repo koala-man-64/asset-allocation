@@ -689,7 +689,7 @@ def _write_alpha26_market_buckets(
     bucket_frames: dict[str, list[pd.DataFrame]],
     *,
     touched_buckets: Optional[set[str]] = None,
-) -> tuple[int, Optional[str]]:
+) -> tuple[int, Optional[str], Optional[int]]:
     valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
     selected_buckets = {
         str(bucket).strip().upper()
@@ -768,9 +768,10 @@ def _write_alpha26_market_buckets(
         domain="market",
         symbol_to_bucket=symbol_to_bucket,
     )
+    column_count: Optional[int] = None
     if index_path:
         try:
-            domain_artifacts.write_domain_artifact(
+            payload = domain_artifacts.write_domain_artifact(
                 layer="silver",
                 domain="market",
                 date_column="date",
@@ -779,9 +780,10 @@ def _write_alpha26_market_buckets(
                 symbol_index_path=index_path,
                 job_name="silver-market-job",
             )
+            column_count = domain_artifacts.extract_column_count(payload)
         except Exception as exc:
             mdc.write_warning(f"Silver market metadata artifact write failed: {exc}")
-    return len(symbol_to_bucket), index_path
+    return len(symbol_to_bucket), index_path, column_count
 
 
 def _count_staged_bucket_rows(bucket_frames: dict[str, list[pd.DataFrame]]) -> int:
@@ -985,6 +987,7 @@ def main():
 
     alpha26_written_symbols = 0
     alpha26_index_path: Optional[str] = None
+    alpha26_column_count: Optional[int] = None
     alpha26_staged_rows = _count_staged_bucket_rows(alpha26_bucket_frames)
     if failed == 0:
         if alpha26_staged_rows == 0:
@@ -996,7 +999,7 @@ def main():
             )
         else:
             try:
-                alpha26_written_symbols, alpha26_index_path = _write_alpha26_market_buckets(
+                alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_market_buckets(
                     alpha26_bucket_frames,
                     touched_buckets=touched_buckets,
                 )
@@ -1051,6 +1054,7 @@ def main():
                 "alpha26_staged_rows": alpha26_staged_rows,
                 "alpha26_symbols": alpha26_written_symbols,
                 "alpha26_index_path": alpha26_index_path,
+                "column_count": alpha26_column_count,
                 "reconciled_orphans": reconciliation_orphans,
                 "reconciliation_deleted_blobs": reconciliation_deleted_blobs,
             },
