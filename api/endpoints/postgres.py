@@ -5,11 +5,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from api.service.dependencies import get_settings
 
 router = APIRouter()
+_HIDDEN_EXPLORER_SCHEMAS = frozenset({"information_schema", "public"})
 
 
 class QueryRequest(BaseModel):
@@ -17,6 +18,11 @@ class QueryRequest(BaseModel):
     table_name: str
     limit: int = Field(default=100, ge=1, le=1000)
     offset: int = Field(default=0, ge=0)
+
+
+class TableRequest(BaseModel):
+    schema_name: str
+    table_name: str
 
 
 def _resolve_postgres_dsn(request: Request) -> Optional[str]:
@@ -83,6 +89,22 @@ def _resolve_postgres_dsn(request: Request) -> Optional[str]:
     return _normalize_sync_driver(dsn)
 
 
+def _quote_identifier(identifier: str) -> str:
+    return '"' + str(identifier or "").replace('"', '""') + '"'
+
+
+def _validate_table_target(insp: Any, *, schema_name: str, table_name: str) -> None:
+    schema_names = insp.get_schema_names()
+    if schema_name not in schema_names:
+        raise HTTPException(status_code=404, detail=f"Schema '{schema_name}' not found.")
+
+    if table_name not in insp.get_table_names(schema=schema_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Table '{table_name}' not found in schema '{schema_name}'.",
+        )
+
+
 @router.get("/schemas")
 def list_schemas(request: Request) -> List[str]:
     """
@@ -95,9 +117,11 @@ def list_schemas(request: Request) -> List[str]:
     engine = create_engine(dsn)
     try:
         insp = inspect(engine)
-        # Filter out system schemas if desired, but for an explorer, showing all is usually requested.
-        # Common system schemas: information_schema, pg_catalog, pg_toast
-        schemas = insp.get_schema_names()
+        schemas = [
+            schema
+            for schema in insp.get_schema_names()
+            if str(schema or "").strip().lower() not in _HIDDEN_EXPLORER_SCHEMAS
+        ]
         return sorted(schemas)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch schemas: {str(e)}")
@@ -119,7 +143,7 @@ def list_tables(schema_name: str, request: Request) -> List[str]:
         insp = inspect(engine)
         if schema_name not in insp.get_schema_names():
             raise HTTPException(status_code=404, detail=f"Schema '{schema_name}' not found.")
-        
+
         tables = insp.get_table_names(schema=schema_name)
         return sorted(tables)
     except HTTPException:
@@ -141,31 +165,61 @@ def query_table(payload: QueryRequest, request: Request) -> List[Dict[str, Any]]
 
     engine = create_engine(dsn)
     try:
-        # 1. Security Check: Verify Schema and Table existence to prevent SQL Injection via identifiers
         insp = inspect(engine)
-        if payload.schema_name not in insp.get_schema_names():
-            raise HTTPException(status_code=404, detail=f"Schema '{payload.schema_name}' not found.")
-        
-        # Note: getting all table names might be slow for huge schemas, but safe for explorer.
-        if payload.table_name not in insp.get_table_names(schema=payload.schema_name):
-            raise HTTPException(status_code=404, detail=f"Table '{payload.table_name}' not found in schema '{payload.schema_name}'.")
+        _validate_table_target(
+            insp,
+            schema_name=payload.schema_name,
+            table_name=payload.table_name,
+        )
 
-        # 2. Construct Safe Query
-        # We use quotes for identifiers to handle case sensitivity and special chars.
-        # Since we validated the identifiers against the DB, we are reasonably safe.
-        query = f'SELECT * FROM "{payload.schema_name}"."{payload.table_name}" LIMIT {payload.limit} OFFSET {payload.offset}'
-        
-        # 3. Execute with Pandas
+        qualified_table = (
+            f"{_quote_identifier(payload.schema_name)}.{_quote_identifier(payload.table_name)}"
+        )
+        query = f"SELECT * FROM {qualified_table} LIMIT {payload.limit} OFFSET {payload.offset}"
+
         df = pd.read_sql(query, engine)
-        
-        # 4. JSON Serialization friendly conversion (handle NaNs, dates)
-        # 'records' orientation: [{'col1': val1}, {'col1': val2}]
         records = df.where(pd.notnull(df), None).to_dict(orient="records")
         return records
-        
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+    finally:
+        engine.dispose()
+
+
+@router.post("/purge")
+def purge_table(payload: TableRequest, request: Request) -> Dict[str, Any]:
+    """
+    Delete all rows from a specific table after schema/table validation.
+    """
+    dsn = _resolve_postgres_dsn(request)
+    if not dsn:
+        raise HTTPException(status_code=500, detail="Database connection string not configured.")
+
+    engine = create_engine(dsn)
+    try:
+        insp = inspect(engine)
+        _validate_table_target(
+            insp,
+            schema_name=payload.schema_name,
+            table_name=payload.table_name,
+        )
+
+        qualified_table = (
+            f"{_quote_identifier(payload.schema_name)}.{_quote_identifier(payload.table_name)}"
+        )
+        with engine.begin() as conn:
+            result = conn.execute(text(f"DELETE FROM {qualified_table}"))
+
+        return {
+            "schema_name": payload.schema_name,
+            "table_name": payload.table_name,
+            "row_count": max(int(result.rowcount or 0), 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to purge table: {str(e)}")
     finally:
         engine.dispose()

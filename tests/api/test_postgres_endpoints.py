@@ -11,7 +11,7 @@ from tests.api._client import get_test_client
 async def test_list_schemas(monkeypatch):
     mock_engine = MagicMock()
     mock_inspector = MagicMock()
-    mock_inspector.get_schema_names.return_value = ["public", "information_schema"]
+    mock_inspector.get_schema_names.return_value = ["public", "information_schema", "core", "gold"]
     
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
@@ -22,7 +22,7 @@ async def test_list_schemas(monkeypatch):
                 resp = await client.get("/api/system/postgres/schemas")
                  
     assert resp.status_code == 200
-    assert resp.json() == ["information_schema", "public"] # endpoint sorts results
+    assert resp.json() == ["core", "gold"]
 
 @pytest.mark.asyncio
 async def test_list_tables(monkeypatch):
@@ -118,5 +118,69 @@ async def test_query_table_security_fail(monkeypatch):
                     },
                 )
     
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_purge_table_success(monkeypatch):
+    mock_engine = MagicMock()
+    mock_inspector = MagicMock()
+    mock_inspector.get_schema_names.return_value = ["gold"]
+    mock_inspector.get_table_names.return_value = ["market_data"]
+    mock_result = MagicMock()
+    mock_result.rowcount = 7
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+    mock_begin = MagicMock()
+    mock_begin.__enter__.return_value = mock_conn
+    mock_begin.__exit__.return_value = False
+    mock_engine.begin.return_value = mock_begin
+
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        with patch("api.endpoints.postgres.inspect", return_value=mock_inspector):
+            app = create_app()
+            async with get_test_client(app) as client:
+                resp = await client.post(
+                    "/api/system/postgres/purge",
+                    json={
+                        "schema_name": "gold",
+                        "table_name": "market_data",
+                    },
+                )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "schema_name": "gold",
+        "table_name": "market_data",
+        "row_count": 7,
+    }
+    statement = mock_conn.execute.call_args[0][0]
+    assert str(statement) == 'DELETE FROM "gold"."market_data"'
+
+
+@pytest.mark.asyncio
+async def test_purge_table_security_fail(monkeypatch):
+    mock_engine = MagicMock()
+    mock_inspector = MagicMock()
+    mock_inspector.get_schema_names.return_value = ["gold"]
+    mock_inspector.get_table_names.return_value = ["market_data"]
+
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        with patch("api.endpoints.postgres.inspect", return_value=mock_inspector):
+            app = create_app()
+            async with get_test_client(app) as client:
+                resp = await client.post(
+                    "/api/system/postgres/purge",
+                    json={
+                        "schema_name": "gold",
+                        "table_name": "missing_table",
+                    },
+                )
+
     assert resp.status_code == 404
     assert "not found" in resp.json()["detail"]

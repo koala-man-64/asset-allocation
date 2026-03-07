@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PostgresService } from '@/services/PostgresService';
 import { DataTable } from '@/app/components/common/DataTable';
-import { Database, Table as TableIcon, RefreshCw } from 'lucide-react';
+import { Database, Table as TableIcon, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
@@ -19,14 +19,17 @@ export const PostgresExplorerPage: React.FC = () => {
   const [limit, setLimit] = useState<number>(100);
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [purging, setPurging] = useState<boolean>(false);
   const [metadataLoading, setMetadataLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!selectedSchema || !selectedTable) return;
 
     setLoading(true);
     setError(null);
+    setStatusMessage(null);
     try {
       const result = await PostgresService.queryTable({
         schema_name: selectedSchema,
@@ -40,6 +43,33 @@ export const PostgresExplorerPage: React.FC = () => {
       setLoading(false);
     }
   }, [selectedSchema, selectedTable, limit]);
+
+  const purgeData = useCallback(async () => {
+    if (!selectedSchema || !selectedTable) return;
+
+    const confirmed = window.confirm(
+      `Purge all rows from ${selectedSchema}.${selectedTable}? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setPurging(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const result = await PostgresService.purgeTable({
+        schema_name: selectedSchema,
+        table_name: selectedTable
+      });
+      setData([]);
+      setStatusMessage(
+        `Purged ${result.row_count} rows from ${result.schema_name}.${result.table_name}.`
+      );
+    } catch (err) {
+      setError(formatSystemStatusText(err));
+    } finally {
+      setPurging(false);
+    }
+  }, [selectedSchema, selectedTable]);
 
   useEffect(() => {
     const loadSchemas = async () => {
@@ -65,6 +95,8 @@ export const PostgresExplorerPage: React.FC = () => {
     const loadTables = async () => {
       if (!selectedSchema) return;
       setMetadataLoading(true);
+      setError(null);
+      setStatusMessage(null);
       setTables([]);
       setSelectedTable('');
       setData([]);
@@ -104,7 +136,7 @@ export const PostgresExplorerPage: React.FC = () => {
       </div>
 
       <div className="mcm-panel p-4 sm:p-5">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[220px_300px_160px_1fr_auto] lg:items-end">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[220px_300px_160px_1fr_auto_auto] lg:items-end">
           <div className="space-y-2">
             <label htmlFor="postgres-schema">Schema</label>
             <select
@@ -164,7 +196,7 @@ export const PostgresExplorerPage: React.FC = () => {
 
           <Button
             onClick={() => void fetchData()}
-            disabled={loading || !selectedTable || metadataLoading}
+            disabled={loading || purging || !selectedTable || metadataLoading}
             className="h-10 gap-2 px-6"
           >
             {loading ? (
@@ -174,8 +206,28 @@ export const PostgresExplorerPage: React.FC = () => {
             )}
             {loading ? 'Querying…' : 'Query Table'}
           </Button>
+
+          <Button
+            onClick={() => void purgeData()}
+            disabled={loading || purging || !selectedTable || metadataLoading}
+            variant="destructive"
+            className="h-10 gap-2 px-6"
+          >
+            {purging ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            {purging ? 'Purging…' : 'Purge Table'}
+          </Button>
         </div>
       </div>
+
+      {statusMessage && (
+        <div className="rounded-lg border border-mcm-teal/30 bg-mcm-teal/10 p-4 font-mono text-sm text-mcm-walnut">
+          <strong>Status:</strong> {statusMessage}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 font-mono text-sm text-destructive">
