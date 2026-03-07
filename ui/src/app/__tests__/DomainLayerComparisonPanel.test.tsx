@@ -109,7 +109,7 @@ function makeLayersWithEmptyPlatinum(): DataLayer[] {
   ];
 }
 
-function makeDomainTriggerLayers(): DataLayer[] {
+function makeLayerTriggerLayers(): DataLayer[] {
   return [
     {
       name: 'Bronze',
@@ -125,6 +125,14 @@ function makeDomainTriggerLayers(): DataLayer[] {
           lastUpdated: NOW,
           status: 'healthy',
           jobName: 'aca-job-market-bronze'
+        },
+        {
+          name: 'earnings',
+          type: 'delta',
+          path: 'earnings-data',
+          lastUpdated: NOW,
+          status: 'healthy',
+          jobName: 'aca-job-earnings-bronze'
         }
       ]
     },
@@ -374,13 +382,13 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect(screen.queryByText('Platinum')).not.toBeInTheDocument();
   });
 
-  it('triggers all configured jobs for a domain from the domain trigger rail', async () => {
+  it('triggers all configured jobs for a layer from the medallion header', async () => {
     const user = userEvent.setup();
 
     renderWithProviders(
       <DomainLayerComparisonPanel
         overall="healthy"
-        dataLayers={makeDomainTriggerLayers()}
+        dataLayers={makeLayerTriggerLayers()}
         recentJobs={makeJobs()}
         onRefresh={vi.fn().mockResolvedValue(undefined)}
         isRefreshing={false}
@@ -388,16 +396,16 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       />
     );
 
-    const domainTriggerButton = await screen.findByRole('button', { name: 'Trigger market domain' });
+    const layerTriggerButton = await screen.findByRole('button', { name: 'Trigger Bronze layer jobs' });
     await waitFor(() => {
-      expect(domainTriggerButton).toBeEnabled();
+      expect(layerTriggerButton).toBeEnabled();
     });
-    await user.click(domainTriggerButton);
+    await user.click(layerTriggerButton);
 
     await waitFor(() => {
       expect(triggerJobMock).toHaveBeenCalledTimes(2);
     });
     expect(triggerJobMock).toHaveBeenNthCalledWith(1, 'aca-job-market-bronze');
-    expect(triggerJobMock).toHaveBeenNthCalledWith(2, 'aca-job-market-silver');
+    expect(triggerJobMock).toHaveBeenNthCalledWith(2, 'aca-job-earnings-bronze');
   });
 });
