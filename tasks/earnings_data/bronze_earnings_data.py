@@ -93,7 +93,21 @@ def _format_invalid_payload_warning(symbol: str, exc: BaseException) -> str:
     message = (
         f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
     )
-    preview = _format_payload_preview(getattr(exc, "payload", None), max_chars=500)
+    preview_payload = getattr(exc, "payload", None)
+    if preview_payload is None:
+        preview_payload = {}
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None:
+            preview_payload["status_code"] = status_code
+        detail = getattr(exc, "detail", None)
+        if detail:
+            preview_payload["detail"] = detail
+        exc_message = str(exc).strip()
+        if exc_message and exc_message != detail:
+            preview_payload["message"] = exc_message
+        if not preview_payload:
+            preview_payload = None
+    preview = _format_payload_preview(preview_payload, max_chars=500)
     if preview:
         return f"{message} payload_preview={preview}"
     return message
