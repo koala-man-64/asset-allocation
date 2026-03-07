@@ -30,7 +30,6 @@ def test_run_alpha26_finance_gold_skips_empty_bucket_without_existing_schema(mon
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
     monkeypatch.setattr(delta_core, "get_delta_last_commit", lambda *_args, **_kwargs: None)
 
@@ -77,7 +76,6 @@ def test_run_alpha26_finance_gold_writes_empty_bucket_when_schema_exists(monkeyp
     captured: dict[str, object] = {"store_calls": 0, "paths": [], "frames": []}
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
     monkeypatch.setattr(
         delta_core,
@@ -182,7 +180,6 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
     monkeypatch.setattr(
         delta_core,
@@ -311,7 +308,6 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
 
 def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(monkeypatch):
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold_finance_data.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
     monkeypatch.setattr(
         delta_core,

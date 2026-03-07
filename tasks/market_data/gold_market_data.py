@@ -35,6 +35,13 @@ from tasks.common.market_reconciliation import (
     enforce_backfill_cutoff_on_bucket_tables,
     purge_orphan_rows_from_bucket_tables,
 )
+from tasks.common.postgres_gold_sync import (
+    bucket_sync_is_current,
+    load_domain_sync_state,
+    resolve_postgres_dsn,
+    sync_gold_bucket,
+    sync_state_cache_entry,
+)
 
 
 @dataclass(frozen=True)
@@ -580,8 +587,6 @@ def _run_alpha26_market_gold(
     from core.pipeline import DataPaths
     from core import delta_core
 
-    # Force rebuild bypasses watermark short-circuiting.
-    force_rebuild = layer_bucketing.gold_alpha26_force_rebuild()
     backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
 
     # Track per-run outcomes for caller status and logging.
@@ -590,6 +595,8 @@ def _run_alpha26_market_gold(
     skipped_unchanged = 0
     skipped_missing_source = 0
     symbol_to_bucket = _load_existing_gold_symbol_to_bucket_map()
+    postgres_dsn = resolve_postgres_dsn()
+    sync_state = load_domain_sync_state(postgres_dsn, domain="market") if postgres_dsn else {}
     pending_watermark_updates: dict[str, dict[str, Any]] = {}
     watermarks_dirty = False
     bucket_results: list[BucketExecutionResult] = []
@@ -600,14 +607,21 @@ def _run_alpha26_market_gold(
         gold_path = DataPaths.get_gold_market_bucket_path(bucket)
         watermark_key = f"bucket::{bucket}"
         silver_commit = delta_core.get_delta_last_commit(silver_container, silver_path)
+        gold_commit = delta_core.get_delta_last_commit(gold_container, gold_path)
         prior = watermarks.get(watermark_key, {})
+        postgres_sync_current = (
+            bucket_sync_is_current(sync_state, bucket=bucket, source_commit=silver_commit)
+            if postgres_dsn
+            else True
+        )
 
         # Skip stable buckets to reduce compute/write overhead on no-change runs.
         if (
-            (not force_rebuild)
-            and silver_commit is not None
+            silver_commit is not None
             and prior.get("silver_last_commit") is not None
             and prior.get("silver_last_commit") >= silver_commit
+            and gold_commit is not None
+            and postgres_sync_current
         ):
             skipped_unchanged += 1
             bucket_results.append(
@@ -620,6 +634,9 @@ def _run_alpha26_market_gold(
             )
             continue
 
+        prior_bucket_symbols = sorted(
+            symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
+        )
         bucket_symbol_to_bucket: dict[str, str] = {}
         bucket_compute_failed = False
 
@@ -760,6 +777,22 @@ def _run_alpha26_market_gold(
                 )
             except Exception as exc:
                 mdc.write_warning(f"Gold market metadata bucket artifact write failed bucket={bucket}: {exc}")
+            if postgres_dsn:
+                sync_result = sync_gold_bucket(
+                    domain="market",
+                    bucket=bucket,
+                    frame=write_decision.frame,
+                    scope_symbols=sorted(set(prior_bucket_symbols).union(bucket_symbol_to_bucket.keys())),
+                    source_commit=silver_commit,
+                    dsn=postgres_dsn,
+                )
+                sync_state[bucket] = sync_state_cache_entry(sync_result)
+                mdc.write_line(
+                    "postgres_gold_sync_status "
+                    f"domain=market bucket={bucket} status={sync_result.status} "
+                    f"rows_out={sync_result.row_count} symbols_out={sync_result.symbol_count} "
+                    f"scope_symbols={sync_result.scope_symbol_count} source_commit={silver_commit}"
+                )
             processed += 1
             symbol_to_bucket = _merge_symbol_to_bucket_map(
                 symbol_to_bucket,

@@ -256,12 +256,6 @@ export interface SystemAlert {
   component: string;
   timestamp: string;
   message: string;
-  acknowledged: boolean;
-  acknowledgedAt?: string | null;
-  acknowledgedBy?: string | null;
-  snoozedUntil?: string | null;
-  resolvedAt?: string | null;
-  resolvedBy?: string | null;
 }
 
 export interface ResourceHealth {

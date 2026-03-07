@@ -140,7 +140,6 @@ class AppSettings(BaseSettings):
     SILVER_LAYOUT_MODE: str = "alpha26"
     SILVER_ALPHA26_FORCE_REBUILD: bool = True
     GOLD_LAYOUT_MODE: str = "alpha26"
-    GOLD_ALPHA26_FORCE_REBUILD: bool = True
 
     # Comma-separated list for debug runs (e.g., "AAPL,MSFT"). Empty disables filtering.
     # Note: ETL jobs may override this from Postgres at startup.
@@ -205,7 +204,6 @@ def _apply_settings(new_settings: AppSettings) -> None:
     global SILVER_LAYOUT_MODE
     global SILVER_ALPHA26_FORCE_REBUILD
     global GOLD_LAYOUT_MODE
-    global GOLD_ALPHA26_FORCE_REBUILD
     global DEBUG_SYMBOLS
 
     settings = new_settings
@@ -244,7 +242,6 @@ def _apply_settings(new_settings: AppSettings) -> None:
     SILVER_LAYOUT_MODE = settings.SILVER_LAYOUT_MODE
     SILVER_ALPHA26_FORCE_REBUILD = settings.SILVER_ALPHA26_FORCE_REBUILD
     GOLD_LAYOUT_MODE = settings.GOLD_LAYOUT_MODE
-    GOLD_ALPHA26_FORCE_REBUILD = settings.GOLD_ALPHA26_FORCE_REBUILD
 
     DEBUG_SYMBOLS = settings.DEBUG_SYMBOLS
 

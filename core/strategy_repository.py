@@ -6,7 +6,7 @@ from typing import Optional, Dict
 from core.postgres import connect
 
 logger = logging.getLogger(__name__)
-STRATEGIES_TABLE = "platinum.strategies"
+STRATEGIES_TABLE = "core.strategies"
 
 class StrategyRepository:
     def __init__(self, dsn: Optional[str] = None):

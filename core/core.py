@@ -910,6 +910,10 @@ def _get_symbols_refresh_interval_hours() -> float:
     return value
 
 
+_SYMBOLS_TABLE = "core.symbols"
+_SYMBOL_SYNC_STATE_TABLE = "core.symbol_sync_state"
+
+
 def _ensure_symbols_tables(cur) -> None:
     """
     Ensure the symbols and sync metadata tables exist (best-effort).
@@ -917,8 +921,8 @@ def _ensure_symbols_tables(cur) -> None:
     This keeps `get_symbols()` self-healing for fresh environments.
     """
     cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS public.symbols (
+        f"""
+        CREATE TABLE IF NOT EXISTS {_SYMBOLS_TABLE} (
           symbol TEXT PRIMARY KEY
         );
         """
@@ -932,6 +936,7 @@ def _ensure_symbols_tables(cur) -> None:
         ("industry", "TEXT"),
         ("industry_2", "TEXT"),
         ("optionable", "TEXT"),
+        ("is_optionable", "BOOLEAN"),
         ("country", "TEXT"),
         ("exchange", "TEXT"),
         ("asset_type", "TEXT"),
@@ -942,34 +947,60 @@ def _ensure_symbols_tables(cur) -> None:
         ("source_massive", "BOOLEAN"),
         ("source_alpha_vantage", "BOOLEAN"),
         ("source_alphavantage", "BOOLEAN"),
+        ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
         ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
     ]
     for name, col_type in columns:
-        cur.execute(f"ALTER TABLE public.symbols ADD COLUMN IF NOT EXISTS {name} {col_type};")
+        cur.execute(f"ALTER TABLE {_SYMBOLS_TABLE} ADD COLUMN IF NOT EXISTS {name} {col_type};")
 
     # Keep both AV source flag spellings in sync for backward compatibility.
     cur.execute(
-        """
-        UPDATE public.symbols
+        f"""
+        UPDATE {_SYMBOLS_TABLE}
         SET source_alpha_vantage = COALESCE(source_alpha_vantage, source_alphavantage, FALSE),
             source_alphavantage = COALESCE(source_alphavantage, source_alpha_vantage, FALSE)
         WHERE source_alpha_vantage IS NULL OR source_alphavantage IS NULL;
         """
     )
 
+    cur.execute(
+        f"""
+        UPDATE {_SYMBOLS_TABLE}
+        SET is_optionable = CASE
+            WHEN upper(trim(optionable)) IN ('Y', 'YES', 'TRUE', 'T', '1') THEN TRUE
+            WHEN upper(trim(optionable)) IN ('N', 'NO', 'FALSE', 'F', '0') THEN FALSE
+            ELSE is_optionable
+        END
+        WHERE optionable IS NOT NULL AND is_optionable IS NULL;
+        """
+    )
+
+    cur.execute(
+        f"""
+        UPDATE {_SYMBOLS_TABLE}
+        SET optionable = CASE
+            WHEN is_optionable IS TRUE THEN 'Y'
+            WHEN is_optionable IS FALSE THEN 'N'
+            ELSE optionable
+        END
+        WHERE optionable IS NULL AND is_optionable IS NOT NULL;
+        """
+    )
+
     # Remove deprecated aggregate source column in favor of provider-specific booleans.
     cur.execute("DROP INDEX IF EXISTS idx_public_symbols_source;")
-    cur.execute("ALTER TABLE public.symbols DROP COLUMN IF EXISTS source;")
+    cur.execute("DROP INDEX IF EXISTS idx_core_symbols_source;")
+    cur.execute(f"ALTER TABLE {_SYMBOLS_TABLE} DROP COLUMN IF EXISTS source;")
 
     # Ensure a unique index exists for upserts even if the table was created without a PK.
     try:
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS symbols_symbol_uidx ON public.symbols(symbol);")
+        cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS symbols_symbol_uidx ON {_SYMBOLS_TABLE}(symbol);")
     except Exception as exc:
         write_warning(f"Unable to ensure unique index for symbols.symbol. ({exc})")
 
     cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS public.symbol_sync_state (
+        f"""
+        CREATE TABLE IF NOT EXISTS {_SYMBOL_SYNC_STATE_TABLE} (
           id SMALLINT PRIMARY KEY,
           last_refreshed_at TIMESTAMPTZ,
           last_refreshed_sources JSONB,
@@ -977,7 +1008,7 @@ def _ensure_symbols_tables(cur) -> None:
         );
         """
     )
-    cur.execute("INSERT INTO public.symbol_sync_state(id) VALUES (1) ON CONFLICT DO NOTHING;")
+    cur.execute(f"INSERT INTO {_SYMBOL_SYNC_STATE_TABLE}(id) VALUES (1) ON CONFLICT DO NOTHING;")
 
 
 def _symbols_refresh_due(cur, interval_hours: float) -> bool:
@@ -990,7 +1021,7 @@ def _symbols_refresh_due(cur, interval_hours: float) -> bool:
 
     try:
         _ensure_symbols_tables(cur)
-        cur.execute("SELECT last_refreshed_at FROM public.symbol_sync_state WHERE id = 1;")
+        cur.execute(f"SELECT last_refreshed_at FROM {_SYMBOL_SYNC_STATE_TABLE} WHERE id = 1;")
         row = cur.fetchone()
         last_refreshed_at = row[0] if row else None
         if last_refreshed_at is None:
@@ -1124,7 +1155,7 @@ def upsert_symbols_to_db(
         placeholders = ", ".join(["%s"] * len(db_cols))
         insert_sql = (
             f"""
-            INSERT INTO public.symbols AS s ({cols_sql})
+            INSERT INTO {_SYMBOLS_TABLE} AS s ({cols_sql})
             VALUES ({placeholders})
             ON CONFLICT (symbol) DO UPDATE SET {set_clause};
             """
@@ -1133,8 +1164,8 @@ def upsert_symbols_to_db(
 
         if sources is not None:
             target_cur.execute(
-                """
-                INSERT INTO public.symbol_sync_state(id, last_refreshed_at, last_refreshed_sources, last_refresh_error)
+                f"""
+                INSERT INTO {_SYMBOL_SYNC_STATE_TABLE}(id, last_refreshed_at, last_refreshed_sources, last_refresh_error)
                 VALUES (1, now(), %s, NULL)
                 ON CONFLICT (id) DO UPDATE
                 SET last_refreshed_at = EXCLUDED.last_refreshed_at,
@@ -1223,8 +1254,8 @@ def refresh_symbols_to_db_if_due() -> None:
             except Exception as exc:
                 try:
                     cur.execute(
-                        """
-                        INSERT INTO public.symbol_sync_state(id, last_refresh_error)
+                        f"""
+                        INSERT INTO {_SYMBOL_SYNC_STATE_TABLE}(id, last_refresh_error)
                         VALUES (1, %s)
                         ON CONFLICT (id) DO UPDATE
                         SET last_refresh_error = EXCLUDED.last_refresh_error;
@@ -1246,7 +1277,7 @@ def get_symbols_from_db():
             
         with connect(dsn) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM public.symbols")
+                cur.execute(f"SELECT * FROM {_SYMBOLS_TABLE}")
                 if cur.description is None:
                      return pd.DataFrame()
                 columns = [desc[0] for desc in cur.description]
@@ -1266,6 +1297,7 @@ def get_symbols_from_db():
                 'industry': 'Industry', 
                 'industry_2': 'Industry_2',
                 'optionable': 'Optionable',
+                'is_optionable': 'IsOptionable',
                 'country': 'Country',
                 'exchange': 'Exchange',
                 'asset_type': 'AssetType',
@@ -1331,7 +1363,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
         with connect(dsn) as conn:
             with conn.cursor() as cur:
                 # 1. Fetch existing symbols to avoid duplicates
-                cur.execute("SELECT symbol FROM public.symbols")
+                cur.execute(f"SELECT symbol FROM {_SYMBOLS_TABLE}")
                 existing_symbols = set(row[0] for row in cur.fetchall())
                 
                 # 2. Filter out existing
@@ -1349,7 +1381,7 @@ def sync_symbols_to_db(df_symbols: pd.DataFrame):
                 # 3. Insert using copy_rows
                 copy_rows(
                     cur,
-                    table="public.symbols",
+                    table=_SYMBOLS_TABLE,
                     columns=db_cols,
                     rows=df_new.itertuples(index=False, name=None)
                 )
@@ -1630,7 +1662,10 @@ def get_symbol_sync_state(dsn: str) -> Optional[dict]:
     """Retrieves the current symbol synchronization state from the database."""
     with connect(dsn) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, last_refreshed_at, last_refreshed_sources, last_refresh_error FROM public.symbol_sync_state WHERE id=1;")
+            cur.execute(
+                f"SELECT id, last_refreshed_at, last_refreshed_sources, last_refresh_error "
+                f"FROM {_SYMBOL_SYNC_STATE_TABLE} WHERE id=1;"
+            )
             row = cur.fetchone()
             if row:
                 return {

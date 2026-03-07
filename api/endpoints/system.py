@@ -20,7 +20,6 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from api.service.dependencies import (
-    get_alert_state_store,
     get_auth_manager,
     get_settings,
     get_system_health_cache,
@@ -79,7 +78,6 @@ REALTIME_TOPIC_BACKTESTS = "backtests"
 REALTIME_TOPIC_SYSTEM_HEALTH = "system-health"
 REALTIME_TOPIC_JOBS = "jobs"
 REALTIME_TOPIC_CONTAINER_APPS = "container-apps"
-REALTIME_TOPIC_ALERTS = "alerts"
 REALTIME_TOPIC_RUNTIME_CONFIG = "runtime-config"
 REALTIME_TOPIC_DEBUG_SYMBOLS = "debug-symbols"
 
@@ -388,44 +386,6 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         raise HTTPException(status_code=503, detail=f"System health unavailable: {exc}") from exc
 
     payload: Dict[str, Any] = dict(result.value or {})
-    raw_alerts = payload.get("alerts")
-    if isinstance(raw_alerts, list):
-        payload["alerts"] = [dict(item) if isinstance(item, dict) else item for item in raw_alerts]
-
-    alert_store = get_alert_state_store(request)
-    if alert_store and isinstance(payload.get("alerts"), list):
-        alert_ids: list[str] = []
-        for alert in payload["alerts"]:
-            if not isinstance(alert, dict):
-                continue
-            alert_id = str(alert.get("id") or "").strip()
-            if alert_id:
-                alert_ids.append(alert_id)
-        try:
-            states = alert_store.get_states(alert_ids)
-        except Exception:
-            logger.exception("Failed to load alert lifecycle states; returning stateless alerts.")
-            states = {}
-
-        for alert in payload["alerts"]:
-            if not isinstance(alert, dict):
-                continue
-            alert_id = str(alert.get("id") or "").strip()
-            if not alert_id:
-                continue
-            state = states.get(alert_id)
-            if not state:
-                continue
-
-            alert["acknowledged"] = bool(state.acknowledged_at)
-            alert["acknowledgedAt"] = _iso(state.acknowledged_at)
-            alert["acknowledgedBy"] = state.acknowledged_by
-            alert["snoozedUntil"] = _iso(state.snoozed_until)
-            alert["resolvedAt"] = _iso(state.resolved_at)
-            alert["resolvedBy"] = state.resolved_by
-    elif alert_store is None:
-        logger.info("System health alert store not configured (alerts will be unacknowledgeable).")
-
     logger.info(
         "System health payload ready: cache_hit=%s refresh_error=%s layers=%s alerts=%s resources=%s recent_jobs=%s",
         result.cache_hit,
@@ -1494,135 +1454,6 @@ def refresh_domain_columns(payload: DomainColumnsRefreshRequest, request: Reques
         },
         headers={"Cache-Control": "no-store"},
     )
-
-
-class SnoozeRequest(BaseModel):
-    minutes: Optional[int] = Field(default=None, ge=1, le=7 * 24 * 60)
-    until: Optional[datetime] = None
-
-
-def _require_alert_store(request: Request):
-    store = get_alert_state_store(request)
-    if store is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Alert lifecycle persistence is not configured (POSTGRES_DSN).",
-        )
-    return store
-
-
-@router.post("/alerts/{alert_id}/ack")
-def acknowledge_alert(alert_id: str, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-    logger.info("Acknowledge alert: id=%s actor=%s", alert_id, actor or "-")
-    try:
-        state = store.acknowledge(alert_id, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to acknowledge alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to acknowledge alert: {exc}") from exc
-    response_payload = {
-        "alertId": state.alert_id,
-        "acknowledgedAt": _iso(state.acknowledged_at),
-        "acknowledgedBy": state.acknowledged_by,
-        "snoozedUntil": _iso(state.snoozed_until),
-        "resolvedAt": _iso(state.resolved_at),
-        "resolvedBy": state.resolved_by,
-    }
-    _emit_realtime(
-        REALTIME_TOPIC_ALERTS,
-        "ALERT_STATE_CHANGED",
-        {
-            "action": "acknowledge",
-            "alertId": state.alert_id,
-        },
-    )
-    _emit_realtime(
-        REALTIME_TOPIC_SYSTEM_HEALTH,
-        "SYSTEM_HEALTH_UPDATE",
-        {"source": "alerts", "alertId": state.alert_id},
-    )
-    return JSONResponse(response_payload)
-
-
-@router.post("/alerts/{alert_id}/snooze")
-def snooze_alert(alert_id: str, payload: SnoozeRequest, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-
-    until = payload.until
-    if until is None:
-        minutes = payload.minutes or 30
-        until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
-
-    logger.info(
-        "Snooze alert: id=%s actor=%s minutes=%s until=%s", alert_id, actor or "-", payload.minutes, payload.until
-    )
-    try:
-        state = store.snooze(alert_id, until=until, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to snooze alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to snooze alert: {exc}") from exc
-    response_payload = {
-        "alertId": state.alert_id,
-        "acknowledgedAt": _iso(state.acknowledged_at),
-        "acknowledgedBy": state.acknowledged_by,
-        "snoozedUntil": _iso(state.snoozed_until),
-        "resolvedAt": _iso(state.resolved_at),
-        "resolvedBy": state.resolved_by,
-    }
-    _emit_realtime(
-        REALTIME_TOPIC_ALERTS,
-        "ALERT_STATE_CHANGED",
-        {
-            "action": "snooze",
-            "alertId": state.alert_id,
-            "snoozedUntil": response_payload["snoozedUntil"],
-        },
-    )
-    _emit_realtime(
-        REALTIME_TOPIC_SYSTEM_HEALTH,
-        "SYSTEM_HEALTH_UPDATE",
-        {"source": "alerts", "alertId": state.alert_id},
-    )
-    return JSONResponse(response_payload)
-
-
-@router.post("/alerts/{alert_id}/resolve")
-def resolve_alert(alert_id: str, request: Request) -> JSONResponse:
-    validate_auth(request)
-    store = _require_alert_store(request)
-    actor = _get_actor(request)
-    logger.info("Resolve alert: id=%s actor=%s", alert_id, actor or "-")
-    try:
-        state = store.resolve(alert_id, actor=actor)
-    except Exception as exc:
-        logger.exception("Failed to resolve alert: id=%s", alert_id)
-        raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {exc}") from exc
-    response_payload = {
-        "alertId": state.alert_id,
-        "acknowledgedAt": _iso(state.acknowledged_at),
-        "acknowledgedBy": state.acknowledged_by,
-        "snoozedUntil": _iso(state.snoozed_until),
-        "resolvedAt": _iso(state.resolved_at),
-        "resolvedBy": state.resolved_by,
-    }
-    _emit_realtime(
-        REALTIME_TOPIC_ALERTS,
-        "ALERT_STATE_CHANGED",
-        {
-            "action": "resolve",
-            "alertId": state.alert_id,
-        },
-    )
-    _emit_realtime(
-        REALTIME_TOPIC_SYSTEM_HEALTH,
-        "SYSTEM_HEALTH_UPDATE",
-        {"source": "alerts", "alertId": state.alert_id},
-    )
-    return JSONResponse(response_payload)
 
 
 @router.get("/lineage")

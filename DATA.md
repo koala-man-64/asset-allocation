@@ -1,12 +1,13 @@
 # DATA
 
-This document is the current medallion data interface contract for AssetAllocation. It covers the canonical persisted datasets written by the Bronze, Silver, and Gold jobs under `tasks/` for the `market`, `finance`, `earnings`, and `price-target` domains.
+This document is the current data interface contract for AssetAllocation. It covers the canonical persisted datasets written by the Bronze, Silver, and Gold jobs under `tasks/` for the `market`, `finance`, `earnings`, and `price-target` domains, plus the Postgres-backed strategy configuration contract used by the strategies API and UI.
 
 Scope notes:
 
-- This contract documents the bucketed medallion tables, not Postgres control-plane tables.
+- This contract primarily documents the bucketed medallion tables, with one explicit control-plane exception: the `platinum.strategies` table that stores strategy metadata and validated strategy configuration JSON.
 - `finance` Bronze stores provider payloads as opaque JSON strings. Downstream contracts are the extracted Silver and Gold schemas, not the provider's full inner JSON shape.
 - The optional `market_by_date` Gold materialization is excluded because its column set is runtime-configurable via `GOLD_MARKET_BY_DATE_COLUMNS`, so it is not a fixed interface contract.
+- The Postgres `gold.*` tables are serving replicas of the canonical Gold Delta buckets. `core.gold_sync_state` tracks whether each alphabet bucket has been fully synchronized for a given source commit.
 
 ## Contract Conventions
 
@@ -39,6 +40,122 @@ Scope notes:
 | Bronze | price-target | `price-target-data/buckets/{bucket}` | `symbol` + `obs_date` | Raw analyst target snapshots plus ingestion metadata. |
 | Silver | price-target | `price-target-data/buckets/{bucket}` | `symbol` + `obs_date` | Daily forward-filled target history. |
 | Gold | price-target | `targets/buckets/{bucket}` | `symbol` + `obs_date` | Dispersion and revision features built from Silver targets. |
+| Control plane | strategies | `Postgres table platinum.strategies` | `name` | Strategy metadata plus validated `StrategyConfig` JSON used by `/strategies` API routes and the React strategy editor. |
+
+## Gold Postgres Serving Replica
+
+The Gold jobs can optionally mirror successful Gold bucket writes into Postgres when `POSTGRES_DSN` is configured.
+
+| Object | Role | Grain |
+| --- | --- | --- |
+| `gold.market_data` | Serving replica of Gold market features with symbol/date and date/symbol indexes. | `symbol` + `date` |
+| `gold.finance_data` | Serving replica of Gold finance features with symbol/date and date/symbol indexes. | `symbol` + `date` |
+| `gold.earnings_data` | Serving replica of Gold earnings features with symbol/date and date/symbol indexes. | `symbol` + `date` |
+| `gold.price_target_data` | Serving replica of Gold price-target features with symbol/obs_date and obs_date/symbol indexes. | `symbol` + `obs_date` |
+| `gold.*_by_date` views | By-date accessors over the same physical Gold serving tables. | Same as base table |
+| `core.gold_sync_state` | Per-domain, per-bucket sync checkpoint used to bootstrap full population before incremental skip behavior resumes. | `domain` + `bucket` |
+
+## Strategies
+
+### Strategy Storage
+
+Path: `Postgres table platinum.strategies`
+
+Each row stores a single named strategy. The API returns either the full record (`/strategies/{name}/detail`) or just the validated `config` payload (`/strategies/{name}`). On create or update, the API validates and normalizes the incoming `config` against `StrategyConfig` before writing it back to Postgres.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `name` | string | Unique strategy identifier. This is the lookup key used by the repository and API routes. |
+| `type` | string | Freeform strategy classification string. The API defaults it to `configured`; the current UI offers `configured` and `code-based`. |
+| `description` | string | Optional human-readable description shown in the UI and returned by the detail API. |
+| `updated_at` | datetime | Server-managed timestamp set to `NOW()` on insert and update. |
+| `config` | JSON object | Nested `StrategyConfig` document containing selection settings, conflict policy, and exit-rule definitions. |
+
+### Strategy Config: `config`
+
+Unexpected keys are rejected. The backend model uses `extra="forbid"` for both `StrategyConfig` and `ExitRule`, so the contract below is closed rather than open-ended.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `universe` | string | Universe identifier for the strategy, such as `SP500`. Default is `SP500`. |
+| `rebalance` | string | Rebalance cadence label. Default is `monthly`; the current UI offers `daily`, `weekly`, `monthly`, and `quarterly`. |
+| `longOnly` | boolean | Long-only flag for the strategy. Default is `true`. |
+| `topN` | integer | Target number of selected holdings or symbols. Must be `>= 1`. Default is `20`. |
+| `lookbackWindow` | integer | Lookback window used by strategy logic. Must be `>= 1`. Default is `63`. |
+| `holdingPeriod` | integer | Planned holding horizon in bars or days. Must be `>= 1`. Default is `21`. |
+| `costModel` | string | Cost-model identifier used by strategy or simulation logic. Default is `default`. |
+| `intrabarConflictPolicy` | enum | Same-bar tie-break policy when multiple exit rules trigger. Supported values are `stop_first`, `take_profit_first`, and `priority_order`. Default is `stop_first`. |
+| `exits` | array of `ExitRule` | Ordered list of exit rules. Duplicate rule IDs are rejected. When `priority` is omitted, the backend normalizes it to the rule's array index. |
+
+### Exit Rule Components: `config.exits[]`
+
+Milestone 1 keeps exit handling constrained to full position exits. The UI reflects that by treating `scope` and `action` as fixed values.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Required rule identifier, unique within the strategy. This ID is emitted in exit decisions and trade metadata. |
+| `enabled` | boolean | When `false`, the evaluator skips the rule entirely. Default is `true`. |
+| `type` | enum | Rule type. Supported values are `stop_loss_fixed`, `take_profit_fixed`, `trailing_stop_pct`, `trailing_stop_atr`, and `time_stop`. |
+| `scope` | enum | Exit scope. The only supported value is `position`. Default is `position`. |
+| `priceField` | enum or null | Price observed on the bar to check whether the rule triggered. Supported values are `open`, `high`, `low`, and `close`. Type-specific defaults apply when omitted. |
+| `value` | number or null | Rule threshold. For fixed and trailing-percent exits it is a percentage-like decimal, for ATR trailing stops it is an ATR multiple, and for `time_stop` it is a bar count. Must be `> 0`; `time_stop` requires an integer value. |
+| `atrColumn` | string or null | Feature column name used only by `trailing_stop_atr`. Required for that rule type and rejected for all others. |
+| `priority` | integer or null | Explicit rule order for resolution. Lower numbers win. If omitted, the backend assigns the array index. |
+| `action` | enum | Exit action. The only supported value is `exit_full`. Default is `exit_full`. |
+| `minHoldBars` | integer | Minimum `bars_held` before the rule is eligible to fire. Must be `>= 0`. Default is `0`. |
+| `reference` | enum or null | Trigger anchor for price-based rules. Supported values are `entry_price` and `highest_since_entry`. Type-specific defaults apply; `time_stop` rejects `reference`. |
+
+### Exit Rule Types And Trigger Semantics
+
+| Rule type | Trigger calculation | Required fields | Defaults and constraints | Exit price recorded |
+| --- | --- | --- | --- | --- |
+| `stop_loss_fixed` | `entry_price * (1 - value)` | `id`, `type`, `value` | Defaults `reference` to `entry_price` and `priceField` to `low`. Rejects `atrColumn`. | Computed trigger price, not the observed bar price. |
+| `take_profit_fixed` | `entry_price * (1 + value)` | `id`, `type`, `value` | Defaults `reference` to `entry_price` and `priceField` to `high`. Rejects `atrColumn`. | Computed trigger price. |
+| `trailing_stop_pct` | `(highest_since_entry or entry_price) * (1 - value)` | `id`, `type`, `value` | Defaults `reference` to `highest_since_entry` and `priceField` to `low`. Rejects `atrColumn`. | Computed trigger price. |
+| `trailing_stop_atr` | `(highest_since_entry or entry_price) - (value * bar.features[atrColumn])` | `id`, `type`, `value`, `atrColumn` | Defaults `reference` to `highest_since_entry` and `priceField` to `low`. If the ATR feature is missing on the bar, the rule does not fire. | Computed trigger price. |
+| `time_stop` | Fires once `bars_held >= value` | `id`, `type`, integer `value` | Forces `priceField` to `close`. Rejects `reference` and `atrColumn`. | Current bar `close` price. |
+
+### Intrabar Conflict Policies
+
+The evaluator sorts triggered candidates by `(priority, ordinal)` before applying policy-specific logic. `ordinal` is the rule's array position, so array order is the final tie-breaker when priorities match.
+
+| Policy | Behavior |
+| --- | --- |
+| `stop_first` | If a stop-like rule and a take-profit rule trigger on the same bar, choose the first stop-like candidate after ordering. If all triggered rules are from the same class, choose the first ordered rule. |
+| `take_profit_first` | If both classes trigger on the same bar, choose the first take-profit candidate after ordering. Otherwise choose the first ordered rule. |
+| `priority_order` | Ignore stop-versus-profit class and choose the first ordered rule directly. |
+
+### Runtime Evaluation Notes
+
+- The evaluator advances position state before testing exit rules. That means `bars_held` is incremented for the current bar first, and trailing-stop anchors such as `highest_since_entry` include the current bar's prices before trigger evaluation.
+- A price-threshold rule checks the selected `priceField` against the trigger, but the emitted `exit_price` is the computed trigger price rather than the observed intrabar print.
+- Disabled rules and rules blocked by `minHoldBars` are skipped.
+- When more than one rule triggers on a bar, the evaluation records an intrabar conflict and returns a single chosen exit decision according to `intrabarConflictPolicy`.
+
+### Editor-Seeded Defaults
+
+These are UI defaults for newly created strategies and rules, not additional backend requirements:
+
+- New strategies start with `universe=SP500`, `rebalance=monthly`, `longOnly=true`, `topN=20`, `lookbackWindow=63`, `holdingPeriod=21`, `costModel=default`, `intrabarConflictPolicy=stop_first`, and an empty `exits` array.
+- New `stop_loss_fixed` rules are seeded with `value=0.08`, `reference=entry_price`, and `priceField=low`.
+- New `take_profit_fixed` rules are seeded with `value=0.15`, `reference=entry_price`, and `priceField=high`.
+- New `trailing_stop_pct` rules are seeded with `value=0.07`, `reference=highest_since_entry`, and `priceField=low`.
+- New `trailing_stop_atr` rules are seeded with `value=3`, `atrColumn=atr_14d`, `reference=highest_since_entry`, and `priceField=low`.
+- New `time_stop` rules are seeded with `value=40` and `priceField=close`.
+
+Evidence:
+
+- `core/strategy_repository.py:9-35`
+- `core/strategy_repository.py:40-89`
+- `api/endpoints/strategies.py:25-46`
+- `api/endpoints/strategies.py:75-106`
+- `core/strategy_engine/contracts.py:7-121`
+- `core/strategy_engine/exit_rules.py:39-184`
+- `core/strategy_engine/position_state.py:42-68`
+- `ui/src/app/components/pages/StrategyEditor.tsx:64-150`
+- `ui/src/app/components/pages/StrategyEditor.tsx:376-619`
+- `tests/core/strategy_engine/test_contracts.py:6-61`
+- `tests/core/strategy_engine/test_exit_rules.py:10-166`
 
 ## Market
 

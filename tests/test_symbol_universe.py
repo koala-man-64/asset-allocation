@@ -106,6 +106,7 @@ def test_upsert_symbols_coerces_source_flags_to_bool():
 
     assert len(cur.executemany_calls) == 1
     sql, rows = cur.executemany_calls[0]
+    assert "INSERT INTO core.symbols AS s" in sql
     assert "source_nasdaq" in sql
     assert "source_massive" in sql
     assert "source_alpha_vantage" in sql

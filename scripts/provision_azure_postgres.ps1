@@ -396,7 +396,10 @@ function Ensure-PostgresIndexes {
   $sql = @'
 DO $$
 BEGIN
-  IF to_regclass('platinum.strategies') IS NOT NULL THEN
+  IF to_regclass('core.strategies') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS idx_core_strategies_type ON core.strategies(type);
+    CREATE INDEX IF NOT EXISTS idx_core_strategies_updated_at ON core.strategies(updated_at DESC);
+  ELSIF to_regclass('platinum.strategies') IS NOT NULL THEN
     CREATE INDEX IF NOT EXISTS platinum.idx_strategies_type ON platinum.strategies(type);
     CREATE INDEX IF NOT EXISTS platinum.idx_strategies_updated_at ON platinum.strategies(updated_at DESC);
   ELSIF to_regclass('public.strategies') IS NOT NULL THEN
@@ -404,16 +407,11 @@ BEGIN
     CREATE INDEX IF NOT EXISTS public.idx_strategies_updated_at ON public.strategies(updated_at DESC);
   END IF;
 
-  IF to_regclass('backtest.runs') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_backtest_runs_status_submitted_at
-      ON backtest.runs(status, submitted_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_backtest_runs_completed_at
-      ON backtest.runs(completed_at DESC);
-  END IF;
-
-  IF to_regclass('monitoring.alert_state') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_alert_state_updated_at
-      ON monitoring.alert_state(updated_at DESC);
+  IF to_regclass('core.runs') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS idx_core_runs_status_submitted_at
+      ON core.runs(status, submitted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_core_runs_completed_at
+      ON core.runs(completed_at DESC);
   END IF;
 
   IF to_regclass('core.runtime_config') IS NOT NULL THEN
@@ -424,6 +422,9 @@ BEGIN
   IF to_regclass('core.symbols') IS NOT NULL THEN
     CREATE INDEX IF NOT EXISTS idx_core_symbols_sector ON core.symbols(sector);
     CREATE INDEX IF NOT EXISTS idx_core_symbols_industry ON core.symbols(industry);
+    CREATE INDEX IF NOT EXISTS idx_core_symbols_status ON core.symbols(status);
+    CREATE INDEX IF NOT EXISTS idx_core_symbols_exchange ON core.symbols(exchange);
+    CREATE INDEX IF NOT EXISTS idx_core_symbols_updated_at ON core.symbols(updated_at DESC);
   END IF;
 
   IF to_regclass('public.symbols') IS NOT NULL THEN
@@ -436,18 +437,29 @@ BEGIN
   IF to_regclass('gold.market_data') IS NOT NULL THEN
     CREATE INDEX IF NOT EXISTS idx_gold_market_data_symbol_date
       ON gold.market_data(symbol, date DESC);
+    CREATE INDEX IF NOT EXISTS idx_gold_market_data_date_symbol
+      ON gold.market_data(date DESC, symbol);
   END IF;
 
   IF to_regclass('gold.finance_data') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_gold_finance_data_date ON gold.finance_data(date);
+    CREATE INDEX IF NOT EXISTS idx_gold_finance_data_symbol_date
+      ON gold.finance_data(symbol, date DESC);
+    CREATE INDEX IF NOT EXISTS idx_gold_finance_data_date_symbol
+      ON gold.finance_data(date DESC, symbol);
   END IF;
 
   IF to_regclass('gold.earnings_data') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_gold_earnings_data_date ON gold.earnings_data(date);
+    CREATE INDEX IF NOT EXISTS idx_gold_earnings_data_symbol_date
+      ON gold.earnings_data(symbol, date DESC);
+    CREATE INDEX IF NOT EXISTS idx_gold_earnings_data_date_symbol
+      ON gold.earnings_data(date DESC, symbol);
   END IF;
 
   IF to_regclass('gold.price_target_data') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_gold_price_target_data_date ON gold.price_target_data(date);
+    CREATE INDEX IF NOT EXISTS idx_gold_price_target_data_symbol_obs_date
+      ON gold.price_target_data(symbol, obs_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_gold_price_target_data_obs_date_symbol
+      ON gold.price_target_data(obs_date DESC, symbol);
   END IF;
 END $$;
 '@

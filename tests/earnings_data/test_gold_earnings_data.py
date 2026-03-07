@@ -51,7 +51,6 @@ def test_run_alpha26_earnings_gold_skips_empty_bucket_without_existing_schema(mo
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}
 
     monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
     monkeypatch.setattr(delta_core, "get_delta_last_commit", lambda *_args, **_kwargs: None)
 
@@ -98,7 +97,6 @@ def test_run_alpha26_earnings_gold_writes_empty_bucket_when_schema_exists(monkey
     captured: dict[str, object] = {"store_calls": 0}
 
     monkeypatch.setattr(gold.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold.layer_bucketing, "gold_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(gold.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
     monkeypatch.setattr(delta_core, "get_delta_last_commit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(

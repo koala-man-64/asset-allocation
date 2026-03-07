@@ -18,6 +18,13 @@ from tasks.common.market_reconciliation import (
     enforce_backfill_cutoff_on_bucket_tables,
     purge_orphan_rows_from_bucket_tables,
 )
+from tasks.common.postgres_gold_sync import (
+    bucket_sync_is_current,
+    load_domain_sync_state,
+    resolve_postgres_dsn,
+    sync_gold_bucket,
+    sync_state_cache_entry,
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +33,35 @@ class FeatureJobConfig:
     gold_container: str
     max_workers: int
     tickers: Sequence[str]
+
+
+def _load_existing_gold_earnings_symbol_to_bucket_map() -> dict[str, str]:
+    out: dict[str, str] = {}
+    existing = layer_bucketing.load_layer_symbol_index(layer="gold", domain="earnings")
+    if existing is None or existing.empty:
+        return out
+    if "symbol" not in existing.columns or "bucket" not in existing.columns:
+        return out
+
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    for _, row in existing.iterrows():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        bucket = str(row.get("bucket") or "").strip().upper()
+        if not symbol or bucket not in valid_buckets:
+            continue
+        out[symbol] = bucket
+    return out
+
+
+def _merge_symbol_to_bucket_map(
+    existing: dict[str, str],
+    *,
+    touched_bucket: str,
+    touched_symbol_to_bucket: dict[str, str],
+) -> dict[str, str]:
+    out = {symbol: bucket for symbol, bucket in existing.items() if bucket != touched_bucket}
+    out.update(touched_symbol_to_bucket)
+    return out
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -357,30 +393,43 @@ def _run_alpha26_earnings_gold(
     from core.pipeline import DataPaths
     from core import delta_core
 
-    force_rebuild = layer_bucketing.gold_alpha26_force_rebuild()
     backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
     processed = 0
     skipped_unchanged = 0
     skipped_missing_source = 0
     failed = 0
     watermarks_dirty = False
-    symbol_to_bucket: dict[str, str] = {}
+    symbol_to_bucket = _load_existing_gold_earnings_symbol_to_bucket_map()
+    postgres_dsn = resolve_postgres_dsn()
+    sync_state = load_domain_sync_state(postgres_dsn, domain="earnings") if postgres_dsn else {}
+    pending_watermark_updates: dict[str, dict[str, Any]] = {}
 
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         silver_path = DataPaths.get_silver_earnings_bucket_path(bucket)
         gold_path = DataPaths.get_gold_earnings_bucket_path(bucket)
         watermark_key = f"bucket::{bucket}"
         silver_commit = delta_core.get_delta_last_commit(silver_container, silver_path)
+        gold_commit = delta_core.get_delta_last_commit(gold_container, gold_path)
         prior = watermarks.get(watermark_key, {})
+        postgres_sync_current = (
+            bucket_sync_is_current(sync_state, bucket=bucket, source_commit=silver_commit)
+            if postgres_dsn
+            else True
+        )
         if (
-            (not force_rebuild)
-            and silver_commit is not None
+            silver_commit is not None
             and prior.get("silver_last_commit") is not None
             and prior.get("silver_last_commit") >= silver_commit
+            and gold_commit is not None
+            and postgres_sync_current
         ):
             skipped_unchanged += 1
             continue
 
+        prior_bucket_symbols = sorted(
+            symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
+        )
+        bucket_symbol_to_bucket: dict[str, str] = {}
         if silver_commit is None:
             skipped_missing_source += 1
             df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
@@ -403,7 +452,7 @@ def _run_alpha26_earnings_gold(
                         if df_features is None or df_features.empty:
                             continue
                         symbol_frames.append(df_features)
-                        symbol_to_bucket[ticker] = bucket
+                        bucket_symbol_to_bucket[ticker] = bucket
                     except Exception as exc:
                         failed += 1
                         mdc.write_warning(f"Gold earnings alpha26 compute failed for {ticker}: {exc}")
@@ -450,13 +499,33 @@ def _run_alpha26_earnings_gold(
                 )
             except Exception as exc:
                 mdc.write_warning(f"Gold earnings metadata bucket artifact write failed bucket={bucket}: {exc}")
+            if postgres_dsn:
+                sync_result = sync_gold_bucket(
+                    domain="earnings",
+                    bucket=bucket,
+                    frame=write_decision.frame,
+                    scope_symbols=sorted(set(prior_bucket_symbols).union(bucket_symbol_to_bucket.keys())),
+                    source_commit=silver_commit,
+                    dsn=postgres_dsn,
+                )
+                sync_state[bucket] = sync_state_cache_entry(sync_result)
+                mdc.write_line(
+                    "postgres_gold_sync_status "
+                    f"domain=earnings bucket={bucket} status={sync_result.status} "
+                    f"rows_out={sync_result.row_count} symbols_out={sync_result.symbol_count} "
+                    f"scope_symbols={sync_result.scope_symbol_count} source_commit={silver_commit}"
+                )
             processed += 1
+            symbol_to_bucket = _merge_symbol_to_bucket_map(
+                symbol_to_bucket,
+                touched_bucket=bucket,
+                touched_symbol_to_bucket=bucket_symbol_to_bucket,
+            )
             if silver_commit is not None:
-                watermarks[watermark_key] = {
+                pending_watermark_updates[watermark_key] = {
                     "silver_last_commit": silver_commit,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
-                watermarks_dirty = True
         except Exception as exc:
             failed += 1
             mdc.write_error(f"Gold earnings alpha26 write failed bucket={bucket}: {exc}")
@@ -478,6 +547,14 @@ def _run_alpha26_earnings_gold(
             )
         except Exception as exc:
             mdc.write_warning(f"Gold earnings metadata artifact write failed: {exc}")
+        if pending_watermark_updates:
+            watermarks.update(pending_watermark_updates)
+            watermarks_dirty = True
+    else:
+        if pending_watermark_updates:
+            mdc.write_warning(
+                "Gold earnings symbol index unavailable; skipping watermark updates to keep index/watermark state consistent."
+            )
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

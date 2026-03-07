@@ -313,7 +313,20 @@ def _find_latest_market_date(
 
 def _query_symbols(conn, *, q: Optional[str] = None) -> pd.DataFrame:  # type: ignore[no-untyped-def]
     query = """
-        SELECT symbol, name, sector, industry, country, is_optionable
+        SELECT
+            symbol,
+            name,
+            sector,
+            industry,
+            country,
+            COALESCE(
+                is_optionable,
+                CASE
+                    WHEN upper(trim(COALESCE(optionable, ''))) IN ('Y', 'YES', 'TRUE', 'T', '1') THEN TRUE
+                    WHEN upper(trim(COALESCE(optionable, ''))) IN ('N', 'NO', 'FALSE', 'F', '0') THEN FALSE
+                    ELSE NULL
+                END
+            ) AS is_optionable
         FROM core.symbols
         ORDER BY symbol
     """

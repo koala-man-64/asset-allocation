@@ -12,8 +12,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS run_update_trigger ON backtest.runs;
-
-CREATE TRIGGER run_update_trigger
-AFTER INSERT OR UPDATE ON backtest.runs
-FOR EACH ROW EXECUTE FUNCTION notify_run_update();
+DO $$
+BEGIN
+  IF to_regclass('core.runs') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS run_update_trigger ON core.runs';
+    EXECUTE 'CREATE TRIGGER run_update_trigger
+             AFTER INSERT OR UPDATE ON core.runs
+             FOR EACH ROW EXECUTE FUNCTION notify_run_update()';
+  END IF;
+END $$;

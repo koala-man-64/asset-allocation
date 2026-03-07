@@ -12,7 +12,6 @@ import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
 // Using .then(m => ({ default: m.ComponentName })) pattern for named exports
 const DataExplorerPage = lazy(() => import('@/app/components/pages/DataExplorerPage').then(m => ({ default: m.DataExplorerPage })));
 const LiveTradingPage = lazy(() => import('@/app/components/pages/LiveTradingPage').then(m => ({ default: m.LiveTradingPage })));
-const AlertsPage = lazy(() => import('@/app/components/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const SystemStatusPage = lazy(() => import('@/app/components/pages/SystemStatusPage').then(m => ({ default: m.SystemStatusPage })));
 const DataQualityPage = lazy(() => import('@/app/components/pages/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
 const StockExplorerPage = lazy(() => import('@/app/components/pages/StockExplorerPage').then(m => ({ default: m.StockExplorerPage })));
@@ -99,7 +98,6 @@ function AppContent() {
                 <Route path="/" element={<Navigate to="/system-status" replace />} />
                 <Route path="/data-explorer" element={<DataExplorerPage />} />
                 <Route path="/live-trading" element={<LiveTradingPage />} />
-                <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/data-quality" element={<DataQualityPage />} />
                 <Route path="/data-profiling" element={<DataProfilingPage />} />
                 <Route path="/system-status" element={<SystemStatusPage />} />

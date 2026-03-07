@@ -11,7 +11,7 @@ API Root
 └── /api
     ├── /docs [GET] (app.swagger_ui) - Browser Swagger UI docs :: api/service/app.py
     ├── /openapi.json [GET] (app.openapi_json) - OpenAPI spec payload :: api/service/app.py
-    ├── /ws/updates [WebSocket] (app.websocket_endpoint) - Real-time updates (system health/alerts) :: api/service/app.py <== ui/src/hooks/useRealtime.ts
+    ├── /ws/updates [WebSocket] (app.websocket_endpoint) - Real-time updates (system health/jobs/container apps/runtime config/debug symbols) :: api/service/app.py <== ui/src/hooks/useRealtime.ts
     
     # System & Health (Matches ui/src/hooks/useDataQueries.ts)
     ├── /system
@@ -28,11 +28,6 @@ API Root
     │   ├── /purge [POST] (system.purge_data) - Queues layer/domain purge operation :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /purge/{operation_id} [GET] (system.get_purge_operation) - Polls purge/preview operation status/result :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /purge-symbols [POST] (system.purge_symbols) - Queues selected-symbol purge batch :: api/endpoints/system.py <== ui/src/services/DataService.ts
-    │   ├── /alerts
-    │   │   └── /{alert_id}
-    │   │       ├── /ack [POST] (system.acknowledge_alert) - Acknowledges a system alert :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
-    │   │       ├── /snooze [POST] (system.snooze_alert) - Snoozes an alert for a specified duration :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
-    │   │       └── /resolve [POST] (system.resolve_alert) - Marks an alert as resolved :: api/endpoints/system.py <== ui/src/app/components/pages/system-status/AlertHistory.tsx
     │   └── /jobs
     │       ├── /{job_name}/run [POST] (system.trigger_job_run) - Manually triggers an Azure Container App Job :: api/endpoints/system.py <== ui/src/hooks/useJobTrigger.ts
     │       ├── /{job_name}/suspend [POST] (system.suspend_job) - Suspends an Azure Container App Job :: api/endpoints/system.py <== ui/src/hooks/useJobSuspend.ts

@@ -731,7 +731,6 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
                 "component": layer_name,
                 "timestamp": timestamp,
                 "message": error or "Layer probe failed.",
-                "acknowledged": False,
             }
         ]
 
@@ -745,7 +744,6 @@ def _layer_alerts(now: datetime, *, layer_name: str, status: str, last_updated: 
             "component": layer_name,
             "timestamp": timestamp,
             "message": f"{layer_name} appears stale (lastUpdated={last_text}).",
-            "acknowledged": False,
         }
     ]
 
@@ -1368,7 +1366,6 @@ def collect_system_health_snapshot(
                             "component": "AzureMonitorMetrics",
                             "timestamp": _iso(now),
                             "message": f"SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: {exc}",
-                            "acknowledged": False,
                             }
                         )
             containerapp_metric_names = _split_csv(
@@ -1406,14 +1403,13 @@ def collect_system_health_snapshot(
                                 title="Log Analytics queries invalid",
                                 component="AzureLogAnalytics",
                             ),
-                            "severity": "warning",
-                            "title": "Log Analytics queries invalid",
-                            "component": "AzureLogAnalytics",
-                            "timestamp": _iso(now),
-                            "message": f"SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON parse error: {exc}",
-                            "acknowledged": False,
-                        }
-                    )
+                        "severity": "warning",
+                        "title": "Log Analytics queries invalid",
+                        "component": "AzureLogAnalytics",
+                        "timestamp": _iso(now),
+                        "message": f"SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON parse error: {exc}",
+                    }
+                )
 
             if log_analytics_enabled and (not log_analytics_workspace_id or not log_analytics_queries):
                 log_analytics_enabled = False
@@ -1429,7 +1425,6 @@ def collect_system_health_snapshot(
                         "component": "AzureLogAnalytics",
                         "timestamp": _iso(now),
                         "message": "Log Analytics enabled but workspace ID or queries are missing.",
-                        "acknowledged": False,
                     }
                     )
 
@@ -1515,7 +1510,6 @@ def collect_system_health_snapshot(
                                 "component": item.name,
                                 "timestamp": checked_iso,
                                 "message": f"{item.resource_type}: {item.details}",
-                                "acknowledged": False,
                             }
                         )
 
@@ -1604,7 +1598,6 @@ def collect_system_health_snapshot(
                                     "component": job_name,
                                     "timestamp": checked_iso,
                                     "message": message,
-                                    "acknowledged": False,
                                 }
                             )
                 finally:
@@ -1632,7 +1625,6 @@ def collect_system_health_snapshot(
                     "component": "AzureControlPlane",
                     "timestamp": checked_iso,
                     "message": f"Control-plane probe error: {exc}",
-                    "acknowledged": False,
                 }
             )
     else:

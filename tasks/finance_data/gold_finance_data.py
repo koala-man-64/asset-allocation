@@ -20,6 +20,13 @@ from tasks.common.market_reconciliation import (
     enforce_backfill_cutoff_on_bucket_tables,
     purge_orphan_rows_from_bucket_tables,
 )
+from tasks.common.postgres_gold_sync import (
+    bucket_sync_is_current,
+    load_domain_sync_state,
+    resolve_postgres_dsn,
+    sync_gold_bucket,
+    sync_state_cache_entry,
+)
 
 @dataclass(frozen=True)
 class FeatureJobConfig:
@@ -840,7 +847,6 @@ def _run_alpha26_finance_gold(
     from core import core as mdc
     from core import delta_core
 
-    force_rebuild = layer_bucketing.gold_alpha26_force_rebuild()
     backfill_start = pd.to_datetime(backfill_start_iso).normalize() if backfill_start_iso else None
     processed = 0
     skipped_unchanged = 0
@@ -848,6 +854,9 @@ def _run_alpha26_finance_gold(
     failed = 0
     watermarks_dirty = False
     symbol_to_bucket = _load_existing_gold_finance_symbol_to_bucket_map()
+    postgres_dsn = resolve_postgres_dsn()
+    sync_state = load_domain_sync_state(postgres_dsn, domain="finance") if postgres_dsn else {}
+    pending_watermark_updates: dict[str, dict[str, Any]] = {}
 
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         from core.pipeline import DataPaths
@@ -865,15 +874,22 @@ def _run_alpha26_finance_gold(
         watermark_key = f"bucket::{bucket}"
         prior = watermarks.get(watermark_key, {})
         skip_due_watermark = (
-            (not force_rebuild)
-            and silver_commit is not None
+            silver_commit is not None
             and prior.get("silver_last_commit") is not None
             and prior.get("silver_last_commit") >= silver_commit
         )
-        if skip_due_watermark and gold_commit is not None:
+        postgres_sync_current = (
+            bucket_sync_is_current(sync_state, bucket=bucket, source_commit=silver_commit)
+            if postgres_dsn
+            else True
+        )
+        if skip_due_watermark and gold_commit is not None and postgres_sync_current:
             skipped_unchanged += 1
             continue
 
+        prior_bucket_symbols = sorted(
+            symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
+        )
         df_gold_bucket: Optional[pd.DataFrame] = None
         bucket_symbol_to_bucket: dict[str, str] = {}
         template_schema_available = False
@@ -1029,7 +1045,6 @@ def _run_alpha26_finance_gold(
                     enforce_retention_duration=False,
                     full=True,
                 )
-            writes_completed += 1
             try:
                 domain_artifacts.write_bucket_artifact(
                     layer="gold",
@@ -1041,6 +1056,23 @@ def _run_alpha26_finance_gold(
                 )
             except Exception as exc:
                 mdc.write_warning(f"Gold finance metadata bucket artifact write failed bucket={bucket}: {exc}")
+            if postgres_dsn:
+                sync_result = sync_gold_bucket(
+                    domain="finance",
+                    bucket=bucket,
+                    frame=write_decision.frame,
+                    scope_symbols=sorted(set(prior_bucket_symbols).union(bucket_symbol_to_bucket.keys())),
+                    source_commit=silver_commit,
+                    dsn=postgres_dsn,
+                )
+                sync_state[bucket] = sync_state_cache_entry(sync_result)
+                mdc.write_line(
+                    "postgres_gold_sync_status "
+                    f"domain=finance bucket={bucket} status={sync_result.status} "
+                    f"rows_out={sync_result.row_count} symbols_out={sync_result.symbol_count} "
+                    f"scope_symbols={sync_result.scope_symbol_count} source_commit={silver_commit}"
+                )
+            writes_completed += 1
             mdc.write_line(
                 "gold_finance_alpha26_write_status "
                 f"bucket={bucket} path={gold_path} rows_out={len(write_decision.frame)} "
@@ -1061,11 +1093,10 @@ def _run_alpha26_finance_gold(
             touched_symbol_to_bucket=bucket_symbol_to_bucket,
         )
         if silver_commit is not None:
-            watermarks[watermark_key] = {
+            pending_watermark_updates[watermark_key] = {
                 "silver_last_commit": silver_commit,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            watermarks_dirty = True
 
     index_path = layer_bucketing.write_layer_symbol_index(
         layer="gold",
@@ -1084,6 +1115,14 @@ def _run_alpha26_finance_gold(
             )
         except Exception as exc:
             mdc.write_warning(f"Gold finance metadata artifact write failed: {exc}")
+        if pending_watermark_updates:
+            watermarks.update(pending_watermark_updates)
+            watermarks_dirty = True
+    else:
+        if pending_watermark_updates:
+            mdc.write_warning(
+                "Gold finance symbol index unavailable; skipping watermark updates to keep index/watermark state consistent."
+            )
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

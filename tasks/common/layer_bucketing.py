@@ -53,13 +53,6 @@ def is_gold_alpha26_mode() -> bool:
     return True
 
 
-def gold_alpha26_force_rebuild() -> bool:
-    raw = os.environ.get("GOLD_ALPHA26_FORCE_REBUILD")
-    if raw is None:
-        return True
-    return _is_truthy(raw)
-
-
 def bucket_letter(symbol: str) -> str:
     return bronze_bucketing.bucket_letter(symbol)
 

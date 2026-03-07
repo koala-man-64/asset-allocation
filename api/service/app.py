@@ -18,7 +18,6 @@ from api.service.alpha_vantage_gateway import AlphaVantageGateway
 from api.service.massive_gateway import MassiveGateway
 from api.service.settings import ServiceSettings
 from api.service.realtime import manager as realtime_manager
-from api.service.alert_state_store import PostgresAlertStateStore
 from monitoring.ttl_cache import TtlCache
 from core.delta_core import get_delta_storage_auth_diagnostics
 
@@ -163,7 +162,6 @@ def create_app() -> FastAPI:
         )
 
         if settings.postgres_dsn:
-            app.state.alert_state_store = PostgresAlertStateStore(settings.postgres_dsn)
             try:
                 from core.config import reload_settings
                 from core.debug_symbols import refresh_debug_symbols_from_db

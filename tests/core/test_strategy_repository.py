@@ -41,7 +41,7 @@ class _FakeConnection:
         return self._cursor
 
 
-def test_get_strategy_config_reads_from_platinum_schema(monkeypatch) -> None:
+def test_get_strategy_config_reads_from_core_schema(monkeypatch) -> None:
     cursor = _FakeCursor(fetchone_result=({"universe": "SP500"},))
 
     monkeypatch.setattr(
@@ -53,11 +53,11 @@ def test_get_strategy_config_reads_from_platinum_schema(monkeypatch) -> None:
 
     assert repo.get_strategy_config("momentum") == {"universe": "SP500"}
     sql, params = cursor.execute_calls[0]
-    assert "FROM platinum.strategies" in sql
+    assert "FROM core.strategies" in sql
     assert params == ("momentum",)
 
 
-def test_save_strategy_writes_to_platinum_schema(monkeypatch) -> None:
+def test_save_strategy_writes_to_core_schema(monkeypatch) -> None:
     cursor = _FakeCursor()
 
     monkeypatch.setattr(
@@ -74,7 +74,7 @@ def test_save_strategy_writes_to_platinum_schema(monkeypatch) -> None:
     )
 
     sql, params = cursor.execute_calls[0]
-    assert "INSERT INTO platinum.strategies" in sql
+    assert "INSERT INTO core.strategies" in sql
     assert params == (
         "momentum",
         json.dumps({"rebalance": "monthly"}),
@@ -113,7 +113,7 @@ def test_get_strategy_reads_metadata_and_config(monkeypatch) -> None:
     assert params == ("momentum",)
 
 
-def test_list_strategies_reads_from_platinum_schema(monkeypatch) -> None:
+def test_list_strategies_reads_from_core_schema(monkeypatch) -> None:
     cursor = _FakeCursor(
         fetchall_result=[
             ("momentum", "configured", "Monthly momentum", "2026-03-07T00:00:00Z"),
@@ -136,5 +136,5 @@ def test_list_strategies_reads_from_platinum_schema(monkeypatch) -> None:
         }
     ]
     sql, params = cursor.execute_calls[0]
-    assert "FROM platinum.strategies" in sql
+    assert "FROM core.strategies" in sql
     assert params is None

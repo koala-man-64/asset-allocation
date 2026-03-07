@@ -5,9 +5,15 @@ import { Database, Table as TableIcon, RefreshCw } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
+const HIDDEN_SCHEMAS = new Set(['public', 'information_schema']);
+
+function isVisibleSchema(schema: string): boolean {
+  return !HIDDEN_SCHEMAS.has(String(schema || '').trim().toLowerCase());
+}
+
 export const PostgresExplorerPage: React.FC = () => {
   const [schemas, setSchemas] = useState<string[]>([]);
-  const [selectedSchema, setSelectedSchema] = useState<string>('public');
+  const [selectedSchema, setSelectedSchema] = useState<string>('');
   const [tables, setTables] = useState<string[]>([]);
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [limit, setLimit] = useState<number>(100);
@@ -38,8 +44,14 @@ export const PostgresExplorerPage: React.FC = () => {
   useEffect(() => {
     const loadSchemas = async () => {
       try {
-        const loadedSchemas = await PostgresService.listSchemas();
+        const loadedSchemas = (await PostgresService.listSchemas()).filter(isVisibleSchema);
         setSchemas(loadedSchemas);
+        setSelectedSchema((current) => {
+          if (current && loadedSchemas.includes(current)) {
+            return current;
+          }
+          return loadedSchemas[0] ?? '';
+        });
       } catch (err) {
         console.error('Failed to load schemas', err);
         const message = formatSystemStatusText(err);
@@ -99,13 +111,18 @@ export const PostgresExplorerPage: React.FC = () => {
               id="postgres-schema"
               value={selectedSchema}
               onChange={(e) => setSelectedSchema(e.target.value)}
+              disabled={schemas.length === 0}
               className={controlClass}
             >
-              {schemas.map((schema) => (
-                <option key={schema} value={schema}>
-                  {schema}
-                </option>
-              ))}
+              {schemas.length === 0 ? (
+                <option value="">(No visible schemas)</option>
+              ) : (
+                schemas.map((schema) => (
+                  <option key={schema} value={schema}>
+                    {schema}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 

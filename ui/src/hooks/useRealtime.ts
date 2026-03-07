@@ -9,7 +9,6 @@ const SUBSCRIPTION_TOPICS = [
   'system-health',
   'jobs',
   'container-apps',
-  'alerts',
   'runtime-config',
   'debug-symbols'
 ] as const;
@@ -144,11 +143,9 @@ export function useRealtime() {
         topic === 'system-health' ||
         topic === 'jobs' ||
         topic === 'container-apps' ||
-        topic === 'alerts' ||
         eventType === 'SYSTEM_HEALTH_UPDATE' ||
         eventType === 'JOB_STATE_CHANGED' ||
-        eventType === 'CONTAINER_APP_STATE_CHANGED' ||
-        eventType === 'ALERT_STATE_CHANGED';
+        eventType === 'CONTAINER_APP_STATE_CHANGED';
 
       if (shouldRefreshSystem) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });

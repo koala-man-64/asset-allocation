@@ -80,6 +80,47 @@ function Invoke-Psql {
   if (-not $?) { throw "psql failed." }
 }
 
+function Add-CreateTableIfNotExistsGuards {
+  param(
+    [Parameter(Mandatory = $true)][string]$Sql
+  )
+
+  $pattern = '(?im)^(\s*CREATE\s+TABLE\s+)(?!IF\s+NOT\s+EXISTS\b)([^\s(]+)'
+  $rewriteCount = ([regex]::Matches($Sql, $pattern)).Count
+  $rewritten = [regex]::Replace($Sql, $pattern, '$1IF NOT EXISTS $2')
+
+  return [pscustomobject]@{
+    Sql          = $rewritten
+    RewriteCount = $rewriteCount
+  }
+}
+
+function New-PreparedMigrationFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourcePath
+  )
+
+  $sql = Get-Content -Path $SourcePath -Raw -Encoding UTF8
+  $guarded = Add-CreateTableIfNotExistsGuards -Sql $sql
+  if ($guarded.RewriteCount -eq 0) {
+    return [pscustomobject]@{
+      Path         = $SourcePath
+      Temporary    = $false
+      RewriteCount = 0
+    }
+  }
+
+  $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}.sql" -f [System.IO.Path]::GetRandomFileName())
+  $utf8 = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText($tempPath, $guarded.Sql, $utf8)
+
+  return [pscustomobject]@{
+    Path         = $tempPath
+    Temporary    = $true
+    RewriteCount = $guarded.RewriteCount
+  }
+}
+
 if (-not $Dsn) {
   $DsnFromEnv = Get-EnvValue -Path (Join-Path $RepoRoot ".env") -Key "POSTGRES_DSN"
   if (-not $DsnFromEnv) {
@@ -111,7 +152,18 @@ if (-not $files) {
 
 foreach ($file in $files) {
   Write-Host "Applying: $($file.Name)"
-  Invoke-Psql -Args @("$Dsn", "-v", "ON_ERROR_STOP=1", "-f", $file.FullName)
+  $prepared = New-PreparedMigrationFile -SourcePath $file.FullName
+  try {
+    if ($prepared.RewriteCount -gt 0) {
+      Write-Host "  Guarded $($prepared.RewriteCount) CREATE TABLE statement(s) with IF NOT EXISTS."
+    }
+    Invoke-Psql -Args @("$Dsn", "-v", "ON_ERROR_STOP=1", "-f", $prepared.Path)
+  }
+  finally {
+    if ($prepared.Temporary -and (Test-Path $prepared.Path)) {
+      Remove-Item -Path $prepared.Path -Force -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 Write-Host "Migrations applied successfully."
