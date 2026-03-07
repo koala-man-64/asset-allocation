@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BrowserRouter } from 'react-router-dom';
 
 import { renderWithProviders } from '@/test/utils';
 import { SystemStatusPage } from '@/app/components/pages/SystemStatusPage';
 import { getDomainOrderEntries } from '@/app/components/pages/system-status/domainOrdering';
+import { queryKeys } from '@/hooks/useDataQueries';
 
 vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
@@ -157,6 +160,17 @@ vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
 }));
 
 describe('SystemStatusPage', () => {
+  const createQueryClient = () =>
+    new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          gcTime: 0,
+          staleTime: 0
+        }
+      }
+    });
+
   const expectNoPlatinumDomain = (layers: Array<{ domains?: Array<{ name?: string }> }>) => {
     for (const layer of layers) {
       for (const domain of layer.domains || []) {
@@ -230,5 +244,62 @@ describe('SystemStatusPage', () => {
     const coverageOrder = getDomainOrderEntries(coverageProps.dataLayers).map((entry) => entry.key);
 
     expect(coverageOrder).toEqual(['alpha', 'market', 'zeta']);
+  });
+
+  it('merges optimistic running overrides into the system status props', async () => {
+    domainLayerCoverageSpy.mockClear();
+
+    const now = new Date().toISOString();
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(queryKeys.systemHealthJobOverrides(), {
+      'aca-job-zeta': {
+        jobName: 'aca-job-zeta',
+        jobKey: 'aca-job-zeta',
+        status: 'running',
+        runningState: 'Running',
+        startTime: now,
+        triggeredBy: 'manual',
+        executionId: 'exec-zeta',
+        executionName: 'exec-zeta',
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
+      }
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <SystemStatusPage />
+        </BrowserRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(domainLayerCoverageSpy).toHaveBeenCalled();
+    });
+
+    const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
+      jobStates: Record<string, string>;
+      recentJobs: Array<{ jobName: string; status: string; triggeredBy?: string }>;
+      managedContainerJobs: Array<{ name: string; runningState?: string | null }>;
+    };
+
+    expect(coverageProps.jobStates['aca-job-zeta']).toBe('Running');
+    expect(coverageProps.recentJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobName: 'aca-job-zeta',
+          status: 'running',
+          triggeredBy: 'manual'
+        })
+      ])
+    );
+    expect(coverageProps.managedContainerJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'aca-job-zeta',
+          runningState: 'Running'
+        })
+      ])
+    );
   });
 });

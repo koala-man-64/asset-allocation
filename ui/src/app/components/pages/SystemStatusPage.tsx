@@ -1,6 +1,10 @@
 import React, { useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
+import {
+  mergeSystemHealthWithJobOverrides,
+  useSystemHealthJobOverrides
+} from '@/hooks/useSystemHealthJobOverrides';
 import { DataService } from '@/services/DataService';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { Skeleton } from '@/app/components/ui/skeleton';
@@ -26,22 +30,27 @@ export function SystemStatusPage() {
   const { data, isLoading, error, isFetching } = useSystemHealthQuery({
     autoRefresh: false
   });
+  const jobOverrides = useSystemHealthJobOverrides();
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const systemHealth = useMemo(
+    () => mergeSystemHealthWithJobOverrides(data, jobOverrides.data),
+    [data, jobOverrides.data]
+  );
 
   const displayDataLayers = useMemo(() => {
-    return (data?.dataLayers || []).map((layer) => ({
+    return (systemHealth?.dataLayers || []).map((layer) => ({
       ...layer,
       domains: (layer.domains || []).filter((domain) => {
         const domainKey = normalizeDomainKey(String(domain?.name || ''));
         return domainKey !== 'platinum';
       })
     }));
-  }, [data]);
+  }, [systemHealth]);
 
   const jobStates = useMemo(() => {
     const states: Record<string, string> = {};
-    for (const resource of data?.resources || []) {
+    for (const resource of systemHealth?.resources || []) {
       if (resource.resourceType !== 'Microsoft.App/jobs') continue;
       const jobKey = normalizeAzureJobName(resource.name);
       const runningState = String(resource.runningState || '').trim();
@@ -50,12 +59,12 @@ export function SystemStatusPage() {
       }
     }
     return states;
-  }, [data]);
+  }, [systemHealth]);
 
   const managedContainerJobs = useMemo<ManagedContainerJob[]>(() => {
     const seen = new Set<string>();
     const items: ManagedContainerJob[] = [];
-    for (const resource of data?.resources || []) {
+    for (const resource of systemHealth?.resources || []) {
       if (resource.resourceType !== 'Microsoft.App/jobs') continue;
       const rawName = String(resource.name || '').trim();
       if (!rawName) continue;
@@ -70,7 +79,7 @@ export function SystemStatusPage() {
       });
     }
     return items;
-  }, [data]);
+  }, [systemHealth]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -88,7 +97,7 @@ export function SystemStatusPage() {
     return <PageLoader text="Initializing System Link..." />;
   }
 
-  if (error || !data) {
+  if (error || !systemHealth) {
     return (
       <div className="p-6 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive font-mono">
         <h3 className="text-lg font-bold mb-2 uppercase">System Link Failure</h3>
@@ -97,7 +106,7 @@ export function SystemStatusPage() {
     );
   }
 
-  const { overall, recentJobs } = data;
+  const { overall, recentJobs } = systemHealth;
 
   return (
     <div className="page-shell">

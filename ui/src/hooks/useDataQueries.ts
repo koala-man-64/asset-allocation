@@ -35,6 +35,7 @@ function systemHealthRefetchInterval(query: {
 export const queryKeys = {
   // System & Data Health
   systemHealth: () => ['systemHealth'] as const,
+  systemHealthJobOverrides: () => ['systemHealth', 'jobOverrides'] as const,
   lineage: () => ['lineage'] as const,
   debugSymbols: () => ['debugSymbols'] as const,
   runtimeConfigCatalog: () => ['runtimeConfigCatalog'] as const,

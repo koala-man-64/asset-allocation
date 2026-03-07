@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, backtestApi } from '@/services/backtestApi';
+import { clearJobOverride } from '@/hooks/useSystemHealthJobOverrides';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 type JobControlAction = 'suspend' | 'resume' | 'stop';
@@ -23,9 +24,11 @@ export function useJobSuspend() {
     try {
       if (suspended) {
         await backtestApi.stopJob(jobName);
+        clearJobOverride(queryClient, jobName);
         toast.success(`Stopped ${jobName}`);
       } else {
         await backtestApi.resumeJob(jobName);
+        clearJobOverride(queryClient, jobName);
         toast.success(`Resumed ${jobName}`);
       }
       void queryClient.invalidateQueries({ queryKey });
@@ -43,6 +46,7 @@ export function useJobSuspend() {
     setJobControl({ jobName, action: 'stop' });
     try {
       await backtestApi.stopJob(jobName);
+      clearJobOverride(queryClient, jobName);
       toast.success(`Stopped ${jobName}`);
       void queryClient.invalidateQueries({ queryKey });
     } catch (err: unknown) {
