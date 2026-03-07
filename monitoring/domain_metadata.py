@@ -10,7 +10,6 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.blob_storage import BlobStorageClient
-from core import core as mdc
 from core import delta_core
 from deltalake import DeltaTable
 from tasks.common import bronze_bucketing
