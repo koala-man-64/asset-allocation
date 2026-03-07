@@ -154,6 +154,47 @@ function getLayerVisual(layerKey: LayerKey): LayerVisualConfig {
   return LAYER_VISUALS[layerKey];
 }
 
+function resolveCentralTimeZoneLabel(date: Date): string {
+  const tzRaw =
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      timeZoneName: 'short'
+    })
+      .formatToParts(date)
+      .find((part) => part.type === 'timeZoneName')?.value ?? '';
+
+  const value = String(tzRaw || '').trim();
+  if (!value) return 'CST';
+  if (value === 'CST' || value === 'CDT') return value;
+  if (/central.*daylight/i.test(value)) return 'CDT';
+  if (/central.*standard/i.test(value)) return 'CST';
+
+  const offsetMatch = value.match(/(?:GMT|UTC)([+-]\d{1,2})(?::?(\d{2}))?/i);
+  if (!offsetMatch) return 'CST';
+
+  const hours = Number.parseInt(offsetMatch[1] || '0', 10);
+  const minutes = Number.parseInt(offsetMatch[2] || '0', 10);
+  const total = hours * 60 + (hours < 0 ? -minutes : minutes);
+  if (total === -360) return 'CST';
+  if (total === -300) return 'CDT';
+  return 'CST';
+}
+
+function formatMetadataTimestamp(value?: string | null): string {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  const stamp = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(date);
+  return `${stamp} ${resolveCentralTimeZoneLabel(date)}`;
+}
+
 function hasFiniteNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -1574,6 +1615,11 @@ export function DomainLayerComparisonPanel({
                       const updatedLabel = domainConfig?.lastUpdated
                         ? `${updatedAgo} ago`
                         : 'unknown';
+                      const metadataUpdatedAt =
+                        metadata?.metadataSource === 'artifact' ? metadata.computedAt || null : null;
+                      const metadataUpdatedDisplay = metadataUpdatedAt
+                        ? formatMetadataTimestamp(metadataUpdatedAt)
+                        : 'N/A';
                       const adlsModifiedAt = metadata?.folderLastModified || null;
                       const adlsModifiedDisplay = adlsModifiedAt
                         ? formatTimeAgo(adlsModifiedAt)
@@ -1651,6 +1697,8 @@ export function DomainLayerComparisonPanel({
                         executionsUrl,
                         jobPortalUrl,
                         updatedLabel,
+                        metadataUpdatedAt,
+                        metadataUpdatedDisplay,
                         adlsModifiedAt,
                         adlsModifiedDisplay,
                         isPurgingThisTarget,
@@ -1742,11 +1790,19 @@ export function DomainLayerComparisonPanel({
                               }}
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span
-                                  className={`${StatusTypos.MONO} tabular-nums text-right text-sm font-bold text-mcm-walnut`}
-                                >
-                                  {formatSymbolCount(model.metadata?.symbolCount)}
-                                </span>
+                                <div className="min-w-0">
+                                  <span
+                                    className={`${StatusTypos.MONO} tabular-nums text-right text-sm font-bold text-mcm-walnut`}
+                                  >
+                                    {formatSymbolCount(model.metadata?.symbolCount)}
+                                  </span>
+                                  <div
+                                    className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
+                                    title={model.metadataUpdatedAt || undefined}
+                                  >
+                                    updated {model.metadataUpdatedDisplay}
+                                  </div>
+                                </div>
                                 <div className="flex flex-col items-end gap-1">
                                   <span
                                     tabIndex={0}

@@ -122,6 +122,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       container: 'bronze',
       type: 'delta',
       computedAt: NOW,
+      metadataSource: 'artifact',
       symbolCount: 123,
       warnings: []
     });
@@ -153,6 +154,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         refresh: true
       });
     });
+    expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
   });
 
   it('shows a row-level refreshing indicator in the medallion-domain view during refresh', async () => {
@@ -187,6 +189,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       container: 'bronze',
       type: 'delta',
       computedAt: NOW,
+      metadataSource: 'artifact',
       symbolCount: 123,
       warnings: []
     });
@@ -205,6 +208,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       container: 'bronze',
       type: 'delta',
       computedAt: NOW,
+      metadataSource: 'artifact',
       symbolCount: 0,
       warnings: []
     });
