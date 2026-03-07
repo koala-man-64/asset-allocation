@@ -52,6 +52,27 @@ vi.mock('@/services/DataService', () => ({
 
 const NOW = '2026-03-03T12:00:00Z';
 
+function primeSnapshot(entry: {
+  layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+  domain: string;
+  container: string;
+  type: 'delta' | 'blob';
+  computedAt: string;
+  symbolCount: number;
+  warnings: string[];
+}) {
+  const key = `${entry.layer}/${entry.domain}`;
+  const payload = {
+    version: 1,
+    updatedAt: NOW,
+    entries: {
+      [key]: entry
+    }
+  };
+  vi.mocked(DataService.getPersistedDomainMetadataSnapshotCache).mockResolvedValue(payload);
+  vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue(payload);
+}
+
 function makeLayers(): DataLayer[] {
   return [
     {
@@ -201,7 +222,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('shows the metadata timestamp when cached entries only have computedAt', async () => {
-    vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
+    primeSnapshot({
       layer: 'bronze',
       domain: 'market',
       container: 'bronze',
@@ -226,7 +247,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {
-    const snapshotEntry = {
+    primeSnapshot({
       layer: 'bronze' as const,
       domain: 'market',
       container: 'bronze',
@@ -234,20 +255,6 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       computedAt: '',
       symbolCount: 123,
       warnings: []
-    };
-    vi.mocked(DataService.getPersistedDomainMetadataSnapshotCache).mockResolvedValue({
-      version: 1,
-      updatedAt: NOW,
-      entries: {
-        'bronze/market': snapshotEntry
-      }
-    });
-    vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue({
-      version: 1,
-      updatedAt: NOW,
-      entries: {
-        'bronze/market': snapshotEntry
-      }
     });
 
     renderWithProviders(
