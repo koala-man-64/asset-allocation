@@ -70,7 +70,6 @@ import type { DataDomain, JobRun } from '@/types/strategy';
 
 const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
-const ACTION_LAYER_PRIORITY = ['gold', 'silver', 'bronze', 'platinum'] as const;
 const CHECKPOINT_RESET_LAYERS = new Set<LayerKey>(['silver', 'gold']);
 const DOMAIN_METADATA_SNAPSHOT_STORAGE_KEY = 'asset-allocation.domain-metadata-snapshot.v1';
 const PURGE_POLL_INTERVAL_MS = 1000;
@@ -475,6 +474,16 @@ export function DomainLayerComparisonPanel({
     return pairs;
   }, [domainRows, domainsByLayer, layerColumns]);
 
+  const queryPairsByLayer = useMemo(() => {
+    const index = new Map<LayerKey, Array<{ layerKey: LayerKey; domainKey: string }>>();
+    for (const pair of queryPairs) {
+      const current = index.get(pair.layerKey) || [];
+      current.push(pair);
+      index.set(pair.layerKey, current);
+    }
+    return index;
+  }, [queryPairs]);
+
   const snapshotQueryKey = queryKeys.domainMetadataSnapshot('all', 'all');
 
   const metadataSnapshotQuery = useQuery({
@@ -708,6 +717,28 @@ export function DomainLayerComparisonPanel({
       }
     },
     [handleCellRefresh, onRefresh, queryClient]
+  );
+
+  const refreshLayerMetadataAndStatus = useCallback(
+    async (layerKey: LayerKey) => {
+      if (
+        isRefreshingPanelCounts ||
+        isResettingAllLists ||
+        isResettingLists ||
+        isResettingCheckpoints
+      )
+        return;
+      const targets = queryPairsByLayer.get(layerKey) || [];
+      await refreshDomainMetadataAndStatus(targets);
+    },
+    [
+      isRefreshingPanelCounts,
+      isResettingAllLists,
+      isResettingCheckpoints,
+      isResettingLists,
+      queryPairsByLayer,
+      refreshDomainMetadataAndStatus
+    ]
   );
 
   const clearDomainMetadataCache = useCallback(
@@ -1357,6 +1388,16 @@ export function DomainLayerComparisonPanel({
                     {layerColumns.map((layer) => {
                       const aggregate = layerAggregateStatus.get(layer.key);
                       const layerVisual = getLayerVisual(layer.key);
+                      const layerTargets = queryPairsByLayer.get(layer.key) || [];
+                      const isLayerRefreshing = layerTargets.some((target) =>
+                        refreshingCells.has(makeCellKey(target.layerKey, target.domainKey))
+                      );
+                      const isLayerBusy =
+                        isLayerRefreshing ||
+                        isRefreshingPanelCounts ||
+                        isResettingAllLists ||
+                        isResettingLists ||
+                        isResettingCheckpoints;
                       return (
                         <TableHead
                           key={`compact-head-${layer.key}`}
@@ -1366,25 +1407,49 @@ export function DomainLayerComparisonPanel({
                             boxShadow: `inset 0 2px 0 ${layerVisual.border}, inset 2px 0 0 ${layerVisual.border}, inset -1px 0 0 ${layerVisual.border}`
                           }}
                         >
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest"
-                              style={{
-                                backgroundColor: layerVisual.strongBg,
-                                color: layerVisual.accent,
-                                borderColor: layerVisual.border
-                              }}
-                            >
-                              {layer.label}
-                            </span>
-                            {aggregate ? (
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
                               <span
-                                className={`${StatusTypos.MONO} text-[10px] font-semibold uppercase tracking-wider`}
-                                style={{ color: layerVisual.mutedText }}
+                                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest"
+                                style={{
+                                  backgroundColor: layerVisual.strongBg,
+                                  color: layerVisual.accent,
+                                  borderColor: layerVisual.border
+                                }}
                               >
-                                ok {aggregate.ok} • warn {aggregate.warn} • fail {aggregate.fail}
+                                {layer.label}
                               </span>
-                            ) : null}
+                              {aggregate ? (
+                                <span
+                                  className={`${StatusTypos.MONO} truncate text-[10px] font-semibold uppercase tracking-wider`}
+                                  style={{ color: layerVisual.mutedText }}
+                                >
+                                  ok {aggregate.ok} • warn {aggregate.warn} • fail {aggregate.fail}
+                                </span>
+                              ) : null}
+                            </div>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0 rounded-full border border-transparent text-mcm-walnut/70 hover:border-mcm-walnut/20 hover:bg-mcm-paper/55 hover:text-mcm-walnut"
+                                  aria-label={`Refresh ${layer.label} layer`}
+                                  disabled={layerTargets.length === 0 || isLayerBusy}
+                                  onClick={() => {
+                                    void refreshLayerMetadataAndStatus(layer.key);
+                                  }}
+                                >
+                                  <RefreshCw className={`h-3.5 w-3.5 ${isLayerRefreshing ? 'animate-spin' : ''}`} />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                {isLayerRefreshing
+                                  ? `Refreshing ${layer.label} domains`
+                                  : `Refresh all ${layer.label} domains`}
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
                         </TableHead>
                       );
@@ -1600,39 +1665,7 @@ export function DomainLayerComparisonPanel({
                     });
 
                     const configuredModels = layerModels.filter((model) => model.isConfigured);
-                    const preferredModel =
-                      ACTION_LAYER_PRIORITY.reduce<(typeof configuredModels)[number] | null>(
-                        (current, layerKey) => {
-                          if (current) return current;
-                          return (
-                            configuredModels.find(
-                              (model) =>
-                                model.layerColumn.key === layerKey && Boolean(model.actionJobName)
-                            ) || null
-                          );
-                        },
-                        null
-                      ) ||
-                      configuredModels.find((model) => Boolean(model.actionJobName)) ||
-                      configuredModels[0] ||
-                      null;
                     const isDomainRefreshing = configuredModels.some((model) => model.isCellRefreshing);
-
-                    const refreshDomainRow = async () => {
-                      if (
-                        isRefreshingPanelCounts ||
-                        isResettingAllLists ||
-                        isResettingLists ||
-                        isResettingCheckpoints
-                      )
-                        return;
-                      await refreshDomainMetadataAndStatus(
-                        configuredModels.map((model) => ({
-                          layerKey: model.layerColumn.key,
-                          domainKey: row.key
-                        }))
-                      );
-                    };
                     const toggleRowExpanded = () =>
                       setExpandedRowKey((previous) => (previous === row.key ? null : row.key));
 
@@ -1668,97 +1701,6 @@ export function DomainLayerComparisonPanel({
                                   refreshing
                                 </span>
                               ) : null}
-                            </div>
-                            <div className="flex shrink-0 items-center justify-end gap-1">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 px-2 text-[11px]"
-                                disabled={
-                                  !preferredModel?.actionJobName || preferredModel.isJobControlBlocked
-                                }
-                                onClick={() => {
-                                  if (!preferredModel?.actionJobName) return;
-                                  if (preferredModel.isRunning) {
-                                    void setJobSuspended(preferredModel.actionJobName, true);
-                                  } else {
-                                    void triggerJob(preferredModel.actionJobName);
-                                  }
-                                }}
-                              >
-                                {preferredModel?.isControlling ||
-                                preferredModel?.isTriggeringThisJob ? (
-                                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                                ) : preferredModel?.isRunning ? (
-                                  <Square className="mr-1 h-3.5 w-3.5" />
-                                ) : (
-                                  <Play className="mr-1 h-3.5 w-3.5" />
-                                )}
-                                {preferredModel?.isRunning ? 'Stop' : 'Run'}
-                              </Button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    aria-label={`More actions for ${row.label}`}
-                                  >
-                                    <EllipsisVertical className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-56">
-                                  <DropdownMenuLabel>{row.label}</DropdownMenuLabel>
-                                  <DropdownMenuItem
-                                    onSelect={(event) => {
-                                      event.preventDefault();
-                                      void refreshDomainRow();
-                                    }}
-                                  >
-                                    <RefreshCw className="h-4 w-4" />
-                                    Refresh domain status + counts
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  {preferredModel?.jobPortalUrl ? (
-                                    <DropdownMenuItem asChild>
-                                      <a
-                                        href={preferredModel.jobPortalUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                      >
-                                        <ExternalLink className="h-4 w-4" />
-                                        Open job in Azure
-                                      </a>
-                                    </DropdownMenuItem>
-                                  ) : null}
-                                  {preferredModel?.executionsUrl ? (
-                                    <DropdownMenuItem asChild>
-                                      <a
-                                        href={preferredModel.executionsUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                      >
-                                        <ScrollText className="h-4 w-4" />
-                                        Open run history
-                                      </a>
-                                    </DropdownMenuItem>
-                                  ) : null}
-                                  {preferredModel?.baseFolderUrl ? (
-                                    <DropdownMenuItem asChild>
-                                      <a
-                                        href={preferredModel.baseFolderUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                      >
-                                        <FolderOpen className="h-4 w-4" />
-                                        Open ADLS folder
-                                      </a>
-                                    </DropdownMenuItem>
-                                  ) : null}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
                             </div>
                           </div>
                         </TableCell>

@@ -127,7 +127,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     });
   });
 
-  it('refreshes both status and metadata from the row actions menu', async () => {
+  it('refreshes both status and metadata from the layer header action', async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
 
@@ -142,13 +142,8 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       />
     );
 
-    const moreButton = await screen.findByRole('button', { name: 'More actions for market' });
-    await user.click(moreButton);
-
-    const refreshMenuItem = await screen.findByRole('menuitem', {
-      name: 'Refresh domain status + counts'
-    });
-    await user.click(refreshMenuItem);
+    const refreshLayerButton = await screen.findByRole('button', { name: 'Refresh Bronze layer' });
+    await user.click(refreshLayerButton);
 
     await waitFor(() => {
       expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -181,13 +176,8 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       />
     );
 
-    const moreButton = await screen.findByRole('button', { name: 'More actions for market' });
-    await user.click(moreButton);
-
-    const refreshMenuItem = await screen.findByRole('menuitem', {
-      name: 'Refresh domain status + counts'
-    });
-    await user.click(refreshMenuItem);
+    const refreshLayerButton = await screen.findByRole('button', { name: 'Refresh Bronze layer' });
+    await user.click(refreshLayerButton);
 
     expect(await screen.findByTestId('domain-refresh-indicator-market')).toBeInTheDocument();
 
