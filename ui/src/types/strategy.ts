@@ -192,7 +192,8 @@ export interface DataLayer {
 export interface JobRun {
   jobName: string;
   jobType: 'backtest' | 'data-ingest' | 'attribution' | 'risk-calc' | 'portfolio-build';
-  status: 'success' | 'failed' | 'running' | 'pending';
+  status: 'success' | 'warning' | 'failed' | 'running' | 'pending';
+  statusCode?: string;
   startTime: string;
   duration?: number; // seconds
   recordsProcessed?: number;

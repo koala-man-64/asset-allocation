@@ -6,6 +6,7 @@ from typing import Optional, Dict
 from core.postgres import connect
 
 logger = logging.getLogger(__name__)
+STRATEGIES_TABLE = "platinum.strategies"
 
 class StrategyRepository:
     def __init__(self, dsn: Optional[str] = None):
@@ -25,7 +26,7 @@ class StrategyRepository:
             with connect(self.dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT config FROM strategies WHERE name = %s", 
+                        f"SELECT config FROM {STRATEGIES_TABLE} WHERE name = %s",
                         (name,)
                     )
                     row = cur.fetchone()
@@ -47,8 +48,8 @@ class StrategyRepository:
             with connect(self.dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        """
-                        INSERT INTO strategies (name, config, type, description, updated_at)
+                        f"""
+                        INSERT INTO {STRATEGIES_TABLE} (name, config, type, description, updated_at)
                         VALUES (%s, %s, %s, %s, NOW())
                         ON CONFLICT (name) 
                         DO UPDATE SET 
@@ -73,7 +74,9 @@ class StrategyRepository:
         try:
             with connect(self.dsn) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT name, type, description, updated_at FROM strategies ORDER BY name")
+                    cur.execute(
+                        f"SELECT name, type, description, updated_at FROM {STRATEGIES_TABLE} ORDER BY name"
+                    )
                     columns = ["name", "type", "description", "updated_at"]
                     return [dict(zip(columns, row)) for row in cur.fetchall()]
         except Exception as e:

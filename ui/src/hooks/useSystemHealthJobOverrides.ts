@@ -10,7 +10,16 @@ const SYSTEM_HEALTH_JOB_OVERRIDE_TTL_MS = 2 * 60 * 1000;
 const RUNNING_JOB_STATUS: JobRun['status'] = 'running';
 const RUNNING_RESOURCE_STATE = 'Running';
 const MANUAL_TRIGGER_SOURCE = 'manual';
-const SERVER_CATCH_UP_STATUSES = new Set(['pending', 'running', 'success', 'succeeded', 'failed', 'error']);
+const SERVER_CATCH_UP_STATUSES = new Set([
+  'pending',
+  'running',
+  'success',
+  'succeeded',
+  'warning',
+  'succeededwithwarnings',
+  'failed',
+  'error'
+]);
 const RUNNING_STATE_TOKENS = ['running', 'processing', 'inprogress', 'starting', 'queued', 'waiting', 'scheduling'];
 
 export interface SystemHealthJobOverride {

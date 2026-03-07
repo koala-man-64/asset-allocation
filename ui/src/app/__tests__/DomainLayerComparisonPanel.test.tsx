@@ -155,12 +155,13 @@ function makeLayerTriggerLayers(): DataLayer[] {
   ];
 }
 
-function makeJobs(): JobRun[] {
+function makeJobs(status: JobRun['status'] = 'success', statusCode?: string): JobRun[] {
   return [
     {
       jobName: 'aca-job-market',
       jobType: 'data-ingest',
-      status: 'success',
+      status,
+      statusCode,
       startTime: NOW,
       triggeredBy: 'test'
     }
@@ -242,6 +243,22 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
+  });
+
+  it('shows WARN for medallion-domain jobs with warning status codes', async () => {
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs('warning', 'SucceededWithWarnings')}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect(await screen.findAllByText('WARN')).not.toHaveLength(0);
+    expect(screen.getAllByTitle('SucceededWithWarnings').length).toBeGreaterThan(0);
   });
 
   it('keeps the panel header focused on the title without status badges', async () => {

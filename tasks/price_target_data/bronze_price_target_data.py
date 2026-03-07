@@ -13,6 +13,7 @@ from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
     load_coverage_marker,
@@ -580,6 +581,14 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        job_status, exit_code = resolve_job_run_status(
+            failed_count=(
+                batch_exception_count
+                + int(aggregate.get("save_failed", 0) or 0)
+                + int(aggregate.get("api_error_batches", 0) or 0)
+            ),
+            warning_count=int(aggregate.get("blacklisted", 0) or 0),
+        )
         mdc.write_line(
             "Bronze price target overall summary: requested={requested} stale={stale} api_rows={api_rows} "
             "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} "
@@ -588,18 +597,14 @@ async def main_async() -> int:
             "coverage_marked_covered={coverage_marked_covered} coverage_marked_limited={coverage_marked_limited} "
             "coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
             "api_error_batches={api_error_batches} "
-            "batch_exceptions={batch_exception_count}".format(
+            "batch_exceptions={batch_exception_count} job_status={job_status}".format(
                 batch_exception_count=batch_exception_count,
+                job_status=job_status,
                 **aggregate,
             )
         )
         mdc.write_line("Bronze Ingestion Complete.")
-    has_failures = (
-        batch_exception_count > 0
-        or int(aggregate.get("save_failed", 0) or 0) > 0
-        or int(aggregate.get("api_error_batches", 0) or 0) > 0
-    )
-    return 1 if has_failures else 0
+    return exit_code
 
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env

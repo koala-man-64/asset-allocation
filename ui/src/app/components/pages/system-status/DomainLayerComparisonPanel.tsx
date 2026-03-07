@@ -63,8 +63,10 @@ import {
   formatTimeAgo,
   getStatusConfig,
   getAzureJobExecutionsUrl,
+  normalizeJobStatus,
   normalizeAzureJobName,
-  normalizeAzurePortalUrl
+  normalizeAzurePortalUrl,
+  toJobStatusLabel
 } from './SystemStatusHelpers';
 import { formatMetadataTimestamp } from './systemStatusClock';
 import type { DataDomain, JobRun } from '@/types/strategy';
@@ -533,17 +535,10 @@ export function DomainLayerComparisonPanel({
           '';
         const jobKey = normalizeAzureJobName(jobName);
         const run = jobKey ? jobIndex.get(jobKey) : null;
-        const runStatusKey = String(run?.status || '')
-          .trim()
-          .toLowerCase();
         const jobStatusKey =
           !jobName || !run
             ? 'pending'
-            : ['running', 'failed', 'success', 'succeeded', 'error', 'pending'].includes(
-                  runStatusKey
-                )
-              ? runStatusKey
-              : 'pending';
+            : normalizeJobStatus(run.status);
 
         const isCritical =
           ['error', 'failed', 'critical'].includes(dataStatusKey) ||
@@ -551,7 +546,7 @@ export function DomainLayerComparisonPanel({
         const isWarning =
           !isCritical &&
           (['stale', 'warning', 'degraded', 'pending'].includes(dataStatusKey) ||
-            ['pending'].includes(jobStatusKey));
+            ['warning', 'pending'].includes(jobStatusKey));
 
         if (isCritical) fail += 1;
         else if (isWarning) warn += 1;
@@ -1491,35 +1486,11 @@ export function DomainLayerComparisonPanel({
                       const dataConfig = getStatusConfig(dataStatusKey);
                       const dataLabel = toDataStatusLabel(dataStatusKey);
 
-                      const jobStatusKey = (() => {
-                        const statusKey = String(run?.status || '')
-                          .trim()
-                          .toLowerCase();
-                        if (!jobName) return 'pending';
-                        if (!run) return 'pending';
-                        if (
-                          statusKey === 'running' ||
-                          statusKey === 'failed' ||
-                          statusKey === 'success' ||
-                          statusKey === 'succeeded' ||
-                          statusKey === 'error' ||
-                          statusKey === 'pending'
-                        ) {
-                          return statusKey;
-                        }
-                        return 'pending';
-                      })();
+                      const jobStatusKey = !jobName || !run ? 'pending' : normalizeJobStatus(run.status);
                       const jobConfig = getStatusConfig(jobStatusKey);
-                      const jobLabel = (() => {
-                        if (!jobName) return 'N/A';
-                        if (!run) return 'NO RUN';
-                        const statusKey = String(jobStatusKey || '').toLowerCase();
-                        if (statusKey === 'success' || statusKey === 'succeeded') return 'OK';
-                        if (statusKey === 'failed' || statusKey === 'error') return 'FAIL';
-                        if (statusKey === 'running') return 'RUN';
-                        if (statusKey === 'pending') return 'PENDING';
-                        return statusKey.toUpperCase();
-                      })();
+                      const jobLabel = !jobName ? 'N/A' : !run ? 'NO RUN' : toJobStatusLabel(jobStatusKey);
+                      const jobStatusCode = String(run?.statusCode || run?.status || '')
+                        .trim() || null;
 
                       const actionJobName = String(run?.jobName || jobName).trim();
                       const runningState = jobKey ? jobStates?.[jobKey] : undefined;
@@ -1629,6 +1600,7 @@ export function DomainLayerComparisonPanel({
                         jobStatusKey,
                         jobConfig,
                         jobLabel,
+                        jobStatusCode,
                         lastStartDisplay,
                         jobUpdatedAt,
                         jobUpdatedDisplay,
@@ -1797,6 +1769,7 @@ export function DomainLayerComparisonPanel({
                                     </span>
                                     <span
                                       tabIndex={0}
+                                      title={model.jobStatusCode || undefined}
                                       className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
                                       style={{
                                         backgroundColor: model.jobConfig.bg,
@@ -1916,6 +1889,7 @@ export function DomainLayerComparisonPanel({
                                               {model.dataLabel}
                                             </span>
                                             <span
+                                              title={model.jobStatusCode || undefined}
                                               className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
                                               style={{
                                                 backgroundColor: model.jobConfig.bg,

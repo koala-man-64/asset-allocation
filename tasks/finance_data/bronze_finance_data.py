@@ -31,6 +31,7 @@ from tasks.common.bronze_backfill_coverage import (
 from tasks.common.run_manifests import create_bronze_finance_manifest
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.job_status import resolve_job_run_status
 from tasks.finance_data import config as cfg
 
 
@@ -1057,13 +1058,19 @@ async def main_async() -> int:
             f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
         )
 
+    job_status, exit_code = resolve_job_run_status(
+        failed_count=progress["failed"],
+        warning_count=progress["blacklisted"],
+    )
     mdc.write_line(
         "Bronze AV finance ingest complete: processed={processed} written={written} skipped={skipped} "
         "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
-        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker}".format(
+        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
+        "job_status={job_status}".format(
             **progress,
             **coverage_progress,
+            job_status=job_status,
         )
     )
     try:
@@ -1072,7 +1079,7 @@ async def main_async() -> int:
             producer_job_name="bronze-finance-job",
             listed_blobs=listed_blobs,
             metadata={
-                "jobStatus": "succeeded" if progress["failed"] == 0 else "failed",
+                "jobStatus": job_status,
                 "processed": int(progress["processed"]),
                 "written": int(progress["written"]),
                 "skipped": int(progress["skipped"]),
@@ -1091,7 +1098,7 @@ async def main_async() -> int:
             )
     except Exception as exc:
         mdc.write_warning(f"Failed to publish bronze finance manifest: {exc}")
-    return 0 if progress["failed"] == 0 else 1
+    return exit_code
 
 
 def main() -> int:

@@ -3,8 +3,10 @@ import { DataDomain, DataLayer, JobRun } from '@/types/strategy';
 import {
   formatTimeAgo,
   getStatusConfig,
+  normalizeJobStatus,
   normalizeAzureJobName,
-  normalizeAzurePortalUrl
+  normalizeAzurePortalUrl,
+  toJobStatusLabel
 } from './SystemStatusHelpers';
 import { StatusTypos } from './StatusTokens';
 import { getDomainOrderEntries } from './domainOrdering';
@@ -175,6 +177,7 @@ export function StatusOverview({
 
       let total = 0;
       let running = 0;
+      let warning = 0;
       let failed = 0;
       let success = 0;
       let pending = 0;
@@ -188,9 +191,11 @@ export function StatusOverview({
           pending += 1;
           continue;
         }
-        if (job.status === 'running') running += 1;
-        else if (job.status === 'failed') failed += 1;
-        else if (job.status === 'success') success += 1;
+        const normalizedStatus = normalizeJobStatus(job.status);
+        if (normalizedStatus === 'running') running += 1;
+        else if (normalizedStatus === 'warning') warning += 1;
+        else if (normalizedStatus === 'failed') failed += 1;
+        else if (normalizedStatus === 'success') success += 1;
         else pending += 1;
       }
 
@@ -198,6 +203,7 @@ export function StatusOverview({
         if (total === 0) return 'pending';
         if (failed > 0) return 'failed';
         if (running > 0) return 'running';
+        if (warning > 0) return 'warning';
         if (pending > 0) return 'pending';
         if (success === total) return 'success';
         return 'pending';
@@ -208,11 +214,7 @@ export function StatusOverview({
       const jobLabel = (() => {
         const key = String(jobStatusKey || '').toLowerCase();
         if (total === 0) return 'N/A';
-        if (key === 'success') return 'OK';
-        if (key === 'failed') return 'FAIL';
-        if (key === 'running') return 'RUN';
-        if (key === 'pending') return 'PENDING';
-        return key.toUpperCase();
+        return toJobStatusLabel(key);
       })();
 
       return {
@@ -224,6 +226,7 @@ export function StatusOverview({
         running,
         failed,
         success,
+        warning,
         pending,
         jobStatusKey,
         jobConfig,
@@ -281,7 +284,8 @@ export function StatusOverview({
                   <TooltipContent side="bottom">
                     {metric.layer} • Data {metric.containerStatusKey.toUpperCase()} • Jobs{' '}
                     {metric.jobStatusKey.toUpperCase()} ( total {metric.total}, ok {metric.success},
-                    run {metric.running}, fail {metric.failed}, pending {metric.pending})
+                    warn {metric.warning}, run {metric.running}, fail {metric.failed}, pending{' '}
+                    {metric.pending})
                   </TooltipContent>
                 </Tooltip>
               ))}
@@ -490,29 +494,14 @@ export function StatusOverview({
                                   return key.toUpperCase();
                                 })();
                                 const jobStatusKey = (() => {
-                                  const key = String(run?.status || '')
-                                    .trim()
-                                    .toLowerCase();
                                   if (!jobName) return 'pending';
                                   if (!run) return 'pending';
-                                  if (
-                                    key === 'running' ||
-                                    key === 'failed' ||
-                                    key === 'success' ||
-                                    key === 'pending'
-                                  )
-                                    return key;
-                                  return 'pending';
+                                  return normalizeJobStatus(run.status);
                                 })();
                                 const jobLabel = (() => {
                                   if (!jobName) return 'N/A';
                                   if (!run) return 'NO RUN';
-                                  const key = String(jobStatusKey || '').toLowerCase();
-                                  if (key === 'success' || key === 'succeeded') return 'OK';
-                                  if (key === 'failed' || key === 'error') return 'FAIL';
-                                  if (key === 'running') return 'RUN';
-                                  if (key === 'pending') return 'PENDING';
-                                  return key.toUpperCase();
+                                  return toJobStatusLabel(jobStatusKey);
                                 })();
 
                                 return (

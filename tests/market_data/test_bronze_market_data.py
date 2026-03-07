@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 import uuid
 from datetime import date
@@ -527,3 +528,49 @@ def test_download_skips_when_no_new_daily_rows_and_supplementals_complete(unique
         mock_massive.get_short_volume.assert_not_called()
         mock_store.assert_not_called()
         mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
+
+
+def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticker):
+    symbol = unique_ticker
+    client_manager = MagicMock()
+
+    async def run_test():
+        with patch(
+            "tasks.market_data.bronze_market_data._validate_environment"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.get_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.market_data.bronze_market_data.bronze_bucketing.is_alpha26_mode",
+            return_value=False,
+        ), patch(
+            "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.market_data.bronze_market_data._get_max_workers",
+            return_value=1,
+        ), patch(
+            "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
+            side_effect=bronze.MassiveGatewayNotFoundError("invalid"),
+        ), patch(
+            "tasks.market_data.bronze_market_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.market_data.bronze_market_data.mdc.write_line"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.write_warning"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
+        mock_list_manager.flush.assert_called_once()
+        client_manager.close_all.assert_called_once()
+
+    asyncio.run(run_test())

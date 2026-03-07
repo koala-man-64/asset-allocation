@@ -82,4 +82,40 @@ def test_collect_jobs_and_executions_maps_status_sorts_and_limits() -> None:
     assert [r["duration"] for r in runs] == [None, None, 120]
     assert all(r["jobType"] == "backtest" for r in runs)
     assert all(r["triggeredBy"] == "azure" for r in runs)
+    assert runs[0]["statusCode"] == "Unknown"
+    assert runs[1]["statusCode"] == "Running"
+    assert runs[2]["statusCode"] == "Succeeded"
+
+
+def test_collect_jobs_and_executions_preserves_warning_status_codes() -> None:
+    arm = FakeArmClient(
+        responses={
+            "https://example.test/Microsoft.App/jobs/bronze-market-job": {
+                "properties": {"provisioningState": "Succeeded"}
+            },
+            "https://example.test/Microsoft.App/jobs/bronze-market-job/executions": {
+                "value": [
+                    {
+                        "properties": {
+                            "status": "SucceededWithWarnings",
+                            "startTime": "2024-01-05T00:00:00Z",
+                            "endTime": "2024-01-05T00:01:00Z",
+                        }
+                    }
+                ]
+            },
+        }
+    )
+
+    _, runs = collect_jobs_and_executions(
+        arm,
+        job_names=["bronze-market-job"],
+        last_checked_iso="2024-01-10T00:00:00+00:00",
+        include_ids=False,
+        max_executions_per_job=1,
+    )
+
+    assert len(runs) == 1
+    assert runs[0]["status"] == "warning"
+    assert runs[0]["statusCode"] == "SucceededWithWarnings"
 

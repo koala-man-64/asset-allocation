@@ -1,8 +1,10 @@
+import asyncio
 import uuid
 import json
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from tasks.finance_data import bronze_finance_data as bronze
@@ -449,3 +451,54 @@ def test_fetch_and_save_raw_coverage_uses_unfiltered_payload_earliest(unique_tic
     _, kwargs = mock_mark_coverage.call_args
     assert kwargs["status"] == "covered"
     assert kwargs["earliest_available"] == date(2023, 12, 31)
+
+
+def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticker):
+    symbol = unique_ticker
+    client_manager = MagicMock()
+    coverage_summary = bronze._empty_coverage_summary()
+    invalid_error = bronze.AlphaVantageGatewayInvalidSymbolError("invalid", status_code=404)
+
+    async def run_test():
+        with patch(
+            "tasks.finance_data.bronze_finance_data._validate_environment"
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.mdc.get_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.bronze_bucketing.is_alpha26_mode",
+            return_value=False,
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.resolve_backfill_start_date",
+            return_value=None,
+        ), patch(
+            "tasks.finance_data.bronze_finance_data._ThreadLocalAlphaVantageClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.finance_data.bronze_finance_data._process_symbol_with_recovery",
+            return_value=(0, True, [("balance_sheet", invalid_error)], coverage_summary),
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.bronze_client"
+        ) as mock_bronze_client, patch(
+            "tasks.finance_data.bronze_finance_data.create_bronze_finance_manifest",
+            return_value=None,
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.finance_data.bronze_finance_data.mdc.write_line"
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.mdc.write_warning"
+        ):
+            mock_bronze_client.list_blob_infos.return_value = []
+            mock_list_manager.is_blacklisted.return_value = False
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
+        mock_list_manager.flush.assert_called_once()
+        client_manager.close_all.assert_called_once()
+
+    asyncio.run(run_test())

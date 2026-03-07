@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tasks.price_target_data import bronze_price_target_data as bronze
 from core import config as cfg
@@ -344,5 +344,40 @@ def test_process_batch_bronze_skips_force_when_limited_marker_present(
             assert summary["coverage_skipped_limited_marker"] == 1
             assert summary["stale"] == 0
             mock_nasdaq.get_table.assert_not_called()
+
+    asyncio.run(run_test())
+
+
+def test_main_async_returns_success_when_only_blacklisted_symbols_are_detected():
+    symbol = "AAA"
+
+    async def run_test():
+        with patch(
+            "tasks.price_target_data.bronze_price_target_data._validate_environment"
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.resolve_backfill_start_date",
+            return_value=None,
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.get_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.bronze_bucketing.is_alpha26_mode",
+            return_value=False,
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.process_batch_bronze",
+            new=AsyncMock(return_value={"blacklisted": 1}),
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.write_line"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_list_manager.flush.assert_called_once()
 
     asyncio.run(run_test())

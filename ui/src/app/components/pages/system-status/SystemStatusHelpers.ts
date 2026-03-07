@@ -21,6 +21,8 @@ interface StatusConfig {
   animation?: 'spin' | 'pulse';
 }
 
+export type NormalizedJobStatus = 'success' | 'warning' | 'failed' | 'running' | 'pending';
+
 /**
  * Returns a configuration object (color, icon) for a given status.
  * Uses "Industrial Utility" tokens.
@@ -280,6 +282,54 @@ export const normalizeAzureJobName = (value?: string | null) => {
   }
 
   return trimmed.toLowerCase().replace(/_/g, '-');
+};
+
+export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus => {
+  const status = String(value || '')
+    .trim()
+    .toLowerCase();
+
+  if (status === 'success' || status === 'succeeded' || status === 'completed' || status === 'complete') {
+    return 'success';
+  }
+  if (
+    status === 'warning' ||
+    status === 'succeededwithwarnings' ||
+    status === 'completedwithwarnings'
+  ) {
+    return 'warning';
+  }
+  if (
+    status === 'failed' ||
+    status === 'error' ||
+    status === 'failure' ||
+    status === 'terminated' ||
+    status === 'terminatedwitherror'
+  ) {
+    return 'failed';
+  }
+  if (
+    status === 'running' ||
+    status === 'processing' ||
+    status === 'inprogress' ||
+    status === 'starting' ||
+    status === 'queued' ||
+    status === 'waiting' ||
+    status === 'scheduling'
+  ) {
+    return 'running';
+  }
+  return 'pending';
+};
+
+export const toJobStatusLabel = (status: string): string => {
+  const key = normalizeJobStatus(status);
+  if (key === 'success') return 'OK';
+  if (key === 'warning') return 'WARN';
+  if (key === 'failed') return 'FAIL';
+  if (key === 'running') return 'RUN';
+  if (key === 'pending') return 'PENDING';
+  return key.toUpperCase();
 };
 
 export const getAzurePortalUrl = (azureId?: string | null) => {

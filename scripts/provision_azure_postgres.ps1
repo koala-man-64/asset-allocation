@@ -396,9 +396,12 @@ function Ensure-PostgresIndexes {
   $sql = @'
 DO $$
 BEGIN
-  IF to_regclass('public.strategies') IS NOT NULL THEN
-    CREATE INDEX IF NOT EXISTS idx_strategies_type ON public.strategies(type);
-    CREATE INDEX IF NOT EXISTS idx_strategies_updated_at ON public.strategies(updated_at DESC);
+  IF to_regclass('platinum.strategies') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS platinum.idx_strategies_type ON platinum.strategies(type);
+    CREATE INDEX IF NOT EXISTS platinum.idx_strategies_updated_at ON platinum.strategies(updated_at DESC);
+  ELSIF to_regclass('public.strategies') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS public.idx_strategies_type ON public.strategies(type);
+    CREATE INDEX IF NOT EXISTS public.idx_strategies_updated_at ON public.strategies(updated_at DESC);
   END IF;
 
   IF to_regclass('backtest.runs') IS NOT NULL THEN
@@ -723,6 +726,9 @@ if ($ApplyMigrations) {
 
   Write-Host "Ensuring supporting indexes..."
   Ensure-PostgresIndexes -Dsn $adminDsn
+
+  Write-Host "Dropping legacy migration ledger table..."
+  Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", "DROP TABLE IF EXISTS public.schema_migrations;")
 }
 else {
   Write-Warning "Migrations were skipped. Runtime Python code no longer creates tables/schemas; run with -ApplyMigrations to provision DB objects."

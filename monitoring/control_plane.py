@@ -32,8 +32,10 @@ def _duration_seconds(start: Optional[datetime], end: Optional[datetime]) -> Opt
 
 def _map_job_execution_status(raw: str) -> str:
     status = (raw or "").strip().lower()
-    if status in {"succeeded", "success", "completed", "complete", "succeededwithwarnings"}:
+    if status in {"succeeded", "success", "completed", "complete"}:
         return "success"
+    if status in {"succeededwithwarnings", "completedwithwarnings", "warning"}:
+        return "warning"
     if status in {"failed", "error", "failure", "terminated", "terminatedwitherror"}:
         return "failed"
     if status in {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}:
@@ -282,6 +284,7 @@ def collect_jobs_and_executions(
                         "jobName": name,
                         "jobType": _job_type_from_name(name),
                         "status": _map_job_execution_status(raw_status),
+                        "statusCode": raw_status or None,
                         "startTime": normalized_start_time,
                         "duration": duration,
                         "triggeredBy": "azure",

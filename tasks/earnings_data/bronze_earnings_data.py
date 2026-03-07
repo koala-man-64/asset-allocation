@@ -22,6 +22,7 @@ from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
     extract_min_date_from_rows,
@@ -680,16 +681,22 @@ async def main_async() -> int:
             if example:
                 mdc.write_warning(f"Bronze AV earnings failure example ({name}): {example}")
 
+    job_status, exit_code = resolve_job_run_status(
+        failed_count=progress["failed"],
+        warning_count=progress["blacklisted"],
+    )
     mdc.write_line(
         "Bronze AV earnings ingest complete: processed={processed} written={written} skipped={skipped} "
         "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
-        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker}".format(
+        "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
+        "job_status={job_status}".format(
             **progress,
             **coverage_progress,
+            job_status=job_status,
         )
     )
-    return 0 if progress["failed"] == 0 else 1
+    return exit_code
 
 
 def main() -> int:

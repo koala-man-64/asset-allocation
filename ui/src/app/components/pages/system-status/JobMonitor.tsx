@@ -25,6 +25,7 @@ import {
   getAzureJobExecutionsUrl,
   getStatusBadge,
   getStatusIcon,
+  normalizeJobStatus,
   normalizeAzureJobName,
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
@@ -45,9 +46,10 @@ const runStartEpoch = (raw?: string | null): number => {
 export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
   const { triggeringJob, triggerJob } = useJobTrigger();
   const { jobControl, setJobSuspended } = useJobSuspend();
-  const successJobs = recentJobs.filter((j) => j.status === 'success').length;
-  const runningJobs = recentJobs.filter((j) => j.status === 'running').length;
-  const failedJobs = recentJobs.filter((j) => j.status === 'failed').length;
+  const successJobs = recentJobs.filter((j) => normalizeJobStatus(j.status) === 'success').length;
+  const warningJobs = recentJobs.filter((j) => normalizeJobStatus(j.status) === 'warning').length;
+  const runningJobs = recentJobs.filter((j) => normalizeJobStatus(j.status) === 'running').length;
+  const failedJobs = recentJobs.filter((j) => normalizeJobStatus(j.status) === 'failed').length;
 
   const latestRunByJob = useMemo(() => {
     const index = new Map<string, JobRun>();
@@ -83,6 +85,10 @@ export function JobMonitor({ recentJobs, jobLinks = {} }: JobMonitorProps) {
             <span className="flex items-center gap-1">
               <div className="h-2 w-2 rounded-full bg-green-500" />
               {successJobs}
+            </span>
+            <span className="flex items-center gap-1">
+              <div className="h-2 w-2 rounded-full bg-amber-500" />
+              {warningJobs}
             </span>
             <span className="flex items-center gap-1">
               <div className="h-2 w-2 rounded-full bg-blue-500" />

@@ -23,6 +23,7 @@ from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.job_status import resolve_job_run_status
 from tasks.market_data import config as cfg
 
 
@@ -1330,9 +1331,16 @@ async def main_async() -> int:
             progress["failed"] += 1
             mdc.write_error(f"Bronze market alpha26 bucket write failed: {exc}")
 
+    job_status, exit_code = resolve_job_run_status(
+        failed_count=progress["failed"],
+        warning_count=progress["blacklisted"],
+    )
     mdc.write_line(
         "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} "
-        "blacklisted={blacklisted} failed={failed}".format(**progress)
+        "blacklisted={blacklisted} failed={failed} job_status={job_status}".format(
+            **progress,
+            job_status=job_status,
+        )
     )
     if retry_next_run:
         preview = ", ".join(sorted(retry_next_run)[:50])
@@ -1340,7 +1348,7 @@ async def main_async() -> int:
         mdc.write_line(
             f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
         )
-    return 0 if progress["failed"] == 0 else 1
+    return exit_code
 
 
 def main() -> int:

@@ -85,33 +85,16 @@ def apply_migrations(conn, migrations_dir: Path):
         sys.exit(1)
         
     with conn.cursor() as cur:
-        # Ensure schema_migrations table exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS public.schema_migrations (
-                version TEXT PRIMARY KEY,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-        """)
-        
         # Get list of .sql files sorted by name
         sql_files = sorted(migrations_dir.glob("*.sql"))
         
         for sql_file in sql_files:
-            version = sql_file.stem
-            
-            # Check if applied
-            cur.execute("SELECT 1 FROM public.schema_migrations WHERE version = %s", (version,))
-            if cur.fetchone():
-                logger.info(f"Already applied: {version}")
-                continue
-            
-            logger.info(f"Applying: {version}")
+            logger.info(f"Applying: {sql_file.name}")
             try:
                 sql_content = sql_file.read_text(encoding='utf-8')
                 cur.execute(sql_content)
-                cur.execute("INSERT INTO public.schema_migrations (version) VALUES (%s)", (version,))
             except Exception as e:
-                logger.error(f"Failed to apply migration {version}: {e}")
+                logger.error(f"Failed to apply migration {sql_file.name}: {e}")
                 raise e
 
 def main():
