@@ -265,6 +265,13 @@ jobs:
                   sys.exit(1)
           PY
 
+      - name: Apply Repo-Owned Postgres Migrations
+        env:
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          pwsh ./scripts/apply_postgres_migrations.ps1 -Dsn "$POSTGRES_DSN" -UseDockerPsql
+
       - name: Detect Market Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: market_changes

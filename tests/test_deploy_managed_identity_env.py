@@ -93,6 +93,19 @@ def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identit
     )
 
 
+def test_deploy_workflow_applies_repo_owned_postgres_migrations() -> None:
+    repo_root = _repo_root()
+    deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
+    text = deploy_workflow.read_text(encoding="utf-8")
+
+    assert "Apply Repo-Owned Postgres Migrations" in text, (
+        "deploy workflow must apply repo-owned Postgres migrations during normal deploys"
+    )
+    assert 'pwsh ./scripts/apply_postgres_migrations.ps1 -Dsn "$POSTGRES_DSN" -UseDockerPsql' in text, (
+        "deploy workflow must run the migration script against the production POSTGRES_DSN"
+    )
+
+
 def test_api_manifest_allowlists_backtest_job() -> None:
     repo_root = _repo_root()
     path = repo_root / "deploy" / "app_api.yaml"
