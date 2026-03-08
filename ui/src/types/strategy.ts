@@ -103,6 +103,21 @@ export type ExitRuleAction = 'exit_full';
 export type ExitRulePriceField = 'open' | 'high' | 'low' | 'close';
 export type ExitRuleReference = 'entry_price' | 'highest_since_entry';
 export type IntrabarConflictPolicy = 'stop_first' | 'take_profit_first' | 'priority_order';
+export type UniverseSource = 'postgres_gold';
+export type UniverseGroupOperator = 'and' | 'or';
+export type UniverseConditionOperator =
+  | 'eq'
+  | 'ne'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'in'
+  | 'not_in'
+  | 'is_null'
+  | 'is_not_null';
+export type UniverseValue = string | number | boolean;
+export type UniverseValueKind = 'string' | 'number' | 'boolean' | 'date' | 'datetime';
 
 export interface ExitRule {
   id: string;
@@ -118,8 +133,56 @@ export interface ExitRule {
   reference?: ExitRuleReference;
 }
 
+export interface UniverseCondition {
+  kind: 'condition';
+  table: string;
+  column: string;
+  operator: UniverseConditionOperator;
+  value?: UniverseValue;
+  values?: UniverseValue[];
+}
+
+export interface UniverseGroup {
+  kind: 'group';
+  operator: UniverseGroupOperator;
+  clauses: UniverseNode[];
+}
+
+export type UniverseNode = UniverseGroup | UniverseCondition;
+
+export interface UniverseDefinition {
+  source: UniverseSource;
+  root: UniverseGroup;
+}
+
+export interface UniverseCatalogColumn {
+  name: string;
+  dataType: string;
+  valueKind: UniverseValueKind;
+  operators: UniverseConditionOperator[];
+}
+
+export interface UniverseCatalogTable {
+  name: string;
+  asOfColumn: string;
+  columns: UniverseCatalogColumn[];
+}
+
+export interface UniverseCatalogResponse {
+  source: UniverseSource;
+  tables: UniverseCatalogTable[];
+}
+
+export interface UniversePreviewResponse {
+  source: UniverseSource;
+  symbolCount: number;
+  sampleSymbols: string[];
+  tablesUsed: string[];
+  warnings: string[];
+}
+
 export interface StrategyConfig {
-  universe: string;
+  universe: UniverseDefinition;
   rebalance: string;
   longOnly: boolean;
   topN: number;

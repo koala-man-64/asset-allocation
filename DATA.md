@@ -4,7 +4,7 @@ This document is the current data interface contract for AssetAllocation. It cov
 
 Scope notes:
 
-- This contract primarily documents the bucketed medallion tables, with one explicit control-plane exception: the `platinum.strategies` table that stores strategy metadata and validated strategy configuration JSON.
+- This contract primarily documents the bucketed medallion tables, with one explicit control-plane exception: the `core.strategies` table that stores strategy metadata and validated strategy configuration JSON.
 - `finance` Bronze stores provider payloads as opaque JSON strings. Downstream contracts are the extracted Silver and Gold schemas, not the provider's full inner JSON shape.
 - The optional `market_by_date` Gold materialization is excluded because its column set is runtime-configurable via `GOLD_MARKET_BY_DATE_COLUMNS`, so it is not a fixed interface contract.
 - The Postgres `gold.*` tables are serving replicas of the canonical Gold Delta buckets. `core.gold_sync_state` tracks whether each alphabet bucket has been fully synchronized for a given source commit.
@@ -40,7 +40,7 @@ Scope notes:
 | Bronze | price-target | `price-target-data/buckets/{bucket}` | `symbol` + `obs_date` | Raw analyst target snapshots plus ingestion metadata. |
 | Silver | price-target | `price-target-data/buckets/{bucket}` | `symbol` + `obs_date` | Daily forward-filled target history. |
 | Gold | price-target | `targets/buckets/{bucket}` | `symbol` + `obs_date` | Dispersion and revision features built from Silver targets. |
-| Control plane | strategies | `Postgres table platinum.strategies` | `name` | Strategy metadata plus validated `StrategyConfig` JSON used by `/strategies` API routes and the React strategy editor. |
+| Control plane | strategies | `Postgres table core.strategies` | `name` | Strategy metadata plus validated `StrategyConfig` JSON used by `/strategies` API routes and the React strategy editor. |
 
 ## Gold Postgres Serving Replica
 
@@ -59,7 +59,7 @@ The Gold jobs can optionally mirror successful Gold bucket writes into Postgres 
 
 ### Strategy Storage
 
-Path: `Postgres table platinum.strategies`
+Path: `Postgres table core.strategies`
 
 Each row stores a single named strategy. The API returns either the full record (`/strategies/{name}/detail`) or just the validated `config` payload (`/strategies/{name}`). On create or update, the API validates and normalizes the incoming `config` against `StrategyConfig` before writing it back to Postgres.
 
@@ -77,7 +77,7 @@ Unexpected keys are rejected. The backend model uses `extra="forbid"` for both `
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `universe` | string | Universe identifier for the strategy, such as `SP500`. Default is `SP500`. |
+| `universe` | object (`UniverseDefinition`) | Structured rule tree that filters the investable symbol set from Postgres `gold.*` tables. The UI seeds a root `and` group with a single blank condition. |
 | `rebalance` | string | Rebalance cadence label. Default is `monthly`; the current UI offers `daily`, `weekly`, `monthly`, and `quarterly`. |
 | `longOnly` | boolean | Long-only flag for the strategy. Default is `true`. |
 | `topN` | integer | Target number of selected holdings or symbols. Must be `>= 1`. Default is `20`. |
@@ -86,6 +86,34 @@ Unexpected keys are rejected. The backend model uses `extra="forbid"` for both `
 | `costModel` | string | Cost-model identifier used by strategy or simulation logic. Default is `default`. |
 | `intrabarConflictPolicy` | enum | Same-bar tie-break policy when multiple exit rules trigger. Supported values are `stop_first`, `take_profit_first`, and `priority_order`. Default is `stop_first`. |
 | `exits` | array of `ExitRule` | Ordered list of exit rules. Duplicate rule IDs are rejected. When `priority` is omitted, the backend normalizes it to the rule's array index. |
+
+### Universe Definition: `config.universe`
+
+Universe authoring is limited to the Postgres `gold.*` serving tables. The editor builds a recursive rule tree, and the preview endpoint resolves the current matching symbol set using the latest available row per symbol from each referenced gold table.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `source` | enum | The only supported value is `postgres_gold`. |
+| `root` | object (`UniverseGroup`) | Root boolean group for the universe rule tree. Must contain at least one clause. |
+
+### Universe Groups And Conditions
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `kind` | enum | Discriminator. Groups use `group`; conditions use `condition`. |
+| `operator` | enum | Group operator. Supported values are `and` and `or`. |
+| `clauses` | array | Child groups or conditions. Empty groups are rejected by the backend. |
+| `table` | string | Gold table name, for example `market_data` or `finance_data`. Only `gold.*` tables exposed by the catalog endpoint are allowed. |
+| `column` | string | Scalar column name within the selected gold table. Non-scalar columns are excluded from the catalog and rejected by preview validation. |
+| `operator` | enum | Condition operator. Supported values are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `is_null`, and `is_not_null`. |
+| `value` | string, number, boolean, or null | Single-value input used by scalar operators such as `eq` or `gt`. Null operators reject both `value` and `values`. |
+| `values` | array of string, number, or boolean | Multi-value input used only by `in` and `not_in`. |
+
+### Universe Preview
+
+- `GET /api/strategies/universe/catalog` returns eligible `gold.*` tables, their scalar columns, value kinds, and allowed operators.
+- `POST /api/strategies/universe/preview` accepts a draft `UniverseDefinition` and returns `symbolCount`, `sampleSymbols`, `tablesUsed`, and `warnings`.
+- Preview is current-state only for this milestone. It evaluates each condition against the latest available row per symbol in the referenced gold table and then combines clause results with `and` intersection or `or` union.
 
 ### Exit Rule Components: `config.exits[]`
 
@@ -136,7 +164,7 @@ The evaluator sorts triggered candidates by `(priority, ordinal)` before applyin
 
 These are UI defaults for newly created strategies and rules, not additional backend requirements:
 
-- New strategies start with `universe=SP500`, `rebalance=monthly`, `longOnly=true`, `topN=20`, `lookbackWindow=63`, `holdingPeriod=21`, `costModel=default`, `intrabarConflictPolicy=stop_first`, and an empty `exits` array.
+- New strategies start with `universe={ source: postgres_gold, root: { kind: group, operator: and, clauses: [blank condition] } }`, `rebalance=monthly`, `longOnly=true`, `topN=20`, `lookbackWindow=63`, `holdingPeriod=21`, `costModel=default`, `intrabarConflictPolicy=stop_first`, and an empty `exits` array.
 - New `stop_loss_fixed` rules are seeded with `value=0.08`, `reference=entry_price`, and `priceField=low`.
 - New `take_profit_fixed` rules are seeded with `value=0.15`, `reference=entry_price`, and `priceField=high`.
 - New `trailing_stop_pct` rules are seeded with `value=0.07`, `reference=highest_since_entry`, and `priceField=low`.

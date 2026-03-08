@@ -28,6 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import type { StrategyDetail, StrategySummary } from '@/types/strategy';
+import { collectUniverseTables, summarizeUniverse } from '@/app/components/pages/strategy-editor/universeUtils';
 
 function formatTimestamp(value?: string): string {
   if (!value) return 'Never synced';
@@ -61,6 +62,12 @@ function summarizeRule(strategy: StrategyDetail, ruleId: string): string {
   }
 
   return `${String(rule.value ?? '')} via ${rule.priceField || 'n/a'}`;
+}
+
+function summarizeUniverseTables(strategy: StrategyDetail): string {
+  const tables = collectUniverseTables(strategy.config.universe.root);
+  if (!tables.length) return 'No tables selected.';
+  return tables.join(' • ');
 }
 
 export function StrategyConfigPage() {
@@ -312,7 +319,12 @@ export function StrategyConfigPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/65 p-4">
                     <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Universe</div>
-                    <div className="mt-2 font-display text-lg text-foreground">{detailQuery.data.config.universe}</div>
+                    <div className="mt-2 font-display text-lg text-foreground">
+                      {summarizeUniverse(detailQuery.data.config.universe)}
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {summarizeUniverseTables(detailQuery.data)}
+                    </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/65 p-4">
                     <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Rebalance</div>

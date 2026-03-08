@@ -33,6 +33,8 @@ import type {
   StrategyDetail,
   StrategySummary
 } from '@/types/strategy';
+import { UniverseRuleBuilder } from '@/app/components/pages/strategy-editor/UniverseRuleBuilder';
+import { buildEmptyUniverse } from '@/app/components/pages/strategy-editor/universeUtils';
 
 interface StrategyEditorProps {
   strategy: StrategySummary | null;
@@ -68,7 +70,7 @@ function buildEmptyStrategy(): StrategyDetail {
     type: 'configured',
     description: '',
     config: {
-      universe: 'SP500',
+      universe: buildEmptyUniverse(),
       rebalance: 'monthly',
       longOnly: true,
       topN: 20,
@@ -224,6 +226,7 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
   };
 
   const watchedType = watch('type');
+  const watchedUniverse = watch('config.universe');
   const watchedRebalance = watch('config.rebalance');
   const watchedPolicy = watch('config.intrabarConflictPolicy');
   const watchedLongOnly = watch('config.longOnly');
@@ -270,7 +273,7 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
             {detailError}
           </div>
         ) : (
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 py-4">
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 px-4 py-4 sm:px-5">
             <div className="space-y-4">
               <h3 className="text-sm font-medium text-muted-foreground">Metadata</h3>
               <div className="grid gap-4 md:grid-cols-2">
@@ -313,16 +316,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
             <div className="space-y-4 border-t pt-4">
               <h3 className="text-sm font-medium text-muted-foreground">Configuration</h3>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="universe">Universe</Label>
-                  <Input
-                    id="universe"
-                    {...register('config.universe', { required: true })}
-                    placeholder="SP500, NDX, etc."
-                  />
-                </div>
+              <UniverseRuleBuilder
+                value={watchedUniverse || buildEmptyUniverse()}
+                onChange={(nextValue) =>
+                  setValue('config.universe', nextValue, { shouldDirty: true, shouldTouch: true })
+                }
+              />
 
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="grid gap-2">
                   <Label htmlFor="rebalance">Rebalance Frequency</Label>
                   <Select

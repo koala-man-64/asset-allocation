@@ -7,10 +7,29 @@ from core.strategy_engine import (
 )
 
 
+def _sample_universe_payload() -> dict:
+    return {
+        "source": "postgres_gold",
+        "root": {
+            "kind": "group",
+            "operator": "and",
+            "clauses": [
+                {
+                    "kind": "condition",
+                    "table": "market_data",
+                    "column": "close",
+                    "operator": "gt",
+                    "value": 10,
+                }
+            ],
+        },
+    }
+
+
 def test_stop_loss_fixed_emits_exit_at_trigger_price() -> None:
     config = StrategyConfig.model_validate(
         {
-            "universe": "SP500",
+            "universe": _sample_universe_payload(),
             "rebalance": "weekly",
             "exits": [{"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08}],
         }
@@ -29,7 +48,7 @@ def test_stop_loss_fixed_emits_exit_at_trigger_price() -> None:
 def test_trailing_stop_pct_updates_anchor_before_evaluation() -> None:
     config = StrategyConfig.model_validate(
         {
-            "universe": "SP500",
+            "universe": _sample_universe_payload(),
             "rebalance": "weekly",
             "exits": [{"id": "trail-7", "type": "trailing_stop_pct", "value": 0.07}],
         }
@@ -53,7 +72,7 @@ def test_trailing_stop_pct_updates_anchor_before_evaluation() -> None:
 def test_trailing_stop_atr_uses_feature_value() -> None:
     config = StrategyConfig.model_validate(
         {
-            "universe": "SP500",
+            "universe": _sample_universe_payload(),
             "rebalance": "weekly",
             "exits": [
                 {
@@ -84,7 +103,7 @@ def test_trailing_stop_atr_uses_feature_value() -> None:
 def test_time_stop_uses_close_after_required_bars() -> None:
     config = StrategyConfig.model_validate(
         {
-            "universe": "SP500",
+            "universe": _sample_universe_payload(),
             "rebalance": "weekly",
             "exits": [{"id": "time-stop", "type": "time_stop", "value": 3}],
         }
@@ -107,7 +126,7 @@ def test_time_stop_uses_close_after_required_bars() -> None:
 
 def test_intrabar_conflict_policy_prefers_stop_or_take_profit() -> None:
     base_payload = {
-        "universe": "SP500",
+        "universe": _sample_universe_payload(),
         "rebalance": "weekly",
         "exits": [
             {"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08, "priority": 10},
@@ -143,7 +162,7 @@ def test_intrabar_conflict_policy_prefers_stop_or_take_profit() -> None:
 def test_strategy_simulator_emits_trade_metadata() -> None:
     config = StrategyConfig.model_validate(
         {
-            "universe": "SP500",
+            "universe": _sample_universe_payload(),
             "rebalance": "weekly",
             "exits": [
                 {"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08},

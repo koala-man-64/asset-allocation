@@ -1879,7 +1879,7 @@ export function DomainLayerComparisonPanel({
                                       style={{ gridColumn: model.layerIndex + 1 }}
                                     >
                                       <div
-                                        className="flex min-h-[132px] flex-col rounded-lg border border-mcm-walnut/20 bg-mcm-cream/35 p-2.5"
+                                        className="flex min-h-[124px] flex-col rounded-lg border border-mcm-walnut/20 bg-mcm-cream/35 p-2.5"
                                         style={{
                                           backgroundColor: model.layerVisual.strongBg,
                                           borderColor: model.layerVisual.border,
@@ -1887,7 +1887,7 @@ export function DomainLayerComparisonPanel({
                                         }}
                                       >
                                         <div className="flex items-start justify-between gap-2">
-                                          <div>
+                                          <div className="min-w-0">
                                             <div
                                               className="text-[11px] font-black uppercase tracking-widest"
                                               style={{ color: model.layerVisual.accent }}
@@ -1907,7 +1907,7 @@ export function DomainLayerComparisonPanel({
                                               </div>
                                             ) : null}
                                           </div>
-                                          <div className="flex flex-col items-end gap-1">
+                                          <div className="flex max-w-[48%] flex-wrap items-start justify-end gap-1">
                                             {model.isCellRefreshing ? (
                                               <span
                                                 data-testid={`cell-refresh-icon-detail-${row.key}-${model.layerColumn.key}`}
@@ -1944,86 +1944,74 @@ export function DomainLayerComparisonPanel({
                                           </div>
                                         </div>
 
-                                        <div className="mt-2 space-y-1 text-[11px] leading-snug">
+                                        <div className="mt-2 grid gap-2 text-[11px] leading-snug">
                                           {model.symbolComparison ? (
-                                            <div className={`${StatusTypos.MONO}`}>
+                                            <div
+                                              className={`${StatusTypos.MONO} flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px]`}
+                                            >
                                               <span className="text-mcm-walnut/70">
-                                                vs {model.previousLabel}:{' '}
+                                                vs {model.previousLabel}:
                                               </span>
                                               <span className={model.symbolComparison.className}>
                                                 {model.symbolComparison.text}
                                               </span>
-                                              <span className="text-mcm-walnut/60">{' | '}</span>
+                                              <span className="text-mcm-walnut/50">•</span>
                                               <span className={model.blacklistSummary.className}>
                                                 {model.blacklistSummary.text}
                                               </span>
                                             </div>
                                           ) : (
-                                            <div className={`${StatusTypos.MONO}`}>
+                                            <div
+                                              className={`${StatusTypos.MONO} flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px]`}
+                                            >
                                               <span className={model.blacklistSummary.className}>
                                                 {model.blacklistSummary.text}
                                               </span>
                                             </div>
                                           )}
-                                          <div
-                                            className={`${StatusTypos.MONO} flex items-center gap-1`}
+                                          <dl
+                                            className={`${StatusTypos.MONO} grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10.5px]`}
                                           >
-                                            <span className="text-mcm-walnut/70">last start:</span>
-                                            <span
-                                              className="text-mcm-walnut/90"
+                                            <dt className="text-mcm-walnut/70">last start:</dt>
+                                            <dd
+                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
                                               title={model.run?.startTime || undefined}
                                             >
                                               {model.lastStartDisplay}
-                                            </span>
-                                          </div>
-                                          <div
-                                            className={`${StatusTypos.MONO} flex items-center gap-1`}
-                                          >
-                                            <span className="text-mcm-walnut/70">job updated:</span>
-                                            <span
-                                              className="text-mcm-walnut/90"
+                                            </dd>
+                                            <dt className="text-mcm-walnut/70">job updated:</dt>
+                                            <dd
+                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
                                               title={model.jobUpdatedAt || undefined}
                                             >
                                               {model.jobUpdatedDisplay}
-                                            </span>
-                                          </div>
-                                          <div
-                                            className={`${StatusTypos.MONO} flex items-center gap-1`}
-                                          >
-                                            <span className="text-mcm-walnut/70">schedule:</span>
-                                            <span
-                                              className="truncate text-mcm-walnut/90"
+                                            </dd>
+                                            <dt className="text-mcm-walnut/70">schedule:</dt>
+                                            <dd
+                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
                                               title={model.scheduleRaw || undefined}
                                             >
                                               {model.scheduleDisplay}
-                                            </span>
-                                          </div>
-                                          <div
-                                            className={`${StatusTypos.MONO} flex items-start gap-1`}
-                                          >
-                                            <span className="text-mcm-walnut/70">date range:</span>
-                                            <span
-                                              className="text-mcm-walnut/90"
+                                            </dd>
+                                            <dt className="self-start text-mcm-walnut/70">
+                                              date range:
+                                            </dt>
+                                            <dd
+                                              className="min-w-0 break-words text-right text-mcm-walnut/90"
                                               title={model.dateRangeTooltip || undefined}
                                             >
                                               {model.dateRangeDisplay || 'N/A'}
-                                            </span>
-                                          </div>
-                                          <div
-                                            className={`${StatusTypos.MONO} flex items-center gap-1`}
-                                          >
-                                            <span className="text-mcm-walnut/70">
-                                              adls modified:
-                                            </span>
-                                            <span
-                                              className="text-mcm-walnut/90"
+                                            </dd>
+                                            <dt className="text-mcm-walnut/70">adls modified:</dt>
+                                            <dd
+                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
                                               title={model.adlsModifiedAt || undefined}
                                             >
                                               {model.adlsModifiedDisplay}
-                                            </span>
-                                          </div>
+                                            </dd>
+                                          </dl>
                                           {model.showFinanceSubfolders ? (
-                                            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 rounded-md border border-mcm-walnut/12 bg-mcm-paper/25 px-2 py-1.5">
                                               {model.financeSubfolderCounts.map((item) => (
                                                 <div
                                                   key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
@@ -2043,7 +2031,7 @@ export function DomainLayerComparisonPanel({
                                           ) : null}
                                         </div>
 
-                                        <div className="mt-auto flex items-center justify-end gap-1 pt-2">
+                                        <div className="mt-auto flex items-center justify-end gap-1 border-t border-mcm-walnut/15 pt-2">
                                           <Button
                                             type="button"
                                             size="sm"

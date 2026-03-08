@@ -42,7 +42,28 @@ class _FakeConnection:
 
 
 def test_get_strategy_config_reads_from_core_schema(monkeypatch) -> None:
-    cursor = _FakeCursor(fetchone_result=({"universe": "SP500"},))
+    cursor = _FakeCursor(
+        fetchone_result=(
+            {
+                "universe": {
+                    "source": "postgres_gold",
+                    "root": {
+                        "kind": "group",
+                        "operator": "and",
+                        "clauses": [
+                            {
+                                "kind": "condition",
+                                "table": "market_data",
+                                "column": "close",
+                                "operator": "gt",
+                                "value": 10,
+                            }
+                        ],
+                    },
+                }
+            },
+        )
+    )
 
     monkeypatch.setattr(
         "core.strategy_repository.connect",
@@ -51,7 +72,24 @@ def test_get_strategy_config_reads_from_core_schema(monkeypatch) -> None:
 
     repo = StrategyRepository("postgresql://user:pass@localhost/db")
 
-    assert repo.get_strategy_config("momentum") == {"universe": "SP500"}
+    assert repo.get_strategy_config("momentum") == {
+        "universe": {
+            "source": "postgres_gold",
+            "root": {
+                "kind": "group",
+                "operator": "and",
+                "clauses": [
+                    {
+                        "kind": "condition",
+                        "table": "market_data",
+                        "column": "close",
+                        "operator": "gt",
+                        "value": 10,
+                    }
+                ],
+            },
+        }
+    }
     sql, params = cursor.execute_calls[0]
     assert "FROM core.strategies" in sql
     assert params == ("momentum",)

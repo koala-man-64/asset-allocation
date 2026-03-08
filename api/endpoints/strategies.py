@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 
 from api.service.dependencies import validate_auth
 
-from core.strategy_engine import StrategyConfig
+from core.strategy_engine import StrategyConfig, UniverseDefinition
+from core.strategy_engine.universe import list_gold_universe_catalog, preview_gold_universe
 from core.strategy_repository import StrategyRepository
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,37 @@ class StrategyUpsertRequest(BaseModel):
     type: str = "configured"
 
 
+class UniverseCatalogColumnResponse(BaseModel):
+    name: str
+    dataType: str
+    valueKind: str
+    operators: list[str]
+
+
+class UniverseCatalogTableResponse(BaseModel):
+    name: str
+    asOfColumn: str
+    columns: list[UniverseCatalogColumnResponse]
+
+
+class UniverseCatalogResponse(BaseModel):
+    source: str
+    tables: list[UniverseCatalogTableResponse]
+
+
+class UniversePreviewRequest(BaseModel):
+    universe: UniverseDefinition
+    sampleLimit: int = Field(default=25, ge=1, le=100)
+
+
+class UniversePreviewResponse(BaseModel):
+    source: str
+    symbolCount: int
+    sampleSymbols: list[str]
+    tablesUsed: list[str]
+    warnings: list[str] = Field(default_factory=list)
+
+
 def _normalize_strategy_config(config: Any) -> dict[str, Any]:
     return StrategyConfig.model_validate(config or {}).model_dump(exclude_none=True)
 
@@ -47,6 +79,14 @@ def _build_strategy_detail_response(strategy: dict[str, Any]) -> StrategyDetailR
     )
 
 
+def _require_postgres_dsn(request: Request) -> str:
+    settings = request.app.state.settings
+    dsn = str(settings.postgres_dsn or "").strip()
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is required for strategy universe features.")
+    return dsn
+
+
 @router.get("/", response_model=List[StrategySummaryResponse])
 async def list_strategies(request: Request) -> List[dict[str, Any]]:
     """
@@ -56,6 +96,50 @@ async def list_strategies(request: Request) -> List[dict[str, Any]]:
     settings = request.app.state.settings
     repo = StrategyRepository(settings.postgres_dsn)
     return repo.list_strategies()
+
+
+@router.get("/universe/catalog", response_model=UniverseCatalogResponse)
+async def get_universe_catalog(request: Request) -> UniverseCatalogResponse:
+    """
+    Return eligible Postgres gold tables and columns for strategy universe authoring.
+    """
+    validate_auth(request)
+    try:
+        return UniverseCatalogResponse.model_validate(
+            list_gold_universe_catalog(_require_postgres_dsn(request))
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        logger.warning("Universe catalog validation failed: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Universe catalog load failed.")
+        raise HTTPException(status_code=500, detail=f"Failed to load universe catalog: {exc}") from exc
+
+
+@router.post("/universe/preview", response_model=UniversePreviewResponse)
+async def preview_universe(payload: UniversePreviewRequest, request: Request) -> UniversePreviewResponse:
+    """
+    Preview the current matching symbol set for a draft strategy universe.
+    """
+    validate_auth(request)
+    try:
+        return UniversePreviewResponse.model_validate(
+            preview_gold_universe(
+                _require_postgres_dsn(request),
+                payload.universe,
+                sample_limit=payload.sampleLimit,
+            )
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        logger.warning("Universe preview validation failed: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Universe preview failed.")
+        raise HTTPException(status_code=500, detail=f"Failed to preview universe: {exc}") from exc
 
 
 @router.get("/{name}/detail", response_model=StrategyDetailResponse)

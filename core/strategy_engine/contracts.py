@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +16,76 @@ ExitAction = Literal["exit_full"]
 PriceField = Literal["open", "high", "low", "close"]
 ExitReference = Literal["entry_price", "highest_since_entry"]
 IntrabarConflictPolicy = Literal["stop_first", "take_profit_first", "priority_order"]
+UniverseSource = Literal["postgres_gold"]
+UniverseGroupOperator = Literal["and", "or"]
+UniverseConditionOperator = Literal[
+    "eq",
+    "ne",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "in",
+    "not_in",
+    "is_null",
+    "is_not_null",
+]
+UniverseValue: TypeAlias = str | int | float | bool
+
+_IDENTIFIER_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
+
+
+class UniverseCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["condition"] = "condition"
+    table: str = Field(..., min_length=1, max_length=128, pattern=_IDENTIFIER_PATTERN)
+    column: str = Field(..., min_length=1, max_length=128, pattern=_IDENTIFIER_PATTERN)
+    operator: UniverseConditionOperator
+    value: UniverseValue | None = None
+    values: list[UniverseValue] | None = None
+
+    @model_validator(mode="after")
+    def validate_condition(self) -> "UniverseCondition":
+        self.table = str(self.table or "").strip().lower()
+        self.column = str(self.column or "").strip().lower()
+
+        if self.operator in {"is_null", "is_not_null"}:
+            if self.value is not None or self.values is not None:
+                raise ValueError(f"{self.operator} does not accept value or values.")
+            return self
+
+        if self.operator in {"in", "not_in"}:
+            if self.value is not None:
+                raise ValueError(f"{self.operator} only supports values.")
+            if not self.values:
+                raise ValueError(f"{self.operator} requires at least one value.")
+            return self
+
+        if self.value is None:
+            raise ValueError(f"{self.operator} requires value.")
+        if self.values is not None:
+            raise ValueError(f"{self.operator} does not support values.")
+        return self
+
+
+class UniverseGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["group"] = "group"
+    operator: UniverseGroupOperator = "and"
+    clauses: list["UniverseGroup | UniverseCondition"] = Field(..., min_length=1)
+
+
+class UniverseDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: UniverseSource = "postgres_gold"
+    root: UniverseGroup
+
+
+UniverseGroup.model_rebuild()
+UniverseDefinition.model_rebuild()
 
 
 class ExitRule(BaseModel):
@@ -99,7 +169,7 @@ class ExitRule(BaseModel):
 class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    universe: str = Field(default="SP500", min_length=1, max_length=128)
+    universe: UniverseDefinition
     rebalance: str = Field(default="monthly", min_length=1, max_length=64)
     longOnly: bool = True
     topN: int = Field(default=20, ge=1)

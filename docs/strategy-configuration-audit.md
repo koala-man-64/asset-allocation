@@ -1,5 +1,7 @@
 # Architecture & Code Audit Report
 
+Historical note: this audit predates the structured Postgres-gold universe builder. The current strategy contract lives in [DATA.md](/mnt/c/Users/rdpro/Projects/AssetAllocation/DATA.md).
+
 ## 1. Executive Summary
 
 The strategy subsystem has a clear control-plane contract: authenticated FastAPI endpoints validate a closed `StrategyConfig` schema, normalize defaults, and persist named strategy documents in Postgres for the React UI to edit. The strongest implemented runtime behavior is the exit engine, where `intrabarConflictPolicy` and `exits[]` are validated and exercised by unit tests. The biggest architectural gap is that most top-level strategy fields (`universe`, `rebalance`, `longOnly`, `topN`, `lookbackWindow`, `holdingPeriod`, `costModel`) are configurable and persisted but are not consumed by the runtime evaluator or simulator. Near-term priorities are to publish an execution matrix for every field, remove or gate unsupported affordances such as `type=code-based`, and replace the current long modal editor with a full-page workbench that combines authoring, validation, and preview.
@@ -66,7 +68,22 @@ Example payload:
   "type": "configured",
   "description": "Momentum strategy with layered exits",
   "config": {
-    "universe": "SP500",
+    "universe": {
+      "source": "postgres_gold",
+      "root": {
+        "kind": "group",
+        "operator": "and",
+        "clauses": [
+          {
+            "kind": "condition",
+            "table": "market_data",
+            "column": "close",
+            "operator": "gt",
+            "value": 10
+          }
+        ]
+      }
+    },
     "rebalance": "monthly",
     "longOnly": true,
     "topN": 20,

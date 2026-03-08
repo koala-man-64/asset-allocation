@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { DomainLayerComparisonPanel } from '@/app/components/pages/system-status/DomainLayerComparisonPanel';
 import { DataService } from '@/services/DataService';
 import { renderWithProviders } from '@/test/utils';
-import type { DataLayer, JobRun } from '@/types/strategy';
+import type { DataLayer, DomainMetadata, JobRun } from '@/types/strategy';
 
 const setJobSuspendedMock = vi.fn().mockResolvedValue(undefined);
 const triggerJobMock = vi.fn().mockResolvedValue(undefined);
@@ -403,9 +403,8 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('shows a row-level refreshing indicator in the medallion-domain view during refresh', async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    let resolveMetadata: ((value: Awaited<ReturnType<typeof DataService.getDomainMetadata>>) => void) | null =
-      null;
-    const metadataPromise = new Promise<Awaited<ReturnType<typeof DataService.getDomainMetadata>>>((resolve) => {
+    let resolveMetadata: ((value: DomainMetadata) => void) | null = null;
+    const metadataPromise = new Promise<DomainMetadata>((resolve) => {
       resolveMetadata = resolve;
     });
     vi.mocked(DataService.getDomainMetadata).mockReturnValue(metadataPromise);

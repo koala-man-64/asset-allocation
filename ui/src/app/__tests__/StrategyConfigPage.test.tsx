@@ -11,7 +11,9 @@ vi.mock('@/services/strategyApi', () => ({
     saveStrategy: vi.fn(),
     getStrategy: vi.fn(),
     getStrategyDetail: vi.fn(),
-    deleteStrategy: vi.fn()
+    deleteStrategy: vi.fn(),
+    getUniverseCatalog: vi.fn(),
+    previewUniverse: vi.fn()
   }
 }));
 
@@ -34,10 +36,52 @@ const createTestQueryClient = () =>
 
 describe('StrategyConfigPage', () => {
   let queryClient: QueryClient;
+  const mockUniverse = {
+    source: 'postgres_gold' as const,
+    root: {
+      kind: 'group' as const,
+      operator: 'and' as const,
+      clauses: [
+        {
+          kind: 'condition' as const,
+          table: 'market_data',
+          column: 'close',
+          operator: 'gt' as const,
+          value: 10
+        }
+      ]
+    }
+  };
+
+  const mockCatalog = {
+    source: 'postgres_gold' as const,
+    tables: [
+      {
+        name: 'market_data',
+        asOfColumn: 'date',
+        columns: [
+          {
+            name: 'close',
+            dataType: 'double precision',
+            valueKind: 'number' as const,
+            operators: ['eq', 'gt']
+          }
+        ]
+      }
+    ]
+  };
 
   beforeEach(() => {
     queryClient = createTestQueryClient();
     vi.clearAllMocks();
+    (strategyApi.getUniverseCatalog as Mock).mockResolvedValue(mockCatalog);
+    (strategyApi.previewUniverse as Mock).mockResolvedValue({
+      source: 'postgres_gold',
+      symbolCount: 2,
+      sampleSymbols: ['AAPL', 'MSFT'],
+      tablesUsed: ['market_data'],
+      warnings: []
+    });
   });
 
   it('renders loading state initially', () => {
@@ -63,7 +107,7 @@ describe('StrategyConfigPage', () => {
       type: 'configured',
       description: 'desc 1',
       config: {
-        universe: 'SP500',
+        universe: mockUniverse,
         rebalance: 'weekly',
         longOnly: true,
         topN: 20,
@@ -100,7 +144,7 @@ describe('StrategyConfigPage', () => {
       type: 'configured',
       description: 'desc 1',
       config: {
-        universe: 'NDX',
+        universe: mockUniverse,
         rebalance: 'weekly',
         longOnly: true,
         topN: 25,
@@ -108,7 +152,32 @@ describe('StrategyConfigPage', () => {
         holdingPeriod: 30,
         costModel: 'default',
         intrabarConflictPolicy: 'stop_first',
-        exits: [{ id: 'stop-8', enabled: true, type: 'stop_loss_fixed', scope: 'position', action: 'exit_full', minHoldBars: 0, priceField: 'low', reference: 'entry_price', value: 0.08, priority: 0 }]
+        exits: [
+          {
+            id: 'stop-8',
+            enabled: true,
+            type: 'stop_loss_fixed',
+            scope: 'position',
+            action: 'exit_full',
+            minHoldBars: 0,
+            priceField: 'low',
+            reference: 'entry_price',
+            value: 0.08,
+            priority: 0
+          },
+          {
+            id: 'take-15',
+            enabled: true,
+            type: 'take_profit_fixed',
+            scope: 'position',
+            action: 'exit_full',
+            minHoldBars: 0,
+            priceField: 'high',
+            reference: 'entry_price',
+            value: 0.15,
+            priority: 1
+          }
+        ]
       }
     });
 
@@ -131,14 +200,16 @@ describe('StrategyConfigPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Top 25 with 90-bar lookback/i)).toBeInTheDocument();
     });
+    expect(screen.getByText(/1 condition across 1 table/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit Strategy$/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/universe/i)).toHaveValue('NDX');
+      expect(screen.getByLabelText(/gold table/i)).toHaveValue('market_data');
     });
 
     expect(screen.getByDisplayValue('stop-8')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('take-15')).toBeInTheDocument();
   });
 
   it('opens editor when New Strategy button is clicked', async () => {

@@ -23,8 +23,25 @@ MOCK_STRATEGY = {
     "updated_at": "2023-01-01T00:00:00Z"
 }
 
+MOCK_UNIVERSE = {
+    "source": "postgres_gold",
+    "root": {
+        "kind": "group",
+        "operator": "and",
+        "clauses": [
+            {
+                "kind": "condition",
+                "table": "market_data",
+                "column": "close",
+                "operator": "gt",
+                "value": 10,
+            }
+        ],
+    },
+}
+
 MOCK_CONFIG = {
-    "universe": "SP500",
+    "universe": MOCK_UNIVERSE,
     "rebalance": "monthly"
 }
 
@@ -65,7 +82,8 @@ def test_get_strategy(client, mock_repo):
     
     response = client.get("/api/strategies/test-strategy")
     assert response.status_code == 200
-    assert response.json()["universe"] == "SP500"
+    assert response.json()["universe"]["source"] == "postgres_gold"
+    assert response.json()["universe"]["root"]["clauses"][0]["table"] == "market_data"
     assert response.json()["intrabarConflictPolicy"] == "stop_first"
     assert response.json()["exits"] == []
 
@@ -83,7 +101,8 @@ def test_get_strategy_detail(client, mock_repo):
     response = client.get("/api/strategies/test-strategy/detail")
     assert response.status_code == 200
     assert response.json()["name"] == "test-strategy"
-    assert response.json()["config"]["universe"] == "SP500"
+    assert response.json()["config"]["universe"]["source"] == "postgres_gold"
+    assert response.json()["config"]["universe"]["root"]["clauses"][0]["column"] == "close"
     assert response.json()["config"]["intrabarConflictPolicy"] == "stop_first"
 
 def test_save_strategy(client, mock_repo):
@@ -93,7 +112,7 @@ def test_save_strategy(client, mock_repo):
     payload = {
         "name": "new-strategy",
         "config": {
-            "universe": "NDX",
+            "universe": MOCK_UNIVERSE,
             "rebalance": "weekly",
             "exits": [{"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08}]
         },
@@ -123,7 +142,7 @@ def test_save_strategy_rejects_duplicate_exit_rule_ids(client, mock_repo):
         "description": "New Strategy",
         "type": "configured",
         "config": {
-            "universe": "NDX",
+            "universe": MOCK_UNIVERSE,
             "rebalance": "weekly",
             "exits": [
                 {"id": "dup", "type": "stop_loss_fixed", "value": 0.08},

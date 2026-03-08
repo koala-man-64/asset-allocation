@@ -3,10 +3,29 @@ from pydantic import ValidationError
 from core.strategy_engine import StrategyConfig
 
 
+def _sample_universe_payload() -> dict:
+    return {
+        "source": "postgres_gold",
+        "root": {
+            "kind": "group",
+            "operator": "and",
+            "clauses": [
+                {
+                    "kind": "condition",
+                    "table": "market_data",
+                    "column": "close",
+                    "operator": "gt",
+                    "value": 10,
+                }
+            ],
+        },
+    }
+
+
 def test_strategy_config_normalizes_exit_defaults() -> None:
     config = StrategyConfig.model_validate(
         {
-            "universe": "SP500",
+            "universe": _sample_universe_payload(),
             "rebalance": "weekly",
             "exits": [{"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08}],
         }
@@ -25,7 +44,7 @@ def test_strategy_config_rejects_duplicate_exit_rule_ids() -> None:
     try:
         StrategyConfig.model_validate(
             {
-                "universe": "SP500",
+                "universe": _sample_universe_payload(),
                 "rebalance": "weekly",
                 "exits": [
                     {"id": "dup", "type": "stop_loss_fixed", "value": 0.08},
@@ -43,7 +62,7 @@ def test_time_stop_rejects_non_close_price_field() -> None:
     try:
         StrategyConfig.model_validate(
             {
-                "universe": "SP500",
+                "universe": _sample_universe_payload(),
                 "rebalance": "weekly",
                 "exits": [
                     {
@@ -59,3 +78,21 @@ def test_time_stop_rejects_non_close_price_field() -> None:
         assert "time_stop only supports priceField='close'" in str(exc)
     else:
         raise AssertionError("Expected ValidationError for invalid time_stop priceField")
+
+
+def test_strategy_config_rejects_empty_universe_group() -> None:
+    try:
+        StrategyConfig.model_validate(
+            {
+                "universe": {
+                    "source": "postgres_gold",
+                    "root": {"kind": "group", "operator": "and", "clauses": []},
+                },
+                "rebalance": "weekly",
+                "exits": [],
+            }
+        )
+    except ValidationError as exc:
+        assert "clauses" in str(exc)
+    else:
+        raise AssertionError("Expected ValidationError for empty universe groups")
