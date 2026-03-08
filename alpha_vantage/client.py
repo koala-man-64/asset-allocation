@@ -1141,6 +1141,16 @@ class AlphaVantageClient:
             return self.fetch_csv(function, symbol)
         return self.fetch(function, symbol)
 
+    def get_earnings_calendar(
+        self,
+        symbol: Optional[str] = None,
+        *,
+        horizon: str = "12month",
+    ) -> str:
+        """Retrieve upcoming earnings-calendar rows as CSV."""
+        function = "EARNINGS_CALENDAR"
+        return self.fetch_csv(function, symbol, horizon=horizon)
+
     # ------------------------------------------------------------------
     # Parsing helpers (delegated to utils)
     # ------------------------------------------------------------------

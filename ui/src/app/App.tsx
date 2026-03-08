@@ -22,10 +22,9 @@ const PostgresExplorerPage = lazy(() =>
 const DebugSymbolsPage = lazy(() => import('@/app/components/pages/DebugSymbolsPage').then(m => ({ default: m.DebugSymbolsPage })));
 const DataProfilingPage = lazy(() => import('@/app/components/pages/DataProfilingPage').then(m => ({ default: m.DataProfilingPage })));
 const RuntimeConfigPage = lazy(() => import('@/app/components/pages/RuntimeConfigPage').then(m => ({ default: m.RuntimeConfigPage })));
-const GoldMaterializationPage = lazy(() =>
-  import('@/app/components/pages/GoldMaterializationPage').then((m) => ({ default: m.GoldMaterializationPage }))
-);
 const StrategyConfigPage = lazy(() => import('@/app/components/pages/StrategyConfigPage').then(m => ({ default: m.StrategyConfigPage })));
+const UniverseConfigPage = lazy(() => import('@/app/components/pages/UniverseConfigPage').then(m => ({ default: m.UniverseConfigPage })));
+const RankingConfigPage = lazy(() => import('@/app/components/pages/RankingConfigPage').then(m => ({ default: m.RankingConfigPage })));
 const SymbolPurgeByCriteriaPage = lazy(() =>
   import('@/app/components/pages/SymbolPurgeByCriteriaPage').then((m) => ({ default: m.SymbolPurgeByCriteriaPage }))
 );
@@ -103,11 +102,15 @@ function AppContent() {
                 <Route path="/system-status" element={<SystemStatusPage />} />
                 <Route path="/debug-symbols" element={<DebugSymbolsPage />} />
                 <Route path="/runtime-config" element={<RuntimeConfigPage />} />
-                <Route path="/gold-materialization" element={<GoldMaterializationPage />} />
                 <Route path="/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
                 <Route path="/data-admin/symbol-purge" element={<SymbolPurgeByCriteriaPage />} />
                 <Route path="/stock-explorer" element={<StockExplorerPage />} />
                 <Route path="/strategies" element={<StrategyConfigPage />} />
+                <Route path="/run-configurations" element={<StrategyConfigPage />} />
+                <Route path="/universes" element={<UniverseConfigPage />} />
+                <Route path="/universe-configurations" element={<UniverseConfigPage />} />
+                <Route path="/rankings" element={<RankingConfigPage />} />
+                <Route path="/ranking-configurations" element={<RankingConfigPage />} />
                 <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
                 <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

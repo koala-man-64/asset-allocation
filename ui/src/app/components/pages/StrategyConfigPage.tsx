@@ -28,7 +28,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import type { StrategyDetail, StrategySummary } from '@/types/strategy';
-import { collectUniverseTables, summarizeUniverse } from '@/app/components/pages/strategy-editor/universeUtils';
 
 function formatTimestamp(value?: string): string {
   if (!value) return 'Never synced';
@@ -62,12 +61,6 @@ function summarizeRule(strategy: StrategyDetail, ruleId: string): string {
   }
 
   return `${String(rule.value ?? '')} via ${rule.priceField || 'n/a'}`;
-}
-
-function summarizeUniverseTables(strategy: StrategyDetail): string {
-  const tables = collectUniverseTables(strategy.config.universe.root);
-  if (!tables.length) return 'No tables selected.';
-  return tables.join(' • ');
 }
 
 export function StrategyConfigPage() {
@@ -108,10 +101,10 @@ export function StrategyConfigPage() {
       ]);
       setSelectedStrategyName((current) => (current === name ? null : current));
       setStrategyPendingDelete(null);
-      toast.success(`Strategy ${name} deleted from Postgres`);
+      toast.success(`Run configuration ${name} deleted from Postgres`);
     },
     onError: (deleteError) => {
-      toast.error(`Failed to delete strategy: ${formatSystemStatusText(deleteError)}`);
+      toast.error(`Failed to delete run configuration: ${formatSystemStatusText(deleteError)}`);
     }
   });
 
@@ -153,14 +146,15 @@ export function StrategyConfigPage() {
     <div className="page-shell">
       <div className="page-header-row">
         <div className="page-header">
-          <p className="page-kicker">Strategy Workbench</p>
-          <h1 className="page-title">Strategies</h1>
+          <p className="page-kicker">Run Configuration</p>
+          <h1 className="page-title">Run Configurations</h1>
           <p className="page-subtitle">
-            View, edit, create, and delete Postgres-backed strategies. Changes persist when you click save or delete.
+            Manage the strategy-backed run settings that control cadence, selection, ranking attachment, and exits.
+            Changes persist when you save or delete the record.
           </p>
         </div>
         <Button onClick={handleCreate} className="gap-2">
-          <Plus className="mr-2 h-4 w-4" /> New Strategy
+          <Plus className="mr-2 h-4 w-4" /> New Run Configuration
         </Button>
       </div>
 
@@ -168,9 +162,9 @@ export function StrategyConfigPage() {
         <Card className="mcm-panel">
           <CardHeader className="border-b border-border/40">
             <div className="space-y-1">
-              <CardTitle className="font-display text-xl">Strategy Catalog</CardTitle>
+              <CardTitle className="font-display text-xl">Run Configuration Catalog</CardTitle>
               <CardDescription>
-                Select a saved strategy to inspect its configuration or open it for editing.
+                Select a saved run configuration to inspect its settings or open it for editing.
               </CardDescription>
             </div>
             <CardAction>
@@ -186,7 +180,7 @@ export function StrategyConfigPage() {
               </div>
             ) : strategies.length === 0 ? (
               <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-6 text-sm text-muted-foreground">
-                No strategies found yet. Create one, then click <span className="font-semibold text-foreground">Save to Postgres</span>.
+                No run configurations found yet. Create one, then click <span className="font-semibold text-foreground">Save to Postgres</span>.
               </div>
             ) : (
               <Table>
@@ -228,7 +222,7 @@ export function StrategyConfigPage() {
                               type="button"
                               variant="ghost"
                               size="sm"
-                              aria-label={`View strategy ${strategy.name}`}
+                              aria-label={`View run configuration ${strategy.name}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 handleView(strategy);
@@ -241,7 +235,7 @@ export function StrategyConfigPage() {
                               type="button"
                               variant="secondary"
                               size="sm"
-                              aria-label={`Edit strategy ${strategy.name}`}
+                              aria-label={`Edit run configuration ${strategy.name}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 handleEdit(strategy);
@@ -254,7 +248,7 @@ export function StrategyConfigPage() {
                               type="button"
                               variant="outline"
                               size="sm"
-                              aria-label={`Delete strategy ${strategy.name}`}
+                              aria-label={`Delete run configuration ${strategy.name}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setStrategyPendingDelete(strategy);
@@ -277,9 +271,9 @@ export function StrategyConfigPage() {
         <Card className="mcm-panel">
           <CardHeader className="border-b border-border/40">
             <div className="space-y-1">
-              <CardTitle className="font-display text-xl">Strategy Detail</CardTitle>
+              <CardTitle className="font-display text-xl">Run Configuration Detail</CardTitle>
               <CardDescription>
-                Review the saved configuration before opening the editor or deleting the strategy from Postgres.
+                Review the saved run configuration before opening the editor or deleting the record from Postgres.
               </CardDescription>
             </div>
             {selectedStrategyLabel ? (
@@ -291,10 +285,10 @@ export function StrategyConfigPage() {
           <CardContent className="space-y-5 pt-6">
             {!selectedStrategyName ? (
               <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-6 text-sm text-muted-foreground">
-                Select a strategy from the catalog to view its saved configuration.
+                Select a run configuration from the catalog to view its saved settings.
               </div>
             ) : detailQuery.isLoading ? (
-              <PageLoader text="Loading strategy..." className="h-72" />
+              <PageLoader text="Loading run configuration..." className="h-72" />
             ) : detailError ? (
               <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
                 {detailError}
@@ -318,12 +312,14 @@ export function StrategyConfigPage() {
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/65 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Universe</div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Universe Config</div>
                     <div className="mt-2 font-display text-lg text-foreground">
-                      {summarizeUniverse(detailQuery.data.config.universe)}
+                      {detailQuery.data.config.universeConfigName || 'Not assigned'}
                     </div>
                     <div className="mt-2 text-xs text-muted-foreground">
-                      {summarizeUniverseTables(detailQuery.data)}
+                      {detailQuery.data.config.universe
+                        ? 'Legacy embedded universe present on this record.'
+                        : 'Saved universe reference used by this run configuration.'}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/65 p-4">
@@ -347,8 +343,20 @@ export function StrategyConfigPage() {
                     <div className="mt-2 text-sm text-foreground">{detailQuery.data.config.costModel}</div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Ranking Schema</div>
+                    <div className="mt-2 text-sm text-foreground">
+                      {detailQuery.data.config.rankingSchemaName || 'None attached'}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
                     <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Conflict Policy</div>
                     <div className="mt-2 text-sm text-foreground">{detailQuery.data.config.intrabarConflictPolicy}</div>
+                  </div>
+                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Platinum Output</div>
+                    <div className="mt-2 text-sm text-foreground">
+                      {detailQuery.data.output_table_name ? `platinum.${detailQuery.data.output_table_name}` : 'Not assigned'}
+                    </div>
                   </div>
                 </div>
 
@@ -393,7 +401,7 @@ export function StrategyConfigPage() {
                   {selectedStrategy ? (
                     <Button type="button" variant="secondary" onClick={() => handleEdit(selectedStrategy)}>
                       <PencilLine className="h-4 w-4" />
-                      Edit Strategy
+                      Edit Run Configuration
                     </Button>
                   ) : null}
                   {selectedStrategy ? (
@@ -403,7 +411,7 @@ export function StrategyConfigPage() {
                       onClick={() => setStrategyPendingDelete(selectedStrategy)}
                     >
                       <Trash2 className="h-4 w-4" />
-                      Delete from Postgres
+                      Delete Run Configuration
                     </Button>
                   ) : null}
                 </div>
@@ -431,10 +439,10 @@ export function StrategyConfigPage() {
         <AlertDialogContent className="border-2 border-mcm-walnut bg-mcm-paper">
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display text-2xl text-foreground">
-              Delete strategy
+              Delete run configuration
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Delete <span className="font-semibold text-foreground">{strategyPendingDelete?.name}</span> from Postgres. This removes the saved strategy record from the strategy catalog.
+              Delete <span className="font-semibold text-foreground">{strategyPendingDelete?.name}</span> from Postgres. This removes the saved run configuration record from the catalog.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

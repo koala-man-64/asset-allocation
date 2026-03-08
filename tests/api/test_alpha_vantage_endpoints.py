@@ -75,6 +75,24 @@ async def test_alpha_vantage_earnings_returns_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_alpha_vantage_earnings_calendar_returns_csv(monkeypatch):
+    def fake_calendar(self, *, symbol=None, horizon="12month"):
+        assert symbol == "AAPL"
+        assert horizon == "6month"
+        return "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\nAAPL,Apple,2026-05-01,2026-03-31,1.5,USD,post-market\n"
+
+    monkeypatch.setattr(AlphaVantageGateway, "get_earnings_calendar_csv", fake_calendar)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/alpha-vantage/earnings-calendar?symbol=AAPL&horizon=6month")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "reportDate" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_alpha_vantage_finance_returns_json(monkeypatch):
     def fake_finance(self, *, symbol, report):
         assert symbol == "AAPL"

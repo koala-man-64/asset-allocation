@@ -204,8 +204,24 @@ _EARNINGS_COLUMNS: tuple[str, ...] = (
     "is_earnings_day",
     "last_earnings_date",
     "days_since_earnings",
+    "next_earnings_date",
+    "days_until_next_earnings",
+    "next_earnings_estimate",
+    "next_earnings_time_of_day",
+    "next_earnings_fiscal_date_ending",
+    "has_upcoming_earnings",
+    "is_scheduled_earnings_day",
 )
-_EARNINGS_INTEGER_COLUMNS = frozenset({"is_earnings_day", "days_since_earnings"})
+_EARNINGS_INTEGER_COLUMNS = frozenset(
+    {
+        "is_earnings_day",
+        "days_since_earnings",
+        "days_until_next_earnings",
+        "has_upcoming_earnings",
+        "is_scheduled_earnings_day",
+    }
+)
+_EARNINGS_TEXT_COLUMNS = frozenset({"next_earnings_time_of_day"})
 
 _PRICE_TARGET_COLUMNS: tuple[str, ...] = (
     "obs_date",
@@ -247,6 +263,7 @@ class GoldSyncConfig:
     columns: tuple[str, ...]
     integer_columns: frozenset[str]
     bigint_columns: frozenset[str] = frozenset()
+    text_columns: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -297,9 +314,10 @@ _DOMAIN_CONFIGS: dict[str, GoldSyncConfig] = {
         domain="earnings",
         table="gold.earnings_data",
         date_column="date",
-        date_columns=("date", "last_earnings_date"),
+        date_columns=("date", "last_earnings_date", "next_earnings_date", "next_earnings_fiscal_date_ending"),
         columns=_EARNINGS_COLUMNS,
         integer_columns=_EARNINGS_INTEGER_COLUMNS,
+        text_columns=_EARNINGS_TEXT_COLUMNS,
     ),
     "price-target": GoldSyncConfig(
         domain="price-target",
@@ -479,6 +497,10 @@ def _prepare_frame(frame: pd.DataFrame, *, config: GoldSyncConfig) -> pd.DataFra
 
     for column in config.columns:
         if column == "symbol" or column in config.date_columns:
+            continue
+        if column in config.text_columns:
+            values = work[column].astype("string").str.strip()
+            work[column] = values.where(values.notna() & (values != ""), pd.NA)
             continue
         if column in config.integer_columns or column in config.bigint_columns:
             work[column] = pd.to_numeric(work[column], errors="coerce").round().astype("Int64")

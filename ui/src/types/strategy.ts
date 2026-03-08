@@ -118,6 +118,19 @@ export type UniverseConditionOperator =
   | 'is_not_null';
 export type UniverseValue = string | number | boolean;
 export type UniverseValueKind = 'string' | 'number' | 'boolean' | 'date' | 'datetime';
+export type RankingTransformType =
+  | 'percentile_rank'
+  | 'zscore'
+  | 'minmax'
+  | 'clip'
+  | 'winsorize'
+  | 'coalesce'
+  | 'log1p'
+  | 'negate'
+  | 'abs';
+export type RankingDirection = 'asc' | 'desc';
+export type RankingMissingValuePolicy = 'exclude' | 'zero';
+export type RankingCatalogValueKind = 'number' | 'boolean';
 
 export interface ExitRule {
   id: string;
@@ -182,13 +195,15 @@ export interface UniversePreviewResponse {
 }
 
 export interface StrategyConfig {
-  universe: UniverseDefinition;
+  universeConfigName?: string;
+  universe?: UniverseDefinition;
   rebalance: string;
   longOnly: boolean;
   topN: number;
   lookbackWindow: number;
   holdingPeriod: number;
   costModel: string;
+  rankingSchemaName?: string;
   intrabarConflictPolicy: IntrabarConflictPolicy;
   exits: ExitRule[];
 }
@@ -197,11 +212,105 @@ export interface StrategySummary {
   name: string;
   type: string;
   description?: string;
+  output_table_name?: string;
   updated_at?: string;
 }
 
 export interface StrategyDetail extends StrategySummary {
   config: StrategyConfig;
+}
+
+export interface RankingTransform {
+  type: RankingTransformType;
+  params: Record<string, string | number | boolean | null>;
+}
+
+export interface RankingFactor {
+  name: string;
+  table: string;
+  column: string;
+  weight: number;
+  direction: RankingDirection;
+  missingValuePolicy: RankingMissingValuePolicy;
+  transforms: RankingTransform[];
+}
+
+export interface RankingGroup {
+  name: string;
+  weight: number;
+  factors: RankingFactor[];
+  transforms: RankingTransform[];
+}
+
+export interface RankingSchemaConfig {
+  universeConfigName?: string;
+  groups: RankingGroup[];
+  overallTransforms: RankingTransform[];
+}
+
+export interface UniverseConfigSummary {
+  name: string;
+  description?: string;
+  version: number;
+  updated_at?: string;
+}
+
+export interface UniverseConfigDetail extends UniverseConfigSummary {
+  config: UniverseDefinition;
+}
+
+export interface RankingSchemaSummary {
+  name: string;
+  description?: string;
+  version: number;
+  updated_at?: string;
+}
+
+export interface RankingSchemaDetail extends RankingSchemaSummary {
+  config: RankingSchemaConfig;
+}
+
+export interface RankingCatalogColumn {
+  name: string;
+  dataType: string;
+  valueKind: RankingCatalogValueKind;
+}
+
+export interface RankingCatalogTable {
+  name: string;
+  asOfColumn: string;
+  columns: RankingCatalogColumn[];
+}
+
+export interface RankingCatalogResponse {
+  source: UniverseSource;
+  tables: RankingCatalogTable[];
+}
+
+export interface RankingPreviewRow {
+  symbol: string;
+  rank: number;
+  score: number;
+}
+
+export interface RankingPreviewResponse {
+  strategyName: string;
+  asOfDate: string;
+  rowCount: number;
+  rows: RankingPreviewRow[];
+  warnings: string[];
+}
+
+export interface RankingMaterializationSummary {
+  runId: string;
+  strategyName: string;
+  rankingSchemaName: string;
+  rankingSchemaVersion: number;
+  outputTableName: string;
+  startDate?: string;
+  endDate?: string;
+  rowCount: number;
+  dateCount: number;
 }
 
 export interface AuditTrail {

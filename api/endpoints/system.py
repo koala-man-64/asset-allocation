@@ -4566,6 +4566,10 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "How many days earnings data is considered fresh before re-fetch (integer).",
         "example": "7",
     },
+    "ALPHA_VANTAGE_EARNINGS_CALENDAR_HORIZON": {
+        "description": "How far ahead to retain Alpha Vantage earnings calendar rows (3month|6month|12month).",
+        "example": "12month",
+    },
     "ALPHA_VANTAGE_FINANCE_FRESH_DAYS": {
         "description": "How many days finance statement data is considered fresh before re-fetch (integer).",
         "example": "28",
@@ -4617,26 +4621,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "FEATURE_ENGINEERING_MAX_WORKERS": {
         "description": "Max workers for feature engineering concurrency (integer).",
         "example": "8",
-    },
-    "GOLD_MARKET_BY_DATE_ENABLED": {
-        "description": "When true, gold-market-job also materializes the consolidated Gold market by-date view.",
-        "example": "true",
-    },
-    "GOLD_BY_DATE_DOMAIN": {
-        "description": "Gold domain to materialize by-date (market|finance|earnings|price-target).",
-        "example": "market",
-    },
-    "GOLD_MARKET_BY_DATE_PATH": {
-        "description": "Target Delta table path for the consolidated Gold market by-date view.",
-        "example": "market_by_date",
-    },
-    "GOLD_MARKET_BY_DATE_COLUMNS": {
-        "description": "Optional comma-separated projection list for by-date view columns (date/symbol always included).",
-        "example": "close,volume,return_1d,vol_20d",
-    },
-    "MATERIALIZE_YEAR_MONTH": {
-        "description": "Optional YYYY-MM or YYYY-MM..YYYY-MM partition filter used by by-date materialization for partial rebuilds.",
-        "example": "2026-01..2026-03",
     },
     "TRIGGER_NEXT_JOB_NAME": {
         "description": "Optional downstream job name to trigger on success.",

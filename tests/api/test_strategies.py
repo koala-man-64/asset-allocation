@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 from api.service.app import app
+from core.universe_repository import UniverseRepository
 
 
 @pytest.fixture
@@ -41,7 +42,7 @@ MOCK_UNIVERSE = {
 }
 
 MOCK_CONFIG = {
-    "universe": MOCK_UNIVERSE,
+    "universeConfigName": "large-cap-quality",
     "rebalance": "monthly"
 }
 
@@ -82,8 +83,7 @@ def test_get_strategy(client, mock_repo):
     
     response = client.get("/api/strategies/test-strategy")
     assert response.status_code == 200
-    assert response.json()["universe"]["source"] == "postgres_gold"
-    assert response.json()["universe"]["root"]["clauses"][0]["table"] == "market_data"
+    assert response.json()["universeConfigName"] == "large-cap-quality"
     assert response.json()["intrabarConflictPolicy"] == "stop_first"
     assert response.json()["exits"] == []
 
@@ -101,29 +101,33 @@ def test_get_strategy_detail(client, mock_repo):
     response = client.get("/api/strategies/test-strategy/detail")
     assert response.status_code == 200
     assert response.json()["name"] == "test-strategy"
-    assert response.json()["config"]["universe"]["source"] == "postgres_gold"
-    assert response.json()["config"]["universe"]["root"]["clauses"][0]["column"] == "close"
+    assert response.json()["config"]["universeConfigName"] == "large-cap-quality"
     assert response.json()["config"]["intrabarConflictPolicy"] == "stop_first"
 
 def test_save_strategy(client, mock_repo):
     repo_instance = mock_repo.return_value
     repo_instance.save_strategy.return_value = None
-    
+
     payload = {
         "name": "new-strategy",
         "config": {
-            "universe": MOCK_UNIVERSE,
+            "universeConfigName": "large-cap-quality",
             "rebalance": "weekly",
             "exits": [{"id": "stop-8", "type": "stop_loss_fixed", "value": 0.08}]
         },
         "description": "New Strategy",
         "type": "configured"
     }
-    
-    try:
-        response = client.post("/api/strategies/", json=payload)
-    except Exception as e:
-        pytest.fail(f"API call failed: {e}")
+
+    with patch("api.endpoints.strategies._require_postgres_dsn", return_value="postgresql://test:test@localhost:5432/asset_allocation"), patch.object(
+        UniverseRepository,
+        "get_universe_config",
+        return_value={"name": "large-cap-quality", "config": MOCK_UNIVERSE},
+    ):
+        try:
+            response = client.post("/api/strategies/", json=payload)
+        except Exception as e:
+            pytest.fail(f"API call failed: {e}")
 
     assert response.status_code == 200
     repo_instance.save_strategy.assert_called_once()
@@ -142,7 +146,7 @@ def test_save_strategy_rejects_duplicate_exit_rule_ids(client, mock_repo):
         "description": "New Strategy",
         "type": "configured",
         "config": {
-            "universe": MOCK_UNIVERSE,
+            "universeConfigName": "large-cap-quality",
             "rebalance": "weekly",
             "exits": [
                 {"id": "dup", "type": "stop_loss_fixed", "value": 0.08},

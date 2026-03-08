@@ -4,6 +4,7 @@ import logging
 from typing import Optional, Dict
 
 from core.postgres import connect
+from core.ranking_engine.naming import slugify_strategy_output_table
 
 logger = logging.getLogger(__name__)
 STRATEGIES_TABLE = "core.strategies"
@@ -49,7 +50,7 @@ class StrategyRepository:
                 with conn.cursor() as cur:
                     cur.execute(
                         f"""
-                        SELECT name, type, description, updated_at, config
+                        SELECT name, type, description, output_table_name, updated_at, config
                         FROM {STRATEGIES_TABLE}
                         WHERE name = %s
                         """,
@@ -58,7 +59,7 @@ class StrategyRepository:
                     row = cur.fetchone()
                     if not row:
                         return None
-                    columns = ["name", "type", "description", "updated_at", "config"]
+                    columns = ["name", "type", "description", "output_table_name", "updated_at", "config"]
                     return dict(zip(columns, row))
         except Exception as e:
             logger.error(f"Failed to fetch strategy detail '{name}': {e}")
@@ -74,18 +75,20 @@ class StrategyRepository:
         try:
             with connect(self.dsn) as conn:
                 with conn.cursor() as cur:
+                    output_table_name = slugify_strategy_output_table(name)
                     cur.execute(
                         f"""
-                        INSERT INTO {STRATEGIES_TABLE} (name, config, type, description, updated_at)
-                        VALUES (%s, %s, %s, %s, NOW())
+                        INSERT INTO {STRATEGIES_TABLE} (name, config, type, description, output_table_name, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW())
                         ON CONFLICT (name) 
                         DO UPDATE SET 
                             config = EXCLUDED.config,
                             type = EXCLUDED.type,
                             description = EXCLUDED.description,
+                            output_table_name = EXCLUDED.output_table_name,
                             updated_at = NOW()
                         """,
-                        (name, json.dumps(config), strategy_type, description)
+                        (name, json.dumps(config), strategy_type, description, output_table_name)
                     )
         except Exception as e:
             logger.error(f"Failed to save strategy '{name}': {e}")
@@ -122,9 +125,9 @@ class StrategyRepository:
             with connect(self.dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"SELECT name, type, description, updated_at FROM {STRATEGIES_TABLE} ORDER BY name"
+                        f"SELECT name, type, description, output_table_name, updated_at FROM {STRATEGIES_TABLE} ORDER BY name"
                     )
-                    columns = ["name", "type", "description", "updated_at"]
+                    columns = ["name", "type", "description", "output_table_name", "updated_at"]
                     return [dict(zip(columns, row)) for row in cur.fetchall()]
         except Exception as e:
             logger.error(f"Failed to list strategies: {e}")

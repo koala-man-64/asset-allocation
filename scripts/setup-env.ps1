@@ -153,6 +153,7 @@ $Config += "ALPHA_VANTAGE_RATE_LIMIT_PER_MIN=" + (Prompt-Var "ALPHA_VANTAGE_RATE
 $Config += "ALPHA_VANTAGE_TIMEOUT_SECONDS=" + (Prompt-Var "ALPHA_VANTAGE_TIMEOUT_SECONDS" "15" "HTTP timeout per request (seconds).")
 $Config += "ALPHA_VANTAGE_MAX_WORKERS=" + (Prompt-Var "ALPHA_VANTAGE_MAX_WORKERS" "32" "Max concurrent fetch workers.")
 $Config += "ALPHA_VANTAGE_EARNINGS_FRESH_DAYS=" + (Prompt-Var "ALPHA_VANTAGE_EARNINGS_FRESH_DAYS" "7" "Skip re-fetching earnings newer than this many days.")
+$Config += "ALPHA_VANTAGE_EARNINGS_CALENDAR_HORIZON=" + (Prompt-Var "ALPHA_VANTAGE_EARNINGS_CALENDAR_HORIZON" "12month" "Upcoming earnings calendar retention horizon: 3month, 6month, or 12month.")
 $Config += "ALPHA_VANTAGE_FINANCE_FRESH_DAYS=" + (Prompt-Var "ALPHA_VANTAGE_FINANCE_FRESH_DAYS" "28" "Skip re-fetching fundamentals newer than this many days.")
 $Config += "NASDAQ_API_KEY=" + (Prompt-Var "NASDAQ_API_KEY" "" "Nasdaq Data Link API key (required for price targets)." -Secret)
 

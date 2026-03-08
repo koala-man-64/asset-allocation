@@ -6,7 +6,7 @@ AssetAllocation is an Azure-oriented market data and operations platform. The re
 
 - Data pipelines in `tasks/` materialize Bronze, Silver, and Gold datasets for the market, finance, earnings, and price-target domains.
 - The FastAPI app in `api/service/app.py` serves `/api/data`, `/api/system`, `/api/strategies`, provider gateway endpoints, Swagger/OpenAPI, `/config.js`, and the realtime websocket.
-- The React UI in `ui/` is the operator control plane for system health, data exploration, data quality, runtime config, debug symbols, symbol purge, gold materialization, Postgres exploration, and strategy configuration.
+- The React UI in `ui/` is the operator control plane for system health, data exploration, data quality, runtime config, debug symbols, symbol purge, Postgres exploration, and strategy configuration.
 - Strategy definitions are persisted in Postgres; the current `Live Trading` page is a monitoring placeholder and explicitly says live trading is not enabled in this deployment.
 - Azure deployment uses one Container App with API and UI sidecars plus scheduled Container App Jobs under `deploy/job_*.yaml`.
 
@@ -68,19 +68,6 @@ pnpm lint
 pnpm exec vitest run --coverage
 pnpm build
 ```
-
-### Materialize the Gold Market By-Date Table
-
-```bash
-python3 -m tasks.market_data.materialize_gold_market_by_date
-```
-
-Relevant environment variables:
-
-- `GOLD_BY_DATE_DOMAIN`
-- `GOLD_MARKET_BY_DATE_COLUMNS`
-- `MATERIALIZE_YEAR_MONTH`
-- `GOLD_MARKET_BY_DATE_ENABLED`
 
 ### Refresh Runtime Dependency Manifests
 

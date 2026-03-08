@@ -151,3 +151,27 @@ def test_sync_gold_bucket_records_failure_state(monkeypatch: pytest.MonkeyPatch)
     assert recorded["domain"] == "finance"
     assert recorded["bucket"] == "A"
     assert recorded["source_commit"] == 321.0
+
+
+def test_prepare_frame_preserves_earnings_calendar_text_and_dates() -> None:
+    config = sync.get_sync_config("earnings")
+    prepared = sync._prepare_frame(  # type: ignore[attr-defined]
+        pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-02-28")],
+                "symbol": ["aapl"],
+                "next_earnings_date": [pd.Timestamp("2026-03-01")],
+                "next_earnings_fiscal_date_ending": [pd.Timestamp("2025-12-31")],
+                "next_earnings_time_of_day": [" post-market "],
+                "has_upcoming_earnings": [1],
+                "is_scheduled_earnings_day": [0],
+            }
+        ),
+        config=config,
+    )
+
+    row = prepared.iloc[0]
+    assert row["symbol"] == "AAPL"
+    assert row["next_earnings_date"] == date(2026, 3, 1)
+    assert row["next_earnings_fiscal_date_ending"] == date(2025, 12, 31)
+    assert row["next_earnings_time_of_day"] == "post-market"

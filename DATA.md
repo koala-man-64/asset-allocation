@@ -1,12 +1,11 @@
 # DATA
 
-This document is the current data interface contract for AssetAllocation. It covers the canonical persisted datasets written by the Bronze, Silver, and Gold jobs under `tasks/` for the `market`, `finance`, `earnings`, and `price-target` domains, plus the Postgres-backed strategy configuration contract used by the strategies API and UI.
+This document is the current data interface contract for AssetAllocation. It covers the canonical persisted datasets written by the Bronze, Silver, and Gold jobs under `tasks/` for the `market`, `finance`, `earnings`, and `price-target` domains, plus the Postgres-backed strategy and ranking control-plane contracts used by the strategies and rankings APIs and UI.
 
 Scope notes:
 
-- This contract primarily documents the bucketed medallion tables, with one explicit control-plane exception: the `core.strategies` table that stores strategy metadata and validated strategy configuration JSON.
+- This contract primarily documents the bucketed medallion tables, with control-plane exceptions for `core.strategies`, `core.ranking_schemas`, `core.ranking_runs`, and `core.ranking_watermarks`.
 - `finance` Bronze stores provider payloads as opaque JSON strings. Downstream contracts are the extracted Silver and Gold schemas, not the provider's full inner JSON shape.
-- The optional `market_by_date` Gold materialization is excluded because its column set is runtime-configurable via `GOLD_MARKET_BY_DATE_COLUMNS`, so it is not a fixed interface contract.
 - The Postgres `gold.*` tables are serving replicas of the canonical Gold Delta buckets. `core.gold_sync_state` tracks whether each alphabet bucket has been fully synchronized for a given source commit.
 
 ## Contract Conventions
@@ -34,13 +33,15 @@ Scope notes:
 | Silver | finance / `cash_flow` | `finance-data/cash_flow/buckets/{bucket}` | `symbol` + `date` | Daily forward-filled cash-flow subset for Piotroski inputs. |
 | Silver | finance / `valuation` | `finance-data/valuation/buckets/{bucket}` | `symbol` + `date` | Daily forward-filled valuation snapshot built from `overview` plus Silver close prices. |
 | Gold | finance | `finance/buckets/{bucket}` | `symbol` + `date` | Piotroski components and F-score plus selected valuation metrics. |
-| Bronze | earnings | `earnings-data/buckets/{bucket}` | `symbol` + `date` | Raw quarterly earnings observations normalized to canonical columns. |
-| Silver | earnings | `earnings-data/buckets/{bucket}` | `symbol` + `date` | Canonical earnings history. |
-| Gold | earnings | `earnings/buckets/{bucket}` | `symbol` + `date` | Daily earnings-surprise features with days-since-event context. |
+| Bronze | earnings | `earnings-data/buckets/{bucket}` | `symbol` + `date` | Canonical earnings events combining historical actuals and upcoming scheduled report dates. |
+| Silver | earnings | `earnings-data/buckets/{bucket}` | `symbol` + `date` | Canonical earnings history plus retained upcoming scheduled events. |
+| Gold | earnings | `earnings/buckets/{bucket}` | `symbol` + `date` | Daily earnings-surprise features plus derived upcoming-earnings context. |
 | Bronze | price-target | `price-target-data/buckets/{bucket}` | `symbol` + `obs_date` | Raw analyst target snapshots plus ingestion metadata. |
 | Silver | price-target | `price-target-data/buckets/{bucket}` | `symbol` + `obs_date` | Daily forward-filled target history. |
 | Gold | price-target | `targets/buckets/{bucket}` | `symbol` + `obs_date` | Dispersion and revision features built from Silver targets. |
 | Control plane | strategies | `Postgres table core.strategies` | `name` | Strategy metadata plus validated `StrategyConfig` JSON used by `/strategies` API routes and the React strategy editor. |
+| Control plane | ranking schemas | `Postgres table core.ranking_schemas` | `name` | Validated `RankingSchemaConfig` documents used by `/rankings` API routes, the React ranking workbench, and ranking materialization. |
+| Platinum | strategy rankings | `Postgres table platinum.<strategy_output_table>` | `date` + `symbol` | Materialized cross-sectional symbol ranks per strategy/date generated from a strategy universe plus a ranking schema. |
 
 ## Gold Postgres Serving Replica
 
@@ -54,6 +55,88 @@ The Gold jobs can optionally mirror successful Gold bucket writes into Postgres 
 | `gold.price_target_data` | Serving replica of Gold price-target features with symbol/obs_date and obs_date/symbol indexes. | `symbol` + `obs_date` |
 | `gold.*_by_date` views | By-date accessors over the same physical Gold serving tables. | Same as base table |
 | `core.gold_sync_state` | Per-domain, per-bucket sync checkpoint used to bootstrap full population before incremental skip behavior resumes. | `domain` + `bucket` |
+
+## Ranking Control Plane
+
+### Ranking Schema Storage
+
+Path: `Postgres table core.ranking_schemas`
+
+Each row stores one named ranking schema plus a versioned `config` payload. Revisions are appended to `core.ranking_schema_revisions`, materialization runs are recorded in `core.ranking_runs`, and per-strategy freshness is tracked in `core.ranking_watermarks`.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `name` | string | Unique ranking schema identifier referenced by strategy config. |
+| `description` | string | Optional human-readable description shown in the ranking workbench. |
+| `version` | integer | Monotonic version incremented on each save. |
+| `config` | JSON object | Validated `RankingSchemaConfig` describing groups, weighted factors, and ordered transforms. |
+| `updated_at` | datetime | Server-managed timestamp set to `NOW()` on insert and update. |
+
+### Ranking Schema Config: `config`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `universeConfigName` | string | Required name of the saved universe configuration applied to the ranking schema itself. Ranking previews and materialization intersect this universe with the selected strategy universe. |
+| `groups` | array of `RankingGroup` | Required array of weighted groups. |
+| `overallTransforms` | array of `RankingTransform` | Ordered transforms applied after weighted group aggregation. |
+
+### Ranking Group
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | Unique group name within the schema. |
+| `weight` | number | Relative contribution of the group to the final score. |
+| `factors` | array of `RankingFactor` | Required array of weighted factor definitions. |
+| `transforms` | array of `RankingTransform` | Ordered transforms applied to the group score after factor aggregation. |
+
+### Ranking Factor
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | Unique factor name within the containing group. |
+| `table` | string | Gold serving table name, for example `market_data` or `finance_data`. |
+| `column` | string | Numeric or boolean scalar column in the selected gold table. |
+| `weight` | number | Relative contribution of the factor within the group. |
+| `direction` | enum | `desc` means higher values are better; `asc` means lower values are better. |
+| `missingValuePolicy` | enum | `exclude` drops rows with missing factor values; `zero` fills missing values with `0`. |
+| `transforms` | array of `RankingTransform` | Ordered transform chain applied to the raw factor values before weighted group aggregation. |
+
+### Ranking Transform
+
+Supported transform types:
+
+- `percentile_rank`
+- `zscore`
+- `minmax`
+- `clip`
+- `winsorize`
+- `coalesce`
+- `log1p`
+- `negate`
+- `abs`
+
+Parameter rules:
+
+- `clip` accepts `lower` and/or `upper`
+- `winsorize` accepts `lowerQuantile` and/or `upperQuantile`
+- `coalesce` requires `value`
+- the remaining transform types reject params
+
+### Strategy-to-Ranking Link
+
+`StrategyConfig` now supports `rankingSchemaName`, which links a saved strategy to a named ranking schema. `core.strategies.output_table_name` stores the sanitized platinum table identifier used during materialization.
+
+### Ranking Materialization Output
+
+Path: `Postgres table platinum.<strategy_output_table>`
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `date` | date | Ranking as-of date. |
+| `symbol` | string | Uppercased ticker/symbol identifier. |
+| `rank` | integer | Cross-sectional rank for the strategy/date where `1` is best. |
+| `score` | number | Weighted composite score used to order symbols before rank assignment. |
+| `last_updated_date` | date | Date the row was last materialized into platinum. |
 
 ## Strategies
 
@@ -77,7 +160,7 @@ Unexpected keys are rejected. The backend model uses `extra="forbid"` for both `
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `universe` | object (`UniverseDefinition`) | Structured rule tree that filters the investable symbol set from Postgres `gold.*` tables. The UI seeds a root `and` group with a single blank condition. |
+| `universeConfigName` | string | Required name of the saved universe configuration attached to the strategy. Strategy materialization resolves this config independently from the ranking schema universe. |
 | `rebalance` | string | Rebalance cadence label. Default is `monthly`; the current UI offers `daily`, `weekly`, `monthly`, and `quarterly`. |
 | `longOnly` | boolean | Long-only flag for the strategy. Default is `true`. |
 | `topN` | integer | Target number of selected holdings or symbols. Must be `>= 1`. Default is `20`. |
@@ -87,7 +170,21 @@ Unexpected keys are rejected. The backend model uses `extra="forbid"` for both `
 | `intrabarConflictPolicy` | enum | Same-bar tie-break policy when multiple exit rules trigger. Supported values are `stop_first`, `take_profit_first`, and `priority_order`. Default is `stop_first`. |
 | `exits` | array of `ExitRule` | Ordered list of exit rules. Duplicate rule IDs are rejected. When `priority` is omitted, the backend normalizes it to the rule's array index. |
 
-### Universe Definition: `config.universe`
+### Universe Config Storage
+
+Path: `Postgres table core.universe_configs`
+
+Universe configurations are first-class saved objects reused by both strategies and ranking schemas. Revisions are appended to `core.universe_config_revisions`.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `name` | string | Unique universe configuration identifier. |
+| `description` | string | Optional UI-facing description. |
+| `version` | integer | Monotonic version incremented on each save. |
+| `config` | JSON object (`UniverseDefinition`) | Structured rule tree filtered against Postgres `gold.*` serving tables. |
+| `updated_at` | datetime | Server-managed timestamp set to `NOW()` on insert and update. |
+
+### Universe Definition: `core.universe_configs.config`
 
 Universe authoring is limited to the Postgres `gold.*` serving tables. The editor builds a recursive rule tree, and the preview endpoint resolves the current matching symbol set using the latest available row per symbol from each referenced gold table.
 
@@ -164,7 +261,8 @@ The evaluator sorts triggered candidates by `(priority, ordinal)` before applyin
 
 These are UI defaults for newly created strategies and rules, not additional backend requirements:
 
-- New strategies start with `universe={ source: postgres_gold, root: { kind: group, operator: and, clauses: [blank condition] } }`, `rebalance=monthly`, `longOnly=true`, `topN=20`, `lookbackWindow=63`, `holdingPeriod=21`, `costModel=default`, `intrabarConflictPolicy=stop_first`, and an empty `exits` array.
+- New run configurations start with no attached universe config, `rebalance=monthly`, `longOnly=true`, `topN=20`, `lookbackWindow=63`, `holdingPeriod=21`, `costModel=default`, `intrabarConflictPolicy=stop_first`, and an empty `exits` array.
+- New universe configurations start with `source=postgres_gold` and a root `and` group seeded with a single blank condition.
 - New `stop_loss_fixed` rules are seeded with `value=0.08`, `reference=entry_price`, and `priceField=low`.
 - New `take_profit_fixed` rules are seeded with `value=0.15`, `reference=entry_price`, and `priceField=high`.
 - New `trailing_stop_pct` rules are seeded with `value=0.07`, `reference=highest_since_entry`, and `priceField=low`.
@@ -478,10 +576,16 @@ Path: `earnings-data/buckets/{bucket}`
 | Column | Type | Description |
 | --- | --- | --- |
 | `symbol` | string | Uppercased ticker symbol. |
-| `date` | datetime | Earnings event date. |
+| `date` | datetime | Canonical event date. For actual rows this stays aligned to the historical earnings event date; for scheduled rows it equals `report_date`. |
+| `report_date` | datetime | Provider report date when available. |
+| `fiscal_date_ending` | datetime | Fiscal quarter end for the earnings event. |
 | `reported_eps` | number | Reported earnings per share. |
 | `eps_estimate` | number | Consensus EPS estimate. |
 | `surprise` | number | Surprise metric normalized from the provider payload. |
+| `record_type` | string | `actual` for historical earnings rows, `scheduled` for upcoming calendar rows. |
+| `is_future_event` | binary flag | `1` when the row represents an upcoming scheduled earnings event. |
+| `calendar_time_of_day` | string | Provider time-of-day hint for scheduled events, such as `pre-market` or `post-market`. |
+| `calendar_currency` | string | Currency code supplied on scheduled earnings rows. |
 | `ingested_at` | string | UTC ingestion timestamp for the Bronze row. |
 | `source_hash` | string | Hash of the normalized Bronze earnings payload. |
 
@@ -493,15 +597,21 @@ Path: `earnings-data/buckets/{bucket}`
 | --- | --- | --- |
 | `date` | datetime | Canonical earnings date. |
 | `symbol` | string | Uppercased ticker symbol. |
+| `report_date` | datetime | Provider report date when available. |
+| `fiscal_date_ending` | datetime | Fiscal quarter end for the earnings event. |
 | `reported_eps` | number | Reported earnings per share. |
 | `eps_estimate` | number | Consensus EPS estimate. |
 | `surprise` | number | Surprise metric carried from Bronze. |
+| `record_type` | string | `actual` for historical earnings rows, `scheduled` for upcoming calendar rows. |
+| `is_future_event` | binary flag | `1` when the row represents an upcoming scheduled earnings event. |
+| `calendar_time_of_day` | string | Provider time-of-day hint for scheduled events. |
+| `calendar_currency` | string | Currency code supplied on scheduled earnings rows. |
 
 ### Gold Earnings
 
 Path: `earnings/buckets/{bucket}`
 
-Gold earnings expands sparse quarterly observations into a daily forward-filled feature table.
+Gold earnings expands sparse quarterly observations into a daily forward-filled feature table. Rolling surprise metrics are computed from actual earnings rows only, while upcoming-earnings fields are derived from scheduled calendar rows. When scheduled rows exist, the daily frame extends through the next scheduled report date.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -517,6 +627,13 @@ Gold earnings expands sparse quarterly observations into a daily forward-filled 
 | `is_earnings_day` | binary flag | `1` on rows representing the actual earnings event date, else `0`. |
 | `last_earnings_date` | datetime | Most recent earnings date carried forward to each daily row. |
 | `days_since_earnings` | number | Integer day difference between `date` and `last_earnings_date`. |
+| `next_earnings_date` | datetime | Next scheduled earnings report date on or after the row’s `date`. |
+| `days_until_next_earnings` | number | Integer day difference between `date` and `next_earnings_date`. |
+| `next_earnings_estimate` | number | Consensus EPS estimate for the next scheduled earnings event. |
+| `next_earnings_time_of_day` | string | Provider time-of-day hint for the next scheduled earnings event. |
+| `next_earnings_fiscal_date_ending` | datetime | Fiscal quarter end for the next scheduled earnings event. |
+| `has_upcoming_earnings` | binary flag | `1` when a scheduled earnings event exists on or after the row’s `date`. |
+| `is_scheduled_earnings_day` | binary flag | `1` on rows representing a scheduled earnings report date, else `0`. |
 
 Evidence:
 

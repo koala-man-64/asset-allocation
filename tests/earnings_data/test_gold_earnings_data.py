@@ -46,6 +46,62 @@ def test_compute_features_missing_cols():
         gold.compute_features(df_raw)
 
 
+def test_compute_features_adds_future_earnings_fields_without_polluting_actual_metrics(monkeypatch):
+    monkeypatch.setattr(gold, "_utc_today", lambda: pd.Timestamp("2026-02-20"))
+    df_raw = pd.DataFrame(
+        {
+            "date": ["2025-12-31", "2026-03-01"],
+            "report_date": ["2026-01-30", "2026-03-01"],
+            "fiscal_date_ending": ["2025-12-31", "2025-12-31"],
+            "symbol": ["TEST", "TEST"],
+            "reported_eps": [1.2, None],
+            "eps_estimate": [1.0, 1.3],
+            "record_type": ["actual", "scheduled"],
+            "calendar_time_of_day": [None, "post-market"],
+        }
+    )
+
+    out = gold.compute_features(df_raw)
+
+    last = out.iloc[-1]
+    pre_event = out.loc[out["date"] == pd.Timestamp("2026-02-28")].iloc[0]
+    scheduled_day = out.loc[out["date"] == pd.Timestamp("2026-03-01")].iloc[0]
+
+    assert last["date"] == pd.Timestamp("2026-03-01")
+    assert pre_event["next_earnings_date"] == pd.Timestamp("2026-03-01")
+    assert int(pre_event["days_until_next_earnings"]) == 1
+    assert int(pre_event["has_upcoming_earnings"]) == 1
+    assert pre_event["next_earnings_time_of_day"] == "post-market"
+    assert scheduled_day["is_earnings_day"] == 0
+    assert scheduled_day["is_scheduled_earnings_day"] == 1
+    assert scheduled_day["last_earnings_date"] == pd.Timestamp("2025-12-31")
+
+
+def test_compute_features_supports_scheduled_only_symbols(monkeypatch):
+    monkeypatch.setattr(gold, "_utc_today", lambda: pd.Timestamp("2026-02-20"))
+    df_raw = pd.DataFrame(
+        {
+            "date": ["2026-03-05"],
+            "report_date": ["2026-03-05"],
+            "fiscal_date_ending": ["2025-12-31"],
+            "symbol": ["TEST"],
+            "eps_estimate": [1.8],
+            "record_type": ["scheduled"],
+            "calendar_time_of_day": ["pre-market"],
+        }
+    )
+
+    out = gold.compute_features(df_raw)
+
+    assert out["date"].min() == pd.Timestamp("2026-02-20")
+    assert out["date"].max() == pd.Timestamp("2026-03-05")
+    first = out.iloc[0]
+    assert pd.isna(first["reported_eps"])
+    assert pd.isna(first["last_earnings_date"])
+    assert int(first["has_upcoming_earnings"]) == 1
+    assert first["next_earnings_time_of_day"] == "pre-market"
+
+
 def test_run_alpha26_earnings_gold_skips_empty_bucket_without_existing_schema(monkeypatch):
     target_path = DataPaths.get_gold_earnings_bucket_path("A")
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}

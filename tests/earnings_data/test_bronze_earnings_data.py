@@ -12,6 +12,11 @@ def unique_ticker():
     return f"TEST_EARN_{uuid.uuid4().hex[:8].upper()}"
 
 
+def _make_canonical_existing_rows(symbol: str, rows: list[dict]) -> bytes:
+    df = pd.DataFrame([{**row, "symbol": symbol} for row in rows])
+    return bronze._stamp_canonical_earnings_frame(df).to_json(orient="records").encode("utf-8")
+
+
 def test_fetch_and_save_raw(unique_ticker):
     """
     Verifies fetch_and_save_raw:
@@ -79,7 +84,7 @@ def test_fetch_and_save_raw_applies_backfill_start_cutoff(unique_ticker):
 
         args, _ = mock_store.call_args
         payload = json.loads(args[0].decode("utf-8"))
-        parsed_dates = [pd.to_datetime(row["Date"], unit="ms").date().isoformat() for row in payload]
+        parsed_dates = [pd.to_datetime(row["date"], unit="ms").date().isoformat() for row in payload]
         assert parsed_dates == ["2024-03-31"]
 
 
@@ -143,25 +148,29 @@ def test_fetch_and_save_raw_skips_write_when_no_new_earnings_dates(unique_ticker
     mock_av = MagicMock()
     mock_av.get_earnings.return_value = payload
 
-    existing_df = pd.DataFrame(
+    existing_raw = _make_canonical_existing_rows(
+        symbol,
         [
             {
-                "Date": pd.Timestamp("2023-12-31"),
-                "Symbol": symbol,
-                "Reported EPS": 1.4,
-                "EPS Estimate": 1.2,
-                "Surprise": 0.05,
+                "date": "2023-12-31",
+                "report_date": None,
+                "fiscal_date_ending": "2023-12-31",
+                "reported_eps": 1.4,
+                "eps_estimate": 1.2,
+                "surprise": 0.05,
+                "record_type": "actual",
             },
             {
-                "Date": pd.Timestamp("2024-03-31"),
-                "Symbol": symbol,
-                "Reported EPS": 1.8,
-                "EPS Estimate": 1.7,
-                "Surprise": 0.03,
+                "date": "2024-03-31",
+                "report_date": None,
+                "fiscal_date_ending": "2024-03-31",
+                "reported_eps": 1.8,
+                "eps_estimate": 1.7,
+                "surprise": 0.03,
+                "record_type": "actual",
             },
-        ]
+        ],
     )
-    existing_raw = existing_df.to_json(orient="records").encode("utf-8")
 
     mock_blob = MagicMock()
     mock_blob.exists.return_value = True
@@ -202,6 +211,180 @@ def test_fetch_and_save_raw_invalid_payload_attaches_payload(unique_ticker):
             bronze.fetch_and_save_raw(symbol, mock_av)
 
     assert exc_info.value.payload == payload
+
+
+def test_fetch_and_save_raw_merges_scheduled_calendar_rows(unique_ticker):
+    symbol = unique_ticker
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = {
+        "symbol": symbol,
+        "quarterlyEarnings": [
+            {
+                "fiscalDateEnding": "2024-12-31",
+                "reportedDate": "2025-02-10",
+                "reportedEPS": "1.6",
+                "estimatedEPS": "1.5",
+                "surprisePercentage": "6.0",
+            }
+        ],
+    }
+    calendar_rows = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "name": "Test Co",
+                "report_date": pd.Timestamp("2026-05-07"),
+                "fiscal_date_ending": pd.Timestamp("2026-03-31"),
+                "estimate": 1.7,
+                "currency": "USD",
+                "time_of_the_day": "post-market",
+            }
+        ]
+    )
+
+    with patch("tasks.earnings_data.bronze_earnings_data.list_manager") as mock_list_manager, patch(
+        "core.core.store_raw_bytes"
+    ) as mock_store:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(symbol, mock_av, calendar_rows=calendar_rows)
+
+        assert wrote is True
+        payload = json.loads(mock_store.call_args[0][0].decode("utf-8"))
+        assert len(payload) == 2
+        scheduled = next(row for row in payload if row["record_type"] == "scheduled")
+        assert pd.to_datetime(scheduled["date"], unit="ms").date().isoformat() == "2026-05-07"
+        assert pd.to_datetime(scheduled["report_date"], unit="ms").date().isoformat() == "2026-05-07"
+        assert scheduled["reported_eps"] is None
+        assert scheduled["calendar_time_of_day"] == "post-market"
+        assert scheduled["calendar_currency"] == "USD"
+
+
+def test_fetch_and_save_raw_replaces_stale_scheduled_row_when_calendar_date_moves(unique_ticker):
+    symbol = unique_ticker
+    existing_raw = _make_canonical_existing_rows(
+        symbol,
+        [
+            {
+                "date": "2026-05-01",
+                "report_date": "2026-05-01",
+                "fiscal_date_ending": "2026-03-31",
+                "reported_eps": None,
+                "eps_estimate": 1.7,
+                "surprise": None,
+                "record_type": "scheduled",
+                "calendar_time_of_day": "post-market",
+                "calendar_currency": "USD",
+            }
+        ],
+    )
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = {"symbol": symbol, "quarterlyEarnings": []}
+    calendar_rows = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "name": "Test Co",
+                "report_date": pd.Timestamp("2026-05-08"),
+                "fiscal_date_ending": pd.Timestamp("2026-03-31"),
+                "estimate": 1.8,
+                "currency": "USD",
+                "time_of_the_day": "post-market",
+            }
+        ]
+    )
+
+    mock_blob = MagicMock()
+    mock_blob.exists.return_value = True
+    mock_blob.get_blob_properties.return_value = MagicMock(
+        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    )
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob
+
+    with patch("tasks.earnings_data.bronze_earnings_data.bronze_client", mock_bronze_client), patch(
+        "tasks.earnings_data.bronze_earnings_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_raw,
+    ), patch("core.core.store_raw_bytes") as mock_store, patch(
+        "tasks.earnings_data.bronze_earnings_data._utc_today",
+        return_value=pd.Timestamp("2026-05-02"),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(symbol, mock_av, calendar_rows=calendar_rows)
+
+        assert wrote is True
+        payload = json.loads(mock_store.call_args[0][0].decode("utf-8"))
+        assert len(payload) == 1
+        row = payload[0]
+        assert row["record_type"] == "scheduled"
+        assert pd.to_datetime(row["report_date"], unit="ms").date().isoformat() == "2026-05-08"
+        assert pd.to_datetime(row["fiscal_date_ending"], unit="ms").date().isoformat() == "2026-03-31"
+
+
+def test_fetch_and_save_raw_actual_replaces_scheduled_row_for_same_fiscal_period(unique_ticker):
+    symbol = unique_ticker
+    existing_raw = _make_canonical_existing_rows(
+        symbol,
+        [
+            {
+                "date": "2026-05-08",
+                "report_date": "2026-05-08",
+                "fiscal_date_ending": "2026-03-31",
+                "reported_eps": None,
+                "eps_estimate": 1.8,
+                "surprise": None,
+                "record_type": "scheduled",
+                "calendar_time_of_day": "post-market",
+                "calendar_currency": "USD",
+            }
+        ],
+    )
+    mock_av = MagicMock()
+    mock_av.get_earnings.return_value = {
+        "symbol": symbol,
+        "quarterlyEarnings": [
+            {
+                "fiscalDateEnding": "2026-03-31",
+                "reportedDate": "2026-05-09",
+                "reportedEPS": "1.9",
+                "estimatedEPS": "1.8",
+                "surprisePercentage": "5.5",
+            }
+        ],
+    }
+
+    mock_blob = MagicMock()
+    mock_blob.exists.return_value = True
+    mock_blob.get_blob_properties.return_value = MagicMock(
+        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    )
+    mock_bronze_client = MagicMock()
+    mock_bronze_client.get_blob_client.return_value = mock_blob
+
+    with patch("tasks.earnings_data.bronze_earnings_data.bronze_client", mock_bronze_client), patch(
+        "tasks.earnings_data.bronze_earnings_data.list_manager"
+    ) as mock_list_manager, patch(
+        "core.core.read_raw_bytes",
+        return_value=existing_raw,
+    ), patch("core.core.store_raw_bytes") as mock_store, patch(
+        "tasks.earnings_data.bronze_earnings_data._utc_today",
+        return_value=pd.Timestamp("2026-05-10"),
+    ):
+        mock_list_manager.is_blacklisted.return_value = False
+
+        wrote = bronze.fetch_and_save_raw(symbol, mock_av)
+
+        assert wrote is True
+        payload = json.loads(mock_store.call_args[0][0].decode("utf-8"))
+        assert len(payload) == 1
+        row = payload[0]
+        assert row["record_type"] == "actual"
+        assert pd.to_datetime(row["fiscal_date_ending"], unit="ms").date().isoformat() == "2026-03-31"
+        assert pd.to_datetime(row["report_date"], unit="ms").date().isoformat() == "2026-05-09"
+        assert row["reported_eps"] == pytest.approx(1.9)
 
 
 def test_fetch_and_save_raw_coverage_gap_overrides_freshness(unique_ticker):
@@ -374,6 +557,9 @@ def test_main_async_logs_invalid_payload_preview(unique_ticker):
     payload = {"detail": "X" * 700}
     expected_preview = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)[:500] + "..."
     mock_av = MagicMock()
+    mock_av.get_earnings_calendar_csv.return_value = (
+        "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n"
+    )
 
     async def run_test():
         with patch(
@@ -427,6 +613,9 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
     expected_payload = {"status_code": 404, "detail": detail, "message": "invalid"}
     expected_preview = json.dumps(expected_payload, separators=(",", ":"), ensure_ascii=False)[:500] + "..."
     mock_av = MagicMock()
+    mock_av.get_earnings_calendar_csv.return_value = (
+        "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n"
+    )
 
     async def run_test():
         with patch(

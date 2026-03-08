@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ExitRuleType = Literal[
     "stop_loss_fixed",
@@ -169,18 +169,38 @@ class ExitRule(BaseModel):
 class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    universe: UniverseDefinition
+    universeConfigName: str | None = Field(default=None, min_length=1, max_length=128)
+    universe: UniverseDefinition | None = None
     rebalance: str = Field(default="monthly", min_length=1, max_length=64)
     longOnly: bool = True
     topN: int = Field(default=20, ge=1)
     lookbackWindow: int = Field(default=63, ge=1)
     holdingPeriod: int = Field(default=21, ge=1)
     costModel: str = Field(default="default", min_length=1, max_length=64)
+    rankingSchemaName: str | None = Field(default=None, min_length=1, max_length=128)
     intrabarConflictPolicy: IntrabarConflictPolicy = "stop_first"
     exits: list[ExitRule] = Field(default_factory=list)
 
+    @field_validator("universeConfigName", mode="before")
+    @classmethod
+    def normalize_universe_config_name(cls, value: object) -> object:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("rankingSchemaName", mode="before")
+    @classmethod
+    def normalize_ranking_schema_name(cls, value: object) -> object:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     @model_validator(mode="after")
     def normalize_exits(self) -> "StrategyConfig":
+        if not self.universeConfigName and self.universe is None:
+            raise ValueError("universeConfigName is required.")
         seen_ids: set[str] = set()
         for idx, rule in enumerate(self.exits):
             if rule.id in seen_ids:

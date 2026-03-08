@@ -17,6 +17,7 @@ vi.mock('lucide-react', () => ({
   Activity: () => <div data-testid="icon-activity" />,
   Database: () => <div data-testid="icon-database" />,
   Layers: () => <div data-testid="icon-layers" />,
+  Layers3: () => <div data-testid="icon-layers-3" />,
   LayoutDashboard: () => <div data-testid="icon-dashboard" />,
   GitCompare: () => <div data-testid="icon-compare" />,
   FileText: () => <div data-testid="icon-text" />,
@@ -35,6 +36,7 @@ vi.mock('lucide-react', () => ({
   Pin: () => <div data-testid="icon-pin" />,
   PinOff: () => <div data-testid="icon-pinoff" />,
   Globe: () => <div data-testid="icon-globe" />,
+  Orbit: () => <div data-testid="icon-orbit" />,
   Bug: () => <div data-testid="icon-bug" />,
   Filter: () => <div data-testid="icon-filter" />,
   SlidersHorizontal: () => <div data-testid="icon-sliders" />,
@@ -63,7 +65,9 @@ describe('LeftNavigation', () => {
     expect(screen.getByText('Stock Explorer')).toBeDefined();
     expect(screen.getByText('Data Quality')).toBeDefined();
     expect(screen.getByText('System Status')).toBeDefined();
-    expect(screen.getByText('Strategies')).toBeDefined();
+    expect(screen.getByText('Run Configurations')).toBeDefined();
+    expect(screen.getByText('Universe Configurations')).toBeDefined();
+    expect(screen.getByText('Ranking Configurations')).toBeDefined();
     expect(screen.getByText('UPTIME CLOCK')).toBeDefined();
   });
 
@@ -79,15 +83,15 @@ describe('LeftNavigation', () => {
     expect(toggleButton).toBeDefined();
   });
 
-  it('moves strategies to the pinned section without duplication', async () => {
+  it('moves run configurations to the pinned section without duplication', async () => {
     renderNavigation();
 
     await waitFor(() => {
-      expect(screen.getAllByText('Strategies').length).toBe(1);
+      expect(screen.getAllByText('Run Configurations').length).toBe(1);
     });
 
-    const strategiesLink = screen.getByRole('link', { name: 'Strategies' });
-    const navRow = strategiesLink.closest('div.group.relative.flex.items-center');
+    const runConfigurationsLink = screen.getByRole('link', { name: 'Run Configurations' });
+    const navRow = runConfigurationsLink.closest('div.group.relative.flex.items-center');
     expect(navRow).toBeTruthy();
 
     const pinButton = navRow?.querySelector('button[title="Pin to top"]');
@@ -96,6 +100,6 @@ describe('LeftNavigation', () => {
     fireEvent.click(pinButton as HTMLButtonElement);
 
     expect(screen.getByText('PINNED')).toBeDefined();
-    expect(screen.getAllByText('Strategies').length).toBe(1);
+    expect(screen.getAllByText('Run Configurations').length).toBe(1);
   });
 });

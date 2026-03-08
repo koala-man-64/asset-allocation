@@ -34,10 +34,6 @@ class DataPaths:
         return f"market/buckets/{str(bucket).strip().upper()}"
 
     @staticmethod
-    def get_gold_market_by_date_path() -> str:
-        return "market_by_date"
-
-    @staticmethod
     def get_technical_analysis_path(ticker: str) -> str:
         """Per-ticker technical analysis indicator table path."""
         return f"technical-analysis/{ticker}"

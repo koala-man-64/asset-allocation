@@ -16,17 +16,8 @@ def test_normalize_env_override_bool_falsey():
     assert normalize_env_override("SILVER_LATEST_ONLY", "off") == "false"
 
 
-def test_normalize_env_override_gold_market_by_date_bool():
-    assert normalize_env_override("GOLD_MARKET_BY_DATE_ENABLED", "true") == "true"
-    assert normalize_env_override("GOLD_MARKET_BY_DATE_ENABLED", "0") == "false"
-
-
 def test_normalize_env_override_debug_symbols_to_uppercase_csv():
     assert normalize_env_override("DEBUG_SYMBOLS", '["aapl", " msft ", "NvDa"]') == "AAPL,MSFT,NVDA"
-
-
-def test_normalize_env_override_gold_by_date_domain_passthrough():
-    assert normalize_env_override("GOLD_BY_DATE_DOMAIN", "finance") == "finance"
 
 
 def test_normalize_env_override_alpha_vantage_rate_wait_timeout_float():

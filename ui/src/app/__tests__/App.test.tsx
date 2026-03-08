@@ -69,6 +69,14 @@ vi.mock('@/app/components/pages/StrategyConfigPage', () => ({
   StrategyConfigPage: () => <div data-testid="mock-strategy-config">Mock Strategy Workbench</div>
 }));
 
+vi.mock('@/app/components/pages/UniverseConfigPage', () => ({
+  UniverseConfigPage: () => <div data-testid="mock-universe-config">Mock Universe Workbench</div>
+}));
+
+vi.mock('@/app/components/pages/RankingConfigPage', () => ({
+  RankingConfigPage: () => <div data-testid="mock-ranking-config">Mock Ranking Workbench</div>
+}));
+
 describe('App Smoke Test', () => {
   it('renders without crashing', async () => {
     window.history.pushState({}, 'System Status', '/system-status');
@@ -107,5 +115,40 @@ describe('App Smoke Test', () => {
     renderWithProviders(<App />);
 
     expect(await screen.findByTestId('mock-strategy-config')).toBeInTheDocument();
+  });
+
+  it('renders the ranking workbench route through the application shell', async () => {
+    window.history.pushState({}, 'Rankings', '/rankings');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-ranking-config')).toBeInTheDocument();
+  });
+
+  it('renders the universe workbench route through the application shell', async () => {
+    window.history.pushState({}, 'Universes', '/universes');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-universe-config')).toBeInTheDocument();
+  });
+
+  it('renders the run configuration route alias through the application shell', async () => {
+    window.history.pushState({}, 'Run Configurations', '/run-configurations');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-strategy-config')).toBeInTheDocument();
+  });
+
+  it('renders the universe configuration route alias through the application shell', async () => {
+    window.history.pushState({}, 'Universe Configurations', '/universe-configurations');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-universe-config')).toBeInTheDocument();
+  });
+
+  it('renders the ranking configuration route alias through the application shell', async () => {
+    window.history.pushState({}, 'Ranking Configurations', '/ranking-configurations');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-ranking-config')).toBeInTheDocument();
   });
 });

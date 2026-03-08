@@ -78,6 +78,120 @@ def test_process_file_preserves_earnings_numeric_precision():
         assert df_saved.iloc[0]["reported_eps"] == pytest.approx(1.234567)
 
 
+def test_process_file_keeps_history_when_scheduled_rows_are_present():
+    blob_name = "earnings-data/TEST.json"
+    bronze_json = (
+        '[{"date":"2024-03-31","report_date":"2024-04-30","fiscal_date_ending":"2024-03-31",'
+        '"reported_eps":1.5,"eps_estimate":1.4,"surprise":0.0714,"record_type":"actual","symbol":"TEST"},'
+        '{"date":"2026-05-07","report_date":"2026-05-07","fiscal_date_ending":"2026-03-31",'
+        '"reported_eps":null,"eps_estimate":1.7,"surprise":null,"record_type":"scheduled",'
+        '"calendar_time_of_day":"post-market","calendar_currency":"USD","symbol":"TEST"}]'
+    )
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2023-12-31"),
+                "symbol": "TEST",
+                "report_date": pd.Timestamp("2024-01-30"),
+                "fiscal_date_ending": pd.Timestamp("2023-12-31"),
+                "reported_eps": 1.2,
+                "eps_estimate": 1.0,
+                "surprise": 0.2,
+                "record_type": "actual",
+            }
+        ]
+    )
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=bronze_json.encode("utf-8")),
+        patch("core.delta_core.load_delta", return_value=history),
+        patch("core.delta_core.store_delta") as mock_store,
+        patch("tasks.earnings_data.silver_earnings_data.get_backfill_range", return_value=(None, None)),
+    ):
+        assert silver.process_file(blob_name) is True
+        df_saved = mock_store.call_args[0][0]
+        saved_dates = sorted(pd.to_datetime(df_saved["date"]).dt.date.astype(str).tolist())
+        assert saved_dates == ["2023-12-31", "2024-03-31", "2026-05-07"]
+        scheduled = df_saved.loc[df_saved["record_type"] == "scheduled"].iloc[0]
+        assert scheduled["calendar_time_of_day"] == "post-market"
+
+
+def test_process_file_replaces_stale_scheduled_row_for_same_fiscal_period():
+    blob_name = "earnings-data/TEST.json"
+    bronze_json = (
+        '[{"date":"2026-05-08","report_date":"2026-05-08","fiscal_date_ending":"2026-03-31",'
+        '"reported_eps":null,"eps_estimate":1.8,"surprise":null,"record_type":"scheduled",'
+        '"calendar_time_of_day":"post-market","calendar_currency":"USD","symbol":"TEST"}]'
+    )
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-05-01"),
+                "symbol": "TEST",
+                "report_date": pd.Timestamp("2026-05-01"),
+                "fiscal_date_ending": pd.Timestamp("2026-03-31"),
+                "reported_eps": None,
+                "eps_estimate": 1.7,
+                "surprise": None,
+                "record_type": "scheduled",
+                "calendar_time_of_day": "post-market",
+                "calendar_currency": "USD",
+            }
+        ]
+    )
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=bronze_json.encode("utf-8")),
+        patch("core.delta_core.load_delta", return_value=history),
+        patch("core.delta_core.store_delta") as mock_store,
+        patch("tasks.earnings_data.silver_earnings_data.get_backfill_range", return_value=(None, None)),
+    ):
+        assert silver.process_file(blob_name) is True
+        df_saved = mock_store.call_args[0][0]
+        assert len(df_saved) == 1
+        row = df_saved.iloc[0]
+        assert pd.to_datetime(row["report_date"]).date().isoformat() == "2026-05-08"
+        assert pd.to_datetime(row["fiscal_date_ending"]).date().isoformat() == "2026-03-31"
+
+
+def test_process_file_actual_replaces_scheduled_row_for_same_fiscal_period():
+    blob_name = "earnings-data/TEST.json"
+    bronze_json = (
+        '[{"date":"2026-03-31","report_date":"2026-05-09","fiscal_date_ending":"2026-03-31",'
+        '"reported_eps":1.9,"eps_estimate":1.8,"surprise":0.055,"record_type":"actual","symbol":"TEST"}]'
+    )
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-05-08"),
+                "symbol": "TEST",
+                "report_date": pd.Timestamp("2026-05-08"),
+                "fiscal_date_ending": pd.Timestamp("2026-03-31"),
+                "reported_eps": None,
+                "eps_estimate": 1.8,
+                "surprise": None,
+                "record_type": "scheduled",
+                "calendar_time_of_day": "post-market",
+                "calendar_currency": "USD",
+            }
+        ]
+    )
+
+    with (
+        patch("core.core.read_raw_bytes", return_value=bronze_json.encode("utf-8")),
+        patch("core.delta_core.load_delta", return_value=history),
+        patch("core.delta_core.store_delta") as mock_store,
+        patch("tasks.earnings_data.silver_earnings_data.get_backfill_range", return_value=(None, None)),
+    ):
+        assert silver.process_file(blob_name) is True
+        df_saved = mock_store.call_args[0][0]
+        assert len(df_saved) == 1
+        row = df_saved.iloc[0]
+        assert row["record_type"] == "actual"
+        assert row["reported_eps"] == pytest.approx(1.9)
+        assert pd.to_datetime(row["fiscal_date_ending"]).date().isoformat() == "2026-03-31"
+
+
 def test_write_alpha26_earnings_buckets_skips_empty_bucket_without_existing_schema(monkeypatch):
     target_path = DataPaths.get_silver_earnings_bucket_path("A")
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}

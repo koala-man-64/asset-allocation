@@ -5,6 +5,7 @@ import pytest
 from api.endpoints import strategies as strategy_endpoints
 from api.service.app import create_app
 from core.strategy_repository import StrategyRepository
+from core.universe_repository import UniverseRepository
 from tests.api._client import get_test_client
 
 
@@ -28,7 +29,7 @@ def _sample_universe_payload() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_save_strategy_persists_structured_universe(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_save_strategy_persists_universe_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
 
@@ -45,13 +46,18 @@ async def test_save_strategy_persists_structured_universe(monkeypatch: pytest.Mo
         )
 
     monkeypatch.setattr(StrategyRepository, "save_strategy", fake_save)
+    monkeypatch.setattr(
+        UniverseRepository,
+        "get_universe_config",
+        lambda self, name: {"name": name, "config": _sample_universe_payload()},
+    )
 
     payload = {
         "name": "mom-spy-res",
         "type": "configured",
         "description": "Structured universe strategy",
         "config": {
-            "universe": _sample_universe_payload(),
+            "universeConfigName": "large-cap-quality",
             "rebalance": "weekly",
             "longOnly": True,
             "topN": 20,
@@ -75,6 +81,37 @@ async def test_save_strategy_persists_structured_universe(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_save_strategy_rejects_unknown_universe_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_AUTH_MODE", "none")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
+    monkeypatch.setattr(UniverseRepository, "get_universe_config", lambda self, name: None)
+
+    payload = {
+        "name": "mom-spy-res",
+        "type": "configured",
+        "description": "Structured universe strategy",
+        "config": {
+            "universeConfigName": "missing-universe",
+            "rebalance": "weekly",
+            "longOnly": True,
+            "topN": 20,
+            "lookbackWindow": 63,
+            "holdingPeriod": 21,
+            "costModel": "default",
+            "intrabarConflictPolicy": "stop_first",
+            "exits": [],
+        },
+    }
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.post("/api/strategies/", json=payload)
+
+    assert response.status_code == 400
+    assert "Universe config 'missing-universe' not found." in response.text
+
+
+@pytest.mark.asyncio
 async def test_get_strategy_detail_round_trips_structured_universe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
@@ -85,7 +122,7 @@ async def test_get_strategy_detail_round_trips_structured_universe(monkeypatch: 
         "description": "Structured universe strategy",
         "updated_at": "2026-03-08T00:00:00Z",
         "config": {
-            "universe": _sample_universe_payload(),
+            "universeConfigName": "large-cap-quality",
             "rebalance": "weekly",
             "longOnly": True,
             "topN": 20,
@@ -104,13 +141,7 @@ async def test_get_strategy_detail_round_trips_structured_universe(monkeypatch: 
         response = await client.get("/api/strategies/mom-spy-res/detail")
 
     assert response.status_code == 200
-    universe = response.json()["config"]["universe"]
-    assert universe["source"] == "postgres_gold"
-    assert universe["root"]["operator"] == "and"
-    assert universe["root"]["clauses"][0]["table"] == "market_data"
-    assert universe["root"]["clauses"][0]["column"] == "close"
-    assert universe["root"]["clauses"][0]["operator"] == "gt"
-    assert float(universe["root"]["clauses"][0]["value"]) == 10.0
+    assert response.json()["config"]["universeConfigName"] == "large-cap-quality"
 
 
 @pytest.mark.asyncio

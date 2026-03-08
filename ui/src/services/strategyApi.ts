@@ -41,7 +41,7 @@ export const strategyApi = {
   },
 
   async getUniverseCatalog(signal?: AbortSignal): Promise<UniverseCatalogResponse> {
-    return request<UniverseCatalogResponse>('/strategies/universe/catalog', { signal });
+    return request<UniverseCatalogResponse>('/universes/catalog', { signal });
   },
 
   async previewUniverse(
@@ -51,7 +51,7 @@ export const strategyApi = {
     },
     signal?: AbortSignal
   ): Promise<UniversePreviewResponse> {
-    return request<UniversePreviewResponse>('/strategies/universe/preview', {
+    return request<UniversePreviewResponse>('/universes/preview', {
       method: 'POST',
       body: JSON.stringify(payload),
       signal

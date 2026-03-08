@@ -4,7 +4,9 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
 
 ## Objects
 
-- Migration: `[deploy/sql/postgres/migrations/0019_gold_postgres_sync.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0019_gold_postgres_sync.sql)`
+- Migrations:
+  - `[deploy/sql/postgres/migrations/0019_gold_postgres_sync.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0019_gold_postgres_sync.sql)`
+  - `[deploy/sql/postgres/migrations/0024_add_gold_earnings_calendar_columns.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0024_add_gold_earnings_calendar_columns.sql)`
 - Shared sync helper: `[tasks/common/postgres_gold_sync.py](/mnt/c/Users/rdpro/Projects/AssetAllocation/tasks/common/postgres_gold_sync.py)`
 - Serving tables:
   - `gold.market_data`
@@ -40,6 +42,15 @@ pwsh ./scripts/apply_postgres_migrations.ps1
 ```
 
 The first successful run seeds `core.gold_sync_state`. After that, unchanged buckets resume normal incremental skipping.
+
+`gold.earnings_data` now includes future-aware calendar columns in addition to the historical surprise metrics:
+- `next_earnings_date`
+- `days_until_next_earnings`
+- `next_earnings_estimate`
+- `next_earnings_time_of_day`
+- `next_earnings_fiscal_date_ending`
+- `has_upcoming_earnings`
+- `is_scheduled_earnings_day`
 
 ## Rebuild / Recovery
 

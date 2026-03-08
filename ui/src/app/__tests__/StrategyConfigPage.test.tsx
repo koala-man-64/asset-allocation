@@ -1,7 +1,9 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, Mock } from 'vitest';
 import { StrategyConfigPage } from '@/app/components/pages/StrategyConfigPage';
+import { rankingApi } from '@/services/rankingApi';
 import { strategyApi } from '@/services/strategyApi';
+import { universeApi } from '@/services/universeApi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock dependencies
@@ -14,6 +16,18 @@ vi.mock('@/services/strategyApi', () => ({
     deleteStrategy: vi.fn(),
     getUniverseCatalog: vi.fn(),
     previewUniverse: vi.fn()
+  }
+}));
+
+vi.mock('@/services/rankingApi', () => ({
+  rankingApi: {
+    listRankingSchemas: vi.fn()
+  }
+}));
+
+vi.mock('@/services/universeApi', () => ({
+  universeApi: {
+    listUniverseConfigs: vi.fn()
   }
 }));
 
@@ -36,52 +50,16 @@ const createTestQueryClient = () =>
 
 describe('StrategyConfigPage', () => {
   let queryClient: QueryClient;
-  const mockUniverse = {
-    source: 'postgres_gold' as const,
-    root: {
-      kind: 'group' as const,
-      operator: 'and' as const,
-      clauses: [
-        {
-          kind: 'condition' as const,
-          table: 'market_data',
-          column: 'close',
-          operator: 'gt' as const,
-          value: 10
-        }
-      ]
-    }
-  };
-
-  const mockCatalog = {
-    source: 'postgres_gold' as const,
-    tables: [
-      {
-        name: 'market_data',
-        asOfColumn: 'date',
-        columns: [
-          {
-            name: 'close',
-            dataType: 'double precision',
-            valueKind: 'number' as const,
-            operators: ['eq', 'gt']
-          }
-        ]
-      }
-    ]
-  };
 
   beforeEach(() => {
     queryClient = createTestQueryClient();
     vi.clearAllMocks();
-    (strategyApi.getUniverseCatalog as Mock).mockResolvedValue(mockCatalog);
-    (strategyApi.previewUniverse as Mock).mockResolvedValue({
-      source: 'postgres_gold',
-      symbolCount: 2,
-      sampleSymbols: ['AAPL', 'MSFT'],
-      tablesUsed: ['market_data'],
-      warnings: []
-    });
+    (rankingApi.listRankingSchemas as Mock).mockResolvedValue([
+      { name: 'quality-momentum', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
+    ]);
+    (universeApi.listUniverseConfigs as Mock).mockResolvedValue([
+      { name: 'large-cap-quality', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
+    ]);
   });
 
   it('renders loading state initially', () => {
@@ -107,7 +85,7 @@ describe('StrategyConfigPage', () => {
       type: 'configured',
       description: 'desc 1',
       config: {
-        universe: mockUniverse,
+        universeConfigName: 'large-cap-quality',
         rebalance: 'weekly',
         longOnly: true,
         topN: 20,
@@ -130,9 +108,9 @@ describe('StrategyConfigPage', () => {
       expect(screen.getByText('strat-2')).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /view strategy strat-1/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /edit strategy strat-1/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /delete strategy strat-1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /view run configuration strat-1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit run configuration strat-1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /delete run configuration strat-1/i })).toBeInTheDocument();
   });
 
   it('loads strategy detail when viewing and editing an existing strategy', async () => {
@@ -144,7 +122,7 @@ describe('StrategyConfigPage', () => {
       type: 'configured',
       description: 'desc 1',
       config: {
-        universe: mockUniverse,
+        universeConfigName: 'large-cap-quality',
         rebalance: 'weekly',
         longOnly: true,
         topN: 25,
@@ -191,7 +169,7 @@ describe('StrategyConfigPage', () => {
       expect(screen.getByText('strat-1')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /view strategy strat-1/i }));
+    fireEvent.click(screen.getByRole('button', { name: /view run configuration strat-1/i }));
 
     await waitFor(() => {
       expect(strategyApi.getStrategyDetail).toHaveBeenCalledWith('strat-1');
@@ -200,19 +178,19 @@ describe('StrategyConfigPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/Top 25 with 90-bar lookback/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/1 condition across 1 table/i)).toBeInTheDocument();
+    expect(screen.getByText('large-cap-quality')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Edit Strategy$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Edit Run Configuration$/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/gold table/i)).toHaveValue('market_data');
+      expect(screen.getByRole('heading', { name: /^Edit Run Configuration$/i })).toBeInTheDocument();
     });
 
     expect(screen.getByDisplayValue('stop-8')).toBeInTheDocument();
     expect(screen.getByDisplayValue('take-15')).toBeInTheDocument();
   });
 
-  it('opens editor when New Strategy button is clicked', async () => {
+  it('opens editor when New Run Configuration button is clicked', async () => {
     (strategyApi.listStrategies as Mock).mockResolvedValue([]);
 
     render(
@@ -222,13 +200,13 @@ describe('StrategyConfigPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/new strategy/i)).toBeInTheDocument();
+      expect(screen.getByText(/new run configuration/i)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText(/new strategy/i));
+    fireEvent.click(screen.getByText(/new run configuration/i));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /^New Strategy$/ })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /^New Run Configuration$/ })).toBeInTheDocument();
     });
 
     expect(strategyApi.getStrategyDetail).not.toHaveBeenCalled();
@@ -250,13 +228,13 @@ describe('StrategyConfigPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /delete strategy strat-1/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /delete run configuration strat-1/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /delete strategy strat-1/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete run configuration strat-1/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /delete strategy/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /delete run configuration/i })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: /delete from postgres/i }));

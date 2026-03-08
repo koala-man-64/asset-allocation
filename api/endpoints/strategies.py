@@ -10,6 +10,7 @@ from api.service.dependencies import validate_auth
 from core.strategy_engine import StrategyConfig, UniverseDefinition
 from core.strategy_engine.universe import list_gold_universe_catalog, preview_gold_universe
 from core.strategy_repository import StrategyRepository
+from core.universe_repository import UniverseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class StrategySummaryResponse(BaseModel):
     name: str
     type: str = "configured"
     description: str = ""
+    output_table_name: str | None = None
     updated_at: datetime | None = None
 
 
@@ -65,8 +67,14 @@ class UniversePreviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-def _normalize_strategy_config(config: Any) -> dict[str, Any]:
-    return StrategyConfig.model_validate(config or {}).model_dump(exclude_none=True)
+def _normalize_strategy_config(dsn: str, config: Any) -> dict[str, Any]:
+    normalized = StrategyConfig.model_validate(config or {})
+    if not normalized.universeConfigName:
+        raise ValueError("Strategy config must reference universeConfigName.")
+    universe_repo = UniverseRepository(dsn)
+    if not universe_repo.get_universe_config(normalized.universeConfigName):
+        raise ValueError(f"Universe config '{normalized.universeConfigName}' not found.")
+    return normalized.model_dump(exclude_none=True)
 
 
 def _build_strategy_detail_response(strategy: dict[str, Any]) -> StrategyDetailResponse:
@@ -74,6 +82,7 @@ def _build_strategy_detail_response(strategy: dict[str, Any]) -> StrategyDetailR
         name=str(strategy.get("name") or ""),
         type=str(strategy.get("type") or "configured"),
         description=str(strategy.get("description") or ""),
+        output_table_name=strategy.get("output_table_name"),
         updated_at=strategy.get("updated_at"),
         config=StrategyConfig.model_validate(strategy.get("config") or {}),
     )
@@ -178,16 +187,19 @@ async def save_strategy(strategy: StrategyUpsertRequest, request: Request) -> di
     """
     validate_auth(request)
     settings = request.app.state.settings
+    dsn = _require_postgres_dsn(request)
     repo = StrategyRepository(settings.postgres_dsn)
 
     try:
         repo.save_strategy(
             name=strategy.name,
-            config=_normalize_strategy_config(strategy.config),
+            config=_normalize_strategy_config(dsn, strategy.config),
             strategy_type=strategy.type or "configured",
             description=strategy.description or "",
         )
         return {"status": "success", "message": f"Strategy '{strategy.name}' saved successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error saving strategy: {e}")
         raise HTTPException(status_code=500, detail=str(e))

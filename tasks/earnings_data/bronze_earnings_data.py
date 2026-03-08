@@ -6,8 +6,8 @@ import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from io import BytesIO
-from typing import Any, Optional, Dict
+from io import BytesIO, StringIO
+from typing import Any, Optional, Dict, Sequence
 
 import pandas as pd
 
@@ -33,6 +33,7 @@ from tasks.common.bronze_backfill_coverage import (
     write_coverage_marker,
 )
 from tasks.common.backfill import filter_by_date
+from tasks.common.silver_contracts import normalize_columns_to_snake_case
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
@@ -48,12 +49,31 @@ list_manager = ListManager(
 EARNINGS_STALE_DAYS = 7
 _COVERAGE_DOMAIN = "earnings"
 _COVERAGE_PROVIDER = "alpha-vantage"
-_BUCKET_COLUMNS = [
+_EARNINGS_CALENDAR_HORIZONS = frozenset({"3month", "6month", "12month"})
+_EARNINGS_CALENDAR_EXPECTED_COLUMNS = (
+    "symbol",
+    "name",
+    "reportDate",
+    "fiscalDateEnding",
+    "estimate",
+    "currency",
+    "timeOfTheDay",
+)
+_CANONICAL_EARNINGS_COLUMNS = [
     "symbol",
     "date",
+    "report_date",
+    "fiscal_date_ending",
     "reported_eps",
     "eps_estimate",
     "surprise",
+    "record_type",
+    "is_future_event",
+    "calendar_time_of_day",
+    "calendar_currency",
+]
+_BUCKET_COLUMNS = [
+    *_CANONICAL_EARNINGS_COLUMNS,
     "ingested_at",
     "source_hash",
 ]
@@ -67,6 +87,30 @@ def _empty_coverage_summary() -> dict[str, int]:
         "coverage_marked_limited": 0,
         "coverage_skipped_limited_marker": 0,
     }
+
+
+def _empty_event_summary() -> dict[str, int]:
+    return {
+        "scheduled_rows_retained": 0,
+        "actual_over_scheduled_replacements": 0,
+    }
+
+
+def _utc_today() -> pd.Timestamp:
+    return pd.Timestamp(datetime.now(timezone.utc).date())
+
+
+def _empty_canonical_earnings_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=_BUCKET_COLUMNS)
+
+
+def _normalize_calendar_horizon(value: object) -> str:
+    text = str(value or "").strip().lower() or "12month"
+    if text not in _EARNINGS_CALENDAR_HORIZONS:
+        raise ValueError(
+            f"Invalid ALPHA_VANTAGE_EARNINGS_CALENDAR_HORIZON={value!r}; expected one of 3month, 6month, 12month."
+        )
+    return text
 
 
 def _format_payload_preview(payload: Any, *, max_chars: int = 500) -> Optional[str]:
@@ -196,7 +240,173 @@ def _coerce_surprise_fraction(payload: dict[str, Any]) -> Optional[float]:
     return _coerce_float(payload.get("surprise"))
 
 
-def _parse_earnings_records(
+def _coerce_datetime_column(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
+        return parsed_default.dt.tz_localize(None)
+    numeric = pd.to_numeric(series, errors="coerce")
+    parsed_numeric = pd.to_datetime(numeric, errors="coerce", unit="ms", utc=True)
+    parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
+    return parsed_default.where(numeric.isna(), parsed_numeric).dt.tz_localize(None)
+
+
+def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, symbol: Optional[str] = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return _empty_canonical_earnings_frame()
+
+    out = normalize_columns_to_snake_case(df).copy()
+    if symbol is not None:
+        out["symbol"] = str(symbol).strip().upper()
+    elif "symbol" not in out.columns:
+        out["symbol"] = pd.NA
+    out["symbol"] = out["symbol"].astype("string").str.strip().str.upper()
+
+    if "date" not in out.columns and "report_date" in out.columns:
+        out["date"] = out["report_date"]
+    for column in ("date", "report_date", "fiscal_date_ending"):
+        if column in out.columns:
+            out[column] = _coerce_datetime_column(out[column])
+        else:
+            out[column] = pd.NaT
+
+    if "record_type" not in out.columns:
+        out["record_type"] = "actual"
+    out["record_type"] = out["record_type"].astype("string").str.strip().str.lower()
+    out.loc[~out["record_type"].isin({"actual", "scheduled"}), "record_type"] = "actual"
+    out.loc[out["record_type"].isna() | (out["record_type"] == ""), "record_type"] = "actual"
+
+    actual_missing_fiscal = out["record_type"].eq("actual") & out["fiscal_date_ending"].isna()
+    out.loc[actual_missing_fiscal, "fiscal_date_ending"] = out.loc[actual_missing_fiscal, "date"]
+    scheduled_missing_date = out["record_type"].eq("scheduled") & out["date"].isna() & out["report_date"].notna()
+    out.loc[scheduled_missing_date, "date"] = out.loc[scheduled_missing_date, "report_date"]
+
+    for column in ("reported_eps", "eps_estimate", "surprise"):
+        if column in out.columns:
+            out[column] = pd.to_numeric(out[column], errors="coerce")
+        else:
+            out[column] = pd.NA
+
+    for column in ("calendar_time_of_day", "calendar_currency", "ingested_at", "source_hash"):
+        if column not in out.columns:
+            out[column] = pd.NA
+
+    if "is_future_event" in out.columns:
+        parsed_future = pd.Series(pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64")
+    else:
+        parsed_future = pd.Series(pd.NA, index=out.index, dtype="Float64")
+    inferred_future = pd.Series(
+        out["record_type"].eq("scheduled") & out["report_date"].notna() & (out["report_date"] >= _utc_today()),
+        index=out.index,
+        dtype="boolean",
+    ).astype("Float64")
+    out["is_future_event"] = parsed_future.fillna(inferred_future).fillna(0).astype(int)
+
+    out = out.dropna(subset=["date"]).copy()
+    return out[_BUCKET_COLUMNS].reset_index(drop=True)
+
+
+def _event_identity_key(df: pd.DataFrame) -> pd.Series:
+    if df.empty:
+        return pd.Series(dtype="string")
+    report_dates = pd.to_datetime(df["report_date"], errors="coerce")
+    fiscal_dates = pd.to_datetime(df["fiscal_date_ending"], errors="coerce")
+    base_dates = pd.to_datetime(df["date"], errors="coerce")
+    # Earnings dates can move. When available, fiscal quarter end is the stable event identity.
+    preferred = fiscal_dates.where(fiscal_dates.notna(), report_dates.where(report_dates.notna(), base_dates))
+    return preferred.dt.strftime("%Y-%m-%d").fillna("")
+
+
+def _select_actual_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    canonical = _canonicalize_earnings_frame(df)
+    if canonical.empty:
+        return canonical
+    return canonical.loc[canonical["record_type"] == "actual"].copy().reset_index(drop=True)
+
+
+def _select_past_scheduled_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    canonical = _canonicalize_earnings_frame(df)
+    if canonical.empty:
+        return canonical
+    today = _utc_today()
+    mask = (
+        canonical["record_type"].eq("scheduled")
+        & canonical["report_date"].notna()
+        & (canonical["report_date"] < today)
+    )
+    return canonical.loc[mask].copy().reset_index(drop=True)
+
+
+def _has_due_scheduled_rows(*frames: Optional[pd.DataFrame]) -> bool:
+    today = _utc_today()
+    for frame in frames:
+        canonical = _canonicalize_earnings_frame(frame)
+        if canonical.empty:
+            continue
+        if (
+            canonical["record_type"].eq("scheduled")
+            & canonical["report_date"].notna()
+            & (canonical["report_date"] <= today)
+        ).any():
+            return True
+    return False
+
+
+def _dedupe_canonical_earnings_events(df: Optional[pd.DataFrame]) -> tuple[pd.DataFrame, int]:
+    canonical = _canonicalize_earnings_frame(df)
+    if canonical.empty:
+        return canonical, 0
+
+    work = canonical.copy()
+    work["_event_identity"] = _event_identity_key(work)
+
+    actual = (
+        work.loc[work["record_type"] == "actual"]
+        .sort_values(["symbol", "date", "report_date", "fiscal_date_ending"])
+        .drop_duplicates(subset=["symbol", "_event_identity"], keep="last")
+    )
+    scheduled = (
+        work.loc[work["record_type"] == "scheduled"]
+        .sort_values(["symbol", "report_date", "date"])
+        .drop_duplicates(subset=["symbol", "_event_identity"], keep="last")
+    )
+    actual_keys = {
+        (str(symbol), str(event_identity))
+        for symbol, event_identity in actual[["symbol", "_event_identity"]].itertuples(index=False, name=None)
+    }
+    scheduled_mask = scheduled.apply(
+        lambda row: (str(row["symbol"]), str(row["_event_identity"])) not in actual_keys,
+        axis=1,
+    )
+    filtered_scheduled = scheduled.loc[scheduled_mask].copy()
+    replacements = int(len(scheduled) - len(filtered_scheduled))
+
+    out = pd.concat([actual, filtered_scheduled], ignore_index=True, sort=False)
+    out = out.drop(columns=["_event_identity"], errors="ignore")
+    out = out.sort_values(["symbol", "date", "record_type"]).reset_index(drop=True)
+    return out[_BUCKET_COLUMNS], replacements
+
+
+def _stamp_canonical_earnings_frame(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    canonical = _canonicalize_earnings_frame(df)
+    if canonical.empty:
+        return canonical
+    payload = canonical[_CANONICAL_EARNINGS_COLUMNS].to_json(orient="records", date_format="iso")
+    now = datetime.now(timezone.utc).isoformat()
+    source_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    canonical["ingested_at"] = now
+    canonical["source_hash"] = source_hash
+    return canonical[_BUCKET_COLUMNS].reset_index(drop=True)
+
+
+def _canonical_payload_bytes(df: Optional[pd.DataFrame]) -> bytes:
+    canonical = _canonicalize_earnings_frame(df)
+    if canonical.empty:
+        return b"[]"
+    canonical = canonical.sort_values(["symbol", "date", "record_type"]).reset_index(drop=True)
+    return canonical[_CANONICAL_EARNINGS_COLUMNS].to_json(orient="records", date_format="iso").encode("utf-8")
+
+
+def _parse_historical_earnings_records(
     symbol: str,
     payload: dict[str, Any],
     *,
@@ -211,23 +421,28 @@ def _parse_earnings_records(
             continue
         rows.append(
             {
-                "Date": str(date_raw).strip(),
-                "Symbol": symbol,
-                "Reported EPS": _coerce_float(item.get("reportedEPS")),
-                "EPS Estimate": _coerce_float(item.get("estimatedEPS")),
-                "Surprise": _coerce_surprise_fraction(item),
+                "symbol": symbol,
+                "date": str(date_raw).strip(),
+                "report_date": str(item.get("reportedDate") or "").strip() or None,
+                "fiscal_date_ending": str(item.get("fiscalDateEnding") or "").strip() or None,
+                "reported_eps": _coerce_float(item.get("reportedEPS")),
+                "eps_estimate": _coerce_float(item.get("estimatedEPS")),
+                "surprise": _coerce_surprise_fraction(item),
+                "record_type": "actual",
+                "is_future_event": 0,
+                "calendar_time_of_day": None,
+                "calendar_currency": None,
             }
         )
 
-    df = pd.DataFrame(rows, columns=["Date", "Symbol", "Reported EPS", "EPS Estimate", "Surprise"])
+    df = pd.DataFrame(rows, columns=_CANONICAL_EARNINGS_COLUMNS)
     if df.empty:
-        return df
+        return _empty_canonical_earnings_frame()
 
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
-    df = df.dropna(subset=["Date"]).copy()
+    df = _canonicalize_earnings_frame(df, symbol=symbol)
     backfill_start_ts = pd.Timestamp(backfill_start) if backfill_start is not None else None
-    df = filter_by_date(df, "Date", backfill_start_ts, None)
-    df = df.sort_values(["Date"]).drop_duplicates(subset=["Date", "Symbol"], keep="last").reset_index(drop=True)
+    df = filter_by_date(df, "date", backfill_start_ts, None)
+    df = df.sort_values(["date"]).drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
     return df
 
 
@@ -236,6 +451,72 @@ def _extract_source_earliest_earnings_date(payload: dict[str, Any]) -> Optional[
     if not isinstance(rows, list):
         return None
     return extract_min_date_from_rows(rows, date_keys=("fiscalDateEnding", "reportedDate", "date"))
+
+
+def _parse_earnings_calendar_csv(
+    csv_text: str,
+    *,
+    symbols: Sequence[str],
+) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+    text = str(csv_text or "").strip()
+    if not text:
+        raise ValueError("Alpha Vantage earnings calendar response was empty.")
+
+    try:
+        df = pd.read_csv(StringIO(text))
+    except Exception as exc:
+        preview = _format_payload_preview(text)
+        raise ValueError(f"Unable to parse Alpha Vantage earnings calendar CSV. payload_preview={preview}") from exc
+
+    missing_columns = [column for column in _EARNINGS_CALENDAR_EXPECTED_COLUMNS if column not in df.columns]
+    if missing_columns:
+        preview = _format_payload_preview(text)
+        raise ValueError(
+            "Alpha Vantage earnings calendar CSV missing required columns "
+            f"{missing_columns}. payload_preview={preview}"
+        )
+
+    total_rows = int(len(df))
+    normalized = normalize_columns_to_snake_case(df).copy()
+    normalized["symbol"] = normalized["symbol"].astype("string").str.strip().str.upper()
+    normalized = normalized[normalized["symbol"].notna() & (normalized["symbol"] != "")].copy()
+    normalized["report_date"] = _coerce_datetime_column(normalized["report_date"])
+    normalized["fiscal_date_ending"] = _coerce_datetime_column(normalized["fiscal_date_ending"])
+    normalized["estimate"] = pd.to_numeric(normalized.get("estimate"), errors="coerce")
+
+    symbol_set = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    matched = normalized[normalized["symbol"].isin(symbol_set)].copy()
+    grouped: dict[str, pd.DataFrame] = {}
+    for symbol, group in matched.groupby("symbol", dropna=True):
+        grouped[str(symbol)] = group.reset_index(drop=True)
+
+    max_report_date = matched["report_date"].dropna().max() if "report_date" in matched.columns else None
+    summary = {
+        "calendar_rows_fetched": total_rows,
+        "calendar_symbols_matched": int(matched["symbol"].nunique()) if not matched.empty else 0,
+        "calendar_symbols_ignored": int(normalized["symbol"].nunique() - matched["symbol"].nunique())
+        if not normalized.empty
+        else 0,
+        "calendar_max_report_date": max_report_date.date().isoformat() if pd.notna(max_report_date) else None,
+    }
+    return grouped, summary
+
+
+def _build_scheduled_earnings_rows(symbol: str, calendar_rows: Optional[pd.DataFrame]) -> pd.DataFrame:
+    if calendar_rows is None or calendar_rows.empty:
+        return _empty_canonical_earnings_frame()
+
+    out = normalize_columns_to_snake_case(calendar_rows).copy()
+    out["symbol"] = str(symbol).strip().upper()
+    out["date"] = out.get("report_date")
+    out["reported_eps"] = pd.NA
+    out["eps_estimate"] = pd.to_numeric(out.get("estimate"), errors="coerce")
+    out["surprise"] = pd.NA
+    out["record_type"] = "scheduled"
+    out["calendar_time_of_day"] = out.get("time_of_the_day")
+    out["calendar_currency"] = out.get("currency")
+    out["is_future_event"] = 1
+    return _canonicalize_earnings_frame(out, symbol=symbol)
 
 
 def _load_existing_earnings_df(blob_path: str) -> pd.DataFrame:
@@ -248,39 +529,26 @@ def _load_existing_earnings_df(blob_path: str) -> pd.DataFrame:
     try:
         df = pd.read_json(BytesIO(raw), orient="records")
     except Exception:
-        return pd.DataFrame()
-    if df.empty or "Date" not in df.columns:
-        return pd.DataFrame()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_localize(None)
-    df = df.dropna(subset=["Date"]).copy()
-    return df
+        return _empty_canonical_earnings_frame()
+    return _canonicalize_earnings_frame(df)
 
 
 def _extract_latest_earnings_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
-    if df.empty or "Date" not in df.columns:
+    if df.empty or "date" not in df.columns:
         return None
-    parsed = pd.to_datetime(df["Date"], errors="coerce", utc=True).dropna()
+    parsed = pd.to_datetime(df["date"], errors="coerce", utc=True).dropna()
     if parsed.empty:
         return None
     return parsed.max()
 
 
 def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["symbol"] = str(symbol).upper()
-    out["date"] = pd.to_datetime(out.get("Date"), errors="coerce", utc=True).dt.tz_localize(None)
-    out["reported_eps"] = pd.to_numeric(out.get("Reported EPS"), errors="coerce")
-    out["eps_estimate"] = pd.to_numeric(out.get("EPS Estimate"), errors="coerce")
-    out["surprise"] = pd.to_numeric(out.get("Surprise"), errors="coerce")
-    out = out.dropna(subset=["date"]).copy()
-    payload = out[["symbol", "date", "reported_eps", "eps_estimate", "surprise"]].to_json(
-        orient="records",
-        date_format="iso",
-    )
-    out["source_hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    out["ingested_at"] = datetime.now(timezone.utc).isoformat()
-    out = out[_BUCKET_COLUMNS]
-    return out.reset_index(drop=True)
+    out = _canonicalize_earnings_frame(df, symbol=symbol)
+    if out.empty:
+        return out
+    if out["source_hash"].isna().all() or out["ingested_at"].isna().all():
+        out = _stamp_canonical_earnings_frame(out)
+    return out[_BUCKET_COLUMNS].reset_index(drop=True)
 
 
 def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
@@ -362,12 +630,34 @@ def _delete_legacy_symbol_blobs() -> int:
     return deleted
 
 
+def _fetch_earnings_calendar_by_symbol(
+    *,
+    av: AlphaVantageGatewayClient,
+    symbols: Sequence[str],
+) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+    if not symbols:
+        return {}, {
+            "calendar_rows_fetched": 0,
+            "calendar_symbols_matched": 0,
+            "calendar_symbols_ignored": 0,
+            "calendar_max_report_date": None,
+        }
+
+    horizon = _normalize_calendar_horizon(getattr(cfg, "ALPHA_VANTAGE_EARNINGS_CALENDAR_HORIZON", "12month"))
+    csv_text = av.get_earnings_calendar_csv(horizon=horizon)
+    grouped, summary = _parse_earnings_calendar_csv(csv_text, symbols=symbols)
+    summary["calendar_horizon"] = horizon
+    return grouped, summary
+
+
 def fetch_and_save_raw(
     symbol: str,
     av: AlphaVantageGatewayClient,
     *,
     backfill_start: Optional[date] = None,
     coverage_summary: Optional[dict[str, int]] = None,
+    event_summary: Optional[dict[str, int]] = None,
+    calendar_rows: Optional[pd.DataFrame] = None,
     write_symbol_file: bool = True,
     collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
     alpha26_mode: bool = False,
@@ -378,27 +668,35 @@ def fetch_and_save_raw(
     Returns True when a Bronze write occurred, False when skipped/no-op.
     """
     coverage_summary = coverage_summary if coverage_summary is not None else _empty_coverage_summary()
+    event_summary = event_summary if event_summary is not None else _empty_event_summary()
     if list_manager.is_blacklisted(symbol):
         return False
 
     blob_path = f"{cfg.EARNINGS_DATA_PREFIX}/{symbol}.json"
     blob_exists: Optional[bool] = None
     resolved_backfill_start = normalize_date(backfill_start)
-    existing_df = pd.DataFrame()
+    existing_df = _empty_canonical_earnings_frame()
+    existing_actual_df = _empty_canonical_earnings_frame()
     existing_min_date: Optional[date] = None
     force_backfill = False
+    should_fetch_historical = True
 
-    # Freshness gate (quarterly data); avoid re-fetching too frequently.
+    scheduled_rows = _build_scheduled_earnings_rows(symbol, calendar_rows)
+    today = _utc_today()
+
+    # Freshness gate only skips the per-symbol historical API fetch. Scheduled rows are still
+    # merged every run from the bulk earnings-calendar feed.
     if not alpha26_mode:
         try:
             blob = bronze_client.get_blob_client(blob_path)
             blob_exists = bool(blob.exists())
             if blob_exists:
+                existing_df = _load_existing_earnings_df(blob_path)
+                existing_actual_df = _select_actual_rows(existing_df)
                 props = blob.get_blob_properties()
                 if resolved_backfill_start is not None:
                     coverage_summary["coverage_checked"] += 1
-                    existing_df = _load_existing_earnings_df(blob_path)
-                    existing_min_date = extract_min_date_from_dataframe(existing_df, date_col="Date")
+                    existing_min_date = extract_min_date_from_dataframe(existing_actual_df, date_col="date")
                     marker = load_coverage_marker(
                         common_client=common_client,
                         domain=_COVERAGE_DOMAIN,
@@ -421,30 +719,55 @@ def fetch_and_save_raw(
                             earliest_available=existing_min_date,
                             coverage_summary=coverage_summary,
                         )
-                if _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS) and not force_backfill:
-                    list_manager.add_to_whitelist(symbol)
-                    return False
+                if (
+                    _is_fresh(props.last_modified, fresh_days=EARNINGS_STALE_DAYS)
+                    and not force_backfill
+                    and not existing_actual_df.empty
+                    and not _has_due_scheduled_rows(existing_df, scheduled_rows)
+                ):
+                    should_fetch_historical = False
         except Exception:
             pass
     else:
         blob_exists = False
 
-    payload = av.get_earnings(symbol=symbol)
-    if not isinstance(payload, dict):
-        raise AlphaVantageGatewayError("Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol})
+    payload: Optional[dict[str, Any]] = None
+    source_earliest: Optional[date] = None
+    has_source_records = False
+    if should_fetch_historical:
+        payload = av.get_earnings(symbol=symbol)
+        if not isinstance(payload, dict):
+            raise AlphaVantageGatewayError("Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol})
 
-    source_records = payload.get("quarterlyEarnings") or []
-    has_source_records = any(
-        isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
-        for item in source_records
-    )
-    source_earliest = _extract_source_earliest_earnings_date(payload)
-    df = _parse_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
-    if df is None or df.empty:
-        if not has_source_records:
+        source_records = payload.get("quarterlyEarnings") or []
+        has_source_records = any(
+            isinstance(item, dict) and (item.get("fiscalDateEnding") or item.get("reportedDate"))
+            for item in source_records
+        )
+        source_earliest = _extract_source_earliest_earnings_date(payload)
+        actual_rows = _parse_historical_earnings_records(symbol, payload, backfill_start=resolved_backfill_start)
+    else:
+        actual_rows = existing_actual_df.copy()
+        source_earliest = extract_min_date_from_dataframe(actual_rows, date_col="date")
+        has_source_records = not actual_rows.empty
+
+    carry_forward_scheduled = _select_past_scheduled_rows(existing_df)
+    merge_parts = [frame for frame in (actual_rows, carry_forward_scheduled, scheduled_rows) if frame is not None and not frame.empty]
+    if merge_parts:
+        merged = pd.concat(merge_parts, ignore_index=True, sort=False)
+    else:
+        merged = _empty_canonical_earnings_frame()
+    merged, actual_replacements = _dedupe_canonical_earnings_events(merged)
+    if resolved_backfill_start is not None:
+        merged = filter_by_date(merged, "date", pd.Timestamp(resolved_backfill_start), None)
+    canonical_raw_json = _canonical_payload_bytes(merged)
+    merged = _stamp_canonical_earnings_frame(merged)
+
+    if merged is None or merged.empty:
+        if not has_source_records and scheduled_rows.empty and carry_forward_scheduled.empty:
             raise AlphaVantageGatewayInvalidSymbolError(
-                "No quarterly earnings records found.",
-                payload=payload,
+                "No quarterly or scheduled earnings records found.",
+                payload=payload or {"symbol": symbol},
             )
         if resolved_backfill_start is not None:
             if force_backfill:
@@ -468,18 +791,9 @@ def fetch_and_save_raw(
             return False
         raw_json = b"[]"
     else:
-        if blob_exists and resolved_backfill_start is None:
-            existing_df = _load_existing_earnings_df(blob_path)
-            incoming_latest = _extract_latest_earnings_date(df)
-            existing_latest = _extract_latest_earnings_date(existing_df)
-            if (
-                incoming_latest is not None
-                and existing_latest is not None
-                and incoming_latest <= existing_latest
-            ):
-                list_manager.add_to_whitelist(symbol)
-                return False
-        raw_json = df.to_json(orient="records").encode("utf-8")
+        raw_json = merged.to_json(orient="records").encode("utf-8")
+        event_summary["scheduled_rows_retained"] += int(merged["record_type"].eq("scheduled").sum())
+        event_summary["actual_over_scheduled_replacements"] += int(actual_replacements)
 
     if resolved_backfill_start is not None and force_backfill:
         marker_status = (
@@ -496,19 +810,15 @@ def fetch_and_save_raw(
         )
 
     if (not alpha26_mode) and blob_exists:
-        try:
-            existing_raw = mdc.read_raw_bytes(blob_path, client=bronze_client)
-        except Exception:
-            existing_raw = None
-        if existing_raw == raw_json:
+        if _canonical_payload_bytes(existing_df) == canonical_raw_json:
             list_manager.add_to_whitelist(symbol)
             return False
 
     if not write_symbol_file:
-        if df is not None and not df.empty and collected_symbol_frames is not None:
-            collected_symbol_frames[symbol] = df.copy()
+        if merged is not None and not merged.empty and collected_symbol_frames is not None:
+            collected_symbol_frames[symbol] = merged.copy()
         list_manager.add_to_whitelist(symbol)
-        return bool(df is not None and not df.empty)
+        return bool(merged is not None and not merged.empty)
 
     mdc.store_raw_bytes(raw_json, blob_path, client=bronze_client)
     list_manager.add_to_whitelist(symbol)
@@ -563,6 +873,16 @@ async def main_async() -> int:
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to bronze earnings data: {backfill_start.isoformat()}")
 
+    calendar_rows_by_symbol, calendar_summary = _fetch_earnings_calendar_by_symbol(av=av, symbols=symbols)
+    mdc.write_line(
+        "Bronze AV earnings calendar: "
+        f"horizon={calendar_summary.get('calendar_horizon', '12month')} "
+        f"calendar_rows_fetched={calendar_summary.get('calendar_rows_fetched', 0)} "
+        f"calendar_symbols_matched={calendar_summary.get('calendar_symbols_matched', 0)} "
+        f"calendar_symbols_ignored={calendar_summary.get('calendar_symbols_ignored', 0)} "
+        f"calendar_max_report_date={calendar_summary.get('calendar_max_report_date') or 'n/a'}"
+    )
+
     max_workers = max(1, int(cfg.ALPHA_VANTAGE_MAX_WORKERS))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-earnings")
     loop = asyncio.get_running_loop()
@@ -570,23 +890,27 @@ async def main_async() -> int:
 
     progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
     coverage_progress = _empty_coverage_summary()
+    event_progress = _empty_event_summary()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
     collected_symbol_frames: Dict[str, pd.DataFrame] = {}
 
-    def worker(symbol: str) -> tuple[bool, dict[str, int]]:
+    def worker(symbol: str) -> tuple[bool, dict[str, int], dict[str, int]]:
         coverage_summary = _empty_coverage_summary()
+        event_summary = _empty_event_summary()
         wrote = fetch_and_save_raw(
             symbol,
             av,
             backfill_start=backfill_start,
             coverage_summary=coverage_summary,
+            event_summary=event_summary,
+            calendar_rows=calendar_rows_by_symbol.get(symbol),
             write_symbol_file=not alpha26_mode,
             collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
             alpha26_mode=alpha26_mode,
         )
-        return wrote, coverage_summary
+        return wrote, coverage_summary, event_summary
 
     async def record_failure(symbol: str, exc: BaseException) -> None:
         failure_type = type(exc).__name__
@@ -613,7 +937,7 @@ async def main_async() -> int:
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
-                wrote, coverage_summary = await loop.run_in_executor(executor, worker, symbol)
+                wrote, coverage_summary, symbol_event_summary = await loop.run_in_executor(executor, worker, symbol)
                 async with progress_lock:
                     if wrote:
                         progress["written"] += 1
@@ -621,6 +945,8 @@ async def main_async() -> int:
                         progress["skipped"] += 1
                     for key in coverage_progress:
                         coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
+                    for key in event_progress:
+                        event_progress[key] += int(symbol_event_summary.get(key, 0) or 0)
             except AlphaVantageGatewayInvalidSymbolError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = False
@@ -690,9 +1016,11 @@ async def main_async() -> int:
         "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
         "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
+        "scheduled_rows_retained={scheduled_rows_retained} actual_over_scheduled_replacements={actual_over_scheduled_replacements} "
         "job_status={job_status}".format(
             **progress,
             **coverage_progress,
+            **event_progress,
             job_status=job_status,
         )
     )

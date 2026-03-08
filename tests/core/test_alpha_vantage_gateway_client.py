@@ -82,3 +82,36 @@ def test_warmup_can_be_disabled(monkeypatch):
     assert counters["warmup"] == 0
     assert counters["data"] == 1
 
+
+def test_get_earnings_calendar_csv_calls_calendar_route(monkeypatch):
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["query"] = str(request.url.query)
+        return httpx.Response(
+            200,
+            text="symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\nAAPL,Apple,2026-05-01,2026-03-31,1.5,USD,post-market\n",
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = AlphaVantageGatewayClient(
+        AlphaVantageGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=600.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        csv = client.get_earnings_calendar_csv(symbol="AAPL", horizon="6month")
+    finally:
+        http_client.close()
+
+    assert "reportDate" in csv
+    assert observed["path"] == "/api/providers/alpha-vantage/earnings-calendar"
+    assert "symbol=AAPL" in str(observed["query"])
+    assert "horizon=6month" in str(observed["query"])

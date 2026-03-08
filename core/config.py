@@ -122,6 +122,7 @@ class AppSettings(BaseSettings):
     ALPHA_VANTAGE_TIMEOUT_SECONDS: float = 15.0
     ALPHA_VANTAGE_MAX_WORKERS: int = 32
     ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: int = 7
+    ALPHA_VANTAGE_EARNINGS_CALENDAR_HORIZON: str = "12month"
     ALPHA_VANTAGE_FINANCE_FRESH_DAYS: int = 28
 
     # Massive (market + fundamentals replacement at Bronze market/finance layers).

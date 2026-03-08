@@ -22,7 +22,9 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/app/components/ui/select';
+import { rankingApi } from '@/services/rankingApi';
 import { strategyApi } from '@/services/strategyApi';
+import { universeApi } from '@/services/universeApi';
 import { toast } from 'sonner';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import type {
@@ -33,8 +35,6 @@ import type {
   StrategyDetail,
   StrategySummary
 } from '@/types/strategy';
-import { UniverseRuleBuilder } from '@/app/components/pages/strategy-editor/UniverseRuleBuilder';
-import { buildEmptyUniverse } from '@/app/components/pages/strategy-editor/universeUtils';
 
 interface StrategyEditorProps {
   strategy: StrategySummary | null;
@@ -70,7 +70,7 @@ function buildEmptyStrategy(): StrategyDetail {
     type: 'configured',
     description: '',
     config: {
-      universe: buildEmptyUniverse(),
+      universeConfigName: undefined,
       rebalance: 'monthly',
       longOnly: true,
       topN: 20,
@@ -175,6 +175,16 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
     queryFn: () => strategyApi.getStrategyDetail(String(strategy?.name)),
     enabled: open && isEditing
   });
+  const rankingSchemasQuery = useQuery({
+    queryKey: ['ranking-schemas'],
+    queryFn: () => rankingApi.listRankingSchemas(),
+    enabled: open
+  });
+  const universeConfigsQuery = useQuery({
+    queryKey: ['universe-configs'],
+    queryFn: () => universeApi.listUniverseConfigs(),
+    enabled: open
+  });
 
   const {
     register,
@@ -213,11 +223,11 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
         queryClient.invalidateQueries({ queryKey: ['strategies', 'detail', savedStrategy.name] })
       ]);
       onSaved?.(savedStrategy);
-      toast.success(`Strategy ${isEditing ? 'updated' : 'created'} in Postgres`);
+      toast.success(`Run configuration ${isEditing ? 'updated' : 'created'} in Postgres`);
       onOpenChange(false);
     },
     onError: (error) => {
-      toast.error(`Failed to save strategy: ${formatSystemStatusText(error)}`);
+      toast.error(`Failed to save run configuration: ${formatSystemStatusText(error)}`);
     }
   });
 
@@ -226,8 +236,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
   };
 
   const watchedType = watch('type');
-  const watchedUniverse = watch('config.universe');
+  const watchedUniverseConfig = watch('config.universeConfigName') || '__none__';
   const watchedRebalance = watch('config.rebalance');
+  const watchedRankingSchema = watch('config.rankingSchemaName') || '__none__';
   const watchedPolicy = watch('config.intrabarConflictPolicy');
   const watchedLongOnly = watch('config.longOnly');
   const watchedExits = watch('config.exits') || [];
@@ -260,14 +271,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="overflow-y-auto sm:max-w-4xl">
         <SheetHeader>
-          <SheetTitle>{isEditing ? 'Edit Strategy' : 'New Strategy'}</SheetTitle>
+          <SheetTitle>{isEditing ? 'Edit Run Configuration' : 'New Run Configuration'}</SheetTitle>
           <SheetDescription>
-            Configure strategy parameters, exit rules, and intrabar conflict handling, then save the record to Postgres.
+            Attach saved universe and ranking configs, adjust cadence, selection, and exit settings, then save the run configuration to Postgres.
           </SheetDescription>
         </SheetHeader>
 
         {isEditing && detailQuery.isLoading ? (
-          <PageLoader text="Loading strategy..." className="h-72" />
+          <PageLoader text="Loading run configuration..." className="h-72" />
         ) : isEditing && detailError ? (
           <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
             {detailError}
@@ -316,14 +327,34 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
             <div className="space-y-4 border-t pt-4">
               <h3 className="text-sm font-medium text-muted-foreground">Configuration</h3>
 
-              <UniverseRuleBuilder
-                value={watchedUniverse || buildEmptyUniverse()}
-                onChange={(nextValue) =>
-                  setValue('config.universe', nextValue, { shouldDirty: true, shouldTouch: true })
-                }
-              />
-
               <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="strategy-universe-config">Universe Config</Label>
+                  <Select
+                    value={watchedUniverseConfig}
+                    onValueChange={(value) =>
+                      setValue('config.universeConfigName', value === '__none__' ? undefined : value, {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  >
+                    <SelectTrigger id="strategy-universe-config">
+                      <SelectValue placeholder="Select universe config" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">No universe config</SelectItem>
+                      {(universeConfigsQuery.data || []).map((universe) => (
+                        <SelectItem key={universe.name} value={universe.name}>
+                          {universe.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Run configurations now reference a separately managed universe config.
+                  </p>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="rebalance">Rebalance Frequency</Label>
                   <Select
@@ -342,6 +373,34 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                       <SelectItem value="quarterly">Quarterly</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="ranking-schema">Ranking Schema</Label>
+                  <Select
+                    value={watchedRankingSchema}
+                    onValueChange={(value) =>
+                      setValue('config.rankingSchemaName', value === '__none__' ? undefined : value, {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  >
+                    <SelectTrigger id="ranking-schema">
+                      <SelectValue placeholder="Select ranking schema" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">No ranking schema</SelectItem>
+                      {(rankingSchemasQuery.data || []).map((schema) => (
+                        <SelectItem key={schema.name} value={schema.name}>
+                          {schema.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Attach a saved ranking schema to enable date-by-date platinum materialization for this strategy.
+                  </p>
                 </div>
               </div>
 
@@ -629,7 +688,7 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
 
             <SheetFooter>
               <Button type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? 'Saving...' : 'Save to Postgres'}
+                {mutation.isPending ? 'Saving...' : 'Save Run Configuration'}
               </Button>
             </SheetFooter>
           </form>

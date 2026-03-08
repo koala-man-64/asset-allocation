@@ -8,7 +8,7 @@ Execution flow:
 2. `_run_alpha26_market_gold()` iterates alphabet buckets and symbols.
 3. `compute_features()` derives technical indicators from OHLCV bars.
 4. Bucket tables are written to gold storage and watermarks are updated.
-5. Optional by-date materialization and health marker updates run at exit.
+5. Health marker updates run at exit.
 """
 
 import os
@@ -71,19 +71,6 @@ _SILVER_TO_GOLD_REQUIRED_COLUMNS = {
     "close",
     "volume",
 }
-
-
-def _is_truthy(raw: Optional[str], *, default: bool = False) -> bool:
-    """Parse common env-style truthy/falsy string values into a boolean."""
-
-    if raw is None:
-        return default
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "t", "yes", "y", "on"}:
-        return True
-    if value in {"0", "false", "f", "no", "n", "off"}:
-        return False
-    return default
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
@@ -973,16 +960,6 @@ if __name__ == "__main__":
     # Ensure the API dependency is awake before running the batch job.
     ensure_api_awake_from_env(required=True)
     exit_code = main()
-
-    # Optional post-step: materialize by-date tables when enabled.
-    if exit_code == 0 and _is_truthy(os.environ.get("GOLD_MARKET_BY_DATE_ENABLED"), default=False):
-        from tasks.market_data.materialize_gold_market_by_date import main as materialize_by_date_main
-
-        mdc.write_line("Running Gold market by-date materialization (GOLD_MARKET_BY_DATE_ENABLED=true)...")
-        mdc.write_line("layer_handoff_status transition=gold_to_by_date status=started")
-        exit_code = materialize_by_date_main([])
-        by_date_status = "ok" if exit_code == 0 else "failed"
-        mdc.write_line(f"layer_handoff_status transition=gold_to_by_date status={by_date_status}")
 
     if exit_code == 0:
         write_system_health_marker(layer="gold", domain="market", job_name=job_name)

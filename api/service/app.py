@@ -12,7 +12,7 @@ from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redi
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from api.endpoints import alpha_vantage, data, massive, postgres, strategies, system
+from api.endpoints import alpha_vantage, data, massive, postgres, rankings, strategies, system, universes
 from api.service.auth import AuthManager
 from api.service.alpha_vantage_gateway import AlphaVantageGateway
 from api.service.massive_gateway import MassiveGateway
@@ -398,7 +398,9 @@ def create_app() -> FastAPI:
         app.include_router(data.router, prefix=f"{api_prefix}/data", tags=["Data"])
         app.include_router(system.router, prefix=f"{api_prefix}/system", tags=["System"])
         app.include_router(postgres.router, prefix=f"{api_prefix}/system/postgres", tags=["Postgres"])
+        app.include_router(universes.router, prefix=f"{api_prefix}/universes", tags=["Universes"])
         app.include_router(strategies.router, prefix=f"{api_prefix}/strategies", tags=["Strategies"])
+        app.include_router(rankings.router, prefix=f"{api_prefix}/rankings", tags=["Rankings"])
         app.include_router(
             alpha_vantage.router,
             prefix=f"{api_prefix}/providers/alpha-vantage",

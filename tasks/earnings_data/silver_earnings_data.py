@@ -47,10 +47,26 @@ silver_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_SILVER)
 _ALPHA26_EARNINGS_MIN_COLUMNS = [
     "date",
     "symbol",
+    "report_date",
+    "fiscal_date_ending",
     "reported_eps",
     "eps_estimate",
     "surprise",
+    "record_type",
+    "is_future_event",
+    "calendar_time_of_day",
+    "calendar_currency",
 ]
+
+
+def _coerce_datetime_column(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
+        return parsed_default.dt.tz_localize(None)
+    numeric = pd.to_numeric(series, errors="coerce")
+    parsed_numeric = pd.to_datetime(numeric, errors="coerce", unit="ms", utc=True)
+    parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
+    return parsed_default.where(numeric.isna(), parsed_numeric).dt.tz_localize(None)
 
 
 def _split_earnings_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -58,20 +74,127 @@ def _split_earnings_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: st
         empty = pd.DataFrame()
         return empty, empty
 
-    out = df_bucket.copy()
-    if "Date" in out.columns:
-        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
-    elif "date" in out.columns:
-        out["date"] = pd.to_datetime(out["date"], errors="coerce")
-        out = out.rename(columns={"date": "Date"})
-    if "Symbol" not in out.columns and "symbol" in out.columns:
-        out = out.rename(columns={"symbol": "Symbol"})
-    if "Symbol" not in out.columns:
-        out["Symbol"] = pd.NA
-    out["Symbol"] = out["Symbol"].astype("string").str.upper()
+    out = normalize_columns_to_snake_case(df_bucket)
+    if "date" in out.columns:
+        out["date"] = _coerce_datetime_column(out["date"])
+    else:
+        out["date"] = pd.NaT
+    if "report_date" in out.columns:
+        out["report_date"] = _coerce_datetime_column(out["report_date"])
+    else:
+        out["report_date"] = pd.NaT
+    if "fiscal_date_ending" in out.columns:
+        out["fiscal_date_ending"] = _coerce_datetime_column(out["fiscal_date_ending"])
+    else:
+        out["fiscal_date_ending"] = pd.NaT
+    if "symbol" not in out.columns:
+        out["symbol"] = pd.NA
+    out["symbol"] = out["symbol"].astype("string").str.upper()
     symbol = str(ticker or "").strip().upper()
-    symbol_mask = out["Symbol"] == symbol
+    symbol_mask = out["symbol"] == symbol
     return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
+
+
+def _utc_today() -> pd.Timestamp:
+    return pd.Timestamp(datetime.utcnow().date())
+
+
+def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, ticker: Optional[str] = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
+
+    out = normalize_columns_to_snake_case(df).copy()
+    out = out.drop(columns=["source_hash", "ingested_at"], errors="ignore")
+    if ticker is not None:
+        out["symbol"] = str(ticker).strip().upper()
+    elif "symbol" not in out.columns:
+        out["symbol"] = pd.NA
+    out["symbol"] = out["symbol"].astype("string").str.strip().str.upper()
+
+    if "date" not in out.columns and "report_date" in out.columns:
+        out["date"] = out["report_date"]
+    for column in ("date", "report_date", "fiscal_date_ending"):
+        if column in out.columns:
+            out[column] = _coerce_datetime_column(out[column])
+        else:
+            out[column] = pd.NaT
+
+    if "record_type" not in out.columns:
+        out["record_type"] = "actual"
+    out["record_type"] = out["record_type"].astype("string").str.strip().str.lower()
+    out.loc[~out["record_type"].isin({"actual", "scheduled"}), "record_type"] = "actual"
+    out.loc[out["record_type"].isna() | (out["record_type"] == ""), "record_type"] = "actual"
+
+    actual_missing_fiscal = out["record_type"].eq("actual") & out["fiscal_date_ending"].isna()
+    out.loc[actual_missing_fiscal, "fiscal_date_ending"] = out.loc[actual_missing_fiscal, "date"]
+    scheduled_missing_date = out["record_type"].eq("scheduled") & out["date"].isna() & out["report_date"].notna()
+    out.loc[scheduled_missing_date, "date"] = out.loc[scheduled_missing_date, "report_date"]
+
+    for column in ("reported_eps", "eps_estimate", "surprise"):
+        if column in out.columns:
+            out[column] = pd.to_numeric(out[column], errors="coerce")
+        else:
+            out[column] = pd.NA
+
+    if "is_future_event" in out.columns:
+        parsed_future = pd.Series(pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64")
+    else:
+        parsed_future = pd.Series(pd.NA, index=out.index, dtype="Float64")
+    inferred_future = pd.Series(
+        out["record_type"].eq("scheduled") & out["report_date"].notna() & (out["report_date"] >= _utc_today()),
+        index=out.index,
+        dtype="boolean",
+    ).astype("Float64")
+    out["is_future_event"] = parsed_future.fillna(inferred_future).fillna(0).astype(int)
+
+    if "calendar_time_of_day" not in out.columns:
+        out["calendar_time_of_day"] = pd.NA
+    if "calendar_currency" not in out.columns:
+        out["calendar_currency"] = pd.NA
+
+    out = out.dropna(subset=["date"]).copy()
+    return out[_ALPHA26_EARNINGS_MIN_COLUMNS].reset_index(drop=True)
+
+
+def _event_identity_key(df: pd.DataFrame) -> pd.Series:
+    if df.empty:
+        return pd.Series(dtype="string")
+    report_dates = pd.to_datetime(df["report_date"], errors="coerce")
+    fiscal_dates = pd.to_datetime(df["fiscal_date_ending"], errors="coerce")
+    base_dates = pd.to_datetime(df["date"], errors="coerce")
+    preferred = fiscal_dates.where(fiscal_dates.notna(), report_dates.where(report_dates.notna(), base_dates))
+    return preferred.dt.strftime("%Y-%m-%d").fillna("")
+
+
+def _dedupe_earnings_events(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    canonical = _canonicalize_earnings_frame(df)
+    if canonical.empty:
+        return canonical
+
+    work = canonical.copy()
+    work["_event_identity"] = _event_identity_key(work)
+
+    actual = (
+        work.loc[work["record_type"] == "actual"]
+        .sort_values(["symbol", "date", "report_date", "fiscal_date_ending"])
+        .drop_duplicates(subset=["symbol", "_event_identity"], keep="last")
+    )
+    scheduled = (
+        work.loc[work["record_type"] == "scheduled"]
+        .sort_values(["symbol", "report_date", "date"])
+        .drop_duplicates(subset=["symbol", "_event_identity"], keep="last")
+    )
+    actual_keys = {
+        (str(symbol), str(event_identity))
+        for symbol, event_identity in actual[["symbol", "_event_identity"]].itertuples(index=False, name=None)
+    }
+    scheduled = scheduled.loc[
+        scheduled.apply(lambda row: (str(row["symbol"]), str(row["_event_identity"])) not in actual_keys, axis=1)
+    ].copy()
+
+    out = pd.concat([actual, scheduled], ignore_index=True, sort=False)
+    out = out.drop(columns=["_event_identity"], errors="ignore")
+    return out[_ALPHA26_EARNINGS_MIN_COLUMNS].sort_values(["date", "record_type"]).reset_index(drop=True)
 
 
 def process_file(blob_name: str) -> bool:
@@ -94,44 +217,28 @@ def _process_symbol_frame(
 ) -> str:
     bucket = layer_bucketing.bucket_letter(ticker)
     cloud_path = DataPaths.get_silver_earnings_bucket_path(bucket)
-    out = df_new.copy()
-    out = out.drop(columns=["source_hash", "ingested_at", "symbol"], errors="ignore")
-    out = out.drop(columns=[col for col in out.columns if "Unnamed" in col], errors="ignore")
-    out = out.rename(
-        columns={
-            "date": "Date",
-            "reported_eps": "Reported EPS",
-            "eps_estimate": "EPS Estimate",
-            "surprise": "Surprise",
-        }
+    out = _canonicalize_earnings_frame(
+        df_new.drop(columns=[col for col in df_new.columns if "Unnamed" in str(col)], errors="ignore"),
+        ticker=ticker,
     )
-
-    try:
-        out = normalize_date_column(
-            out,
-            context=f"earnings date parse {source_name}",
-            aliases=("Date", "date"),
-            canonical="Date",
-        )
-        out = assert_no_unexpected_mixed_empty(out, context=f"earnings date filter {source_name}", alias="Date")
-    except ContractViolation as exc:
-        log_contract_violation(f"earnings preflight failed for {source_name}", exc, severity="ERROR")
+    if out.empty:
+        mdc.write_error(f"Failed to normalize earnings payload for {source_name}: no valid rows after canonicalization.")
         return "failed"
-
-    out["Symbol"] = ticker
 
     backfill_start, backfill_end = get_backfill_range()
     if backfill_start or backfill_end:
-        out = filter_by_date(out, "Date", backfill_start, backfill_end)
+        out = filter_by_date(out, "date", backfill_start, backfill_end)
         latest_only = False
     else:
         latest_only = get_latest_only_flag("EARNINGS", default=True)
+    if "record_type" in out.columns and out["record_type"].eq("scheduled").any():
+        latest_only = False
     if not include_history:
         latest_only = False
 
-    if latest_only and "Date" in out.columns and not out.empty:
-        latest_date = out["Date"].max()
-        out = out[out["Date"] == latest_date].copy()
+    if latest_only and "date" in out.columns and not out.empty:
+        latest_date = out["date"].max()
+        out = out[out["date"] == latest_date].copy()
 
     existing_bucket = (
         delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
@@ -141,24 +248,11 @@ def _process_symbol_frame(
     df_history, df_other_symbols = _split_earnings_bucket_rows(existing_bucket, ticker=ticker)
     if not include_history:
         df_history = pd.DataFrame()
-    if df_history is None or df_history.empty:
-        df_merged = out
-    else:
-        df_history = align_to_existing_schema(df_history, cfg.AZURE_CONTAINER_SILVER, cloud_path)
-        if "Date" in df_history.columns:
-            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
-        elif "date" in df_history.columns:
-            df_history = df_history.rename(columns={"date": "Date"})
-            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
-        df_merged = pd.concat([df_history, out], ignore_index=True)
-
-    df_merged = df_merged.sort_values(by=["Date"], ascending=True)
-    df_merged = df_merged.drop_duplicates(subset=["Date", "Symbol"], keep="last")
-    df_merged = df_merged.reset_index(drop=True)
+    df_merged = _dedupe_earnings_events(pd.concat([df_history, out], ignore_index=True, sort=False))
 
     df_merged, _ = apply_backfill_start_cutoff(
         df_merged,
-        date_col="Date",
+        date_col="date",
         backfill_start=backfill_start,
         context=f"silver earnings {ticker}",
     )
@@ -166,7 +260,7 @@ def _process_symbol_frame(
         if not persist:
             return "ok"
         if silver_client is not None:
-            df_remaining = normalize_columns_to_snake_case(df_other_symbols)
+            df_remaining = _canonicalize_earnings_frame(df_other_symbols)
             if "symbol" in df_remaining.columns:
                 df_remaining["symbol"] = df_remaining["symbol"].astype("string").str.upper()
             if df_remaining.empty:
@@ -192,7 +286,7 @@ def _process_symbol_frame(
         )
         return "failed"
 
-    df_merged = normalize_columns_to_snake_case(df_merged)
+    df_merged = _canonicalize_earnings_frame(df_merged, ticker=ticker)
     df_merged = apply_precision_policy(
         df_merged,
         price_columns=set(),
@@ -206,10 +300,15 @@ def _process_symbol_frame(
                 raise ValueError("alpha26_bucket_frames must be provided when persist=False.")
             alpha26_bucket_frames.setdefault(bucket, []).append(df_merged.copy())
         else:
-            df_other_symbols = normalize_columns_to_snake_case(df_other_symbols)
+            df_other_symbols = _canonicalize_earnings_frame(df_other_symbols)
             if "symbol" in df_other_symbols.columns:
                 df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
-            df_bucket_to_store = pd.concat([df_other_symbols, df_merged], ignore_index=True).reset_index(drop=True)
+            parts_to_store = [frame for frame in (df_other_symbols, df_merged) if frame is not None and not frame.empty]
+            if parts_to_store:
+                df_bucket_to_store = pd.concat(parts_to_store, ignore_index=True).reset_index(drop=True)
+            else:
+                df_bucket_to_store = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
+            df_bucket_to_store = align_to_existing_schema(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, cloud_path)
             delta_core.store_delta(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, cloud_path)
             if backfill_start is not None:
                 delta_core.vacuum_delta_table(
@@ -355,6 +454,26 @@ def _write_alpha26_earnings_buckets(
                 df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
         else:
             df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
+        scheduled_rows_retained = 0
+        symbols_with_upcoming_earnings = 0
+        future_date_range_max = None
+        if not df_bucket.empty and "record_type" in df_bucket.columns:
+            scheduled_mask = df_bucket["record_type"].astype("string").str.strip().str.lower().eq("scheduled")
+            scheduled_rows_retained = int(scheduled_mask.sum())
+            if scheduled_mask.any() and "symbol" in df_bucket.columns:
+                symbols_with_upcoming_earnings = int(
+                    df_bucket.loc[scheduled_mask, "symbol"].astype("string").str.upper().nunique()
+                )
+        if not df_bucket.empty and "date" in df_bucket.columns:
+            max_date = pd.to_datetime(df_bucket["date"], errors="coerce").max()
+            if pd.notna(max_date):
+                future_date_range_max = pd.Timestamp(max_date).date().isoformat()
+        mdc.write_line(
+            "silver_earnings_bucket_summary "
+            f"bucket={bucket} scheduled_rows_retained={scheduled_rows_retained} "
+            f"symbols_with_upcoming_earnings={symbols_with_upcoming_earnings} "
+            f"future_date_range_max={future_date_range_max or 'n/a'}"
+        )
         write_decision = prepare_delta_write_frame(
             df_bucket.reset_index(drop=True),
             container=cfg.AZURE_CONTAINER_SILVER,

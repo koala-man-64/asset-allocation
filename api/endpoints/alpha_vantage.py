@@ -11,6 +11,7 @@ from alpha_vantage import AlphaVantageError, AlphaVantageInvalidSymbolError, Alp
 from api.service.alpha_vantage_gateway import (
     AlphaVantageGateway,
     AlphaVantageNotConfiguredError,
+    normalize_earnings_calendar_horizon,
     FinanceReport,
     alpha_vantage_caller_context,
 )
@@ -122,6 +123,28 @@ def get_earnings(
         _handle_alpha_vantage_error(exc)
         raise
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/earnings-calendar")
+def get_earnings_calendar(
+    request: Request,
+    symbol: Optional[str] = Query(default=None, description="Optional ticker symbol filter (e.g. AAPL)."),
+    horizon: str = Query(default="12month", description="3month|6month|12month"),
+    gateway: AlphaVantageGateway = Depends(_get_gateway),
+) -> Response:
+    validate_auth(request)
+    sym = str(symbol or "").strip().upper() or None
+    try:
+        normalized_horizon = normalize_earnings_calendar_horizon(horizon)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        with _caller_context(request):
+            csv_text = gateway.get_earnings_calendar_csv(symbol=sym, horizon=normalized_horizon)
+    except Exception as exc:
+        _handle_alpha_vantage_error(exc)
+        raise
+    return Response(content=csv_text, media_type="text/csv", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/finance/{report}")

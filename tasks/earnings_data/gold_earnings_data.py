@@ -65,7 +65,13 @@ def _merge_symbol_to_bucket_map(
 
 
 def _coerce_datetime(series: pd.Series) -> pd.Series:
-    value = pd.to_datetime(series, errors="coerce")
+    if pd.api.types.is_datetime64_any_dtype(series):
+        value = pd.to_datetime(series, errors="coerce", utc=True)
+    else:
+        numeric = pd.to_numeric(series, errors="coerce")
+        numeric_dates = pd.to_datetime(numeric, errors="coerce", unit="ms", utc=True)
+        value = pd.to_datetime(series, errors="coerce", utc=True)
+        value = value.where(numeric.isna(), numeric_dates)
     if hasattr(value.dt, "tz_convert") and value.dt.tz is not None:
         value = value.dt.tz_convert(None)
     return value
@@ -106,7 +112,101 @@ def _snake_case_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _resample_daily_ffill(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+def _utc_today() -> pd.Timestamp:
+    return pd.Timestamp(datetime.now(timezone.utc).date())
+
+
+def _canonicalize_earnings_events(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "symbol",
+                "report_date",
+                "fiscal_date_ending",
+                "reported_eps",
+                "eps_estimate",
+                "surprise",
+                "record_type",
+                "is_future_event",
+                "calendar_time_of_day",
+                "calendar_currency",
+            ]
+        )
+
+    out = _snake_case_columns(df)
+    out = out.drop(columns=["source_hash", "ingested_at"], errors="ignore")
+
+    if "symbol" not in out.columns:
+        out["symbol"] = pd.NA
+    out["symbol"] = out["symbol"].astype("string").str.strip().str.upper()
+
+    if "date" not in out.columns and "report_date" in out.columns:
+        out["date"] = out["report_date"]
+    for column in ("date", "report_date", "fiscal_date_ending"):
+        if column in out.columns:
+            out[column] = _coerce_datetime(out[column])
+        else:
+            out[column] = pd.NaT
+
+    if "record_type" not in out.columns:
+        out["record_type"] = "actual"
+    out["record_type"] = out["record_type"].astype("string").str.strip().str.lower()
+    out.loc[~out["record_type"].isin({"actual", "scheduled"}), "record_type"] = "actual"
+    out.loc[out["record_type"].isna() | (out["record_type"] == ""), "record_type"] = "actual"
+
+    actual_missing_fiscal = out["record_type"].eq("actual") & out["fiscal_date_ending"].isna()
+    out.loc[actual_missing_fiscal, "fiscal_date_ending"] = out.loc[actual_missing_fiscal, "date"]
+    scheduled_missing_date = out["record_type"].eq("scheduled") & out["date"].isna() & out["report_date"].notna()
+    out.loc[scheduled_missing_date, "date"] = out.loc[scheduled_missing_date, "report_date"]
+
+    for column in ("reported_eps", "eps_estimate", "surprise"):
+        if column in out.columns:
+            out[column] = pd.to_numeric(out[column], errors="coerce")
+        else:
+            out[column] = np.nan
+
+    if "is_future_event" in out.columns:
+        parsed_future = pd.Series(pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64")
+    else:
+        parsed_future = pd.Series(pd.NA, index=out.index, dtype="Float64")
+    inferred_future = pd.Series(
+        out["record_type"].eq("scheduled") & out["report_date"].notna() & (out["report_date"] >= _utc_today()),
+        index=out.index,
+        dtype="boolean",
+    ).astype("Float64")
+    out["is_future_event"] = parsed_future.fillna(inferred_future).fillna(0).astype(int)
+
+    if "calendar_time_of_day" not in out.columns:
+        out["calendar_time_of_day"] = pd.NA
+    if "calendar_currency" not in out.columns:
+        out["calendar_currency"] = pd.NA
+
+    out = out.dropna(subset=["date", "symbol"]).copy()
+    return out[
+        [
+            "date",
+            "symbol",
+            "report_date",
+            "fiscal_date_ending",
+            "reported_eps",
+            "eps_estimate",
+            "surprise",
+            "record_type",
+            "is_future_event",
+            "calendar_time_of_day",
+            "calendar_currency",
+        ]
+    ].reset_index(drop=True)
+
+
+def _resample_daily_ffill(
+    df: pd.DataFrame,
+    date_col: str,
+    *,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
+) -> pd.DataFrame:
     if df is None or df.empty:
         return df
 
@@ -123,30 +223,28 @@ def _resample_daily_ffill(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
     out = out.drop_duplicates(subset=[date_col], keep="last").copy()
 
     out = out.set_index(date_col)
-    full_range = pd.date_range(start=out.index.min(), end=out.index.max(), freq="D")
+    range_start = pd.to_datetime(start_date).normalize() if start_date is not None else out.index.min()
+    range_end = pd.to_datetime(end_date).normalize() if end_date is not None else out.index.max()
+    if range_end < range_start:
+        range_end = range_start
+    full_range = pd.date_range(start=range_start, end=range_end, freq="D")
     out = out.reindex(full_range)
-    
-    # We want to fill feature columns forward, but some might be flags (handle separately if needed)
-    # For now, ffill everything, then fixing flags downstream is easier.
     out = out.ffill()
     out = out.reset_index().rename(columns={"index": date_col})
     return out
 
 
-def compute_features(df: pd.DataFrame) -> pd.DataFrame:
-    out = _snake_case_columns(df)
-
+def _compute_actual_feature_frame(actual_rows: pd.DataFrame, *, extend_to: Optional[pd.Timestamp]) -> pd.DataFrame:
+    out = actual_rows.copy()
     required = {"date", "symbol", "reported_eps", "eps_estimate"}
     missing = required.difference(out.columns)
     if missing:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
 
     out["date"] = _coerce_datetime(out["date"])
-    out["symbol"] = out["symbol"].astype(str)
-
     out["reported_eps"] = pd.to_numeric(out["reported_eps"], errors="coerce")
     out["eps_estimate"] = pd.to_numeric(out["eps_estimate"], errors="coerce")
-
+    out["surprise"] = pd.to_numeric(out.get("surprise"), errors="coerce")
     out = out.dropna(subset=["date"]).sort_values(["symbol", "date"]).reset_index(drop=True)
     out = out.drop_duplicates(subset=["symbol", "date"], keep="last").reset_index(drop=True)
 
@@ -167,28 +265,138 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda series: series.rolling(window=8, min_periods=8).mean()
     )
 
-    # -------------------------------------------------------------------------
-    # Conversion to Daily Time Series
-    # -------------------------------------------------------------------------
-    # 1. Mark the actual earnings day before resampling
-    out["is_earnings_day"] = 1.0
+    out["is_earnings_day"] = 1
     out["last_earnings_date"] = out["date"]
 
-    # 2. Resample daily (per ticker)
-    # Since we have multiple tickers mixed, apply per ticker
-    out = out.groupby("symbol", sort=False, group_keys=False).apply(
-        lambda x: _resample_daily_ffill(x, "date")
-    ).reset_index(drop=True)
+    out = _resample_daily_ffill(out, "date", end_date=extend_to)
+    out["is_earnings_day"] = (out["date"] == out["last_earnings_date"]).astype(int)
+    out["days_since_earnings"] = pd.array((out["date"] - out["last_earnings_date"]).dt.days, dtype="Int64")
+    return out
 
-    # 3. Fix flags after ffill
-    # _resample_daily_ffill ffilled 'is_earnings_day', so it's 1 everywhere after first earnings.
-    # We want it to be 1 only on the original dates.
-    # Logic: if date == last_earnings_date, then 1, else 0
-    out["is_earnings_day"] = np.where(out["date"] == out["last_earnings_date"], 1.0, 0.0)
 
-    # 4. Calculate days since earnings
-    out["days_since_earnings"] = (out["date"] - out["last_earnings_date"]).dt.days
+def _build_scheduled_only_frame(
+    *,
+    symbol: str,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> pd.DataFrame:
+    full_range = pd.date_range(start=start_date.normalize(), end=end_date.normalize(), freq="D")
+    out = pd.DataFrame({"date": full_range})
+    out["symbol"] = str(symbol or "").strip().upper()
+    for column in (
+        "reported_eps",
+        "eps_estimate",
+        "surprise",
+        "surprise_pct",
+        "surprise_mean_4q",
+        "surprise_std_8q",
+        "beat_rate_8q",
+    ):
+        out[column] = np.nan
+    out["is_earnings_day"] = 0
+    out["last_earnings_date"] = pd.NaT
+    out["days_since_earnings"] = pd.array([pd.NA] * len(out), dtype="Int64")
+    return out
 
+
+def _attach_upcoming_earnings_fields(frame: pd.DataFrame, scheduled_rows: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out["next_earnings_date"] = pd.NaT
+    out["days_until_next_earnings"] = pd.array([pd.NA] * len(out), dtype="Int64")
+    out["next_earnings_estimate"] = np.nan
+    out["next_earnings_time_of_day"] = pd.NA
+    out["next_earnings_fiscal_date_ending"] = pd.NaT
+    out["has_upcoming_earnings"] = 0
+    out["is_scheduled_earnings_day"] = 0
+
+    if scheduled_rows is None or scheduled_rows.empty or out.empty:
+        return out
+
+    scheduled = scheduled_rows.copy()
+    scheduled["report_date"] = _coerce_datetime(scheduled["report_date"])
+    scheduled["fiscal_date_ending"] = _coerce_datetime(scheduled["fiscal_date_ending"])
+    scheduled["eps_estimate"] = pd.to_numeric(scheduled["eps_estimate"], errors="coerce")
+    scheduled = scheduled.dropna(subset=["report_date"]).sort_values(["report_date", "date"]).copy()
+    scheduled = scheduled.drop_duplicates(subset=["report_date"], keep="last").reset_index(drop=True)
+    if scheduled.empty:
+        return out
+
+    report_dates = scheduled["report_date"].to_numpy(dtype="datetime64[ns]")
+    row_dates = pd.to_datetime(out["date"]).to_numpy(dtype="datetime64[ns]")
+    positions = report_dates.searchsorted(row_dates, side="left")
+    valid_mask = positions < len(scheduled)
+    if valid_mask.any():
+        valid_rows = np.flatnonzero(valid_mask)
+        valid_positions = positions[valid_mask]
+        next_rows = scheduled.iloc[valid_positions]
+        out.loc[valid_rows, "next_earnings_date"] = next_rows["report_date"].to_numpy()
+        out.loc[valid_rows, "next_earnings_estimate"] = next_rows["eps_estimate"].to_numpy()
+        out.loc[valid_rows, "next_earnings_time_of_day"] = next_rows["calendar_time_of_day"].to_numpy()
+        out.loc[valid_rows, "next_earnings_fiscal_date_ending"] = next_rows["fiscal_date_ending"].to_numpy()
+        out.loc[valid_rows, "has_upcoming_earnings"] = 1
+
+    day_delta = (pd.to_datetime(out["next_earnings_date"], errors="coerce") - pd.to_datetime(out["date"])).dt.days
+    out["days_until_next_earnings"] = pd.array(day_delta, dtype="Int64")
+
+    scheduled_days = set(pd.to_datetime(scheduled["report_date"]).dt.normalize())
+    out["is_scheduled_earnings_day"] = pd.to_datetime(out["date"]).dt.normalize().isin(scheduled_days).astype(int)
+    return out
+
+
+def compute_features(df: pd.DataFrame) -> pd.DataFrame:
+    normalized_input = _snake_case_columns(df)
+    input_columns = set(normalized_input.columns)
+    base_missing = {"date", "symbol"}.difference(input_columns)
+    if base_missing:
+        raise ValueError(f"Missing required columns: {sorted(base_missing)}")
+
+    canonical = _canonicalize_earnings_events(df)
+
+    if canonical.empty:
+        missing_actual = {"reported_eps", "eps_estimate"}.difference(input_columns)
+        if missing_actual:
+            raise ValueError(f"Missing required columns: {sorted(missing_actual)}")
+        return pd.DataFrame()
+
+    if canonical["record_type"].eq("actual").any():
+        missing_actual = {"reported_eps", "eps_estimate"}.difference(input_columns)
+        if missing_actual:
+            raise ValueError(f"Missing required columns: {sorted(missing_actual)}")
+
+    frames: list[pd.DataFrame] = []
+    today = _utc_today()
+    for symbol, group in canonical.groupby("symbol", sort=False):
+        actual_rows = group.loc[group["record_type"] == "actual"].copy()
+        scheduled_rows = group.loc[group["record_type"] == "scheduled"].copy()
+        scheduled_rows = scheduled_rows.loc[
+            scheduled_rows["report_date"].notna() & (scheduled_rows["report_date"] >= today)
+        ].copy()
+
+        latest_scheduled_date = (
+            pd.to_datetime(scheduled_rows["report_date"]).max() if not scheduled_rows.empty else None
+        )
+        if actual_rows.empty:
+            if scheduled_rows.empty:
+                continue
+            feature_frame = _build_scheduled_only_frame(
+                symbol=str(symbol),
+                start_date=today,
+                end_date=latest_scheduled_date,
+            )
+        else:
+            extend_to = latest_scheduled_date if latest_scheduled_date is not None else actual_rows["date"].max()
+            if extend_to is not None:
+                extend_to = max(pd.Timestamp(extend_to).normalize(), actual_rows["date"].max().normalize())
+            feature_frame = _compute_actual_feature_frame(actual_rows, extend_to=extend_to)
+
+        feature_frame = _attach_upcoming_earnings_fields(feature_frame, scheduled_rows)
+        frames.append(feature_frame)
+
+    if not frames:
+        return pd.DataFrame()
+
+    out = pd.concat(frames, ignore_index=True, sort=False)
+    out = out.sort_values(["symbol", "date"]).reset_index(drop=True)
     out = out.replace([np.inf, -np.inf], np.nan)
     return out
 
@@ -430,11 +638,20 @@ def _run_alpha26_earnings_gold(
             symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
         )
         bucket_symbol_to_bucket: dict[str, str] = {}
+        scheduled_rows_retained = 0
         if silver_commit is None:
             skipped_missing_source += 1
             df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
         else:
             df_silver_bucket = delta_core.load_delta(silver_container, silver_path)
+            if (
+                df_silver_bucket is not None
+                and not df_silver_bucket.empty
+                and "record_type" in df_silver_bucket.columns
+            ):
+                scheduled_rows_retained = int(
+                    df_silver_bucket["record_type"].astype("string").str.strip().str.lower().eq("scheduled").sum()
+                )
             symbol_frames: list[pd.DataFrame] = []
             if df_silver_bucket is not None and not df_silver_bucket.empty and "symbol" in df_silver_bucket.columns:
                 for symbol, group in df_silver_bucket.groupby("symbol"):
@@ -461,6 +678,33 @@ def _run_alpha26_earnings_gold(
                 df_gold_bucket = normalize_columns_to_snake_case(df_gold_bucket)
             else:
                 df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+
+        future_date_range_max = None
+        symbols_with_upcoming_earnings = 0
+        if not df_gold_bucket.empty and "date" in df_gold_bucket.columns:
+            max_date = pd.to_datetime(df_gold_bucket["date"], errors="coerce").max()
+            if pd.notna(max_date):
+                future_date_range_max = pd.Timestamp(max_date).date().isoformat()
+        if (
+            not df_gold_bucket.empty
+            and "has_upcoming_earnings" in df_gold_bucket.columns
+            and "symbol" in df_gold_bucket.columns
+        ):
+            symbols_with_upcoming_earnings = int(
+                df_gold_bucket.loc[
+                    pd.to_numeric(df_gold_bucket["has_upcoming_earnings"], errors="coerce").fillna(0).astype(int) == 1,
+                    "symbol",
+                ]
+                .astype("string")
+                .str.upper()
+                .nunique()
+            )
+        mdc.write_line(
+            "gold_earnings_bucket_summary "
+            f"bucket={bucket} scheduled_rows_retained={scheduled_rows_retained} "
+            f"symbols_with_upcoming_earnings={symbols_with_upcoming_earnings} "
+            f"future_date_range_max={future_date_range_max or 'n/a'}"
+        )
 
         write_decision = prepare_delta_write_frame(
             df_gold_bucket.reset_index(drop=True),

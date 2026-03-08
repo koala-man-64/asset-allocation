@@ -456,6 +456,18 @@ class AlphaVantageGatewayClient:
         resp = self._request("/api/providers/alpha-vantage/earnings", params={"symbol": symbol})
         return resp.json()
 
+    def get_earnings_calendar_csv(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        horizon: str = "12month",
+    ) -> str:
+        params: dict[str, Any] = {"horizon": horizon}
+        if symbol:
+            params["symbol"] = symbol
+        resp = self._request("/api/providers/alpha-vantage/earnings-calendar", params=params)
+        return str(resp.text or "")
+
     def get_finance_report(self, *, symbol: str, report: str) -> dict[str, Any]:
         resp = self._request(f"/api/providers/alpha-vantage/finance/{report}", params={"symbol": symbol})
         return resp.json()

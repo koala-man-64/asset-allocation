@@ -18,6 +18,7 @@ from alpha_vantage import (
 logger = logging.getLogger("asset-allocation.api.alpha_vantage")
 
 FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "overview"]
+EarningsCalendarHorizon = Literal["3month", "6month", "12month"]
 
 
 class AlphaVantageNotConfiguredError(RuntimeError):
@@ -81,6 +82,15 @@ def _normalize_caller_component(value: object, *, default: str) -> str:
     if len(text) > 128:
         return text[:128]
     return text
+
+
+def normalize_earnings_calendar_horizon(value: object, *, default: EarningsCalendarHorizon = "12month") -> EarningsCalendarHorizon:
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    if text in {"3month", "6month", "12month"}:
+        return text  # type: ignore[return-value]
+    raise ValueError(f"Invalid earnings calendar horizon={value!r}; expected 3month, 6month, or 12month.")
 
 
 def _get_current_caller_job() -> str:
@@ -210,6 +220,15 @@ class AlphaVantageGateway:
         if not isinstance(payload, dict):
             raise AlphaVantageError("Unexpected Alpha Vantage earnings response type.", code="invalid_payload")
         return payload
+
+    def get_earnings_calendar_csv(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        horizon: EarningsCalendarHorizon = "12month",
+    ) -> str:
+        normalized_horizon = normalize_earnings_calendar_horizon(horizon)
+        return str(self.get_client().get_earnings_calendar(symbol=symbol, horizon=normalized_horizon))
 
     def get_finance_report(self, *, symbol: str, report: FinanceReport) -> dict[str, Any]:
         function_by_report: dict[str, str] = {
