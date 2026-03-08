@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -8,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field

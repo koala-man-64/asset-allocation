@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 
 from core.backtest_repository import BacktestRepository
 from core.backtest_runtime import execute_backtest_run
