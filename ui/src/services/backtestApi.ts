@@ -194,6 +194,15 @@ export interface ListRunsParams {
   offset?: number;
 }
 
+export interface SubmitBacktestPayload {
+  strategyName: string;
+  strategyVersion?: number;
+  startTs: string;
+  endTs: string;
+  barSize: string;
+  runName?: string;
+}
+
 export interface GetTimeseriesParams {
   source?: DataSource;
   maxPoints?: number;
@@ -258,6 +267,14 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
 }
 
 export const backtestApi = {
+  async submitRun(payload: SubmitBacktestPayload, signal?: AbortSignal): Promise<RunRecordResponse> {
+    return requestJson<RunRecordResponse>('/backtests', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal
+    });
+  },
+
   async listRuns(params: ListRunsParams = {}, signal?: AbortSignal): Promise<RunListResponse> {
     const query = buildQuery({
       status: params.status,

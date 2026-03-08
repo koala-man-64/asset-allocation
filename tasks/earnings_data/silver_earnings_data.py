@@ -133,7 +133,9 @@ def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, ticker: Optional
             out[column] = pd.NA
 
     if "is_future_event" in out.columns:
-        parsed_future = pd.Series(pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64")
+        parsed_future = pd.Series(
+            pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64"
+        )
     else:
         parsed_future = pd.Series(pd.NA, index=out.index, dtype="Float64")
     inferred_future = pd.Series(
@@ -218,7 +220,9 @@ def _process_symbol_frame(
         ticker=ticker,
     )
     if out.empty:
-        mdc.write_error(f"Failed to normalize earnings payload for {source_name}: no valid rows after canonicalization.")
+        mdc.write_error(
+            f"Failed to normalize earnings payload for {source_name}: no valid rows after canonicalization."
+        )
         return "failed"
 
     backfill_start, backfill_end = get_backfill_range()
@@ -237,9 +241,7 @@ def _process_symbol_frame(
         out = out[out["date"] == latest_date].copy()
 
     existing_bucket = (
-        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path)
-        if (persist or include_history)
-        else None
+        delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, cloud_path) if (persist or include_history) else None
     )
     df_history, df_other_symbols = _split_earnings_bucket_rows(existing_bucket, ticker=ticker)
     if not include_history:
@@ -428,7 +430,7 @@ def process_alpha26_bucket_blob(
 
 
 def _write_alpha26_earnings_buckets(
-    bucket_frames: dict[str, list[pd.DataFrame]]
+    bucket_frames: dict[str, list[pd.DataFrame]],
 ) -> tuple[int, Optional[str], Optional[int]]:
     symbol_to_bucket: dict[str, str] = {}
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
@@ -481,9 +483,7 @@ def _write_alpha26_earnings_buckets(
             f"reason={write_decision.reason} path={bucket_path}"
         )
         if write_decision.action == "skip_empty_no_schema":
-            mdc.write_line(
-                f"Skipping Silver earnings empty bucket write for {bucket_path}: no existing Delta schema."
-            )
+            mdc.write_line(f"Skipping Silver earnings empty bucket write for {bucket_path}: no existing Delta schema.")
             continue
         delta_core.store_delta(
             write_decision.frame,
@@ -590,9 +590,7 @@ def _run_earnings_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, 
             f"rows_dropped={cutoff_stats.rows_dropped}"
         )
     if cutoff_stats.errors > 0:
-        mdc.write_warning(
-            f"Silver earnings reconciliation cutoff sweep encountered errors={cutoff_stats.errors}."
-        )
+        mdc.write_warning(f"Silver earnings reconciliation cutoff sweep encountered errors={cutoff_stats.errors}.")
     return len(orphan_symbols), deleted_blobs
 
 

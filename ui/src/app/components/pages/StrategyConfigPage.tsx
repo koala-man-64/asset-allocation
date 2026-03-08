@@ -12,6 +12,7 @@ import {
   AlertDialogTitle
 } from '@/app/components/ui/alert-dialog';
 import { strategyApi } from '@/services/strategyApi';
+import { backtestApi } from '@/services/backtestApi';
 import { StrategyEditor } from '@/app/components/pages/StrategyEditor';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
@@ -24,6 +25,16 @@ import {
   CardTitle
 } from '@/app/components/ui/card';
 import { PageLoader } from '@/app/components/common/PageLoader';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/app/components/ui/dialog';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { toast } from 'sonner';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
@@ -63,12 +74,25 @@ function summarizeRule(strategy: StrategyDetail, ruleId: string): string {
   return `${String(rule.value ?? '')} via ${rule.priceField || 'n/a'}`;
 }
 
+function toIsoTimestamp(value: string): string | null {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
 export function StrategyConfigPage() {
   const queryClient = useQueryClient();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [isRunDialogOpen, setIsRunDialogOpen] = useState(false);
   const [selectedStrategyName, setSelectedStrategyName] = useState<string | null>(null);
   const [editorStrategy, setEditorStrategy] = useState<StrategySummary | null>(null);
   const [strategyPendingDelete, setStrategyPendingDelete] = useState<StrategySummary | null>(null);
+  const [runDraft, setRunDraft] = useState({
+    runName: '',
+    startTs: '',
+    endTs: '',
+    barSize: '5m'
+  });
 
   const { data: strategies = [], isLoading, isFetching, error } = useQuery({
     queryKey: ['strategies'],
@@ -92,6 +116,17 @@ export function StrategyConfigPage() {
     enabled: Boolean(selectedStrategyName)
   });
 
+  const recentRunsQuery = useQuery({
+    queryKey: ['backtest', 'runs', selectedStrategyName],
+    queryFn: () =>
+      backtestApi.listRuns({
+        q: String(selectedStrategyName),
+        limit: 6,
+        offset: 0
+      }),
+    enabled: Boolean(selectedStrategyName)
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (name: string) => strategyApi.deleteStrategy(name),
     onSuccess: async (_, name) => {
@@ -105,6 +140,43 @@ export function StrategyConfigPage() {
     },
     onError: (deleteError) => {
       toast.error(`Failed to delete run configuration: ${formatSystemStatusText(deleteError)}`);
+    }
+  });
+
+  const submitRunMutation = useMutation({
+    mutationFn: () => {
+      const startTs = toIsoTimestamp(runDraft.startTs);
+      const endTs = toIsoTimestamp(runDraft.endTs);
+      if (!selectedStrategyName) {
+        throw new Error('Select a run configuration before submitting a backtest.');
+      }
+      if (!startTs || !endTs) {
+        throw new Error('Enter valid start and end timestamps.');
+      }
+      return backtestApi.submitRun({
+        strategyName: selectedStrategyName,
+        startTs,
+        endTs,
+        barSize: runDraft.barSize.trim() || '5m',
+        runName: runDraft.runName.trim() || undefined
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['backtest'] }),
+        queryClient.invalidateQueries({ queryKey: ['strategies'] })
+      ]);
+      setIsRunDialogOpen(false);
+      setRunDraft({
+        runName: '',
+        startTs: '',
+        endTs: '',
+        barSize: '5m'
+      });
+      toast.success('Backtest submitted to the queue');
+    },
+    onError: (submitError) => {
+      toast.error(`Failed to submit backtest: ${formatSystemStatusText(submitError)}`);
     }
   });
 
@@ -397,7 +469,59 @@ export function StrategyConfigPage() {
                   )}
                 </div>
 
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="font-display text-lg text-foreground">Recent Backtest Runs</h3>
+                    <Badge variant="secondary">{recentRunsQuery.data?.runs.length ?? 0} queued or finished</Badge>
+                  </div>
+                  {recentRunsQuery.isLoading ? (
+                    <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-4 text-sm text-muted-foreground">
+                      Loading recent runs...
+                    </div>
+                  ) : recentRunsQuery.data?.runs.length ? (
+                    <div className="space-y-3">
+                      {recentRunsQuery.data.runs.map((run) => (
+                        <div
+                          key={run.run_id}
+                          className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/55 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="font-display text-base text-foreground">
+                                {run.run_name || run.run_id}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {run.start_date || 'Unknown start'} to {run.end_date || 'Unknown end'}
+                              </div>
+                            </div>
+                            <Badge
+                              variant={
+                                run.status === 'completed'
+                                  ? 'default'
+                                  : run.status === 'failed'
+                                    ? 'destructive'
+                                    : 'outline'
+                              }
+                            >
+                              {run.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border-2 border-dashed border-mcm-walnut/35 bg-mcm-cream/70 p-4 text-sm text-muted-foreground">
+                      No backtests submitted for this configuration yet.
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap gap-3 border-t border-border/40 pt-5">
+                  {selectedStrategy ? (
+                    <Button type="button" onClick={() => setIsRunDialogOpen(true)}>
+                      Run Backtest
+                    </Button>
+                  ) : null}
                   {selectedStrategy ? (
                     <Button type="button" variant="secondary" onClick={() => handleEdit(selectedStrategy)}>
                       <PencilLine className="h-4 w-4" />
@@ -427,6 +551,71 @@ export function StrategyConfigPage() {
         onOpenChange={handleEditorOpenChange}
         onSaved={handleSaved}
       />
+
+      <Dialog open={isRunDialogOpen} onOpenChange={setIsRunDialogOpen}>
+        <DialogContent className="border-2 border-mcm-walnut bg-mcm-paper sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl text-foreground">Run Backtest</DialogTitle>
+            <DialogDescription>
+              Submit an intraday backtest for <span className="font-semibold text-foreground">{selectedStrategyLabel}</span>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="run-name">Run name</Label>
+              <Input
+                id="run-name"
+                value={runDraft.runName}
+                onChange={(event) => setRunDraft((current) => ({ ...current, runName: event.target.value }))}
+                placeholder="Optional label for this run"
+              />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="run-start">Start timestamp</Label>
+                <Input
+                  id="run-start"
+                  type="datetime-local"
+                  value={runDraft.startTs}
+                  onChange={(event) => setRunDraft((current) => ({ ...current, startTs: event.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="run-end">End timestamp</Label>
+                <Input
+                  id="run-end"
+                  type="datetime-local"
+                  value={runDraft.endTs}
+                  onChange={(event) => setRunDraft((current) => ({ ...current, endTs: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="bar-size">Bar size</Label>
+              <Input
+                id="bar-size"
+                value={runDraft.barSize}
+                onChange={(event) => setRunDraft((current) => ({ ...current, barSize: event.target.value }))}
+                placeholder="5m"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsRunDialogOpen(false)} disabled={submitRunMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => submitRunMutation.mutate()}
+              disabled={submitRunMutation.isPending || !selectedStrategyName}
+            >
+              {submitRunMutation.isPending ? 'Submitting...' : 'Submit Backtest'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={Boolean(strategyPendingDelete)}

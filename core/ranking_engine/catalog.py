@@ -25,6 +25,7 @@ def list_gold_ranking_catalog(dsn: str) -> dict[str, Any]:
             {
                 "name": spec.name,
                 "asOfColumn": spec.as_of_column,
+                "asOfKind": spec.as_of_kind,
                 "columns": columns,
             }
         )

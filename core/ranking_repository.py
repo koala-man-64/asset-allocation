@@ -3,12 +3,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import hashlib
 from typing import Any, Optional
 
 from core.postgres import connect
 
 logger = logging.getLogger(__name__)
 RANKING_SCHEMAS_TABLE = "core.ranking_schemas"
+
+
+def _stable_config_hash(config: dict[str, Any]) -> str:
+    payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
 
 class RankingRepository:
@@ -63,6 +69,7 @@ class RankingRepository:
                 row = cur.fetchone()
                 next_version = (int(row[0]) + 1) if row else 1
                 payload = json.dumps(config)
+                config_hash = _stable_config_hash(config)
                 cur.execute(
                     f"""
                     INSERT INTO {RANKING_SCHEMAS_TABLE} (name, description, version, config, updated_at)
@@ -78,13 +85,63 @@ class RankingRepository:
                 )
                 cur.execute(
                     """
-                    INSERT INTO core.ranking_schema_revisions (schema_name, version, description, config, created_at)
-                    VALUES (%s, %s, %s, %s, NOW())
+                    INSERT INTO core.ranking_schema_revisions (
+                        schema_name,
+                        version,
+                        description,
+                        config,
+                        status,
+                        config_hash,
+                        published_at,
+                        created_at
+                    )
+                    VALUES (%s, %s, %s, %s, 'published', %s, NOW(), NOW())
                     ON CONFLICT (schema_name, version) DO NOTHING
                     """,
-                    (name, next_version, description, payload),
+                    (name, next_version, description, payload, config_hash),
                 )
         return {"name": name, "version": next_version, "description": description, "config": config}
+
+    def get_ranking_schema_revision(self, name: str, version: int | None = None) -> Optional[dict[str, Any]]:
+        if not self.dsn:
+            return None
+        resolved_version = int(version) if version is not None else None
+        with connect(self.dsn) as conn:
+            with conn.cursor() as cur:
+                if resolved_version is None:
+                    cur.execute(
+                        """
+                        SELECT schema_name, version, description, config, status, config_hash, published_at, created_at
+                        FROM core.ranking_schema_revisions
+                        WHERE schema_name = %s
+                        ORDER BY version DESC
+                        LIMIT 1
+                        """,
+                        (name,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT schema_name, version, description, config, status, config_hash, published_at, created_at
+                        FROM core.ranking_schema_revisions
+                        WHERE schema_name = %s AND version = %s
+                        """,
+                        (name, resolved_version),
+                    )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                columns = [
+                    "name",
+                    "version",
+                    "description",
+                    "config",
+                    "status",
+                    "config_hash",
+                    "published_at",
+                    "created_at",
+                ]
+                return dict(zip(columns, row))
 
     def delete_ranking_schema(self, name: str) -> bool:
         if not self.dsn:

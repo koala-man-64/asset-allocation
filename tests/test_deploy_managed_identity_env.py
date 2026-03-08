@@ -73,6 +73,7 @@ def test_deploy_workflow_exports_acr_pull_identity_client_id() -> None:
     deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
     text = deploy_workflow.read_text(encoding="utf-8")
     assert "ACR_PULL_IDENTITY_CLIENT_ID" in text, "deploy workflow must export ACR_PULL_IDENTITY_CLIENT_ID"
+    assert "BACKTEST_JOB" in text, "deploy workflow must define the backtest job name"
 
 
 def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identity() -> None:
@@ -88,4 +89,24 @@ def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identit
     )
     assert "Updating job from YAML (image + identity + registry)..." in text, (
         "deploy workflow should update jobs using the rendered manifest"
+    )
+
+
+def test_api_manifest_allowlists_backtest_job() -> None:
+    repo_root = _repo_root()
+    path = repo_root / "deploy" / "app_api.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+    containers = ((doc.get("properties") or {}).get("template") or {}).get("containers") or []
+    api_container = next(
+        (container for container in containers if container.get("name") == "asset-allocation-api"),
+        None,
+    )
+    assert api_container, f"{path}: expected asset-allocation-api container"
+    env_vars = {entry.get("name"): entry.get("value") for entry in api_container.get("env") or []}
+    assert "backtests-job" in str(env_vars.get("SYSTEM_HEALTH_ARM_JOBS") or ""), (
+        "app_api manifest must allowlist the backtest ACA job"
+    )
+    assert env_vars.get("BACKTEST_ACA_JOB_NAME") == "backtests-job", (
+        "app_api manifest must export BACKTEST_ACA_JOB_NAME"
     )

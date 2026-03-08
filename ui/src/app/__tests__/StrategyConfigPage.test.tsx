@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, Mock } from 'vitest';
 import { StrategyConfigPage } from '@/app/components/pages/StrategyConfigPage';
+import { backtestApi } from '@/services/backtestApi';
 import { rankingApi } from '@/services/rankingApi';
 import { strategyApi } from '@/services/strategyApi';
 import { universeApi } from '@/services/universeApi';
@@ -16,6 +17,13 @@ vi.mock('@/services/strategyApi', () => ({
     deleteStrategy: vi.fn(),
     getUniverseCatalog: vi.fn(),
     previewUniverse: vi.fn()
+  }
+}));
+
+vi.mock('@/services/backtestApi', () => ({
+  backtestApi: {
+    listRuns: vi.fn(),
+    submitRun: vi.fn()
   }
 }));
 
@@ -60,6 +68,12 @@ describe('StrategyConfigPage', () => {
     (universeApi.listUniverseConfigs as Mock).mockResolvedValue([
       { name: 'large-cap-quality', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
     ]);
+    (backtestApi.listRuns as Mock).mockResolvedValue({ runs: [], limit: 6, offset: 0 });
+    (backtestApi.submitRun as Mock).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'queued',
+      submitted_at: '2026-03-08T00:00:00Z'
+    });
   });
 
   it('renders loading state initially', () => {
@@ -210,6 +224,65 @@ describe('StrategyConfigPage', () => {
     });
 
     expect(strategyApi.getStrategyDetail).not.toHaveBeenCalled();
+  });
+
+  it('submits a backtest from the detail panel', async () => {
+    (strategyApi.listStrategies as Mock).mockResolvedValue([
+      { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' }
+    ]);
+    (strategyApi.getStrategyDetail as Mock).mockResolvedValue({
+      name: 'strat-1',
+      type: 'configured',
+      description: 'desc 1',
+      config: {
+        universeConfigName: 'large-cap-quality',
+        rebalance: 'weekly',
+        longOnly: true,
+        topN: 20,
+        lookbackWindow: 63,
+        holdingPeriod: 21,
+        costModel: 'default',
+        intrabarConflictPolicy: 'stop_first',
+        exits: []
+      }
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StrategyConfigPage />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('strat-1')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /view run configuration strat-1/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /run backtest/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Run Backtest$/i }));
+
+    fireEvent.change(screen.getByLabelText(/run name/i), {
+      target: { value: 'Smoke intraday' }
+    });
+    fireEvent.change(screen.getByLabelText(/start timestamp/i), {
+      target: { value: '2026-03-03T08:30' }
+    });
+    fireEvent.change(screen.getByLabelText(/end timestamp/i), {
+      target: { value: '2026-03-03T09:30' }
+    });
+    fireEvent.change(screen.getByLabelText(/bar size/i), {
+      target: { value: '5m' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /submit backtest/i }));
+
+    await waitFor(() => {
+      expect(backtestApi.submitRun).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('deletes a strategy from the page actions', async () => {

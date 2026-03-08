@@ -504,11 +504,7 @@ def _merge_symbol_to_bucket_map(
     touched_bucket: str,
     touched_symbol_to_bucket: dict[str, str],
 ) -> dict[str, str]:
-    out = {
-        symbol: bucket
-        for symbol, bucket in existing.items()
-        if bucket != touched_bucket
-    }
+    out = {symbol: bucket for symbol, bucket in existing.items() if bucket != touched_bucket}
     out.update(touched_symbol_to_bucket)
     return out
 
@@ -524,24 +520,18 @@ def _validate_silver_to_gold_market_bucket_contract(
     normalized = normalize_columns_to_snake_case(df_silver_bucket.copy())
     missing = sorted(_SILVER_TO_GOLD_REQUIRED_COLUMNS.difference(set(normalized.columns)))
     if missing:
-        raise ValueError(
-            f"silver_to_gold contract violation for bucket={bucket}: missing required columns={missing}"
-        )
+        raise ValueError(f"silver_to_gold contract violation for bucket={bucket}: missing required columns={missing}")
 
     if normalized.empty:
         return normalized
 
     parsed_dates = pd.to_datetime(normalized["date"], errors="coerce").dropna()
     if parsed_dates.empty:
-        raise ValueError(
-            f"silver_to_gold contract violation for bucket={bucket}: no parseable date values."
-        )
+        raise ValueError(f"silver_to_gold contract violation for bucket={bucket}: no parseable date values.")
 
     symbols = normalized["symbol"].astype("string").str.strip().str.upper()
     if symbols.empty or symbols.eq("").all():
-        raise ValueError(
-            f"silver_to_gold contract violation for bucket={bucket}: no non-empty symbols."
-        )
+        raise ValueError(f"silver_to_gold contract violation for bucket={bucket}: no non-empty symbols.")
 
     return normalized
 
@@ -597,9 +587,7 @@ def _run_alpha26_market_gold(
         gold_commit = delta_core.get_delta_last_commit(gold_container, gold_path)
         prior = watermarks.get(watermark_key, {})
         postgres_sync_current = (
-            bucket_sync_is_current(sync_state, bucket=bucket, source_commit=silver_commit)
-            if postgres_dsn
-            else True
+            bucket_sync_is_current(sync_state, bucket=bucket, source_commit=silver_commit) if postgres_dsn else True
         )
 
         # Skip stable buckets to reduce compute/write overhead on no-change runs.

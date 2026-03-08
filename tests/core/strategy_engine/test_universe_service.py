@@ -37,6 +37,19 @@ def test_build_table_specs_keeps_only_gold_tables_with_symbol_and_as_of() -> Non
     assert specs["finance_data"].as_of_column == "obs_date"
 
 
+def test_build_table_specs_marks_timestamp_tables_as_intraday() -> None:
+    specs = universe_service._build_table_specs(
+        [
+            ("intraday_features", "symbol", "text", "text"),
+            ("intraday_features", "as_of_ts", "timestamp with time zone", "timestamptz"),
+            ("intraday_features", "signal_strength", "double precision", "float8"),
+        ]
+    )
+
+    assert specs["intraday_features"].as_of_column == "as_of_ts"
+    assert specs["intraday_features"].as_of_kind == "intraday"
+
+
 def test_preview_gold_universe_combines_nested_and_or_groups(monkeypatch) -> None:
     universe = UniverseDefinition.model_validate(
         {

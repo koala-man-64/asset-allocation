@@ -135,9 +135,7 @@ def _format_payload_preview(payload: Any, *, max_chars: int = 500) -> Optional[s
 
 
 def _format_invalid_payload_warning(symbol: str, exc: BaseException) -> str:
-    message = (
-        f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
-    )
+    message = f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
     preview_payload = getattr(exc, "payload", None)
     if preview_payload is None:
         preview_payload = {}
@@ -291,7 +289,9 @@ def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, symbol: Optional
             out[column] = pd.NA
 
     if "is_future_event" in out.columns:
-        parsed_future = pd.Series(pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64")
+        parsed_future = pd.Series(
+            pd.to_numeric(out["is_future_event"], errors="coerce"), index=out.index, dtype="Float64"
+        )
     else:
         parsed_future = pd.Series(pd.NA, index=out.index, dtype="Float64")
     inferred_future = pd.Series(
@@ -329,9 +329,7 @@ def _select_past_scheduled_rows(df: Optional[pd.DataFrame]) -> pd.DataFrame:
         return canonical
     today = _utc_today()
     mask = (
-        canonical["record_type"].eq("scheduled")
-        & canonical["report_date"].notna()
-        & (canonical["report_date"] < today)
+        canonical["record_type"].eq("scheduled") & canonical["report_date"].notna() & (canonical["report_date"] < today)
     )
     return canonical.loc[mask].copy().reset_index(drop=True)
 
@@ -736,7 +734,9 @@ def fetch_and_save_raw(
     if should_fetch_historical:
         payload = av.get_earnings(symbol=symbol)
         if not isinstance(payload, dict):
-            raise AlphaVantageGatewayError("Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol})
+            raise AlphaVantageGatewayError(
+                "Unexpected Alpha Vantage earnings response type.", payload={"symbol": symbol}
+            )
 
         source_records = payload.get("quarterlyEarnings") or []
         has_source_records = any(
@@ -751,7 +751,11 @@ def fetch_and_save_raw(
         has_source_records = not actual_rows.empty
 
     carry_forward_scheduled = _select_past_scheduled_rows(existing_df)
-    merge_parts = [frame for frame in (actual_rows, carry_forward_scheduled, scheduled_rows) if frame is not None and not frame.empty]
+    merge_parts = [
+        frame
+        for frame in (actual_rows, carry_forward_scheduled, scheduled_rows)
+        if frame is not None and not frame.empty
+    ]
     if merge_parts:
         merged = pd.concat(merge_parts, ignore_index=True, sort=False)
     else:
@@ -780,10 +784,7 @@ def fetch_and_save_raw(
             if blob_exists is not False:
                 cutoff_iso = pd.Timestamp(resolved_backfill_start).date().isoformat()
                 bronze_client.delete_file(blob_path)
-                mdc.write_line(
-                    f"No earnings rows on/after {cutoff_iso} for {symbol}; "
-                    f"deleted bronze {blob_path}."
-                )
+                mdc.write_line(f"No earnings rows on/after {cutoff_iso} for {symbol}; " f"deleted bronze {blob_path}.")
                 list_manager.add_to_whitelist(symbol)
                 return True
             list_manager.add_to_whitelist(symbol)
@@ -796,9 +797,7 @@ def fetch_and_save_raw(
 
     if resolved_backfill_start is not None and force_backfill:
         marker_status = (
-            "covered"
-            if source_earliest is not None and source_earliest <= resolved_backfill_start
-            else "limited"
+            "covered" if source_earliest is not None and source_earliest <= resolved_backfill_start else "limited"
         )
         _mark_coverage(
             symbol=symbol,

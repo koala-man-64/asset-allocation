@@ -17,7 +17,7 @@ from core.strategy_engine.contracts import (
 logger = logging.getLogger(__name__)
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_AS_OF_COLUMN_CANDIDATES = ("date", "obs_date")
+_AS_OF_COLUMN_CANDIDATES = ("as_of_ts", "timestamp", "ts", "datetime", "date", "obs_date")
 _NUMERIC_TYPES = {
     "smallint",
     "integer",
@@ -74,17 +74,19 @@ class UniverseTableSpec:
     name: str
     as_of_column: str
     columns: dict[str, UniverseColumnSpec]
+    as_of_kind: str = "slower"
 
 
 def list_gold_universe_catalog(dsn: str) -> dict[str, Any]:
     table_specs = _load_gold_table_specs(dsn)
     tables = [
-        {
-            "name": spec.name,
-            "asOfColumn": spec.as_of_column,
-            "columns": [
                 {
-                    "name": column.name,
+                    "name": spec.name,
+                    "asOfColumn": spec.as_of_column,
+                    "asOfKind": spec.as_of_kind,
+                    "columns": [
+                        {
+                            "name": column.name,
                     "dataType": column.data_type,
                     "valueKind": column.value_kind,
                     "operators": list(column.operators),
@@ -177,12 +179,26 @@ def _build_table_specs(rows: list[tuple[Any, ...]]) -> dict[str, UniverseTableSp
 
         if not has_symbol or not as_of_column:
             continue
+        as_of_kind = "intraday" if _is_intraday_data_type(as_of_column, column_rows) else "slower"
         table_specs[table_name] = UniverseTableSpec(
             name=table_name,
             as_of_column=as_of_column,
+            as_of_kind=as_of_kind,
             columns=column_specs,
         )
     return table_specs
+
+
+def _is_intraday_data_type(as_of_column: str, column_rows: list[tuple[str, str, str]]) -> bool:
+    for column_name, data_type, _udt_name in column_rows:
+        if column_name != as_of_column:
+            continue
+        return data_type in _DATETIME_TYPES
+    return False
+
+
+def is_intraday_table_spec(spec: UniverseTableSpec) -> bool:
+    return spec.as_of_kind == "intraday"
 
 
 def _evaluate_node(

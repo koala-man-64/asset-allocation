@@ -20,6 +20,7 @@ on:
           - gold_finance
           - gold_price_target
           - gold_earnings
+          - backtests
 
 concurrency:
   group: manual-job-trigger-${{ github.event.inputs.job }}
@@ -46,6 +47,7 @@ env:
   GOLD_FINANCE_JOB: gold-finance-job
   GOLD_PRICE_TARGET_JOB: gold-price-target-job
   GOLD_EARNINGS_JOB: gold-earnings-job
+  BACKTEST_JOB: backtests-job
 
 jobs:
   trigger-job:
@@ -76,6 +78,7 @@ jobs:
             gold_finance) selected_job="${GOLD_FINANCE_JOB}" ;;
             gold_price_target) selected_job="${GOLD_PRICE_TARGET_JOB}" ;;
             gold_earnings) selected_job="${GOLD_EARNINGS_JOB}" ;;
+            backtests) selected_job="${BACKTEST_JOB}" ;;
             *)
               echo "::error::Unsupported job input: ${{ github.event.inputs.job }}"
               exit 1

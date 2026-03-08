@@ -36,16 +36,16 @@ API Root
 
     # Backtest Data & Execution (Matches ui/src/services/backtestHooks.ts)
     ├── /backtests [GET] (backtests.list_backtests) - Lists historical backtest runs with filtering :: api/endpoints/backtests.py <== ui/src/services/backtestHooks.ts
-    ├── /backtests [POST] (backtests.submit_backtest) - Submits a new backtest job :: api/endpoints/backtests.py (UI submit not wired)
+    ├── /backtests [POST] (backtests.submit_backtest) - Submits a new backtest job :: api/endpoints/backtests.py <== ui/src/app/components/pages/StrategyConfigPage.tsx
     └── /backtests/{run_id}
-        ├── /status [GET] (backtests.get_status) - Polls current status of a running backtest :: api/endpoints/backtests.py (not used by UI)
+        ├── /status [GET] (backtests.get_status) - Polls current status of a running backtest :: api/endpoints/backtests.py
         ├── /summary [GET] (backtests.get_summary) - Returns performance summary (Sharpe, Returns, Drawdown) :: api/endpoints/backtests.py <== ui/src/services/backtestHooks.ts
         ├── /trades [GET] (backtests.get_trades) - Returns list of executed trades for a run :: api/endpoints/backtests.py <== ui/src/services/backtestHooks.ts
         ├── /metrics
         │   ├── /timeseries [GET] (backtests.get_timeseries) - Returns daily equity curve and drawdown series :: api/endpoints/backtests.py <== ui/src/services/backtestHooks.ts
         │   └── /rolling [GET] (backtests.get_rolling_metrics) - Returns rolling metrics (volatility, beta etc) :: api/endpoints/backtests.py <== ui/src/services/backtestHooks.ts
-        ├── /artifacts [GET] (backtests.list_artifacts) - Lists generated files (logs, plots, csvs) for a run :: api/endpoints/backtests.py (UI artifacts not wired)
-        └── /artifacts/{name:path} [GET] (backtests.get_artifact_content) - Downloads a specific artifact file :: api/endpoints/backtests.py (UI artifacts not wired)
+        ├── /artifacts [GET] (backtests.list_artifacts) - Lists generated files (logs, plots, csvs) for a run :: api/endpoints/backtests.py
+        └── /artifacts/{name:path} [GET] (backtests.get_artifact_content) - Downloads a specific artifact file :: api/endpoints/backtests.py
 
     # Providers (ETL Gateway)
     ├── /providers
