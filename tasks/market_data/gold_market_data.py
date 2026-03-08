@@ -24,6 +24,7 @@ from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
 from tasks.common import domain_artifacts
 from tasks.common import layer_bucketing
+from tasks.technical_analysis.market_structure import add_market_structure_features
 from tasks.technical_analysis.technical_indicators import (
     add_candlestick_patterns,
     add_heikin_ashi_and_ichimoku,
@@ -144,7 +145,8 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     - date, open, high, low, close, volume, symbol
 
     Output includes return, volatility, drawdown, ATR/gap, moving-average trend,
-    range/compression, volume context, and candlestick/Ichimoku features.
+    range/compression, volume context, market-structure, and candlestick/Ichimoku
+    features.
     """
 
     # Normalize schema once so the rest of the function can use fixed names.
@@ -234,6 +236,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     vol_std_20 = volume.rolling(window=20, min_periods=20).std()
     out["volume_z_20d"] = _safe_div((volume - vol_mean_20), vol_std_20)
     out["volume_pct_rank_252d"] = volume.rolling(window=252, min_periods=1).apply(_percentile_rank_last, raw=True)
+
+    # Market structure features use confirmed pivots only to avoid look-ahead.
+    out = add_market_structure_features(out)
 
     # Shared TA enrichments are centralized in `tasks.technical_analysis`.
     out = add_candlestick_patterns(out)

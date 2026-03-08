@@ -175,3 +175,30 @@ def test_prepare_frame_preserves_earnings_calendar_text_and_dates() -> None:
     assert row["next_earnings_date"] == date(2026, 3, 1)
     assert row["next_earnings_fiscal_date_ending"] == date(2025, 12, 31)
     assert row["next_earnings_time_of_day"] == "post-market"
+
+
+def test_market_sync_config_includes_market_structure_columns() -> None:
+    config = sync.get_sync_config("market")
+    prepared = sync._prepare_frame(  # type: ignore[attr-defined]
+        pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2026-02-28")],
+                "symbol": ["aapl"],
+                "donchian_high_20d": [110.5],
+                "sr_support_1_touches": [2],
+                "fib_swing_direction": [-1],
+                "fib_level_618": [98.2],
+                "fib_in_value_zone": [1],
+            }
+        ),
+        config=config,
+    )
+
+    row = prepared.iloc[0]
+    assert "donchian_high_20d" in config.columns
+    assert "fib_level_618" in config.columns
+    assert "sr_support_1_touches" in config.integer_columns
+    assert "fib_swing_direction" in config.integer_columns
+    assert int(row["sr_support_1_touches"]) == 2
+    assert int(row["fib_swing_direction"]) == -1
+    assert int(row["fib_in_value_zone"]) == 1

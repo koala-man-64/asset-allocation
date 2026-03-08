@@ -54,6 +54,12 @@ def test_compute_features_adds_expected_columns():
         "range_close",
         "volume_z_20d",
         "volume_pct_rank_252d",
+        "donchian_high_20d",
+        "donchian_low_55d",
+        "sr_support_1_mid",
+        "sr_resistance_1_mid",
+        "fib_swing_direction",
+        "fib_level_618",
         "pat_doji",
         "atr_14d",
         "ha_open",
@@ -91,6 +97,7 @@ def test_compute_features_does_not_emit_internal_helper_columns():
     df = _make_market_df(300)
     out = compute_features(df)
 
+    assert not any(str(column).startswith("_") for column in out.columns)
     assert "_eq_tol" not in out.columns
     assert "_gap_tol" not in out.columns
     assert "eq_tol" not in out.columns

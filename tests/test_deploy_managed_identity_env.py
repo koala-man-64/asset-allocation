@@ -196,3 +196,22 @@ def test_env_template_includes_regime_job_defaults() -> None:
     assert "REGIME_ACA_JOB_NAME=gold-regime-job" in text, (
         ".env.template must define REGIME_ACA_JOB_NAME"
     )
+
+
+def test_reset_postgres_script_uses_psql_reset_and_repo_migrations() -> None:
+    repo_root = _repo_root()
+    reset_script = repo_root / "scripts" / "reset_postgres_from_scratch.ps1"
+    text = reset_script.read_text(encoding="utf-8")
+
+    assert "reset_postgres.py" not in text, (
+        "reset_postgres_from_scratch should not depend on a local Python helper"
+    )
+    assert 'Invoke-Psql -Args @($Dsn, "-v", "ON_ERROR_STOP=1", "-c", $resetSql)' in text, (
+        "reset_postgres_from_scratch must perform the destructive reset through psql"
+    )
+    assert '& $migrationScript -Dsn $Dsn -MigrationsDir $resolvedDir -UseDockerPsql:$UseDockerPsql' in text, (
+        "reset_postgres_from_scratch must reapply repo-owned migrations through the shared migration script"
+    )
+    assert "-UseDockerPsql is ignored" not in text, (
+        "reset_postgres_from_scratch must honor the UseDockerPsql switch"
+    )

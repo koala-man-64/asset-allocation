@@ -7,6 +7,7 @@ Gold Delta remains the source of truth. The gold jobs now replicate successful b
 - Migrations:
   - `[deploy/sql/postgres/migrations/0019_gold_postgres_sync.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0019_gold_postgres_sync.sql)`
   - `[deploy/sql/postgres/migrations/0024_add_gold_earnings_calendar_columns.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0024_add_gold_earnings_calendar_columns.sql)`
+  - `[deploy/sql/postgres/migrations/0027_add_gold_market_structure_features.sql](/mnt/c/Users/rdpro/Projects/AssetAllocation/deploy/sql/postgres/migrations/0027_add_gold_market_structure_features.sql)`
 - Shared sync helper: `[tasks/common/postgres_gold_sync.py](/mnt/c/Users/rdpro/Projects/AssetAllocation/tasks/common/postgres_gold_sync.py)`
 - Serving tables:
   - `gold.market_data`
@@ -51,6 +52,11 @@ The first successful run seeds `core.gold_sync_state`. After that, unchanged buc
 - `next_earnings_fiscal_date_ending`
 - `has_upcoming_earnings`
 - `is_scheduled_earnings_day`
+
+`gold.market_data` now also includes market-structure features derived from daily OHLCV history:
+- Donchian channel highs/lows, ATR-normalized distance, and breakout flags for 20-day and 55-day windows
+- Confirmed-pivot nearest support/resistance zone scalars (`sr_*`)
+- Fibonacci retracement levels and active-swing context (`fib_*`)
 
 ## Rebuild / Recovery
 

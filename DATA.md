@@ -373,6 +373,55 @@ Trend and moving-average columns:
 | `sma_50_crosses_above_sma_200` | binary flag | `1` on the row where `sma_50_gt_sma_200` flips from `0` to `1`. |
 | `sma_50_crosses_below_sma_200` | binary flag | `1` on the row where `sma_50_gt_sma_200` flips from `1` to `0`. |
 
+Market-structure columns:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `donchian_high_20d` | number | Prior 20-day rolling high, shifted one row to avoid look-ahead. |
+| `donchian_low_20d` | number | Prior 20-day rolling low, shifted one row to avoid look-ahead. |
+| `dist_donchian_high_20d_atr` | number | `(donchian_high_20d - close) / atr_14d`. |
+| `dist_donchian_low_20d_atr` | number | `(close - donchian_low_20d) / atr_14d`. |
+| `above_donchian_high_20d` | binary flag | `1` when close is above the prior 20-day high. |
+| `below_donchian_low_20d` | binary flag | `1` when close is below the prior 20-day low. |
+| `crosses_above_donchian_high_20d` | binary flag | `1` when close breaks above the prior 20-day high on that row. |
+| `crosses_below_donchian_low_20d` | binary flag | `1` when close breaks below the prior 20-day low on that row. |
+| `donchian_high_55d` | number | Prior 55-day rolling high, shifted one row to avoid look-ahead. |
+| `donchian_low_55d` | number | Prior 55-day rolling low, shifted one row to avoid look-ahead. |
+| `dist_donchian_high_55d_atr` | number | `(donchian_high_55d - close) / atr_14d`. |
+| `dist_donchian_low_55d_atr` | number | `(close - donchian_low_55d) / atr_14d`. |
+| `above_donchian_high_55d` | binary flag | `1` when close is above the prior 55-day high. |
+| `below_donchian_low_55d` | binary flag | `1` when close is below the prior 55-day low. |
+| `crosses_above_donchian_high_55d` | binary flag | `1` when close breaks above the prior 55-day high on that row. |
+| `crosses_below_donchian_low_55d` | binary flag | `1` when close breaks below the prior 55-day low on that row. |
+| `sr_support_1_mid` | number | Midpoint of the nearest confirmed-pivot support zone. |
+| `sr_support_1_low` | number | Lower edge of the nearest confirmed-pivot support zone. |
+| `sr_support_1_high` | number | Upper edge of the nearest confirmed-pivot support zone. |
+| `sr_support_1_touches` | integer | Confirmed pivot touches assigned to the nearest support zone. |
+| `sr_support_1_strength` | number | Recency-decayed strength score for the nearest support zone. |
+| `sr_support_1_dist_atr` | number | `(close - sr_support_1_mid) / atr_14d`. |
+| `sr_resistance_1_mid` | number | Midpoint of the nearest confirmed-pivot resistance zone. |
+| `sr_resistance_1_low` | number | Lower edge of the nearest confirmed-pivot resistance zone. |
+| `sr_resistance_1_high` | number | Upper edge of the nearest confirmed-pivot resistance zone. |
+| `sr_resistance_1_touches` | integer | Confirmed pivot touches assigned to the nearest resistance zone. |
+| `sr_resistance_1_strength` | number | Recency-decayed strength score for the nearest resistance zone. |
+| `sr_resistance_1_dist_atr` | number | `(sr_resistance_1_mid - close) / atr_14d`. |
+| `sr_in_support_1_zone` | binary flag | `1` when close is inside the nearest support zone. |
+| `sr_in_resistance_1_zone` | binary flag | `1` when close is inside the nearest resistance zone. |
+| `sr_breaks_above_resistance_1` | binary flag | `1` when close moves above the nearest resistance-zone high after the prior close was not above it. |
+| `sr_breaks_below_support_1` | binary flag | `1` when close moves below the nearest support-zone low after the prior close was not below it. |
+| `sr_zone_position` | number | Relative position of close between the nearest support and resistance mids. |
+| `fib_swing_direction` | integer | `1` for an up swing, `-1` for a down swing, `0` when no confirmed opposite-pivot pair exists yet. |
+| `fib_anchor_low` | number | Confirmed low anchor of the active Fibonacci swing. |
+| `fib_anchor_high` | number | Confirmed high anchor of the active Fibonacci swing. |
+| `fib_level_236` | number | 23.6% retracement level of the active swing. |
+| `fib_level_382` | number | 38.2% retracement level of the active swing. |
+| `fib_level_500` | number | 50.0% retracement level of the active swing. |
+| `fib_level_618` | number | 61.8% retracement level of the active swing. |
+| `fib_level_786` | number | 78.6% retracement level of the active swing. |
+| `fib_nearest_level` | number | Closest Fibonacci retracement level to close for the active swing. |
+| `fib_nearest_dist_atr` | number | `(close - fib_nearest_level) / atr_14d`. |
+| `fib_in_value_zone` | binary flag | `1` when close sits between the 38.2% and 61.8% retracement levels of the active swing. |
+
 Candle-geometry columns:
 
 | Column | Type | Description |

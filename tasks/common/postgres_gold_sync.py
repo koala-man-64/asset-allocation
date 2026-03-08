@@ -104,6 +104,50 @@ _MARKET_COLUMNS: tuple[str, ...] = (
     "ichimoku_senkou_span_a_26",
     "ichimoku_senkou_span_b_26",
     "ichimoku_chikou_span_26",
+    "donchian_high_20d",
+    "donchian_low_20d",
+    "dist_donchian_high_20d_atr",
+    "dist_donchian_low_20d_atr",
+    "above_donchian_high_20d",
+    "below_donchian_low_20d",
+    "crosses_above_donchian_high_20d",
+    "crosses_below_donchian_low_20d",
+    "donchian_high_55d",
+    "donchian_low_55d",
+    "dist_donchian_high_55d_atr",
+    "dist_donchian_low_55d_atr",
+    "above_donchian_high_55d",
+    "below_donchian_low_55d",
+    "crosses_above_donchian_high_55d",
+    "crosses_below_donchian_low_55d",
+    "sr_support_1_mid",
+    "sr_support_1_low",
+    "sr_support_1_high",
+    "sr_support_1_touches",
+    "sr_support_1_strength",
+    "sr_support_1_dist_atr",
+    "sr_resistance_1_mid",
+    "sr_resistance_1_low",
+    "sr_resistance_1_high",
+    "sr_resistance_1_touches",
+    "sr_resistance_1_strength",
+    "sr_resistance_1_dist_atr",
+    "sr_in_support_1_zone",
+    "sr_in_resistance_1_zone",
+    "sr_breaks_above_resistance_1",
+    "sr_breaks_below_support_1",
+    "sr_zone_position",
+    "fib_swing_direction",
+    "fib_anchor_low",
+    "fib_anchor_high",
+    "fib_level_236",
+    "fib_level_382",
+    "fib_level_500",
+    "fib_level_618",
+    "fib_level_786",
+    "fib_nearest_level",
+    "fib_nearest_dist_atr",
+    "fib_in_value_zone",
 )
 _MARKET_INTEGER_COLUMNS = frozenset(
     {
@@ -155,6 +199,22 @@ _MARKET_INTEGER_COLUMNS = frozenset(
         "pat_three_outside_up",
         "pat_three_inside_down",
         "pat_three_outside_down",
+        "above_donchian_high_20d",
+        "below_donchian_low_20d",
+        "crosses_above_donchian_high_20d",
+        "crosses_below_donchian_low_20d",
+        "above_donchian_high_55d",
+        "below_donchian_low_55d",
+        "crosses_above_donchian_high_55d",
+        "crosses_below_donchian_low_55d",
+        "sr_support_1_touches",
+        "sr_resistance_1_touches",
+        "sr_in_support_1_zone",
+        "sr_in_resistance_1_zone",
+        "sr_breaks_above_resistance_1",
+        "sr_breaks_below_support_1",
+        "fib_swing_direction",
+        "fib_in_value_zone",
     }
 )
 _MARKET_BIGINT_COLUMNS = frozenset({"volume"})
@@ -481,9 +541,10 @@ def _prepare_frame(frame: pd.DataFrame, *, config: GoldSyncConfig) -> pd.DataFra
         return pd.DataFrame(columns=list(config.columns))
 
     work = frame.copy()
-    for column in config.columns:
-        if column not in work.columns:
-            work[column] = pd.NA
+    missing_columns = [column for column in config.columns if column not in work.columns]
+    if missing_columns:
+        missing_frame = pd.DataFrame(index=work.index, columns=missing_columns)
+        work = pd.concat([work, missing_frame], axis=1)
     work = work[list(config.columns)].copy()
 
     for column in config.date_columns:

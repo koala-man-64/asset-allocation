@@ -42,73 +42,118 @@ CREATE TABLE IF NOT EXISTS core.symbol_sync_state (
 );
 
 DO $$
+DECLARE
+  public_symbols_has_source_alpha_vantage BOOLEAN;
+  public_symbols_has_source_alphavantage BOOLEAN;
+  source_alpha_vantage_expr TEXT;
+  source_alphavantage_expr TEXT;
 BEGIN
   IF to_regclass('public.symbols') IS NOT NULL THEN
-    INSERT INTO core.symbols AS s (
-      symbol,
-      name,
-      description,
-      sector,
-      industry,
-      industry_2,
-      optionable,
-      is_optionable,
-      country,
-      exchange,
-      asset_type,
-      ipo_date,
-      delisting_date,
-      status,
-      source_nasdaq,
-      source_massive,
-      source_alpha_vantage,
-      source_alphavantage,
-      updated_at
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'symbols'
+        AND column_name = 'source_alpha_vantage'
     )
-    SELECT
-      symbol,
-      name,
-      description,
-      sector,
-      industry,
-      industry_2,
-      optionable,
-      CASE
-        WHEN upper(trim(COALESCE(optionable, ''))) IN ('Y', 'YES', 'TRUE', 'T', '1') THEN TRUE
-        WHEN upper(trim(COALESCE(optionable, ''))) IN ('N', 'NO', 'FALSE', 'F', '0') THEN FALSE
-        ELSE NULL
-      END AS is_optionable,
-      country,
-      exchange,
-      asset_type,
-      ipo_date,
-      delisting_date,
-      status,
-      source_nasdaq,
-      source_massive,
-      COALESCE(source_alpha_vantage, source_alphavantage, FALSE),
-      COALESCE(source_alphavantage, source_alpha_vantage, FALSE),
-      updated_at
-    FROM public.symbols
-    ON CONFLICT (symbol) DO UPDATE
-    SET name = COALESCE(EXCLUDED.name, s.name),
-        description = COALESCE(EXCLUDED.description, s.description),
-        sector = COALESCE(EXCLUDED.sector, s.sector),
-        industry = COALESCE(EXCLUDED.industry, s.industry),
-        industry_2 = COALESCE(EXCLUDED.industry_2, s.industry_2),
-        optionable = COALESCE(EXCLUDED.optionable, s.optionable),
-        is_optionable = COALESCE(EXCLUDED.is_optionable, s.is_optionable),
-        country = COALESCE(EXCLUDED.country, s.country),
-        exchange = COALESCE(EXCLUDED.exchange, s.exchange),
-        asset_type = COALESCE(EXCLUDED.asset_type, s.asset_type),
-        ipo_date = COALESCE(EXCLUDED.ipo_date, s.ipo_date),
-        delisting_date = COALESCE(EXCLUDED.delisting_date, s.delisting_date),
-        status = COALESCE(EXCLUDED.status, s.status),
-        source_nasdaq = COALESCE(EXCLUDED.source_nasdaq, s.source_nasdaq),
-        source_massive = COALESCE(EXCLUDED.source_massive, s.source_massive),
-        source_alpha_vantage = COALESCE(EXCLUDED.source_alpha_vantage, s.source_alpha_vantage),
-        source_alphavantage = COALESCE(EXCLUDED.source_alphavantage, s.source_alphavantage),
-        updated_at = GREATEST(s.updated_at, EXCLUDED.updated_at);
+    INTO public_symbols_has_source_alpha_vantage;
+
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'symbols'
+        AND column_name = 'source_alphavantage'
+    )
+    INTO public_symbols_has_source_alphavantage;
+
+    source_alpha_vantage_expr := CASE
+      WHEN public_symbols_has_source_alpha_vantage AND public_symbols_has_source_alphavantage
+        THEN 'COALESCE(p.source_alpha_vantage, p.source_alphavantage, FALSE)'
+      WHEN public_symbols_has_source_alpha_vantage
+        THEN 'COALESCE(p.source_alpha_vantage, FALSE)'
+      WHEN public_symbols_has_source_alphavantage
+        THEN 'COALESCE(p.source_alphavantage, FALSE)'
+      ELSE 'FALSE'
+    END;
+
+    source_alphavantage_expr := CASE
+      WHEN public_symbols_has_source_alphavantage AND public_symbols_has_source_alpha_vantage
+        THEN 'COALESCE(p.source_alphavantage, p.source_alpha_vantage, FALSE)'
+      WHEN public_symbols_has_source_alphavantage
+        THEN 'COALESCE(p.source_alphavantage, FALSE)'
+      WHEN public_symbols_has_source_alpha_vantage
+        THEN 'COALESCE(p.source_alpha_vantage, FALSE)'
+      ELSE 'FALSE'
+    END;
+
+    EXECUTE format($symbols_move$
+      INSERT INTO core.symbols AS s (
+        symbol,
+        name,
+        description,
+        sector,
+        industry,
+        industry_2,
+        optionable,
+        is_optionable,
+        country,
+        exchange,
+        asset_type,
+        ipo_date,
+        delisting_date,
+        status,
+        source_nasdaq,
+        source_massive,
+        source_alpha_vantage,
+        source_alphavantage,
+        updated_at
+      )
+      SELECT
+        p.symbol,
+        p.name,
+        p.description,
+        p.sector,
+        p.industry,
+        p.industry_2,
+        p.optionable,
+        CASE
+          WHEN upper(trim(COALESCE(p.optionable, ''))) IN ('Y', 'YES', 'TRUE', 'T', '1') THEN TRUE
+          WHEN upper(trim(COALESCE(p.optionable, ''))) IN ('N', 'NO', 'FALSE', 'F', '0') THEN FALSE
+          ELSE NULL
+        END AS is_optionable,
+        p.country,
+        p.exchange,
+        p.asset_type,
+        p.ipo_date,
+        p.delisting_date,
+        p.status,
+        p.source_nasdaq,
+        p.source_massive,
+        %s,
+        %s,
+        p.updated_at
+      FROM public.symbols AS p
+      ON CONFLICT (symbol) DO UPDATE
+      SET name = COALESCE(EXCLUDED.name, s.name),
+          description = COALESCE(EXCLUDED.description, s.description),
+          sector = COALESCE(EXCLUDED.sector, s.sector),
+          industry = COALESCE(EXCLUDED.industry, s.industry),
+          industry_2 = COALESCE(EXCLUDED.industry_2, s.industry_2),
+          optionable = COALESCE(EXCLUDED.optionable, s.optionable),
+          is_optionable = COALESCE(EXCLUDED.is_optionable, s.is_optionable),
+          country = COALESCE(EXCLUDED.country, s.country),
+          exchange = COALESCE(EXCLUDED.exchange, s.exchange),
+          asset_type = COALESCE(EXCLUDED.asset_type, s.asset_type),
+          ipo_date = COALESCE(EXCLUDED.ipo_date, s.ipo_date),
+          delisting_date = COALESCE(EXCLUDED.delisting_date, s.delisting_date),
+          status = COALESCE(EXCLUDED.status, s.status),
+          source_nasdaq = COALESCE(EXCLUDED.source_nasdaq, s.source_nasdaq),
+          source_massive = COALESCE(EXCLUDED.source_massive, s.source_massive),
+          source_alpha_vantage = COALESCE(EXCLUDED.source_alpha_vantage, s.source_alpha_vantage),
+          source_alphavantage = COALESCE(EXCLUDED.source_alphavantage, s.source_alphavantage),
+          updated_at = GREATEST(s.updated_at, EXCLUDED.updated_at)
+    $symbols_move$, source_alpha_vantage_expr, source_alphavantage_expr);
 
     DROP TABLE public.symbols;
   END IF;
