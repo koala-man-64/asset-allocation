@@ -36,6 +36,7 @@ _BLOB_PREFIXES: dict[tuple[str, str], str] = {
     ("gold", "finance"): "finance/",
     ("gold", "earnings"): "earnings/",
     ("gold", "price-target"): "targets/",
+    ("gold", "regime"): "regime/",
     ("platinum", "platinum"): "platinum/",
 }
 

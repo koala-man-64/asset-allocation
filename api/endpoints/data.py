@@ -14,6 +14,8 @@ from api.service.dependencies import get_settings, validate_auth
 from core.delta_core import load_delta
 from core.pipeline import DataPaths
 from core.postgres import PostgresError, connect
+from core.regime import DEFAULT_REGIME_MODEL_NAME
+from core.regime_repository import RegimeRepository
 from tasks.common import layer_bucketing
 
 from ..data_service import DataService
@@ -743,6 +745,102 @@ def get_data_generic(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _load_regime_dataset_rows(
+    *,
+    request: Request,
+    dataset: str,
+    model_name: str,
+    model_version: int | None,
+    start_date: date | None,
+    end_date: date | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    dsn = _resolve_postgres_dsn(request)
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres is required for regime datasets.")
+    repo = RegimeRepository(dsn)
+    dataset_key = str(dataset or "").strip().lower()
+    if dataset_key == "inputs":
+        return repo.list_regime_inputs(start_date=start_date, end_date=end_date, limit=limit)
+    if dataset_key == "history":
+        return repo.list_regime_history(
+            model_name=model_name,
+            model_version=model_version,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+    if dataset_key == "latest":
+        latest = repo.get_regime_latest(model_name=model_name, model_version=model_version)
+        return [latest] if latest else []
+    if dataset_key == "transitions":
+        return repo.list_regime_transitions(
+            model_name=model_name,
+            model_version=model_version,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+    raise HTTPException(status_code=400, detail="dataset must be one of: inputs, history, latest, transitions")
+
+
+@router.get("/gold/regime/{dataset}")
+def get_gold_regime_dataset(
+    dataset: str,
+    request: Request,
+    model_name: str = Query(default=DEFAULT_REGIME_MODEL_NAME, alias="modelName"),
+    model_version: int | None = Query(default=None, alias="modelVersion", ge=1),
+    start_date: date | None = Query(default=None, alias="startDate"),
+    end_date: date | None = Query(default=None, alias="endDate"),
+    limit: int = Query(default=500, ge=1, le=5000),
+) -> list[dict[str, Any]]:
+    validate_auth(request)
+    return _load_regime_dataset_rows(
+        request=request,
+        dataset=dataset,
+        model_name=model_name,
+        model_version=model_version,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+
+@router.get("/gold/regime/{dataset}/profile")
+def get_gold_regime_dataset_profile(
+    dataset: str,
+    request: Request,
+    column: str = Query(..., min_length=1),
+    model_name: str = Query(default=DEFAULT_REGIME_MODEL_NAME, alias="modelName"),
+    model_version: int | None = Query(default=None, alias="modelVersion", ge=1),
+    start_date: date | None = Query(default=None, alias="startDate"),
+    end_date: date | None = Query(default=None, alias="endDate"),
+    bins: int = Query(default=20, ge=3, le=200),
+    sample_rows: int = Query(default=10000, alias="sampleRows", ge=10, le=100000),
+    top_values: int = Query(default=20, alias="topValues", ge=1, le=200),
+) -> dict[str, Any]:
+    validate_auth(request)
+    rows = _load_regime_dataset_rows(
+        request=request,
+        dataset=dataset,
+        model_name=model_name,
+        model_version=model_version,
+        start_date=start_date,
+        end_date=end_date,
+        limit=sample_rows,
+    )
+    return DataService.build_column_profile_from_rows(
+        rows,
+        layer="gold",
+        domain=f"regime/{dataset}",
+        column=column,
+        bins=bins,
+        sample_rows=sample_rows,
+        top_values=top_values,
+    )
+
 
 @router.get("/{layer}/finance/{sub_domain}")
 def get_finance_data(

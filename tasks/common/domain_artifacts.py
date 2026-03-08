@@ -42,6 +42,7 @@ _ROOT_PREFIXES: dict[tuple[str, str], str] = {
     ("gold", "finance"): "finance",
     ("gold", "earnings"): "earnings",
     ("gold", "price-target"): "targets",
+    ("gold", "regime"): "regime",
 }
 _FINANCE_SUBDOMAIN_ALIASES: dict[str, str] = {
     "balance_sheet": "balance_sheet",

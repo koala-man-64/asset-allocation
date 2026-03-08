@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
-from core.backtest_runtime import ResolvedBacktestDefinition, _score_snapshot, validate_backtest_submission
+from core.backtest_runtime import (
+    ResolvedBacktestDefinition,
+    _regime_context_for_session,
+    _score_snapshot,
+    validate_backtest_submission,
+)
 from core.ranking_engine.contracts import RankingSchemaConfig
 from core.strategy_engine.contracts import StrategyConfig, UniverseDefinition
 from core.strategy_engine import universe as universe_service
@@ -153,3 +158,110 @@ def test_validate_backtest_submission_rejects_intraday_coverage_gaps(monkeypatch
         )
 
     assert "Intraday feature coverage gap" in str(exc.value)
+
+
+def test_validate_backtest_submission_rejects_regime_coverage_gaps(monkeypatch: pytest.MonkeyPatch) -> None:
+    definition = ResolvedBacktestDefinition(
+        **(_sample_definition().__dict__ | {"regime_model_name": "default-regime", "regime_model_version": 1})
+    )
+    specs = {
+        "market_data": universe_service.UniverseTableSpec(
+            name="market_data",
+            as_of_column="as_of_ts",
+            as_of_kind="intraday",
+            columns={
+                "open": universe_service.UniverseColumnSpec("open", "double precision", "number", universe_service._NUMBER_OPERATORS),
+                "high": universe_service.UniverseColumnSpec("high", "double precision", "number", universe_service._NUMBER_OPERATORS),
+                "low": universe_service.UniverseColumnSpec("low", "double precision", "number", universe_service._NUMBER_OPERATORS),
+                "close": universe_service.UniverseColumnSpec("close", "double precision", "number", universe_service._NUMBER_OPERATORS),
+                "volume": universe_service.UniverseColumnSpec("volume", "double precision", "number", universe_service._NUMBER_OPERATORS),
+                "return_20d": universe_service.UniverseColumnSpec("return_20d", "double precision", "number", universe_service._NUMBER_OPERATORS),
+            },
+        )
+    }
+    monkeypatch.setattr(universe_service, "_load_gold_table_specs", lambda _dsn: specs)
+    monkeypatch.setattr(
+        "core.backtest_runtime._load_run_schedule",
+        lambda *args, **kwargs: [
+            datetime(2026, 3, 3, 14, 30, tzinfo=timezone.utc),
+            datetime(2026, 3, 3, 14, 35, tzinfo=timezone.utc),
+        ],
+    )
+    monkeypatch.setattr(
+        "core.backtest_runtime._load_exact_coverage",
+        lambda *args, **kwargs: {
+            datetime(2026, 3, 3, 14, 30, tzinfo=timezone.utc),
+            datetime(2026, 3, 3, 14, 35, tzinfo=timezone.utc),
+        },
+    )
+    monkeypatch.setattr(
+        "core.backtest_runtime._validate_regime_history_coverage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("Regime history coverage gap")),
+    )
+
+    with pytest.raises(ValueError) as exc:
+        validate_backtest_submission(
+            "postgresql://test:test@localhost:5432/asset_allocation",
+            definition=definition,
+            start_ts=datetime(2026, 3, 3, 14, 30, tzinfo=timezone.utc),
+            end_ts=datetime(2026, 3, 3, 14, 35, tzinfo=timezone.utc),
+            bar_size="5m",
+        )
+
+    assert "Regime history coverage gap" in str(exc.value)
+
+
+def test_regime_context_blocks_and_scales_exposure() -> None:
+    policy = StrategyConfig.model_validate(
+        {
+            "universeConfigName": "large-cap-quality",
+            "rebalance": "weekly",
+            "longOnly": True,
+            "topN": 2,
+            "lookbackWindow": 20,
+            "holdingPeriod": 5,
+            "costModel": "default",
+            "rankingSchemaName": "quality",
+            "intrabarConflictPolicy": "stop_first",
+            "regimePolicy": {
+                "enabled": True,
+                "modelName": "default-regime",
+                "targetGrossExposureByRegime": {
+                    "trending_bull": 1.0,
+                    "trending_bear": 0.5,
+                    "choppy_mean_reversion": 0.75,
+                    "high_vol": 0.0,
+                    "unclassified": 0.0,
+                },
+                "blockOnTransition": True,
+                "blockOnUnclassified": True,
+                "honorHaltFlag": True,
+                "onBlocked": "skip_entries",
+            },
+            "exits": [],
+        }
+    ).regimePolicy
+
+    confirmed = _regime_context_for_session(
+        policy,
+        {
+            "regime_code": "trending_bear",
+            "regime_status": "confirmed",
+            "halt_flag": False,
+            "matched_rule_id": "trending_bear",
+        },
+    )
+    assert confirmed["blocked"] is False
+    assert confirmed["exposure_multiplier"] == 0.5
+
+    transition = _regime_context_for_session(
+        policy,
+        {
+            "regime_code": "trending_bear",
+            "regime_status": "transition",
+            "halt_flag": False,
+        },
+    )
+    assert transition["blocked"] is True
+    assert transition["blocked_reason"] == "transition"
+    assert transition["blocked_action"] == "skip_entries"

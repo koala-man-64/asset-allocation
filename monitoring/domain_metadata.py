@@ -162,6 +162,8 @@ def _blob_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
             return f"{domain_key}/"
         if domain_key == "price-target":
             return "targets/"
+        if domain_key == "regime":
+            return "regime/"
     if layer_key == "platinum":
         return "platinum/"
     return None
@@ -212,6 +214,8 @@ def _ticker_listing_prefix(layer: LayerKey, domain: DomainKey) -> Optional[str]:
             return "earnings/"
         if domain_key == "price-target":
             return "targets/"
+        if domain_key == "regime":
+            return None
 
     return None
 

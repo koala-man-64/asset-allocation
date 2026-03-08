@@ -62,6 +62,8 @@ class BacktestRepository:
         ranking_schema_version: int | None = None,
         universe_name: str | None = None,
         universe_version: int | None = None,
+        regime_model_name: str | None = None,
+        regime_model_version: int | None = None,
         submitted_by: str | None = None,
         output_dir: str | None = None,
         adls_container: str | None = None,
@@ -90,13 +92,15 @@ class BacktestRepository:
                         ranking_schema_version,
                         universe_name,
                         universe_version,
+                        regime_model_name,
+                        regime_model_version,
                         start_ts,
                         end_ts,
                         bar_size,
                         submitted_by
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -116,6 +120,8 @@ class BacktestRepository:
                         ranking_schema_version,
                         universe_name,
                         universe_version,
+                        regime_model_name,
+                        regime_model_version,
                         start_ts,
                         end_ts,
                         bar_size,
@@ -151,6 +157,8 @@ class BacktestRepository:
                         ranking_schema_version,
                         universe_name,
                         universe_version,
+                        regime_model_name,
+                        regime_model_version,
                         start_ts,
                         end_ts,
                         bar_size,
@@ -189,6 +197,8 @@ class BacktestRepository:
             "ranking_schema_version",
             "universe_name",
             "universe_version",
+            "regime_model_name",
+            "regime_model_version",
             "start_ts",
             "end_ts",
             "bar_size",

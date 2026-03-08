@@ -425,6 +425,14 @@ export function StrategyConfigPage() {
                     <div className="mt-2 text-sm text-foreground">{detailQuery.data.config.intrabarConflictPolicy}</div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Regime Policy</div>
+                    <div className="mt-2 text-sm text-foreground">
+                      {detailQuery.data.config.regimePolicy?.enabled
+                        ? `Enabled • ${detailQuery.data.config.regimePolicy.modelName}`
+                        : 'Disabled'}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
                     <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Platinum Output</div>
                     <div className="mt-2 text-sm text-foreground">
                       {detailQuery.data.output_table_name ? `platinum.${detailQuery.data.output_table_name}` : 'Not assigned'}

@@ -65,7 +65,7 @@ const isLikelyTextFile = (name: string): boolean => {
 };
 
 type LayerKey = 'bronze' | 'silver' | 'gold' | 'platinum';
-type DomainKey = 'market' | 'finance' | 'earnings' | 'price-target';
+type DomainKey = 'market' | 'finance' | 'earnings' | 'price-target' | 'regime';
 
 const CONTAINER_OPTIONS: Array<{ value: LayerKey; label: string }> = [
   { value: 'bronze', label: 'Bronze' },
@@ -74,37 +74,62 @@ const CONTAINER_OPTIONS: Array<{ value: LayerKey; label: string }> = [
   { value: 'platinum', label: 'Platinum' }
 ];
 
-const DOMAIN_OPTIONS: Array<{ value: DomainKey; label: string }> = [
-  { value: 'market', label: 'Market' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'earnings', label: 'Earnings' },
-  { value: 'price-target', label: 'Targets' }
-];
+const DOMAIN_OPTIONS_BY_LAYER: Record<LayerKey, Array<{ value: DomainKey; label: string }>> = {
+  bronze: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Targets' }
+  ],
+  silver: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Targets' }
+  ],
+  gold: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Targets' },
+    { value: 'regime', label: 'Regime' }
+  ],
+  platinum: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Targets' }
+  ]
+};
 
 const EXPLORER_ROOT_PATHS: Record<LayerKey, Record<DomainKey, string>> = {
   bronze: {
     market: 'market-data/',
     finance: 'finance-data/',
     earnings: 'earnings-data/',
-    'price-target': 'price-target-data/'
+    'price-target': 'price-target-data/',
+    regime: 'regime/'
   },
   silver: {
     market: 'market-data/buckets/',
     finance: 'finance-data/',
     earnings: 'earnings-data/buckets/',
-    'price-target': 'price-target-data/buckets/'
+    'price-target': 'price-target-data/buckets/',
+    regime: 'regime/'
   },
   gold: {
     market: 'market/buckets/',
     finance: 'finance/',
     earnings: 'earnings/buckets/',
-    'price-target': 'targets/buckets/'
+    'price-target': 'targets/buckets/',
+    regime: 'regime/'
   },
   platinum: {
     market: 'market/buckets/',
     finance: 'finance/',
     earnings: 'earnings/buckets/',
-    'price-target': 'targets/buckets/'
+    'price-target': 'targets/buckets/',
+    regime: 'regime/'
   }
 };
 
@@ -144,6 +169,7 @@ type TreeMeta = {
 export const DataExplorerPage: React.FC = () => {
   const [layer, setLayer] = useState<LayerKey>('gold');
   const [domain, setDomain] = useState<DomainKey>('market');
+  const domainOptions = useMemo(() => DOMAIN_OPTIONS_BY_LAYER[layer], [layer]);
   const [maxDeltaFiles, setMaxDeltaFiles] = useState<string>('0');
   const rootPath = useMemo(() => normalizeFolderPath(EXPLORER_ROOT_PATHS[layer][domain]), [domain, layer]);
   const scanLimit = 5000;
@@ -220,6 +246,13 @@ export const DataExplorerPage: React.FC = () => {
     },
     [layer, maxDeltaFiles, previewMaxBytes]
   );
+
+  useEffect(() => {
+    if (domainOptions.some((option) => option.value === domain)) {
+      return;
+    }
+    setDomain(domainOptions[0]?.value ?? 'market');
+  }, [domain, domainOptions]);
 
   useEffect(() => {
     setTreeByPath({});
@@ -384,7 +417,7 @@ export const DataExplorerPage: React.FC = () => {
                 <SelectValue placeholder="Select domain" />
               </SelectTrigger>
               <SelectContent>
-                {DOMAIN_OPTIONS.map((option) => (
+                {domainOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

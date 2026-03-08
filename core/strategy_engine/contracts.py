@@ -4,6 +4,8 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from core.regime import RegimePolicy
+
 ExitRuleType = Literal[
     "stop_loss_fixed",
     "take_profit_fixed",
@@ -178,6 +180,7 @@ class StrategyConfig(BaseModel):
     holdingPeriod: int = Field(default=21, ge=1)
     costModel: str = Field(default="default", min_length=1, max_length=64)
     rankingSchemaName: str | None = Field(default=None, min_length=1, max_length=128)
+    regimePolicy: RegimePolicy | None = None
     intrabarConflictPolicy: IntrabarConflictPolicy = "stop_first"
     exits: list[ExitRule] = Field(default_factory=list)
 

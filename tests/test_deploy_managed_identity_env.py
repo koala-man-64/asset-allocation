@@ -74,6 +74,7 @@ def test_deploy_workflow_exports_acr_pull_identity_client_id() -> None:
     text = deploy_workflow.read_text(encoding="utf-8")
     assert "ACR_PULL_IDENTITY_CLIENT_ID" in text, "deploy workflow must export ACR_PULL_IDENTITY_CLIENT_ID"
     assert "BACKTEST_JOB" in text, "deploy workflow must define the backtest job name"
+    assert "GOLD_REGIME_JOB" in text, "deploy workflow must define the gold regime job name"
 
 
 def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identity() -> None:
@@ -109,4 +110,60 @@ def test_api_manifest_allowlists_backtest_job() -> None:
     )
     assert env_vars.get("BACKTEST_ACA_JOB_NAME") == "backtests-job", (
         "app_api manifest must export BACKTEST_ACA_JOB_NAME"
+    )
+    assert "gold-regime-job" in str(env_vars.get("SYSTEM_HEALTH_ARM_JOBS") or ""), (
+        "app_api manifest must allowlist the gold regime ACA job"
+    )
+    assert env_vars.get("REGIME_ACA_JOB_NAME") == "gold-regime-job", (
+        "app_api manifest must export REGIME_ACA_JOB_NAME"
+    )
+
+
+def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
+    repo_root = _repo_root()
+    setup_env = repo_root / "scripts" / "setup-env.ps1"
+    text = setup_env.read_text(encoding="utf-8")
+
+    assert "gold-regime-job" in text, "setup-env must seed the gold regime job name"
+    assert '$IsGitHubSyncTarget = $EnvFileName -ieq ".env.web"' in text, (
+        "setup-env must detect .env.web targets for GitHub sync defaults"
+    )
+    assert 'Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" $DefaultAssetAllocationApiBaseUrl' in text, (
+        "setup-env must use GitHub-safe API base URL defaults for .env.web"
+    )
+    assert 'Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget' in text, (
+        "setup-env must use GitHub-safe UI proxy defaults for .env.web"
+    )
+    assert 'Prompt-Var "BACKTEST_ACA_JOB_NAME" "backtests-job"' in text, (
+        "setup-env must default BACKTEST_ACA_JOB_NAME for GitHub sync"
+    )
+    assert 'Prompt-Var "REGIME_ACA_JOB_NAME" "gold-regime-job"' in text, (
+        "setup-env must default REGIME_ACA_JOB_NAME for GitHub sync"
+    )
+
+
+def test_sync_all_to_github_treats_aca_job_names_as_variables() -> None:
+    repo_root = _repo_root()
+    sync_script = repo_root / "scripts" / "sync-all-to-github.ps1"
+    text = sync_script.read_text(encoding="utf-8")
+
+    assert "^BACKTEST_ACA_JOB_NAME$" in text, (
+        "sync-all-to-github must classify BACKTEST_ACA_JOB_NAME as a GitHub variable"
+    )
+    assert "^REGIME_ACA_JOB_NAME$" in text, (
+        "sync-all-to-github must classify REGIME_ACA_JOB_NAME as a GitHub variable"
+    )
+
+
+def test_env_template_includes_regime_job_defaults() -> None:
+    repo_root = _repo_root()
+    env_template = repo_root / ".env.template"
+    text = env_template.read_text(encoding="utf-8")
+
+    assert "gold-regime-job" in text, ".env.template must include the gold regime job"
+    assert "BACKTEST_ACA_JOB_NAME=backtests-job" in text, (
+        ".env.template must define BACKTEST_ACA_JOB_NAME"
+    )
+    assert "REGIME_ACA_JOB_NAME=gold-regime-job" in text, (
+        ".env.template must define REGIME_ACA_JOB_NAME"
     )

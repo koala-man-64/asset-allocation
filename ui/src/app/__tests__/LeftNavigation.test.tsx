@@ -60,15 +60,17 @@ describe('LeftNavigation', () => {
   });
 
   it('renders navigation sections and items', () => {
-    renderNavigation();
+    const { container } = renderNavigation();
 
     expect(screen.getByText('Stock Explorer')).toBeDefined();
     expect(screen.getByText('Data Quality')).toBeDefined();
+    expect(screen.getByText('Regime Monitor')).toBeDefined();
     expect(screen.getByText('System Status')).toBeDefined();
     expect(screen.getByText('Run Configurations')).toBeDefined();
     expect(screen.getByText('Universe Configurations')).toBeDefined();
     expect(screen.getByText('Ranking Configurations')).toBeDefined();
     expect(screen.getByText('UPTIME CLOCK')).toBeDefined();
+    expect(container.firstChild).toHaveClass('w-[280px]');
   });
 
   it('toggles collapsed state when clicking the button', () => {

@@ -26,6 +26,9 @@ if ([string]::IsNullOrWhiteSpace($EnvFilePath)) {
     $EnvFilePath = Join-Path $rootDir ".env"
 }
 
+$EnvFileName = Split-Path -Leaf $EnvFilePath
+$IsGitHubSyncTarget = $EnvFileName -ieq ".env.web"
+
 # Load existing variables (if any) to use as defaults.
 $ExistingVars = @{}
 if (Test-Path $EnvFilePath) {
@@ -40,6 +43,11 @@ if (Test-Path $EnvFilePath) {
 Write-Host "`n--- AssetAllocation Environment Setup ---" -ForegroundColor Cyan
 Write-Host "This writes plaintext values to .env. Do NOT commit .env to git." -ForegroundColor Yellow
 Write-Host "Press [Enter] to accept the suggestion in [brackets].`n"
+
+$DefaultSystemHealthArmJobs = "bronze-market-job,bronze-finance-job,bronze-price-target-job,bronze-earnings-job,silver-market-job,silver-finance-job,silver-price-target-job,silver-earnings-job,gold-market-job,gold-finance-job,gold-price-target-job,gold-earnings-job,gold-regime-job,platinum-rankings-job,backtests-job"
+$DefaultAssetAllocationApiBaseUrl = if ($IsGitHubSyncTarget) { "http://asset-allocation-api" } else { "http://localhost:8000" }
+$DefaultJobStartupApiContainerApps = if ($IsGitHubSyncTarget) { "asset-allocation-api" } else { "" }
+$DefaultViteApiProxyTarget = if ($IsGitHubSyncTarget) { "http://asset-allocation-api" } else { "http://127.0.0.1:8000" }
 
 function ConvertFrom-SecureStringPlain {
     param([Parameter(Mandatory = $true)][System.Security.SecureString]$Secure)
@@ -164,7 +172,7 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
-$Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" "http://localhost:8000" "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
+$Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" $DefaultAssetAllocationApiBaseUrl "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
 $Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
 $Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")
@@ -172,7 +180,7 @@ $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATI
 $Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
 $Config += "JOB_STARTUP_API_WAKE_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_WAKE_ENABLED" "true" "Optional: attempt ARM start for API container app when startup health probe fails.")
 $Config += "JOB_STARTUP_API_ARM_START_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_ARM_START_ENABLED" "true" "Optional: enable/disable ARM start calls during startup preflight.")
-$Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" "" "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")
+$Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" $DefaultJobStartupApiContainerApps "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")
 $Config += "JOB_STARTUP_API_HEALTH_PATH=" + (Prompt-Var "JOB_STARTUP_API_HEALTH_PATH" "/healthz" "Optional: health endpoint path used by startup preflight.")
 $Config += "JOB_STARTUP_API_PROBE_ATTEMPTS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_ATTEMPTS" "6" "Optional: startup health probe attempts.")
 $Config += "JOB_STARTUP_API_PROBE_SLEEP_SECONDS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_SLEEP_SECONDS" "10" "Optional: delay between startup health probes.")
@@ -237,7 +245,9 @@ $Config += "SYSTEM_HEALTH_LINK_TOKEN_SECRET=" + (Prompt-Var "SYSTEM_HEALTH_LINK_
 $Config += "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID=" + (Prompt-Var "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID" "" "Optional: ARM subscription ID for probes / job start allowlist.")
 $Config += "SYSTEM_HEALTH_ARM_RESOURCE_GROUP=" + (Prompt-Var "SYSTEM_HEALTH_ARM_RESOURCE_GROUP" "" "Optional: ARM resource group for probes / job start allowlist.")
 $Config += "SYSTEM_HEALTH_ARM_CONTAINERAPPS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_CONTAINERAPPS" "" "Optional: comma-separated Container Apps names.")
-$Config += "SYSTEM_HEALTH_ARM_JOBS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_JOBS" "" "Optional: comma-separated Job names (also used as job-start allowlist).")
+$Config += "SYSTEM_HEALTH_ARM_JOBS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_JOBS" $DefaultSystemHealthArmJobs "Optional: comma-separated Job names (also used as job-start allowlist).")
+$Config += "BACKTEST_ACA_JOB_NAME=" + (Prompt-Var "BACKTEST_ACA_JOB_NAME" "backtests-job" "Container Apps Job name used by API-triggered backtest runs.")
+$Config += "REGIME_ACA_JOB_NAME=" + (Prompt-Var "REGIME_ACA_JOB_NAME" "gold-regime-job" "Container Apps Job name used by API-triggered regime recompute runs.")
 $Config += "SYSTEM_HEALTH_ARM_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_ARM_API_VERSION" "" "Optional: ARM API version (required if ARM probes enabled).")
 $Config += "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS" "5" "Optional: ARM timeout seconds.")
 $Config += "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=" + (Prompt-Var "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB" "3" "Optional: how many executions to return per job.")
@@ -290,7 +300,7 @@ $Config += "# UI / CI Variables (GitHub Variables)"
 $Config += "# =========================================="
 $Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port (required by CI UI build).")
 $Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" "UI dev only: when true, proxy /config.js to the API.")
-$Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" "http://127.0.0.1:8000" "UI dev only: Vite proxy target for /api (do not include /api).")
+$Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget "UI dev only: Vite proxy target for /api (do not include /api).")
 $Config += "SERVICE_ACCOUNT_NAME=" + (Prompt-Var "SERVICE_ACCOUNT_NAME" "asset-allocation-sa" "Service account name (used by deploy manifests).")
 $Config += "KUBERNETES_NAMESPACE=" + (Prompt-Var "KUBERNETES_NAMESPACE" "" "Optional: Kubernetes namespace (used by provision_azure.ps1 when AKS is enabled).")
 $Config += "AKS_CLUSTER_NAME=" + (Prompt-Var "AKS_CLUSTER_NAME" "" "Optional: AKS cluster name (used by provision_azure.ps1 when AKS is enabled).")

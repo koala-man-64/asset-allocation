@@ -285,6 +285,8 @@ async def submit_backtest(payload: SubmitBacktestRequest, request: Request) -> R
             "rankingSchemaVersion": definition.ranking_schema_version,
             "universeName": definition.ranking_universe_name,
             "universeVersion": definition.ranking_universe_version,
+            "regimeModelName": definition.regime_model_name,
+            "regimeModelVersion": definition.regime_model_version,
         },
         "execution": {
             "startTs": start_ts.isoformat(),
@@ -306,6 +308,8 @@ async def submit_backtest(payload: SubmitBacktestRequest, request: Request) -> R
         ranking_schema_version=definition.ranking_schema_version,
         universe_name=definition.ranking_universe_name,
         universe_version=definition.ranking_universe_version,
+        regime_model_name=definition.regime_model_name,
+        regime_model_version=definition.regime_model_version,
         submitted_by=_actor_from_request(request),
         output_dir=str(os.environ.get("BACKTEST_OUTPUT_DIR") or "").strip() or None,
         adls_container=str(os.environ.get("AZURE_CONTAINER_COMMON") or "").strip() or None,

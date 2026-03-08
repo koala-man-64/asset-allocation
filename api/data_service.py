@@ -1604,3 +1604,52 @@ class DataService:
                 {"value": str(value), "count": int(count)} for value, count in top_n.items()
             ],
         }
+
+    @staticmethod
+    def build_column_profile_from_rows(
+        rows: List[Dict[str, Any]],
+        *,
+        layer: str,
+        domain: str,
+        column: str,
+        bins: int = 20,
+        sample_rows: int = 10000,
+        top_values: int = 20,
+    ) -> Dict[str, Any]:
+        frame = pd.DataFrame(rows or [])
+        if frame.empty:
+            return {
+                "layer": layer,
+                "domain": domain,
+                "column": column,
+                "kind": "string",
+                "totalRows": 0,
+                "nonNullCount": 0,
+                "nullCount": 0,
+                "sampleRows": sample_rows,
+                "bins": [],
+                "uniqueCount": 0,
+                "duplicateCount": 0,
+                "topValues": [],
+            }
+
+        if column not in frame.columns:
+            raise ValueError(f"Column '{column}' not found in sampled data.")
+
+        temp_domain = "__profile_tmp__"
+        original_get_data = DataService.get_data
+        try:
+            DataService.get_data = staticmethod(lambda _layer, _domain, _ticker=None, limit=None, sort_by_date=None: frame.to_dict("records"))  # type: ignore[method-assign]
+            payload = DataService.get_column_profile(
+                layer=layer,
+                domain=temp_domain,
+                column=column,
+                ticker=None,
+                bins=bins,
+                sample_rows=sample_rows,
+                top_values=top_values,
+            )
+            payload["domain"] = domain
+            return payload
+        finally:
+            DataService.get_data = original_get_data  # type: ignore[method-assign]

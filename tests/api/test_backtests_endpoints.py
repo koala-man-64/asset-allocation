@@ -50,6 +50,21 @@ def _sample_definition() -> ResolvedBacktestDefinition:
                 "costModel": "default",
                 "rankingSchemaName": "quality",
                 "intrabarConflictPolicy": "stop_first",
+                "regimePolicy": {
+                    "enabled": True,
+                    "modelName": "default-regime",
+                    "targetGrossExposureByRegime": {
+                        "trending_bull": 1.0,
+                        "trending_bear": 0.5,
+                        "choppy_mean_reversion": 0.75,
+                        "high_vol": 0.0,
+                        "unclassified": 0.0,
+                    },
+                    "blockOnTransition": True,
+                    "blockOnUnclassified": True,
+                    "honorHaltFlag": True,
+                    "onBlocked": "skip_entries",
+                },
                 "exits": [],
             }
         ),
@@ -63,6 +78,21 @@ def _sample_definition() -> ResolvedBacktestDefinition:
             "costModel": "default",
             "rankingSchemaName": "quality",
             "intrabarConflictPolicy": "stop_first",
+            "regimePolicy": {
+                "enabled": True,
+                "modelName": "default-regime",
+                "targetGrossExposureByRegime": {
+                    "trending_bull": 1.0,
+                    "trending_bear": 0.5,
+                    "choppy_mean_reversion": 0.75,
+                    "high_vol": 0.0,
+                    "unclassified": 0.0,
+                },
+                "blockOnTransition": True,
+                "blockOnUnclassified": True,
+                "honorHaltFlag": True,
+                "onBlocked": "skip_entries",
+            },
             "exits": [],
         },
         strategy_universe=universe,
@@ -95,6 +125,9 @@ def _sample_definition() -> ResolvedBacktestDefinition:
         ranking_universe_name="large-cap-quality",
         ranking_universe_version=5,
         ranking_universe=universe,
+        regime_model_name="default-regime",
+        regime_model_version=1,
+        regime_model_config={"highVolEnterThreshold": 28.0},
     )
 
 
@@ -195,9 +228,13 @@ async def test_submit_backtest_freezes_pinned_versions_and_queues_run(
     assert captured["ranking_schema_version"] == 7
     assert captured["universe_name"] == "large-cap-quality"
     assert captured["universe_version"] == 5
+    assert captured["regime_model_name"] == "default-regime"
+    assert captured["regime_model_version"] == 1
     effective_config = captured["effective_config"]
     assert isinstance(effective_config, dict)
     assert effective_config["pins"]["rankingSchemaVersion"] == 7
+    assert effective_config["pins"]["regimeModelName"] == "default-regime"
+    assert effective_config["pins"]["regimeModelVersion"] == 1
     assert effective_config["execution"]["barsResolved"] == 2
 
 

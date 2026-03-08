@@ -951,7 +951,18 @@ export const apiService = {
   ): Promise<Record<string, unknown>[]> {
     const options = optionsOrSignal instanceof AbortSignal ? undefined : optionsOrSignal;
     const resolvedSignal = optionsOrSignal instanceof AbortSignal ? optionsOrSignal : signal;
-    const endpoint = `/data/${layer}/${domain}`;
+    const normalizedDomain = String(domain || '').trim();
+    if (layer === 'gold' && normalizedDomain.startsWith('regime/')) {
+      const dataset = normalizedDomain.slice('regime/'.length);
+      return request<Record<string, unknown>[]>(`/data/gold/regime/${encodeURIComponent(dataset)}`, {
+        params: {
+          limit,
+          date_sort: options?.sortByDate
+        },
+        signal: resolvedSignal
+      });
+    }
+    const endpoint = `/data/${layer}/${normalizedDomain}`;
     return request<Record<string, unknown>[]>(endpoint, {
       params: {
         ticker,
@@ -1029,9 +1040,22 @@ export const apiService = {
     } = {},
     signal?: AbortSignal
   ): Promise<DataProfilingResponse> {
+    const normalizedDomain = String(domain || '').trim();
+    if (layer === 'gold' && normalizedDomain.startsWith('regime/')) {
+      const dataset = normalizedDomain.slice('regime/'.length);
+      return request<DataProfilingResponse>(`/data/gold/regime/${encodeURIComponent(dataset)}/profile`, {
+        params: {
+          column,
+          bins: params.bins,
+          sampleRows: params.sampleRows,
+          topValues: params.topValues
+        },
+        signal
+      });
+    }
     return request<DataProfilingResponse>(`/data/${layer}/profile`, {
       params: {
-        domain,
+        domain: normalizedDomain,
         column,
         ticker: params.ticker,
         bins: params.bins,

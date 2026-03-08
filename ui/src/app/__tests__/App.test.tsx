@@ -65,6 +65,10 @@ vi.mock('@/app/components/pages/DataExplorerPage', () => ({
   DataExplorerPage: () => <div data-testid="mock-data-explorer">Mock Data Explorer</div>
 }));
 
+vi.mock('@/app/components/pages/RegimeMonitorPage', () => ({
+  RegimeMonitorPage: () => <div data-testid="mock-regime-monitor">Mock Regime Monitor</div>
+}));
+
 vi.mock('@/app/components/pages/StrategyConfigPage', () => ({
   StrategyConfigPage: () => <div data-testid="mock-strategy-config">Mock Strategy Workbench</div>
 }));
@@ -122,6 +126,13 @@ describe('App Smoke Test', () => {
     renderWithProviders(<App />);
 
     expect(await screen.findByTestId('mock-ranking-config')).toBeInTheDocument();
+  });
+
+  it('renders the regime monitor route through the application shell', async () => {
+    window.history.pushState({}, 'Regimes', '/regimes');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-regime-monitor')).toBeInTheDocument();
   });
 
   it('renders the universe workbench route through the application shell', async () => {

@@ -32,8 +32,12 @@ import type {
   ExitRulePriceField,
   ExitRuleType,
   IntrabarConflictPolicy,
+  RegimeBlockedAction,
+  RegimeCode,
+  RegimePolicy,
   StrategyDetail,
-  StrategySummary
+  StrategySummary,
+  TargetGrossExposureByRegime
 } from '@/types/strategy';
 
 interface StrategyEditorProps {
@@ -64,6 +68,44 @@ const INTRABAR_OPTIONS: Array<{ value: IntrabarConflictPolicy; label: string }> 
   { value: 'priority_order', label: 'Priority Order' }
 ];
 
+const DEFAULT_REGIME_EXPOSURES: TargetGrossExposureByRegime = {
+  trending_bull: 1.0,
+  trending_bear: 0.5,
+  choppy_mean_reversion: 0.75,
+  high_vol: 0.0,
+  unclassified: 0.0
+};
+
+const DEFAULT_REGIME_POLICY: RegimePolicy = {
+  enabled: false,
+  modelName: 'default-regime',
+  targetGrossExposureByRegime: DEFAULT_REGIME_EXPOSURES,
+  blockOnTransition: true,
+  blockOnUnclassified: true,
+  honorHaltFlag: true,
+  onBlocked: 'skip_entries'
+};
+
+const REGIME_CODES: Array<{ value: RegimeCode; label: string }> = [
+  { value: 'trending_bull', label: 'Trending Bull' },
+  { value: 'trending_bear', label: 'Trending Bear' },
+  { value: 'choppy_mean_reversion', label: 'Choppy Mean Reversion' },
+  { value: 'high_vol', label: 'High Vol' },
+  { value: 'unclassified', label: 'Unclassified' }
+];
+
+const REGIME_BLOCKED_ACTIONS: Array<{ value: RegimeBlockedAction; label: string }> = [
+  { value: 'skip_entries', label: 'Skip Entries' },
+  { value: 'skip_rebalance', label: 'Skip Rebalance' }
+];
+
+function buildDefaultRegimePolicy(): RegimePolicy {
+  return {
+    ...DEFAULT_REGIME_POLICY,
+    targetGrossExposureByRegime: { ...DEFAULT_REGIME_EXPOSURES }
+  };
+}
+
 function buildEmptyStrategy(): StrategyDetail {
   return {
     name: '',
@@ -78,7 +120,30 @@ function buildEmptyStrategy(): StrategyDetail {
       holdingPeriod: 21,
       costModel: 'default',
       intrabarConflictPolicy: 'stop_first',
+      regimePolicy: buildDefaultRegimePolicy(),
       exits: []
+    }
+  };
+}
+
+function normalizeStrategyDetail(strategy: StrategyDetail): StrategyDetail {
+  const base = buildEmptyStrategy();
+  const incomingPolicy = strategy.config.regimePolicy;
+  return {
+    ...base,
+    ...strategy,
+    config: {
+      ...base.config,
+      ...strategy.config,
+      regimePolicy: {
+        ...buildDefaultRegimePolicy(),
+        ...(incomingPolicy || {}),
+        targetGrossExposureByRegime: {
+          ...DEFAULT_REGIME_EXPOSURES,
+          ...(incomingPolicy?.targetGrossExposureByRegime || {})
+        }
+      },
+      exits: strategy.config.exits || []
     }
   };
 }
@@ -208,7 +273,7 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
     if (!open) return;
     if (isEditing) {
       if (detailQuery.data) {
-        reset(detailQuery.data);
+        reset(normalizeStrategyDetail(detailQuery.data));
       }
       return;
     }
@@ -241,6 +306,7 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
   const watchedRankingSchema = watch('config.rankingSchemaName') || '__none__';
   const watchedPolicy = watch('config.intrabarConflictPolicy');
   const watchedLongOnly = watch('config.longOnly');
+  const watchedRegimePolicy = watch('config.regimePolicy') || buildDefaultRegimePolicy();
   const watchedExits = watch('config.exits') || [];
 
   const addExitRule = () => {
@@ -475,6 +541,141 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                       })
                     }
                   />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 border-t pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium text-muted-foreground">Regime Policy</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Gate entries or rebalance actions using the gold regime monitor and scale gross exposure by confirmed regime.
+                  </p>
+                </div>
+                <Switch
+                  aria-label="Toggle regime policy"
+                  checked={Boolean(watchedRegimePolicy.enabled)}
+                  onCheckedChange={(checked) =>
+                    setValue('config.regimePolicy.enabled', Boolean(checked), {
+                      shouldDirty: true,
+                      shouldTouch: true
+                    })
+                  }
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-2 xl:col-span-2">
+                  <Label htmlFor="regime-model-name">Model Name</Label>
+                  <Input
+                    id="regime-model-name"
+                    {...register('config.regimePolicy.modelName')}
+                    placeholder="default-regime"
+                  />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="regime-on-blocked">Blocked Action</Label>
+                  <Select
+                    value={watchedRegimePolicy.onBlocked}
+                    onValueChange={(value) =>
+                      setValue('config.regimePolicy.onBlocked', value as RegimeBlockedAction, {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  >
+                    <SelectTrigger id="regime-on-blocked">
+                      <SelectValue placeholder="Select blocked action" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REGIME_BLOCKED_ACTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Block On Transition</p>
+                    <p className="text-xs text-muted-foreground">Stops new risk during the 25-28 vol hysteresis band.</p>
+                  </div>
+                  <Switch
+                    aria-label="Toggle block on transition"
+                    checked={Boolean(watchedRegimePolicy.blockOnTransition)}
+                    onCheckedChange={(checked) =>
+                      setValue('config.regimePolicy.blockOnTransition', Boolean(checked), {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Block On Unclassified</p>
+                    <p className="text-xs text-muted-foreground">Keeps the strategy conservative when regime inputs are missing or unresolved.</p>
+                  </div>
+                  <Switch
+                    aria-label="Toggle block on unclassified"
+                    checked={Boolean(watchedRegimePolicy.blockOnUnclassified)}
+                    onCheckedChange={(checked) =>
+                      setValue('config.regimePolicy.blockOnUnclassified', Boolean(checked), {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Honor Halt Flag</p>
+                    <p className="text-xs text-muted-foreground">Applies the VIX 32.0 two-day halt overlay before new risk is opened.</p>
+                  </div>
+                  <Switch
+                    aria-label="Toggle honor halt flag"
+                    checked={Boolean(watchedRegimePolicy.honorHaltFlag)}
+                    onCheckedChange={(checked) =>
+                      setValue('config.regimePolicy.honorHaltFlag', Boolean(checked), {
+                        shouldDirty: true,
+                        shouldTouch: true
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground">Target Gross Exposure By Regime</h4>
+                  <p className="text-xs text-muted-foreground">
+                    These multipliers only apply when the regime is confirmed and not blocked by transition, unclassified, or halt overlays.
+                  </p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  {REGIME_CODES.map((regime) => (
+                    <div key={regime.value} className="grid gap-2">
+                      <Label htmlFor={`regime-exposure-${regime.value}`}>{regime.label}</Label>
+                      <Input
+                        id={`regime-exposure-${regime.value}`}
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        {...register(
+                          `config.regimePolicy.targetGrossExposureByRegime.${regime.value}` as const,
+                          { valueAsNumber: true }
+                        )}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

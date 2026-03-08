@@ -289,6 +289,12 @@ TICKERS_TO_ADD = [
         "Industry": "Index",
     },
     {
+        "Symbol": "^VIX3M",
+        "Description": "3-Month Volatility Index",
+        "Sector": "Market Analysis",
+        "Industry": "Index",
+    },
+    {
         "Symbol": "UST",
         "Description": "US Treasury ETF",
         "Sector": "Market Analysis",

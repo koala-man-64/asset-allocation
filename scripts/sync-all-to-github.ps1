@@ -162,6 +162,7 @@ $ConfigPatterns = @(
     "^KUBERNETES_NAMESPACE$",
     "^AKS_CLUSTER_NAME$",
     "^API_AUTH_MODE$",
+    "^BACKTEST_ACA_JOB_NAME$",
     "^API_KEY_HEADER$",
     "^API_ROOT_PREFIX$",
     "^API_INGRESS_EXTERNAL$",
@@ -169,6 +170,7 @@ $ConfigPatterns = @(
     "^API_CSP$",
     "^API_CORS_ALLOW_ORIGINS$",
     "^API_OIDC_",
+    "^REGIME_ACA_JOB_NAME$",
     "^UI_"
 )
 

@@ -103,6 +103,13 @@ export type ExitRuleAction = 'exit_full';
 export type ExitRulePriceField = 'open' | 'high' | 'low' | 'close';
 export type ExitRuleReference = 'entry_price' | 'highest_since_entry';
 export type IntrabarConflictPolicy = 'stop_first' | 'take_profit_first' | 'priority_order';
+export type RegimeCode =
+  | 'trending_bull'
+  | 'trending_bear'
+  | 'choppy_mean_reversion'
+  | 'high_vol'
+  | 'unclassified';
+export type RegimeBlockedAction = 'skip_entries' | 'skip_rebalance';
 export type UniverseSource = 'postgres_gold';
 export type UniverseGroupOperator = 'and' | 'or';
 export type UniverseConditionOperator =
@@ -194,6 +201,24 @@ export interface UniversePreviewResponse {
   warnings: string[];
 }
 
+export interface TargetGrossExposureByRegime {
+  trending_bull: number;
+  trending_bear: number;
+  choppy_mean_reversion: number;
+  high_vol: number;
+  unclassified: number;
+}
+
+export interface RegimePolicy {
+  enabled: boolean;
+  modelName: string;
+  targetGrossExposureByRegime: TargetGrossExposureByRegime;
+  blockOnTransition: boolean;
+  blockOnUnclassified: boolean;
+  honorHaltFlag: boolean;
+  onBlocked: RegimeBlockedAction;
+}
+
 export interface StrategyConfig {
   universeConfigName?: string;
   universe?: UniverseDefinition;
@@ -205,6 +230,7 @@ export interface StrategyConfig {
   costModel: string;
   rankingSchemaName?: string;
   intrabarConflictPolicy: IntrabarConflictPolicy;
+  regimePolicy?: RegimePolicy;
   exits: ExitRule[];
 }
 

@@ -794,6 +794,7 @@ def _default_layer_specs() -> List[LayerProbeSpec]:
                 DomainSpec("finance/", trigger_type="manual"),
                 DomainSpec("earnings/", trigger_type="manual"),
                 DomainSpec("targets/", trigger_type="manual"),
+                DomainSpec("regime/", trigger_type="manual"),
             ),
         ),
         LayerProbeSpec(
@@ -861,6 +862,10 @@ def _get_domain_description(layer_name: str, name: str) -> str:
         if "silver" in l_name: return "Standardized consensus targets"
         if "gold" in l_name: return "Consensus upside/downside metrics"
         return "Analyst price targets"
+
+    if "regime" in n:
+        if "gold" in l_name: return "Market-wide regime monitor outputs"
+        return "Regime monitor outputs"
     
     return ""  # Fallback empty
 

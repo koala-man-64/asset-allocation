@@ -14,12 +14,30 @@ interface DomainOption {
 }
 
 const containerOptions: ContainerLayer[] = ['bronze', 'silver', 'gold'];
-const domainOptions: DomainOption[] = [
-  { value: 'market', label: 'Market' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'earnings', label: 'Earnings' },
-  { value: 'price-target', label: 'Price Target' }
-];
+const domainOptionsByLayer: Record<ContainerLayer, DomainOption[]> = {
+  bronze: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Price Target' }
+  ],
+  silver: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Price Target' }
+  ],
+  gold: [
+    { value: 'market', label: 'Market' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'earnings', label: 'Earnings' },
+    { value: 'price-target', label: 'Price Target' },
+    { value: 'regime/inputs', label: 'Regime Inputs' },
+    { value: 'regime/history', label: 'Regime History' },
+    { value: 'regime/latest', label: 'Regime Latest' },
+    { value: 'regime/transitions', label: 'Regime Transitions' }
+  ]
+};
 
 const controlClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/40';
@@ -36,6 +54,7 @@ function toInputSafeNumber(raw: string): number {
 export function DataProfilingPage() {
   const [layer, setLayer] = useState<ContainerLayer>('gold');
   const [domain, setDomain] = useState<string>('market');
+  const domainOptions = useMemo(() => domainOptionsByLayer[layer], [layer]);
   const [column, setColumn] = useState<string>('');
   const [bins, setBins] = useState<number>(20);
   const [sampleRows, setSampleRows] = useState<number>(12000);
@@ -48,6 +67,13 @@ export function DataProfilingPage() {
   const [profile, setProfile] = useState<DataProfilingResponse | null>(null);
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (domainOptions.some((option) => option.value === domain)) {
+      return;
+    }
+    setDomain(domainOptions[0]?.value ?? 'market');
+  }, [domain, domainOptions]);
 
   const loadColumns = useCallback(async () => {
     setColumnsLoading(true);

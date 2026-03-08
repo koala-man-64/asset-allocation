@@ -25,6 +25,7 @@ import {
   Pin,
   PinOff,
   Globe,
+  Orbit,
   Database,
   Bug,
   SlidersHorizontal,
@@ -58,6 +59,7 @@ const navSections: NavSection[] = [
       { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
       { path: '/data-profiling', label: 'Data Profiling', icon: BarChart3 },
       { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
+      { path: '/regimes', label: 'Regime Monitor', icon: Orbit },
       { path: '/system-status', label: 'System Status', icon: Activity },
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
       { path: '/symbol-purge', label: 'Symbol Purge', icon: Filter },
@@ -80,6 +82,7 @@ const findNavItem = (path: string): NavItem | undefined => {
 };
 
 const PINNED_TABS_COOKIE = 'ag_pinned_tabs';
+const EXPANDED_NAV_WIDTH_CLASS = 'w-[280px]';
 
 export function LeftNavigation() {
   const [collapsed, setCollapsed] = useState(false);
@@ -217,7 +220,7 @@ export function LeftNavigation() {
     <div
       className={cn(
         'group/sidebar flex flex-col border-r bg-card h-full transition-all duration-300 ease-in-out',
-        collapsed ? 'w-[64px]' : 'w-[240px]'
+        collapsed ? 'w-[64px]' : EXPANDED_NAV_WIDTH_CLASS
       )}
     >
       <div className="flex h-14 items-center border-b px-3 justify-between">
