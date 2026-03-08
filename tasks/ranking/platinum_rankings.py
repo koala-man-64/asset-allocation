@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date
-from typing import Iterable
 
 from core.logging_config import configure_logging
 from core.ranking_engine.service import materialize_strategy_rankings

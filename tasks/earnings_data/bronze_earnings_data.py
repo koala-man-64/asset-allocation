@@ -682,7 +682,6 @@ def fetch_and_save_raw(
     should_fetch_historical = True
 
     scheduled_rows = _build_scheduled_earnings_rows(symbol, calendar_rows)
-    today = _utc_today()
 
     # Freshness gate only skips the per-symbol historical API fetch. Scheduled rows are still
     # merged every run from the bulk earnings-calendar feed.

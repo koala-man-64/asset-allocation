@@ -953,7 +953,6 @@ def main() -> int:
 if __name__ == "__main__":
     from tasks.common.job_trigger import ensure_api_awake_from_env
     from tasks.common.system_health_markers import write_system_health_marker
-    from core import core as mdc
 
     job_name = "gold-market-job"
 
