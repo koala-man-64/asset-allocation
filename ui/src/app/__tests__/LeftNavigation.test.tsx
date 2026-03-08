@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LeftNavigation } from '../components/layout/LeftNavigation';
 import { BrowserRouter } from 'react-router-dom';
@@ -42,30 +42,33 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <div data-testid="icon-down" />
 }));
 
+const renderNavigation = () =>
+  render(
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <LeftNavigation />
+      </BrowserRouter>
+    </QueryClientProvider>
+  );
+
 describe('LeftNavigation', () => {
+  beforeEach(() => {
+    document.cookie = 'ag_pinned_tabs=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+    queryClient.clear();
+  });
+
   it('renders navigation sections and items', () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <LeftNavigation />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderNavigation();
 
     expect(screen.getByText('Stock Explorer')).toBeDefined();
     expect(screen.getByText('Data Quality')).toBeDefined();
     expect(screen.getByText('System Status')).toBeDefined();
+    expect(screen.getByText('Strategies')).toBeDefined();
     expect(screen.getByText('UPTIME CLOCK')).toBeDefined();
   });
 
   it('toggles collapsed state when clicking the button', () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <LeftNavigation />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderNavigation();
 
     const toggleButton = screen.getByRole('button', { name: /icon-(left|right)/i });
     fireEvent.click(toggleButton);
@@ -76,21 +79,15 @@ describe('LeftNavigation', () => {
     expect(toggleButton).toBeDefined();
   });
 
-  it('moves pinned items to the pinned section without duplication', async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <LeftNavigation />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+  it('moves strategies to the pinned section without duplication', async () => {
+    renderNavigation();
 
     await waitFor(() => {
-      expect(screen.getAllByText('Data Quality').length).toBe(1);
+      expect(screen.getAllByText('Strategies').length).toBe(1);
     });
 
-    const dataQualityLink = screen.getByRole('link', { name: 'Data Quality' });
-    const navRow = dataQualityLink.closest('div.group.relative.flex.items-center');
+    const strategiesLink = screen.getByRole('link', { name: 'Strategies' });
+    const navRow = strategiesLink.closest('div.group.relative.flex.items-center');
     expect(navRow).toBeTruthy();
 
     const pinButton = navRow?.querySelector('button[title="Pin to top"]');
@@ -99,6 +96,6 @@ describe('LeftNavigation', () => {
     fireEvent.click(pinButton as HTMLButtonElement);
 
     expect(screen.getByText('PINNED')).toBeDefined();
-    expect(screen.getAllByText('Data Quality').length).toBe(1);
+    expect(screen.getAllByText('Strategies').length).toBe(1);
   });
 });

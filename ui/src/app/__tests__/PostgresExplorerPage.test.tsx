@@ -122,6 +122,78 @@ describe('PostgresExplorerPage', () => {
     });
   });
 
+  it('does not load metadata for the previously selected table after a schema change', async () => {
+    vi.mocked(PostgresService.getTableMetadata).mockImplementation(async (schema: string, table: string) => {
+      if (schema === 'gold' && table === 'symbols') {
+        throw new Error('stale metadata request');
+      }
+      return {
+        schema_name: schema,
+        table_name: table,
+        primary_key: ['symbol'],
+        can_edit: true,
+        edit_reason: null,
+        columns: [
+          {
+            name: 'symbol',
+            data_type: 'TEXT',
+            nullable: false,
+            primary_key: true,
+            editable: true,
+            edit_reason: null
+          }
+        ]
+      };
+    });
+
+    renderWithProviders(<PostgresExplorerPage />);
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
+    });
+
+    fireEvent.change(screen.getByRole('combobox', { name: /schema/i }), {
+      target: { value: 'gold' }
+    });
+
+    await waitFor(() => {
+      expect(PostgresService.listTables).toHaveBeenCalledWith('gold');
+    });
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('gold', 'market_features');
+    });
+
+    expect(PostgresService.getTableMetadata).not.toHaveBeenCalledWith('gold', 'symbols');
+    expect(screen.queryByText(/stale metadata request/i)).not.toBeInTheDocument();
+  });
+
+  it('clears the visible error when the table dropdown changes', async () => {
+    vi.mocked(PostgresService.queryTable).mockRejectedValueOnce(new Error('query exploded'));
+
+    renderWithProviders(<PostgresExplorerPage />);
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /query table/i }));
+
+    await screen.findByText(/query exploded/i);
+
+    fireEvent.change(screen.getByRole('combobox', { name: /table/i }), {
+      target: { value: 'runtime_config' }
+    });
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'runtime_config');
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/query exploded/i)).not.toBeInTheDocument();
+    });
+  });
+
   it('purges the selected table after confirmation', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 

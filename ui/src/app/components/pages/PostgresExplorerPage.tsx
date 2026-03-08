@@ -177,6 +177,33 @@ export const PostgresExplorerPage: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState | null>(null);
 
+  const resetSelectionState = useCallback(() => {
+    setError(null);
+    setStatusMessage(null);
+    setData([]);
+    setEditState(null);
+  }, []);
+
+  const handleSchemaChange = useCallback(
+    (schema: string) => {
+      resetSelectionState();
+      setTables([]);
+      setSelectedTable('');
+      setTableMetadata(null);
+      setSelectedSchema(schema);
+    },
+    [resetSelectionState]
+  );
+
+  const handleTableChange = useCallback(
+    (table: string) => {
+      resetSelectionState();
+      setTableMetadata(null);
+      setSelectedTable(table);
+    },
+    [resetSelectionState]
+  );
+
   const fetchData = useCallback(async () => {
     if (!selectedSchema || !selectedTable) return;
 
@@ -331,9 +358,14 @@ export const PostgresExplorerPage: React.FC = () => {
   }, [closeEditor, editState, fetchData, selectedSchema, selectedTable, tableMetadata]);
 
   useEffect(() => {
+    let isActive = true;
+
     const loadSchemas = async () => {
       try {
         const loadedSchemas = (await PostgresService.listSchemas()).filter(isVisibleSchema);
+        if (!isActive) {
+          return;
+        }
         setSchemas(loadedSchemas);
         setSelectedSchema((current) => {
           if (current && loadedSchemas.includes(current)) {
@@ -348,11 +380,22 @@ export const PostgresExplorerPage: React.FC = () => {
       }
     };
     void loadSchemas();
+    return () => {
+      isActive = false;
+    };
   }, []);
 
   useEffect(() => {
+    let isActive = true;
+
     const loadTables = async () => {
-      if (!selectedSchema) return;
+      if (!selectedSchema) {
+        setTables([]);
+        setSelectedTable('');
+        setTableMetadata(null);
+        return;
+      }
+
       setTablesLoading(true);
       setError(null);
       setStatusMessage(null);
@@ -363,11 +406,17 @@ export const PostgresExplorerPage: React.FC = () => {
       setEditState(null);
       try {
         const loadedTables = await PostgresService.listTables(selectedSchema);
+        if (!isActive) {
+          return;
+        }
         setTables(loadedTables);
         if (loadedTables.length > 0) {
           setSelectedTable(loadedTables[0]);
         }
       } catch (err) {
+        if (!isActive) {
+          return;
+        }
         console.error('Failed to load tables', err);
         const message = formatSystemStatusText(err);
         setError(
@@ -376,13 +425,20 @@ export const PostgresExplorerPage: React.FC = () => {
             : `Failed to load tables for schema ${selectedSchema}`
         );
       } finally {
-        setTablesLoading(false);
+        if (isActive) {
+          setTablesLoading(false);
+        }
       }
     };
     void loadTables();
+    return () => {
+      isActive = false;
+    };
   }, [selectedSchema]);
 
   useEffect(() => {
+    let isActive = true;
+
     const loadTableMetadata = async () => {
       if (!selectedSchema || !selectedTable) {
         setTableMetadata(null);
@@ -390,12 +446,20 @@ export const PostgresExplorerPage: React.FC = () => {
       }
 
       setTableMetadataLoading(true);
+      setError(null);
+      setStatusMessage(null);
       setTableMetadata(null);
       setEditState(null);
       try {
         const metadata = await PostgresService.getTableMetadata(selectedSchema, selectedTable);
+        if (!isActive) {
+          return;
+        }
         setTableMetadata(metadata);
       } catch (err) {
+        if (!isActive) {
+          return;
+        }
         console.error('Failed to load table metadata', err);
         const message = formatSystemStatusText(err);
         setError(
@@ -404,10 +468,15 @@ export const PostgresExplorerPage: React.FC = () => {
             : `Failed to load table metadata for ${selectedSchema}.${selectedTable}`
         );
       } finally {
-        setTableMetadataLoading(false);
+        if (isActive) {
+          setTableMetadataLoading(false);
+        }
       }
     };
     void loadTableMetadata();
+    return () => {
+      isActive = false;
+    };
   }, [selectedSchema, selectedTable]);
 
   const controlClass =
@@ -439,7 +508,7 @@ export const PostgresExplorerPage: React.FC = () => {
             <select
               id="postgres-schema"
               value={selectedSchema}
-              onChange={(e) => setSelectedSchema(e.target.value)}
+              onChange={(e) => handleSchemaChange(e.target.value)}
               disabled={schemas.length === 0}
               className={controlClass}
             >
@@ -460,7 +529,7 @@ export const PostgresExplorerPage: React.FC = () => {
             <select
               id="postgres-table"
               value={selectedTable}
-              onChange={(e) => setSelectedTable(e.target.value)}
+              onChange={(e) => handleTableChange(e.target.value)}
               disabled={tablesLoading || tables.length === 0}
               className={`${controlClass} disabled:opacity-50`}
             >

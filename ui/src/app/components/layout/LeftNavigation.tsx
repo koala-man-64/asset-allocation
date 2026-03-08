@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Activity,
   TrendingUp,
+  Target,
   BarChart3,
   ScanSearch,
   Pin,
@@ -60,6 +61,7 @@ const navSections: NavSection[] = [
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
       { path: '/symbol-purge', label: 'Symbol Purge', icon: Filter },
       { path: '/runtime-config', label: 'Runtime Config', icon: SlidersHorizontal },
+      { path: '/strategies', label: 'Strategies', icon: Target },
       { path: '/postgres-explorer', label: 'Postgres Explorer', icon: Database },
       { path: '/gold-materialization', label: 'Gold Materialization', icon: SlidersHorizontal }
     ]

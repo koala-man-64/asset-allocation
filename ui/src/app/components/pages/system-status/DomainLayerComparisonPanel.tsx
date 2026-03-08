@@ -210,6 +210,35 @@ function formatStorageBytes(value: number | null | undefined): string {
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function formatDateRangeBoundary(value: string | null | undefined): string {
+  if (!value) return '—';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toISOString().slice(0, 10);
+}
+
+function formatMetadataDateRange(metadata?: DomainMetadata | null): string | null {
+  const min = metadata?.dateRange?.min;
+  const max = metadata?.dateRange?.max;
+  if (!min && !max) return null;
+
+  const formattedMin = formatDateRangeBoundary(min);
+  const formattedMax = formatDateRangeBoundary(max);
+  if (min && max && formattedMin === formattedMax) {
+    return formattedMin;
+  }
+  return `${formattedMin} → ${formattedMax}`;
+}
+
+function describeMetadataDateRange(metadata?: DomainMetadata | null): string | null {
+  const fragments = [
+    metadata?.dateRange?.column ? `column=${metadata.dateRange.column}` : null,
+    metadata?.dateRange?.source ? `source=${metadata.dateRange.source}` : null
+  ].filter((fragment): fragment is string => Boolean(fragment));
+
+  return fragments.length > 0 ? fragments.join(' • ') : null;
+}
+
 function compareSymbols(
   current: DomainMetadata,
   previous: DomainMetadata
@@ -1558,6 +1587,8 @@ export function DomainLayerComparisonPanel({
                         : { text: 'blacklist n/a', className: 'text-mcm-walnut/70' };
                       const columnCount = resolveColumnCount(metadata);
                       const storageBytes = metadata?.totalBytes;
+                      const dateRangeDisplay = formatMetadataDateRange(metadata);
+                      const dateRangeTooltip = describeMetadataDateRange(metadata);
                       const columnStorageSummary =
                         [
                           columnCount !== null ? formatColumnCount(columnCount) : null,
@@ -1622,6 +1653,8 @@ export function DomainLayerComparisonPanel({
                         symbolComparison,
                         columnCount,
                         columnStorageSummary,
+                        dateRangeDisplay,
+                        dateRangeTooltip,
                         previousLabel,
                         blacklistSummary,
                         financeSubfolderCounts,
@@ -1732,6 +1765,14 @@ export function DomainLayerComparisonPanel({
                                       className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
                                     >
                                       {model.columnStorageSummary}
+                                    </div>
+                                  ) : null}
+                                  {model.dateRangeDisplay ? (
+                                    <div
+                                      className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
+                                      title={model.dateRangeTooltip || undefined}
+                                    >
+                                      range {model.dateRangeDisplay}
                                     </div>
                                   ) : null}
                                   {model.metadataUpdatedAt ? (
@@ -1955,6 +1996,17 @@ export function DomainLayerComparisonPanel({
                                               title={model.scheduleRaw || undefined}
                                             >
                                               {model.scheduleDisplay}
+                                            </span>
+                                          </div>
+                                          <div
+                                            className={`${StatusTypos.MONO} flex items-start gap-1`}
+                                          >
+                                            <span className="text-mcm-walnut/70">date range:</span>
+                                            <span
+                                              className="text-mcm-walnut/90"
+                                              title={model.dateRangeTooltip || undefined}
+                                            >
+                                              {model.dateRangeDisplay || 'N/A'}
                                             </span>
                                           </div>
                                           <div

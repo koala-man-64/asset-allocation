@@ -59,6 +59,12 @@ function primeSnapshot(entry: {
   symbolCount: number;
   columnCount?: number;
   totalBytes?: number;
+  dateRange?: {
+    min?: string;
+    max?: string;
+    source?: 'artifact' | 'partition' | 'stats';
+    column?: string;
+  };
   warnings: string[];
 }) {
   const key = `${entry.layer}/${entry.domain}`;
@@ -330,6 +336,39 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     expect((await screen.findAllByText('9 cols • 2.0 KB')).length).toBeGreaterThan(0);
+  });
+
+  it('shows the date range in medallion-domain metadata and detail subpanels', async () => {
+    primeSnapshot({
+      layer: 'bronze',
+      domain: 'market',
+      container: 'bronze',
+      type: 'delta',
+      computedAt: NOW,
+      symbolCount: 123,
+      dateRange: {
+        min: '2026-01-02T00:00:00Z',
+        max: '2026-03-03T00:00:00Z',
+        source: 'stats',
+        column: 'Date'
+      },
+      warnings: []
+    });
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    expect(await screen.findByText('range 2026-01-02 → 2026-03-03')).toBeInTheDocument();
+    expect(screen.getAllByText('date range:').length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle('column=Date • source=stats').length).toBeGreaterThan(0);
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {

@@ -65,6 +65,10 @@ vi.mock('@/app/components/pages/DataExplorerPage', () => ({
   DataExplorerPage: () => <div data-testid="mock-data-explorer">Mock Data Explorer</div>
 }));
 
+vi.mock('@/app/components/pages/StrategyConfigPage', () => ({
+  StrategyConfigPage: () => <div data-testid="mock-strategy-config">Mock Strategy Workbench</div>
+}));
+
 describe('App Smoke Test', () => {
   it('renders without crashing', async () => {
     window.history.pushState({}, 'System Status', '/system-status');
@@ -96,5 +100,12 @@ describe('App Smoke Test', () => {
       },
       { timeout: 2000 }
     );
+  });
+
+  it('renders the strategy workbench route through the application shell', async () => {
+    window.history.pushState({}, 'Strategies', '/strategies');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-strategy-config')).toBeInTheDocument();
   });
 });
