@@ -1,16 +1,36 @@
 import importlib.util
 import os
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, time as time_value
+from typing import Any, Dict, List, Literal, Optional
 
-import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import MetaData, Table, and_, create_engine, inspect, text
+from sqlalchemy import MetaData, String as SqlString, Table, and_, cast, create_engine, inspect, select, text
 
 from api.service.dependencies import get_settings
 
 router = APIRouter()
 _HIDDEN_EXPLORER_SCHEMAS = frozenset({"information_schema", "public"})
+_BOOLEAN_TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on"})
+_BOOLEAN_FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off"})
+
+
+class QueryFilter(BaseModel):
+    column_name: str = Field(min_length=1)
+    operator: Literal[
+        "eq",
+        "neq",
+        "contains",
+        "starts_with",
+        "ends_with",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "is_null",
+        "is_not_null",
+    ]
+    value: Optional[Any] = None
 
 
 class QueryRequest(BaseModel):
@@ -18,6 +38,7 @@ class QueryRequest(BaseModel):
     table_name: str
     limit: int = Field(default=100, ge=1, le=1000)
     offset: int = Field(default=0, ge=0)
+    filters: List[QueryFilter] = Field(default_factory=list)
 
 
 class TableRequest(BaseModel):
@@ -195,6 +216,185 @@ def _load_table_metadata(
     )
 
 
+def _normalize_data_type(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_text_type(data_type: str) -> bool:
+    normalized = _normalize_data_type(data_type)
+    return any(token in normalized for token in ("char", "text", "uuid", "citext"))
+
+
+def _is_integer_type(data_type: str) -> bool:
+    normalized = _normalize_data_type(data_type)
+    return any(token in normalized for token in ("smallint", "integer", "bigint", "serial"))
+
+
+def _is_numeric_type(data_type: str) -> bool:
+    normalized = _normalize_data_type(data_type)
+    return any(
+        token in normalized
+        for token in ("smallint", "integer", "bigint", "numeric", "decimal", "real", "double", "float", "serial", "money")
+    )
+
+
+def _is_boolean_type(data_type: str) -> bool:
+    return "bool" in _normalize_data_type(data_type)
+
+
+def _is_datetime_type(data_type: str) -> bool:
+    normalized = _normalize_data_type(data_type)
+    return "timestamp" in normalized or "datetime" in normalized
+
+
+def _is_date_type(data_type: str) -> bool:
+    normalized = _normalize_data_type(data_type)
+    return "date" in normalized and "time" not in normalized and "stamp" not in normalized
+
+
+def _is_time_type(data_type: str) -> bool:
+    normalized = _normalize_data_type(data_type)
+    return "time" in normalized and "stamp" not in normalized
+
+
+def _operator_requires_value(operator: str) -> bool:
+    return operator not in {"is_null", "is_not_null"}
+
+
+def _allowed_query_operators(data_type: str) -> set[str]:
+    allowed = {"eq", "neq", "is_null", "is_not_null"}
+    if _is_text_type(data_type):
+        allowed.update({"contains", "starts_with", "ends_with"})
+    if _is_numeric_type(data_type) or _is_datetime_type(data_type) or _is_date_type(data_type) or _is_time_type(data_type):
+        allowed.update({"gt", "gte", "lt", "lte"})
+    return allowed
+
+
+def _parse_iso_datetime(raw_value: Any) -> datetime:
+    candidate = str(raw_value or "").strip()
+    if not candidate:
+        raise ValueError("datetime value is required")
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    return datetime.fromisoformat(candidate)
+
+
+def _coerce_filter_value(column: PostgresColumnMetadata, raw_value: Any) -> Any:
+    if raw_value is None:
+        raise ValueError(f'Filter "{column.name}" requires a value.')
+
+    data_type = column.data_type
+    normalized_value = str(raw_value).strip()
+
+    if not normalized_value and _operator_requires_value("eq"):
+        raise ValueError(f'Filter "{column.name}" requires a value.')
+
+    if _is_boolean_type(data_type):
+        lowered = normalized_value.lower()
+        if lowered in _BOOLEAN_TRUE_VALUES:
+            return True
+        if lowered in _BOOLEAN_FALSE_VALUES:
+            return False
+        raise ValueError(
+            f'Filter "{column.name}" must be a boolean value (true/false, yes/no, 1/0).'
+        )
+
+    if _is_numeric_type(data_type):
+        try:
+            if _is_integer_type(data_type):
+                return int(normalized_value)
+            return float(normalized_value)
+        except ValueError as exc:
+            raise ValueError(f'Filter "{column.name}" must be numeric.') from exc
+
+    if _is_datetime_type(data_type):
+        try:
+            return _parse_iso_datetime(normalized_value)
+        except ValueError as exc:
+            raise ValueError(
+                f'Filter "{column.name}" must be an ISO-8601 timestamp.'
+            ) from exc
+
+    if _is_date_type(data_type):
+        try:
+            return date.fromisoformat(normalized_value)
+        except ValueError as exc:
+            raise ValueError(f'Filter "{column.name}" must be an ISO-8601 date.') from exc
+
+    if _is_time_type(data_type):
+        try:
+            return time_value.fromisoformat(normalized_value)
+        except ValueError as exc:
+            raise ValueError(f'Filter "{column.name}" must be an ISO-8601 time.') from exc
+
+    return normalized_value
+
+
+def _build_query_conditions(
+    table: Table,
+    filters: List[QueryFilter],
+    metadata: TableMetadataResponse,
+) -> List[Any]:
+    if not filters:
+        return []
+
+    metadata_by_name = {column.name: column for column in metadata.columns}
+    conditions: List[Any] = []
+
+    for filter_item in filters:
+        column_metadata = metadata_by_name.get(filter_item.column_name)
+        if not column_metadata:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Unknown query filter column "{filter_item.column_name}".',
+            )
+
+        allowed_operators = _allowed_query_operators(column_metadata.data_type)
+        if filter_item.operator not in allowed_operators:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'Operator "{filter_item.operator}" is not supported for column '
+                    f'"{filter_item.column_name}" ({column_metadata.data_type}).'
+                ),
+            )
+
+        column = table.c[filter_item.column_name]
+
+        if filter_item.operator == "is_null":
+            conditions.append(column.is_(None))
+            continue
+        if filter_item.operator == "is_not_null":
+            conditions.append(column.is_not(None))
+            continue
+
+        try:
+            coerced_value = _coerce_filter_value(column_metadata, filter_item.value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if filter_item.operator == "eq":
+            conditions.append(column == coerced_value)
+        elif filter_item.operator == "neq":
+            conditions.append(column != coerced_value)
+        elif filter_item.operator == "contains":
+            conditions.append(cast(column, SqlString).ilike(f"%{coerced_value}%"))
+        elif filter_item.operator == "starts_with":
+            conditions.append(cast(column, SqlString).ilike(f"{coerced_value}%"))
+        elif filter_item.operator == "ends_with":
+            conditions.append(cast(column, SqlString).ilike(f"%{coerced_value}"))
+        elif filter_item.operator == "gt":
+            conditions.append(column > coerced_value)
+        elif filter_item.operator == "gte":
+            conditions.append(column >= coerced_value)
+        elif filter_item.operator == "lt":
+            conditions.append(column < coerced_value)
+        elif filter_item.operator == "lte":
+            conditions.append(column <= coerced_value)
+
+    return conditions
+
+
 @router.get("/schemas")
 def list_schemas(request: Request) -> List[str]:
     """
@@ -286,15 +486,25 @@ def query_table(payload: QueryRequest, request: Request) -> List[Dict[str, Any]]
             schema_name=payload.schema_name,
             table_name=payload.table_name,
         )
-
-        qualified_table = (
-            f"{_quote_identifier(payload.schema_name)}.{_quote_identifier(payload.table_name)}"
+        table = _reflect_table(
+            engine,
+            schema_name=payload.schema_name,
+            table_name=payload.table_name,
         )
-        query = f"SELECT * FROM {qualified_table} LIMIT {payload.limit} OFFSET {payload.offset}"
+        metadata = _load_table_metadata(
+            insp,
+            schema_name=payload.schema_name,
+            table_name=payload.table_name,
+        )
+        conditions = _build_query_conditions(table, payload.filters, metadata)
+        statement = select(table).limit(payload.limit).offset(payload.offset)
+        if conditions:
+            statement = statement.where(and_(*conditions))
 
-        df = pd.read_sql(query, engine)
-        records = df.where(pd.notnull(df), None).to_dict(orient="records")
-        return records
+        with engine.connect() as conn:
+            rows = conn.execute(statement).mappings().all()
+
+        return [dict(row) for row in rows]
     except HTTPException:
         raise
     except Exception as e:

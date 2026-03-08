@@ -26,6 +26,26 @@ export interface QueryRequest {
   table_name: string;
   limit?: number;
   offset?: number;
+  filters?: QueryFilter[];
+}
+
+export type QueryFilterOperator =
+  | 'eq'
+  | 'neq'
+  | 'contains'
+  | 'starts_with'
+  | 'ends_with'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'is_null'
+  | 'is_not_null';
+
+export interface QueryFilter {
+  column_name: string;
+  operator: QueryFilterOperator;
+  value?: string | number | boolean | null;
 }
 
 export interface PurgeTableResponse extends TableRequest {
