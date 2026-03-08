@@ -25,5 +25,15 @@ export const strategyApi = {
       body: JSON.stringify(strategy),
       signal
     });
+  },
+
+  async deleteStrategy(name: string, signal?: AbortSignal): Promise<{ status: string; message: string }> {
+    return request<{ status: string; message: string }>(
+      `/strategies/${encodeURIComponent(name)}`,
+      {
+        method: 'DELETE',
+        signal
+      }
+    );
   }
 };

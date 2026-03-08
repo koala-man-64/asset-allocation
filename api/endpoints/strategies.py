@@ -107,3 +107,25 @@ async def save_strategy(strategy: StrategyUpsertRequest, request: Request) -> di
     except Exception as e:
         logger.error(f"Error saving strategy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{name}")
+async def delete_strategy(name: str, request: Request) -> dict[str, str]:
+    """
+    Delete a strategy configuration by name.
+    Requires authentication.
+    """
+    validate_auth(request)
+    settings = request.app.state.settings
+    repo = StrategyRepository(settings.postgres_dsn)
+
+    try:
+        deleted = repo.delete_strategy(name)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found")
+        return {"status": "success", "message": f"Strategy '{name}' deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting strategy '{name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))

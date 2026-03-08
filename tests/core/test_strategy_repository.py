@@ -138,3 +138,20 @@ def test_list_strategies_reads_from_core_schema(monkeypatch) -> None:
     sql, params = cursor.execute_calls[0]
     assert "FROM core.strategies" in sql
     assert params is None
+
+
+def test_delete_strategy_deletes_from_core_schema(monkeypatch) -> None:
+    cursor = _FakeCursor(fetchone_result=("momentum",))
+
+    monkeypatch.setattr(
+        "core.strategy_repository.connect",
+        lambda _dsn: _FakeConnection(cursor),
+    )
+
+    repo = StrategyRepository("postgresql://user:pass@localhost/db")
+
+    assert repo.delete_strategy("momentum") is True
+    sql, params = cursor.execute_calls[0]
+    assert "DELETE FROM core.strategies" in sql
+    assert "RETURNING name" in sql
+    assert params == ("momentum",)

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import MetaData, Table, and_, create_engine, inspect, text
 
 from api.service.dependencies import get_settings
 
@@ -23,6 +23,31 @@ class QueryRequest(BaseModel):
 class TableRequest(BaseModel):
     schema_name: str
     table_name: str
+
+
+class PostgresColumnMetadata(BaseModel):
+    name: str
+    data_type: str
+    nullable: bool
+    primary_key: bool
+    editable: bool
+    edit_reason: Optional[str] = None
+
+
+class TableMetadataResponse(BaseModel):
+    schema_name: str
+    table_name: str
+    primary_key: List[str]
+    can_edit: bool
+    edit_reason: Optional[str] = None
+    columns: List[PostgresColumnMetadata]
+
+
+class UpdateRowRequest(BaseModel):
+    schema_name: str
+    table_name: str
+    match: Dict[str, Any] = Field(default_factory=dict)
+    values: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _resolve_postgres_dsn(request: Request) -> Optional[str]:
@@ -105,6 +130,71 @@ def _validate_table_target(insp: Any, *, schema_name: str, table_name: str) -> N
         )
 
 
+def _reflect_table(engine: Any, *, schema_name: str, table_name: str) -> Table:
+    metadata = MetaData()
+    return Table(table_name, metadata, schema=schema_name, autoload_with=engine)
+
+
+def _load_table_metadata(
+    insp: Any,
+    *,
+    schema_name: str,
+    table_name: str,
+) -> TableMetadataResponse:
+    _validate_table_target(
+        insp,
+        schema_name=schema_name,
+        table_name=table_name,
+    )
+
+    pk_constraint = insp.get_pk_constraint(table_name, schema=schema_name) or {}
+    primary_key = [
+        str(name)
+        for name in (pk_constraint.get("constrained_columns") or [])
+        if str(name or "").strip()
+    ]
+    primary_key_set = set(primary_key)
+
+    columns: List[PostgresColumnMetadata] = []
+    has_editable_columns = False
+    for column in insp.get_columns(table_name, schema=schema_name):
+        name = str(column.get("name") or "").strip()
+        if not name:
+            continue
+
+        is_generated = bool(column.get("computed")) or bool(column.get("identity"))
+        editable = not is_generated
+        if editable:
+            has_editable_columns = True
+
+        columns.append(
+            PostgresColumnMetadata(
+                name=name,
+                data_type=str(column.get("type") or ""),
+                nullable=bool(column.get("nullable", True)),
+                primary_key=name in primary_key_set,
+                editable=editable,
+                edit_reason=None if editable else "Generated or identity column is read-only.",
+            )
+        )
+
+    can_edit = bool(primary_key) and has_editable_columns
+    edit_reason: Optional[str] = None
+    if not primary_key:
+        edit_reason = "Table has no primary key; row editing is disabled."
+    elif not has_editable_columns:
+        edit_reason = "Table exposes no editable columns."
+
+    return TableMetadataResponse(
+        schema_name=schema_name,
+        table_name=table_name,
+        primary_key=primary_key,
+        can_edit=can_edit,
+        edit_reason=edit_reason,
+        columns=columns,
+    )
+
+
 @router.get("/schemas")
 def list_schemas(request: Request) -> List[str]:
     """
@@ -154,6 +244,31 @@ def list_tables(schema_name: str, request: Request) -> List[str]:
         engine.dispose()
 
 
+@router.get("/schemas/{schema_name}/tables/{table_name}/metadata")
+def get_table_metadata(schema_name: str, table_name: str, request: Request) -> TableMetadataResponse:
+    """
+    Return column metadata and editing capability for a specific table.
+    """
+    dsn = _resolve_postgres_dsn(request)
+    if not dsn:
+        raise HTTPException(status_code=500, detail="Database connection string not configured.")
+
+    engine = create_engine(dsn)
+    try:
+        insp = inspect(engine)
+        return _load_table_metadata(
+            insp,
+            schema_name=schema_name,
+            table_name=table_name,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load table metadata: {str(e)}")
+    finally:
+        engine.dispose()
+
+
 @router.post("/query")
 def query_table(payload: QueryRequest, request: Request) -> List[Dict[str, Any]]:
     """
@@ -184,6 +299,107 @@ def query_table(payload: QueryRequest, request: Request) -> List[Dict[str, Any]]
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+    finally:
+        engine.dispose()
+
+
+@router.post("/update")
+def update_row(payload: UpdateRowRequest, request: Request) -> Dict[str, Any]:
+    """
+    Update a single row using primary-key match values.
+    """
+    dsn = _resolve_postgres_dsn(request)
+    if not dsn:
+        raise HTTPException(status_code=500, detail="Database connection string not configured.")
+
+    if not payload.values:
+        raise HTTPException(status_code=400, detail="At least one field value is required.")
+
+    engine = create_engine(dsn)
+    try:
+        insp = inspect(engine)
+        metadata = _load_table_metadata(
+            insp,
+            schema_name=payload.schema_name,
+            table_name=payload.table_name,
+        )
+        if not metadata.can_edit:
+            raise HTTPException(
+                status_code=400,
+                detail=metadata.edit_reason or "Row editing is disabled for this table.",
+            )
+
+        missing_match_columns = [
+            column_name for column_name in metadata.primary_key if column_name not in payload.match
+        ]
+        if missing_match_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Primary-key match values are required for row updates: "
+                    + ", ".join(missing_match_columns)
+                ),
+            )
+
+        column_lookup = {column.name: column for column in metadata.columns}
+        unknown_columns = [
+            column_name for column_name in payload.values.keys() if column_name not in column_lookup
+        ]
+        if unknown_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown columns requested for update: {', '.join(sorted(unknown_columns))}",
+            )
+
+        read_only_columns = [
+            column_name
+            for column_name in payload.values.keys()
+            if not column_lookup[column_name].editable
+        ]
+        if read_only_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Read-only columns cannot be updated: "
+                    + ", ".join(sorted(read_only_columns))
+                ),
+            )
+
+        table = _reflect_table(
+            engine,
+            schema_name=payload.schema_name,
+            table_name=payload.table_name,
+        )
+        conditions = []
+        for column_name in metadata.primary_key:
+            column = table.c[column_name]
+            match_value = payload.match.get(column_name)
+            if match_value is None:
+                conditions.append(column.is_(None))
+            else:
+                conditions.append(column == match_value)
+
+        statement = table.update().where(and_(*conditions)).values(**payload.values)
+        with engine.begin() as conn:
+            result = conn.execute(statement)
+
+        row_count = max(int(result.rowcount or 0), 0)
+        if row_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="No row matched the provided primary-key values.",
+            )
+
+        return {
+            "schema_name": payload.schema_name,
+            "table_name": payload.table_name,
+            "row_count": row_count,
+            "updated_columns": sorted(payload.values.keys()),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update row: {str(e)}")
     finally:
         engine.dispose()
 

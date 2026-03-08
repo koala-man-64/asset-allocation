@@ -9,7 +9,9 @@ vi.mock('@/services/PostgresService', () => ({
   PostgresService: {
     listSchemas: vi.fn(),
     listTables: vi.fn(),
+    getTableMetadata: vi.fn(),
     queryTable: vi.fn(),
+    updateRow: vi.fn(),
     purgeTable: vi.fn()
   }
 }));
@@ -32,7 +34,40 @@ describe('PostgresExplorerPage', () => {
       }
       return ['should_not_be_used'];
     });
-    vi.mocked(PostgresService.queryTable).mockResolvedValue([]);
+    vi.mocked(PostgresService.getTableMetadata).mockImplementation(async (schema: string, table: string) => ({
+      schema_name: schema,
+      table_name: table,
+      primary_key: ['symbol'],
+      can_edit: true,
+      edit_reason: null,
+      columns: [
+        {
+          name: 'symbol',
+          data_type: 'TEXT',
+          nullable: false,
+          primary_key: true,
+          editable: true,
+          edit_reason: null
+        },
+        {
+          name: 'company_name',
+          data_type: 'TEXT',
+          nullable: true,
+          primary_key: false,
+          editable: true,
+          edit_reason: null
+        }
+      ]
+    }));
+    vi.mocked(PostgresService.queryTable).mockResolvedValue([
+      { symbol: 'AAPL', company_name: 'Apple' }
+    ]);
+    vi.mocked(PostgresService.updateRow).mockResolvedValue({
+      schema_name: 'core',
+      table_name: 'symbols',
+      row_count: 1,
+      updated_columns: ['company_name']
+    });
     vi.mocked(PostgresService.purgeTable).mockResolvedValue({
       schema_name: 'core',
       table_name: 'symbols',
@@ -57,13 +92,43 @@ describe('PostgresExplorerPage', () => {
     expect(schemaOptions).not.toContain('information_schema');
   });
 
+  it('opens a row editor and saves field updates', async () => {
+    renderWithProviders(<PostgresExplorerPage />);
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /query table/i }));
+
+    await screen.findByText('AAPL');
+
+    fireEvent.click(screen.getByText('AAPL'));
+
+    const nameField = await screen.findByLabelText(/company_name/i);
+    fireEvent.change(nameField, { target: { value: 'Apple Inc' } });
+    fireEvent.click(screen.getByRole('button', { name: /save row/i }));
+
+    await waitFor(() => {
+      expect(PostgresService.updateRow).toHaveBeenCalledWith({
+        schema_name: 'core',
+        table_name: 'symbols',
+        match: { symbol: 'AAPL' },
+        values: {
+          symbol: 'AAPL',
+          company_name: 'Apple Inc'
+        }
+      });
+    });
+  });
+
   it('purges the selected table after confirmation', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderWithProviders(<PostgresExplorerPage />);
 
     await waitFor(() => {
-      expect(PostgresService.listTables).toHaveBeenCalledWith('core');
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
     });
 
     fireEvent.click(screen.getByRole('button', { name: /purge table/i }));

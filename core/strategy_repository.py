@@ -91,6 +91,26 @@ class StrategyRepository:
             logger.error(f"Failed to save strategy '{name}': {e}")
             raise
 
+    def delete_strategy(self, name: str) -> bool:
+        """
+        Deletes a strategy by name.
+        Returns True when a row was removed.
+        """
+        if not self.dsn:
+            raise ValueError("Database connection not configured")
+
+        try:
+            with connect(self.dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"DELETE FROM {STRATEGIES_TABLE} WHERE name = %s RETURNING name",
+                        (name,),
+                    )
+                    return cur.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Failed to delete strategy '{name}': {e}")
+            raise
+
     def list_strategies(self) -> list[Dict]:
         """
         Returns a list of all strategies metadata.

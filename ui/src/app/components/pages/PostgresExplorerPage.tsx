@@ -1,14 +1,163 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { PostgresService } from '@/services/PostgresService';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  PostgresService,
+  type PostgresColumnMetadata,
+  type PostgresTableMetadata
+} from '@/services/PostgresService';
 import { DataTable } from '@/app/components/common/DataTable';
-import { Database, Table as TableIcon, RefreshCw, Trash2 } from 'lucide-react';
+import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/app/components/ui/dialog';
+import { Input } from '@/app/components/ui/input';
+import { Switch } from '@/app/components/ui/switch';
+import { Textarea } from '@/app/components/ui/textarea';
+import { toast } from 'sonner';
+import { Database, Pencil, RefreshCw, Save, Table as TableIcon, Trash2 } from 'lucide-react';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 const HIDDEN_SCHEMAS = new Set(['public', 'information_schema']);
+const BOOLEAN_TRUE_VALUES = new Set(['1', 'true', 't', 'yes', 'y', 'on']);
+const BOOLEAN_FALSE_VALUES = new Set(['0', 'false', 'f', 'no', 'n', 'off']);
+
+type RowData = Record<string, unknown>;
+
+type EditableFieldState = {
+  raw: string;
+  isNull: boolean;
+};
+
+type EditState = {
+  match: Record<string, unknown>;
+  fields: Record<string, EditableFieldState>;
+};
 
 function isVisibleSchema(schema: string): boolean {
   return !HIDDEN_SCHEMAS.has(String(schema || '').trim().toLowerCase());
+}
+
+function normalizeFieldValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  return String(value);
+}
+
+function buildEditState(row: RowData, metadata: PostgresTableMetadata): EditState {
+  const match = metadata.primary_key.reduce<Record<string, unknown>>((acc, columnName) => {
+    acc[columnName] = row[columnName];
+    return acc;
+  }, {});
+
+  const fields = metadata.columns.reduce<Record<string, EditableFieldState>>((acc, column) => {
+    const value = row[column.name];
+    acc[column.name] = {
+      raw: normalizeFieldValue(value),
+      isNull: value === null || value === undefined
+    };
+    return acc;
+  }, {});
+
+  return { match, fields };
+}
+
+function isJsonType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return normalized.includes('json');
+}
+
+function isArrayType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return normalized.includes('array') || normalized.endsWith('[]');
+}
+
+function isBooleanType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return normalized.includes('bool');
+}
+
+function isNumericType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return [
+    'int',
+    'numeric',
+    'decimal',
+    'real',
+    'double',
+    'float',
+    'serial',
+    'money'
+  ].some((token) => normalized.includes(token));
+}
+
+function shouldUseTextarea(column: PostgresColumnMetadata, rawValue: string): boolean {
+  return (
+    isJsonType(column.data_type) ||
+    isArrayType(column.data_type) ||
+    rawValue.includes('\n') ||
+    rawValue.length > 72
+  );
+}
+
+function coerceFieldValue(column: PostgresColumnMetadata, field: EditableFieldState): unknown {
+  if (field.isNull) {
+    return null;
+  }
+
+  const dataType = String(column.data_type || '').toLowerCase();
+  const raw = field.raw;
+  const trimmed = raw.trim();
+
+  if (isJsonType(dataType) || isArrayType(dataType)) {
+    if (!trimmed) {
+      throw new Error(`Field "${column.name}" requires valid JSON.`);
+    }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new Error(`Field "${column.name}" must contain valid JSON.`);
+    }
+  }
+
+  if (isBooleanType(dataType)) {
+    const normalized = trimmed.toLowerCase();
+    if (BOOLEAN_TRUE_VALUES.has(normalized)) {
+      return true;
+    }
+    if (BOOLEAN_FALSE_VALUES.has(normalized)) {
+      return false;
+    }
+    throw new Error(`Field "${column.name}" must be a boolean value.`);
+  }
+
+  if (isNumericType(dataType)) {
+    if (!trimmed) {
+      throw new Error(`Field "${column.name}" must be a numeric value.`);
+    }
+    const numeric = Number(trimmed);
+    if (Number.isNaN(numeric)) {
+      throw new Error(`Field "${column.name}" must be a numeric value.`);
+    }
+    return numeric;
+  }
+
+  return raw;
 }
 
 export const PostgresExplorerPage: React.FC = () => {
@@ -17,12 +166,16 @@ export const PostgresExplorerPage: React.FC = () => {
   const [tables, setTables] = useState<string[]>([]);
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [limit, setLimit] = useState<number>(100);
-  const [data, setData] = useState<Record<string, unknown>[]>([]);
+  const [data, setData] = useState<RowData[]>([]);
+  const [tableMetadata, setTableMetadata] = useState<PostgresTableMetadata | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [purging, setPurging] = useState<boolean>(false);
-  const [metadataLoading, setMetadataLoading] = useState<boolean>(false);
+  const [tablesLoading, setTablesLoading] = useState<boolean>(false);
+  const [tableMetadataLoading, setTableMetadataLoading] = useState<boolean>(false);
+  const [rowSaving, setRowSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [editState, setEditState] = useState<EditState | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!selectedSchema || !selectedTable) return;
@@ -37,6 +190,7 @@ export const PostgresExplorerPage: React.FC = () => {
         limit
       });
       setData(result);
+      setEditState(null);
     } catch (err) {
       setError(formatSystemStatusText(err));
     } finally {
@@ -61,6 +215,7 @@ export const PostgresExplorerPage: React.FC = () => {
         table_name: selectedTable
       });
       setData([]);
+      setEditState(null);
       setStatusMessage(
         `Purged ${result.row_count} rows from ${result.schema_name}.${result.table_name}.`
       );
@@ -70,6 +225,110 @@ export const PostgresExplorerPage: React.FC = () => {
       setPurging(false);
     }
   }, [selectedSchema, selectedTable]);
+
+  const openEditor = useCallback(
+    (row: RowData) => {
+      if (!tableMetadata?.can_edit) {
+        const message = tableMetadata?.edit_reason || 'Row editing is unavailable for this table.';
+        setError(message);
+        return;
+      }
+      setError(null);
+      setStatusMessage(null);
+      setEditState(buildEditState(row, tableMetadata));
+    },
+    [tableMetadata]
+  );
+
+  const closeEditor = useCallback(() => {
+    setEditState(null);
+  }, []);
+
+  const updateFieldRaw = useCallback((columnName: string, raw: string) => {
+    setEditState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        fields: {
+          ...current.fields,
+          [columnName]: {
+            ...current.fields[columnName],
+            raw
+          }
+        }
+      };
+    });
+  }, []);
+
+  const updateFieldNull = useCallback((columnName: string, isNull: boolean) => {
+    setEditState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        fields: {
+          ...current.fields,
+          [columnName]: {
+            ...current.fields[columnName],
+            isNull
+          }
+        }
+      };
+    });
+  }, []);
+
+  const saveRow = useCallback(async () => {
+    if (!selectedSchema || !selectedTable || !tableMetadata || !editState) {
+      return;
+    }
+
+    const values: Record<string, unknown> = {};
+    try {
+      for (const column of tableMetadata.columns) {
+        if (!column.editable) {
+          continue;
+        }
+        const field = editState.fields[column.name];
+        if (!field) {
+          continue;
+        }
+        values[column.name] = coerceFieldValue(column, field);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to validate row values before saving.';
+      toast.error(message);
+      return;
+    }
+
+    if (Object.keys(values).length === 0) {
+      toast.error('This table has no editable columns.');
+      return;
+    }
+
+    setRowSaving(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const result = await PostgresService.updateRow({
+        schema_name: selectedSchema,
+        table_name: selectedTable,
+        match: editState.match,
+        values
+      });
+      closeEditor();
+      await fetchData();
+      setStatusMessage(
+        `Updated ${result.row_count} row in ${result.schema_name}.${result.table_name}.`
+      );
+      toast.success(`Updated ${result.updated_columns.length} field(s) on the selected row.`);
+    } catch (err) {
+      const message = formatSystemStatusText(err);
+      setError(message);
+      toast.error(`Failed to update row: ${message}`);
+    } finally {
+      setRowSaving(false);
+    }
+  }, [closeEditor, editState, fetchData, selectedSchema, selectedTable, tableMetadata]);
 
   useEffect(() => {
     const loadSchemas = async () => {
@@ -94,12 +353,14 @@ export const PostgresExplorerPage: React.FC = () => {
   useEffect(() => {
     const loadTables = async () => {
       if (!selectedSchema) return;
-      setMetadataLoading(true);
+      setTablesLoading(true);
       setError(null);
       setStatusMessage(null);
       setTables([]);
       setSelectedTable('');
+      setTableMetadata(null);
       setData([]);
+      setEditState(null);
       try {
         const loadedTables = await PostgresService.listTables(selectedSchema);
         setTables(loadedTables);
@@ -115,14 +376,48 @@ export const PostgresExplorerPage: React.FC = () => {
             : `Failed to load tables for schema ${selectedSchema}`
         );
       } finally {
-        setMetadataLoading(false);
+        setTablesLoading(false);
       }
     };
     void loadTables();
   }, [selectedSchema]);
 
+  useEffect(() => {
+    const loadTableMetadata = async () => {
+      if (!selectedSchema || !selectedTable) {
+        setTableMetadata(null);
+        return;
+      }
+
+      setTableMetadataLoading(true);
+      setTableMetadata(null);
+      setEditState(null);
+      try {
+        const metadata = await PostgresService.getTableMetadata(selectedSchema, selectedTable);
+        setTableMetadata(metadata);
+      } catch (err) {
+        console.error('Failed to load table metadata', err);
+        const message = formatSystemStatusText(err);
+        setError(
+          message
+            ? `Failed to load table metadata for ${selectedSchema}.${selectedTable}: ${message}`
+            : `Failed to load table metadata for ${selectedSchema}.${selectedTable}`
+        );
+      } finally {
+        setTableMetadataLoading(false);
+      }
+    };
+    void loadTableMetadata();
+  }, [selectedSchema, selectedTable]);
+
   const controlClass =
     'h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/40';
+  const editingEnabled = Boolean(tableMetadata?.can_edit);
+  const editCapabilityLabel = tableMetadataLoading
+    ? 'Loading table metadata...'
+    : editingEnabled
+      ? 'Row editing enabled. Click a row to edit its fields.'
+      : tableMetadata?.edit_reason || 'Row editing unavailable.';
 
   return (
     <div className="page-shell">
@@ -132,7 +427,9 @@ export const PostgresExplorerPage: React.FC = () => {
           <Database className="h-5 w-5 text-mcm-teal" />
           Postgres Explorer
         </h1>
-        <p className="page-subtitle">Introspect database schemas and query tables directly.</p>
+        <p className="page-subtitle">
+          Introspect database schemas, query tables directly, and edit primary-key-backed rows.
+        </p>
       </div>
 
       <div className="mcm-panel p-4 sm:p-5">
@@ -164,7 +461,7 @@ export const PostgresExplorerPage: React.FC = () => {
               id="postgres-table"
               value={selectedTable}
               onChange={(e) => setSelectedTable(e.target.value)}
-              disabled={metadataLoading || tables.length === 0}
+              disabled={tablesLoading || tables.length === 0}
               className={`${controlClass} disabled:opacity-50`}
             >
               {tables.length === 0 ? (
@@ -192,11 +489,16 @@ export const PostgresExplorerPage: React.FC = () => {
             />
           </div>
 
-          <div />
+          <div className="flex min-h-10 items-center gap-3 text-xs text-muted-foreground">
+            <Badge variant={editingEnabled ? 'default' : 'secondary'} className="font-mono">
+              {editingEnabled ? 'Editable' : 'Read Only'}
+            </Badge>
+            <span className="font-mono">{editCapabilityLabel}</span>
+          </div>
 
           <Button
             onClick={() => void fetchData()}
-            disabled={loading || purging || !selectedTable || metadataLoading}
+            disabled={loading || purging || !selectedTable || tablesLoading || tableMetadataLoading}
             className="h-10 gap-2 px-6"
           >
             {loading ? (
@@ -204,12 +506,12 @@ export const PostgresExplorerPage: React.FC = () => {
             ) : (
               <TableIcon className="h-4 w-4" />
             )}
-            {loading ? 'Querying…' : 'Query Table'}
+            {loading ? 'Querying...' : 'Query Table'}
           </Button>
 
           <Button
             onClick={() => void purgeData()}
-            disabled={loading || purging || !selectedTable || metadataLoading}
+            disabled={loading || purging || !selectedTable || tablesLoading || tableMetadataLoading}
             variant="destructive"
             className="h-10 gap-2 px-6"
           >
@@ -218,7 +520,7 @@ export const PostgresExplorerPage: React.FC = () => {
             ) : (
               <Trash2 className="h-4 w-4" />
             )}
-            {purging ? 'Purging…' : 'Purge Table'}
+            {purging ? 'Purging...' : 'Purge Table'}
           </Button>
         </div>
       </div>
@@ -240,11 +542,137 @@ export const PostgresExplorerPage: React.FC = () => {
           data={data}
           className="flex-1"
           emptyMessage="Select a table and run query to view data."
+          onRowClick={editingEnabled ? (row) => openEditor(row) : undefined}
         />
-        <div className="mt-2 text-right font-mono text-xs text-muted-foreground">
-          {data.length > 0 ? `Showing ${data.length} rows.` : 'Ready.'}
+        <div className="mt-2 flex items-center justify-between gap-3 text-right font-mono text-xs text-muted-foreground">
+          <span>
+            {data.length > 0 && editingEnabled ? (
+              <span className="inline-flex items-center gap-1">
+                <Pencil className="h-3.5 w-3.5" />
+                Click a row to edit it.
+              </span>
+            ) : (
+              editCapabilityLabel
+            )}
+          </span>
+          <span>{data.length > 0 ? `Showing ${data.length} rows.` : 'Ready.'}</span>
         </div>
       </div>
+
+      <Dialog open={Boolean(editState)} onOpenChange={(open) => (!open ? closeEditor() : undefined)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Edit Row</DialogTitle>
+            <DialogDescription>
+              Editing {selectedSchema}.{selectedTable}. Primary-key columns identify the row being
+              updated.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[70vh] overflow-y-auto pr-2">
+            <div className="mb-4 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs">
+              <div className="font-mono uppercase tracking-wide text-muted-foreground">
+                Row Match
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(tableMetadata?.primary_key || []).map((columnName) => (
+                  <Badge key={columnName} variant="outline" className="font-mono">
+                    {columnName}={normalizeFieldValue(editState?.match[columnName]) || 'null'}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {(tableMetadata?.columns || []).map((column) => {
+                const field = editState?.fields[column.name] || { raw: '', isNull: false };
+                const disabled = rowSaving || !column.editable;
+                const useTextarea = shouldUseTextarea(column, field.raw);
+                const fieldId = `postgres-edit-${column.name}`;
+
+                return (
+                  <div key={column.name} className="space-y-2 rounded-lg border border-border/60 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <label htmlFor={fieldId} className="space-y-1">
+                        <div className="font-mono text-xs uppercase tracking-wide text-foreground">
+                          {column.name}
+                        </div>
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          {column.data_type}
+                        </div>
+                      </label>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {column.primary_key ? (
+                          <Badge variant="default" className="font-mono text-[10px]">
+                            PK
+                          </Badge>
+                        ) : null}
+                        {!column.editable ? (
+                          <Badge variant="secondary" className="font-mono text-[10px]">
+                            Read Only
+                          </Badge>
+                        ) : null}
+                        {column.nullable ? (
+                          <Badge variant="outline" className="font-mono text-[10px]">
+                            Nullable
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="font-mono text-[10px]">
+                            Required
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    {useTextarea ? (
+                      <Textarea
+                        id={fieldId}
+                        value={field.raw}
+                        onChange={(event) => updateFieldRaw(column.name, event.target.value)}
+                        disabled={disabled || field.isNull}
+                        rows={6}
+                        className="font-mono text-xs"
+                      />
+                    ) : (
+                      <Input
+                        id={fieldId}
+                        value={field.raw}
+                        onChange={(event) => updateFieldRaw(column.name, event.target.value)}
+                        disabled={disabled || field.isNull}
+                        className="font-mono text-xs"
+                      />
+                    )}
+
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-muted-foreground">
+                        {column.edit_reason || 'Editable field'}
+                      </span>
+                      <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                        <Switch
+                          checked={field.isNull}
+                          onCheckedChange={(checked) => updateFieldNull(column.name, Boolean(checked))}
+                          disabled={disabled || !column.nullable}
+                        />
+                        NULL
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeEditor} disabled={rowSaving}>
+              Cancel
+            </Button>
+            <Button onClick={() => void saveRow()} disabled={rowSaving || !editState} className="gap-2">
+              {rowSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {rowSaving ? 'Saving...' : 'Save Row'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

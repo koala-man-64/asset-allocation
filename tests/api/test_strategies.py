@@ -136,3 +136,24 @@ def test_save_strategy_rejects_duplicate_exit_rule_ids(client, mock_repo):
 
     assert response.status_code == 422
     repo_instance.save_strategy.assert_not_called()
+
+
+def test_delete_strategy(client, mock_repo):
+    repo_instance = mock_repo.return_value
+    repo_instance.delete_strategy.return_value = True
+
+    response = client.delete("/api/strategies/test-strategy")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    repo_instance.delete_strategy.assert_called_once_with("test-strategy")
+
+
+def test_delete_strategy_not_found(client, mock_repo):
+    repo_instance = mock_repo.return_value
+    repo_instance.delete_strategy.return_value = False
+
+    response = client.delete("/api/strategies/non-existent")
+
+    assert response.status_code == 404
+    repo_instance.delete_strategy.assert_called_once_with("non-existent")

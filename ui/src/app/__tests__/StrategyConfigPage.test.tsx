@@ -10,7 +10,8 @@ vi.mock('@/services/strategyApi', () => ({
     listStrategies: vi.fn(),
     saveStrategy: vi.fn(),
     getStrategy: vi.fn(),
-    getStrategyDetail: vi.fn()
+    getStrategyDetail: vi.fn(),
+    deleteStrategy: vi.fn()
   }
 }));
 
@@ -84,9 +85,13 @@ describe('StrategyConfigPage', () => {
       expect(screen.getByText('strat-1')).toBeInTheDocument();
       expect(screen.getByText('strat-2')).toBeInTheDocument();
     });
+
+    expect(screen.getByRole('button', { name: /view strategy strat-1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit strategy strat-1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /delete strategy strat-1/i })).toBeInTheDocument();
   });
 
-  it('loads strategy detail when editing an existing strategy', async () => {
+  it('loads strategy detail when viewing and editing an existing strategy', async () => {
     (strategyApi.listStrategies as Mock).mockResolvedValue([
       { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' }
     ]);
@@ -117,11 +122,17 @@ describe('StrategyConfigPage', () => {
       expect(screen.getByText('strat-1')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('strat-1'));
+    fireEvent.click(screen.getByRole('button', { name: /view strategy strat-1/i }));
 
     await waitFor(() => {
       expect(strategyApi.getStrategyDetail).toHaveBeenCalledWith('strat-1');
     });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Top 25 with 90-bar lookback/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit Strategy$/i }));
 
     await waitFor(() => {
       expect(screen.getByLabelText(/universe/i)).toHaveValue('NDX');
@@ -150,5 +161,37 @@ describe('StrategyConfigPage', () => {
     });
 
     expect(strategyApi.getStrategyDetail).not.toHaveBeenCalled();
+  });
+
+  it('deletes a strategy from the page actions', async () => {
+    (strategyApi.listStrategies as Mock).mockResolvedValue([
+      { name: 'strat-1', type: 'configured', description: 'desc 1', updated_at: '2023-01-01' }
+    ]);
+    (strategyApi.deleteStrategy as Mock).mockResolvedValue({
+      status: 'success',
+      message: "Strategy 'strat-1' deleted successfully"
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StrategyConfigPage />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /delete strategy strat-1/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /delete strategy strat-1/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /delete strategy/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /delete from postgres/i }));
+
+    await waitFor(() => {
+      expect(strategyApi.deleteStrategy).toHaveBeenCalledWith('strat-1');
+    });
   });
 });

@@ -38,6 +38,7 @@ interface StrategyEditorProps {
   strategy: StrategySummary | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSaved?: (strategy: StrategyDetail) => void;
 }
 
 const EXIT_RULE_OPTIONS: Array<{ value: ExitRuleType; label: string }> = [
@@ -162,7 +163,7 @@ function toOptionalNumber(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorProps) {
+export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: StrategyEditorProps) {
   const queryClient = useQueryClient();
   const isEditing = Boolean(strategy?.name);
   const [newRuleType, setNewRuleType] = useState<ExitRuleType>('stop_loss_fixed');
@@ -209,7 +210,8 @@ export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorP
         queryClient.invalidateQueries({ queryKey: ['strategies'] }),
         queryClient.invalidateQueries({ queryKey: ['strategies', 'detail', savedStrategy.name] })
       ]);
-      toast.success(`Strategy ${isEditing ? 'updated' : 'created'} successfully`);
+      onSaved?.(savedStrategy);
+      toast.success(`Strategy ${isEditing ? 'updated' : 'created'} in Postgres`);
       onOpenChange(false);
     },
     onError: (error) => {
@@ -257,7 +259,7 @@ export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorP
         <SheetHeader>
           <SheetTitle>{isEditing ? 'Edit Strategy' : 'New Strategy'}</SheetTitle>
           <SheetDescription>
-            Configure strategy parameters, exit rules, and intrabar conflict handling.
+            Configure strategy parameters, exit rules, and intrabar conflict handling, then save the record to Postgres.
           </SheetDescription>
         </SheetHeader>
 
@@ -626,7 +628,7 @@ export function StrategyEditor({ strategy, open, onOpenChange }: StrategyEditorP
 
             <SheetFooter>
               <Button type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? 'Saving...' : 'Save Strategy'}
+                {mutation.isPending ? 'Saving...' : 'Save to Postgres'}
               </Button>
             </SheetFooter>
           </form>
