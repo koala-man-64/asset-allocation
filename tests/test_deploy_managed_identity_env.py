@@ -119,6 +119,22 @@ def test_api_manifest_allowlists_backtest_job() -> None:
     )
 
 
+def test_gold_regime_job_runs_daily_at_4pm_est() -> None:
+    repo_root = _repo_root()
+    path = repo_root / "deploy" / "job_gold_regime_data.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+
+    configuration = (doc.get("properties") or {}).get("configuration") or {}
+    assert configuration.get("triggerType") == "Schedule", (
+        "gold regime job must be scheduled"
+    )
+    schedule = configuration.get("scheduleTriggerConfig") or {}
+    assert schedule.get("cronExpression") == "0 21 * * *", (
+        "gold regime job must run daily at 21:00 UTC (4:00 PM EST)"
+    )
+
+
 def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     repo_root = _repo_root()
     setup_env = repo_root / "scripts" / "setup-env.ps1"
