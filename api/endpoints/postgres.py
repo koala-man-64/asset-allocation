@@ -128,7 +128,6 @@ def _resolve_postgres_dsn(request: Request) -> Optional[str]:
     
     # SQLAlchemy create_engine with psycopg2 (default for postgresql://) works well for sync usage here.
     # If the app uses asyncpg elsewhere, we might need to strictly ensure we use the right driver.
-    # For introspection/pandas, using the standard driver is safest.
     if dsn.startswith("postgresql+asyncpg://"):
         dsn = "postgresql://" + dsn.removeprefix("postgresql+asyncpg://")
 
@@ -286,7 +285,7 @@ def _coerce_filter_value(column: PostgresColumnMetadata, raw_value: Any) -> Any:
     data_type = column.data_type
     normalized_value = str(raw_value).strip()
 
-    if not normalized_value and _operator_requires_value("eq"):
+    if not normalized_value:
         raise ValueError(f'Filter "{column.name}" requires a value.')
 
     if _is_boolean_type(data_type):

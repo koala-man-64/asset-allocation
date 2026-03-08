@@ -122,6 +122,36 @@ describe('PostgresExplorerPage', () => {
     });
   });
 
+  it('adds server-side filters to the query request', async () => {
+    renderWithProviders(<PostgresExplorerPage />);
+
+    await waitFor(() => {
+      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /add filter/i }));
+    fireEvent.change(screen.getByLabelText(/value/i), {
+      target: { value: 'AAP' }
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /query table/i }));
+
+    await waitFor(() => {
+      expect(PostgresService.queryTable).toHaveBeenCalledWith({
+        schema_name: 'core',
+        table_name: 'symbols',
+        limit: 100,
+        filters: [
+          {
+            column_name: 'symbol',
+            operator: 'contains',
+            value: 'AAP'
+          }
+        ]
+      });
+    });
+  });
+
   it('does not load metadata for the previously selected table after a schema change', async () => {
     vi.mocked(PostgresService.getTableMetadata).mockImplementation(async (schema: string, table: string) => {
       if (schema === 'gold' && table === 'symbols') {

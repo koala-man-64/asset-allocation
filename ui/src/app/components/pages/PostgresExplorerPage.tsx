@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   PostgresService,
   type PostgresColumnMetadata,
+  type QueryFilter as PostgresQueryFilter,
+  type QueryFilterOperator,
   type PostgresTableMetadata
 } from '@/services/PostgresService';
 import { DataTable } from '@/app/components/common/DataTable';
@@ -19,7 +21,17 @@ import { Input } from '@/app/components/ui/input';
 import { Switch } from '@/app/components/ui/switch';
 import { Textarea } from '@/app/components/ui/textarea';
 import { toast } from 'sonner';
-import { Database, Pencil, RefreshCw, Save, Table as TableIcon, Trash2 } from 'lucide-react';
+import {
+  Database,
+  Filter as FilterIcon,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Save,
+  Table as TableIcon,
+  Trash2,
+  X
+} from 'lucide-react';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 const HIDDEN_SCHEMAS = new Set(['public', 'information_schema']);
@@ -37,6 +49,41 @@ type EditState = {
   match: Record<string, unknown>;
   fields: Record<string, EditableFieldState>;
 };
+
+type QueryFilterDraft = {
+  id: string;
+  columnName: string;
+  operator: QueryFilterOperator;
+  value: string;
+};
+
+const TEXT_FILTER_OPERATORS: Array<{ value: QueryFilterOperator; label: string }> = [
+  { value: 'contains', label: 'contains' },
+  { value: 'eq', label: 'equals' },
+  { value: 'neq', label: 'does not equal' },
+  { value: 'starts_with', label: 'starts with' },
+  { value: 'ends_with', label: 'ends with' },
+  { value: 'is_null', label: 'is null' },
+  { value: 'is_not_null', label: 'is not null' }
+];
+
+const COMPARISON_FILTER_OPERATORS: Array<{ value: QueryFilterOperator; label: string }> = [
+  { value: 'eq', label: 'equals' },
+  { value: 'neq', label: 'does not equal' },
+  { value: 'gt', label: 'greater than' },
+  { value: 'gte', label: 'greater than or equal' },
+  { value: 'lt', label: 'less than' },
+  { value: 'lte', label: 'less than or equal' },
+  { value: 'is_null', label: 'is null' },
+  { value: 'is_not_null', label: 'is not null' }
+];
+
+const BOOLEAN_FILTER_OPERATORS: Array<{ value: QueryFilterOperator; label: string }> = [
+  { value: 'eq', label: 'equals' },
+  { value: 'neq', label: 'does not equal' },
+  { value: 'is_null', label: 'is null' },
+  { value: 'is_not_null', label: 'is not null' }
+];
 
 function isVisibleSchema(schema: string): boolean {
   return !HIDDEN_SCHEMAS.has(String(schema || '').trim().toLowerCase());
@@ -104,6 +151,65 @@ function isNumericType(dataType: string): boolean {
     'serial',
     'money'
   ].some((token) => normalized.includes(token));
+}
+
+function isDateType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return normalized.includes('date') && !normalized.includes('time') && !normalized.includes('stamp');
+}
+
+function isDateTimeType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return normalized.includes('timestamp') || normalized.includes('datetime');
+}
+
+function isTimeType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return normalized.includes('time') && !normalized.includes('stamp');
+}
+
+function isTextType(dataType: string): boolean {
+  const normalized = String(dataType || '').toLowerCase();
+  return ['char', 'text', 'uuid', 'citext'].some((token) => normalized.includes(token));
+}
+
+function getFilterOperatorOptions(dataType: string): Array<{ value: QueryFilterOperator; label: string }> {
+  if (isBooleanType(dataType)) {
+    return BOOLEAN_FILTER_OPERATORS;
+  }
+  if (isNumericType(dataType) || isDateType(dataType) || isDateTimeType(dataType) || isTimeType(dataType)) {
+    return COMPARISON_FILTER_OPERATORS;
+  }
+  if (isTextType(dataType)) {
+    return TEXT_FILTER_OPERATORS;
+  }
+  return BOOLEAN_FILTER_OPERATORS;
+}
+
+function getDefaultFilterOperator(dataType: string): QueryFilterOperator {
+  return getFilterOperatorOptions(dataType)[0]?.value ?? 'eq';
+}
+
+function queryFilterOperatorNeedsValue(operator: QueryFilterOperator): boolean {
+  return operator !== 'is_null' && operator !== 'is_not_null';
+}
+
+function createQueryFilterId(): string {
+  return `filter-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createQueryFilterDraft(metadata: PostgresTableMetadata | null): QueryFilterDraft | null {
+  const firstColumn = metadata?.columns?.[0];
+  if (!firstColumn) {
+    return null;
+  }
+
+  return {
+    id: createQueryFilterId(),
+    columnName: firstColumn.name,
+    operator: getDefaultFilterOperator(firstColumn.data_type),
+    value: ''
+  };
 }
 
 function shouldUseTextarea(column: PostgresColumnMetadata, rawValue: string): boolean {
@@ -176,12 +282,14 @@ export const PostgresExplorerPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState | null>(null);
+  const [queryFilters, setQueryFilters] = useState<QueryFilterDraft[]>([]);
 
   const resetSelectionState = useCallback(() => {
     setError(null);
     setStatusMessage(null);
     setData([]);
     setEditState(null);
+    setQueryFilters([]);
   }, []);
 
   const handleSchemaChange = useCallback(
@@ -211,10 +319,32 @@ export const PostgresExplorerPage: React.FC = () => {
     setError(null);
     setStatusMessage(null);
     try {
+      const filters: PostgresQueryFilter[] = queryFilters.map((filter) => {
+        const column = tableMetadata?.columns.find((item) => item.name === filter.columnName);
+        if (!column) {
+          throw new Error(`Unknown filter column "${filter.columnName}".`);
+        }
+        if (queryFilterOperatorNeedsValue(filter.operator) && !filter.value.trim()) {
+          throw new Error(`Filter "${filter.columnName}" requires a value.`);
+        }
+
+        return queryFilterOperatorNeedsValue(filter.operator)
+          ? {
+              column_name: filter.columnName,
+              operator: filter.operator,
+              value: filter.value.trim()
+            }
+          : {
+              column_name: filter.columnName,
+              operator: filter.operator
+            };
+      });
+
       const result = await PostgresService.queryTable({
         schema_name: selectedSchema,
         table_name: selectedTable,
-        limit
+        limit,
+        filters
       });
       setData(result);
       setEditState(null);
@@ -223,7 +353,7 @@ export const PostgresExplorerPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedSchema, selectedTable, limit]);
+  }, [limit, queryFilters, selectedSchema, selectedTable, tableMetadata]);
 
   const purgeData = useCallback(async () => {
     if (!selectedSchema || !selectedTable) return;
@@ -269,6 +399,75 @@ export const PostgresExplorerPage: React.FC = () => {
 
   const closeEditor = useCallback(() => {
     setEditState(null);
+  }, []);
+
+  const addQueryFilter = useCallback(() => {
+    const nextFilter = createQueryFilterDraft(tableMetadata);
+    if (!nextFilter) {
+      return;
+    }
+    setQueryFilters((current) => [...current, nextFilter]);
+  }, [tableMetadata]);
+
+  const removeQueryFilter = useCallback((filterId: string) => {
+    setQueryFilters((current) => current.filter((filter) => filter.id !== filterId));
+  }, []);
+
+  const clearQueryFilters = useCallback(() => {
+    setQueryFilters([]);
+  }, []);
+
+  const updateQueryFilterColumn = useCallback(
+    (filterId: string, columnName: string) => {
+      const column = tableMetadata?.columns.find((item) => item.name === columnName);
+      if (!column) {
+        return;
+      }
+
+      setQueryFilters((current) =>
+        current.map((filter) => {
+          if (filter.id !== filterId) {
+            return filter;
+          }
+
+          const allowedOperators = getFilterOperatorOptions(column.data_type).map((item) => item.value);
+          return {
+            ...filter,
+            columnName,
+            operator: allowedOperators.includes(filter.operator)
+              ? filter.operator
+              : getDefaultFilterOperator(column.data_type)
+          };
+        })
+      );
+    },
+    [tableMetadata]
+  );
+
+  const updateQueryFilterOperator = useCallback((filterId: string, operator: QueryFilterOperator) => {
+    setQueryFilters((current) =>
+      current.map((filter) =>
+        filter.id === filterId
+          ? {
+              ...filter,
+              operator
+            }
+          : filter
+      )
+    );
+  }, []);
+
+  const updateQueryFilterValue = useCallback((filterId: string, value: string) => {
+    setQueryFilters((current) =>
+      current.map((filter) =>
+        filter.id === filterId
+          ? {
+              ...filter,
+              value
+            }
+          : filter
+      )
+    );
   }, []);
 
   const updateFieldRaw = useCallback((columnName: string, raw: string) => {
@@ -479,6 +678,10 @@ export const PostgresExplorerPage: React.FC = () => {
     };
   }, [selectedSchema, selectedTable]);
 
+  const columnsByName = useMemo(() => {
+    return new Map((tableMetadata?.columns || []).map((column) => [column.name, column]));
+  }, [tableMetadata?.columns]);
+
   const controlClass =
     'h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/40';
   const editingEnabled = Boolean(tableMetadata?.can_edit);
@@ -562,6 +765,11 @@ export const PostgresExplorerPage: React.FC = () => {
             <Badge variant={editingEnabled ? 'default' : 'secondary'} className="font-mono">
               {editingEnabled ? 'Editable' : 'Read Only'}
             </Badge>
+            {queryFilters.length ? (
+              <Badge variant="outline" className="font-mono">
+                {queryFilters.length} filter{queryFilters.length === 1 ? '' : 's'}
+              </Badge>
+            ) : null}
             <span className="font-mono">{editCapabilityLabel}</span>
           </div>
 
@@ -591,6 +799,143 @@ export const PostgresExplorerPage: React.FC = () => {
             )}
             {purging ? 'Purging...' : 'Purge Table'}
           </Button>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                <FilterIcon className="h-3.5 w-3.5" />
+                Query Filters
+              </div>
+              <p className="font-mono text-xs text-muted-foreground">
+                Filters are combined with AND on the database before the row limit is applied.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addQueryFilter}
+                disabled={tableMetadataLoading || !tableMetadata?.columns.length}
+                className="h-9 gap-2 px-3"
+              >
+                <Plus className="h-4 w-4" />
+                Add Filter
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={clearQueryFilters}
+                disabled={queryFilters.length === 0}
+                className="h-9 px-3"
+              >
+                Clear Filters
+              </Button>
+            </div>
+          </div>
+
+          {queryFilters.length === 0 ? (
+            <p className="mt-4 font-mono text-xs text-muted-foreground">
+              No filters applied. Querying returns the first {limit} rows from the selected table.
+            </p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {queryFilters.map((filter, index) => {
+                const column = columnsByName.get(filter.columnName) || tableMetadata?.columns[0];
+                const operatorOptions = getFilterOperatorOptions(column?.data_type || '');
+                const valueRequired = queryFilterOperatorNeedsValue(filter.operator);
+                const columnId = `postgres-filter-column-${filter.id}`;
+                const operatorId = `postgres-filter-operator-${filter.id}`;
+                const valueId = `postgres-filter-value-${filter.id}`;
+
+                return (
+                  <div
+                    key={filter.id}
+                    className="grid gap-3 rounded-lg border border-border/60 bg-background/80 p-3 md:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)_auto]"
+                  >
+                    <div className="space-y-1">
+                      <label
+                        htmlFor={columnId}
+                        className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground"
+                      >
+                        Column {index + 1}
+                      </label>
+                      <select
+                        id={columnId}
+                        value={filter.columnName}
+                        onChange={(event) => updateQueryFilterColumn(filter.id, event.target.value)}
+                        className={controlClass}
+                      >
+                        {(tableMetadata?.columns || []).map((item) => (
+                          <option key={item.name} value={item.name}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label
+                        htmlFor={operatorId}
+                        className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground"
+                      >
+                        Operator
+                      </label>
+                      <select
+                        id={operatorId}
+                        value={filter.operator}
+                        onChange={(event) =>
+                          updateQueryFilterOperator(filter.id, event.target.value as QueryFilterOperator)
+                        }
+                        className={controlClass}
+                      >
+                        {operatorOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label
+                        htmlFor={valueId}
+                        className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground"
+                      >
+                        Value
+                      </label>
+                      {valueRequired ? (
+                        <Input
+                          id={valueId}
+                          value={filter.value}
+                          onChange={(event) => updateQueryFilterValue(filter.id, event.target.value)}
+                          className="font-mono text-sm"
+                          placeholder={column?.data_type ? `${column.data_type}` : 'Value'}
+                        />
+                      ) : (
+                        <div className={`${controlClass} flex items-center text-muted-foreground`}>
+                          No value required
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => removeQueryFilter(filter.id)}
+                        className="h-10 px-3"
+                        aria-label={`Remove filter ${index + 1}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

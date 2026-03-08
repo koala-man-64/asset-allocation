@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
-import pandas as pd
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table
+from sqlalchemy.dialects import postgresql
 
 from api.service.app import create_app
 from tests.api._client import get_test_client
@@ -66,15 +66,35 @@ async def test_query_table_success(monkeypatch):
     mock_inspector = MagicMock()
     mock_inspector.get_schema_names.return_value = ["public"]
     mock_inspector.get_table_names.return_value = ["test_table"]
-    
-    # Mock DataFrame result
-    df = pd.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})
+    mock_inspector.get_pk_constraint.return_value = {"constrained_columns": []}
+    mock_inspector.get_columns.return_value = [
+        {"name": "col1", "type": "INTEGER", "nullable": False},
+        {"name": "col2", "type": "TEXT", "nullable": True},
+    ]
+    reflected_table = Table(
+        "test_table",
+        MetaData(),
+        Column("col1", Integer),
+        Column("col2", String),
+        schema="public",
+    )
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.all.return_value = [
+        {"col1": 1, "col2": "a"},
+        {"col1": 2, "col2": "b"},
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+    mock_connect = MagicMock()
+    mock_connect.__enter__.return_value = mock_conn
+    mock_connect.__exit__.return_value = False
+    mock_engine.connect.return_value = mock_connect
     
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
     with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
         with patch("api.endpoints.postgres.inspect", return_value=mock_inspector):
-             with patch("api.endpoints.postgres.pd.read_sql", return_value=df) as mock_read:
+             with patch("api.endpoints.postgres._reflect_table", return_value=reflected_table):
                 app = create_app()
                 async with get_test_client(app) as client:
                     resp = await client.post(
@@ -90,12 +110,84 @@ async def test_query_table_success(monkeypatch):
     data = resp.json()
     assert len(data) == 2
     assert data[0]["col1"] == 1
-    
-    # Verify query structure roughly (optional)
-    args, _ = mock_read.call_args
-    query = args[0]
-    assert 'FROM "public"."test_table"' in query
-    assert 'LIMIT 10' in query
+
+    statement = mock_conn.execute.call_args[0][0]
+    compiled = str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert 'FROM public.test_table' in compiled
+    assert 'LIMIT 10' in compiled
+
+
+@pytest.mark.asyncio
+async def test_query_table_applies_server_side_filters(monkeypatch):
+    mock_engine = MagicMock()
+    mock_inspector = MagicMock()
+    mock_inspector.get_schema_names.return_value = ["public"]
+    mock_inspector.get_table_names.return_value = ["test_table"]
+    mock_inspector.get_pk_constraint.return_value = {"constrained_columns": []}
+    mock_inspector.get_columns.return_value = [
+        {"name": "symbol", "type": "TEXT", "nullable": False},
+        {"name": "price", "type": "DOUBLE PRECISION", "nullable": True},
+    ]
+    reflected_table = Table(
+        "test_table",
+        MetaData(),
+        Column("symbol", String),
+        Column("price", Float),
+        schema="public",
+    )
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.all.return_value = [{"symbol": "AAPL", "price": 10}]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+    mock_connect = MagicMock()
+    mock_connect.__enter__.return_value = mock_conn
+    mock_connect.__exit__.return_value = False
+    mock_engine.connect.return_value = mock_connect
+
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        with patch("api.endpoints.postgres.inspect", return_value=mock_inspector):
+            with patch("api.endpoints.postgres._reflect_table", return_value=reflected_table):
+                app = create_app()
+                async with get_test_client(app) as client:
+                    resp = await client.post(
+                        "/api/system/postgres/query",
+                        json={
+                            "schema_name": "public",
+                            "table_name": "test_table",
+                            "limit": 10,
+                            "filters": [
+                                {
+                                    "column_name": "symbol",
+                                    "operator": "contains",
+                                    "value": "AAP",
+                                },
+                                {
+                                    "column_name": "price",
+                                    "operator": "gte",
+                                    "value": "5",
+                                },
+                            ],
+                        },
+                    )
+
+    assert resp.status_code == 200
+    statement = mock_conn.execute.call_args[0][0]
+    compiled = str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "WHERE" in compiled
+    assert "ILIKE" in compiled
+    assert ">= 5.0" in compiled
 
 @pytest.mark.asyncio
 async def test_query_table_security_fail(monkeypatch):
