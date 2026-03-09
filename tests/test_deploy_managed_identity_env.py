@@ -104,17 +104,11 @@ def test_deploy_workflow_only_updates_preprovisioned_resources() -> None:
     assert "Provision it outside GitHub Actions before running deploy." in text, (
         "deploy workflow must fail fast when prerequisite infrastructure is missing"
     )
-    assert "Deploy workflow only updates existing apps. Provision it outside GitHub Actions." in text, (
-        "deploy workflow must treat missing Container Apps as an external provisioning issue"
-    )
     assert "Deploy workflow only updates existing jobs. Provision it outside GitHub Actions." in text, (
         "deploy workflow must treat missing Container App jobs as an external provisioning issue"
     )
     assert "az storage container create" not in text, (
         "deploy workflow must not provision storage containers"
-    )
-    assert "az containerapp create" not in text, (
-        "deploy workflow must not create Container Apps"
     )
     assert "az containerapp job create" not in text, (
         "deploy workflow must not create Container App jobs"
@@ -124,6 +118,25 @@ def test_deploy_workflow_only_updates_preprovisioned_resources() -> None:
     )
     assert "apply_postgres_migrations.ps1" not in text, (
         "deploy workflow must not invoke the migration script"
+    )
+
+
+def test_deploy_workflow_creates_missing_api_app_from_yaml() -> None:
+    repo_root = _repo_root()
+    deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
+    text = deploy_workflow.read_text(encoding="utf-8")
+
+    assert "Creating Container App from rendered YAML..." in text, (
+        "deploy workflow must create the unified Container App when it is missing"
+    )
+    assert "az containerapp create" in text, (
+        "deploy workflow must create the unified Container App from YAML"
+    )
+    assert '--yaml "$tmp"' in text, (
+        "deploy workflow must create the unified Container App from the rendered manifest"
+    )
+    assert "Deploy workflow only updates existing apps. Provision it outside GitHub Actions." not in text, (
+        "deploy workflow should not fail fast when the unified Container App is absent"
     )
 
 

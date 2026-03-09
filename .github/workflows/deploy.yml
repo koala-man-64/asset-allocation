@@ -570,11 +570,6 @@ jobs:
           require_container gold
           require_container platinum
 
-          if ! az containerapp show --name "${{ env.API_APP_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
-            echo "::error::Container App '${{ env.API_APP_NAME }}' is not provisioned in '${{ env.RESOURCE_GROUP }}'. Provision it outside GitHub Actions before running deploy."
-            exit 1
-          fi
-
           for job_name in \
             "${{ env.BRONZE_MARKET_JOB }}" \
             "${{ env.SILVER_MARKET_JOB }}" \
@@ -834,66 +829,69 @@ jobs:
             }
           ' "$tmp"
 
-          if ! az containerapp show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Container App '${{ env.API_APP_NAME }}' not found. Deploy workflow only updates existing apps. Provision it outside GitHub Actions."
-            exit 1
-          fi
+          if az containerapp show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
+            echo "Ensuring app can pull from ACR using managed identity..."
 
-          echo "Ensuring app can pull from ACR using managed identity..."
+            # If the app is in a bad state (private image + bad registry credentials), identity
+            # assignment can deadlock because it triggers a revision pull. Bootstrap to a public
+            # image first so identity/registry updates can succeed, then apply the desired YAML.
+            current_registry_identity="$(az containerapp show \
+              --name ${{ env.API_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
 
-          # If the app is in a bad state (private image + bad registry credentials), identity
-          # assignment can deadlock because it triggers a revision pull. Bootstrap to a public
-          # image first so identity/registry updates can succeed, then apply the desired YAML.
-          current_registry_identity="$(az containerapp show \
-            --name ${{ env.API_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
-
-          if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
-            bootstrap_app_image "${{ env.API_APP_NAME }}" || true
-          fi
-
-          if ! assign_out="$(ensure_app_identity_assigned "${{ env.API_APP_NAME }}" 2>&1)"; then
-            echo "$assign_out"
-            if is_acr_auth_error "$assign_out"; then
-              bootstrap_app_image "${{ env.API_APP_NAME }}"
-              ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
-            else
-              echo "::error::Failed to assign managed identity to '${{ env.API_APP_NAME }}'."
-              exit 1
+            if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
+              bootstrap_app_image "${{ env.API_APP_NAME }}" || true
             fi
-          fi
 
-          if ! reg_out="$(ensure_registry_identity "${{ env.API_APP_NAME }}" 2>&1)"; then
-            echo "$reg_out"
-            if is_acr_auth_error "$reg_out"; then
-              bootstrap_app_image "${{ env.API_APP_NAME }}"
-              ensure_registry_identity "${{ env.API_APP_NAME }}"
-            else
-              echo "::error::Failed to set ACR registry identity for '${{ env.API_APP_NAME }}'."
-              exit 1
+            if ! assign_out="$(ensure_app_identity_assigned "${{ env.API_APP_NAME }}" 2>&1)"; then
+              echo "$assign_out"
+              if is_acr_auth_error "$assign_out"; then
+                bootstrap_app_image "${{ env.API_APP_NAME }}"
+                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+              else
+                echo "::error::Failed to assign managed identity to '${{ env.API_APP_NAME }}'."
+                exit 1
+              fi
             fi
-          fi
 
-          if ! update_out="$(az containerapp update \
-            --name ${{ env.API_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp" 2>&1)"; then
-            echo "$update_out"
-            if is_acr_auth_error "$update_out"; then
-              echo "Update failed due to ACR auth. Bootstrapping and retrying..."
-              bootstrap_app_image "${{ env.API_APP_NAME }}"
-              ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
-              ensure_registry_identity "${{ env.API_APP_NAME }}"
-              az containerapp update \
-                --name ${{ env.API_APP_NAME }} \
-                --resource-group ${{ env.RESOURCE_GROUP }} \
-                --yaml "$tmp" \
-                --only-show-errors
-            else
-              echo "::error::Failed to update Container App '${{ env.API_APP_NAME }}'. See output above."
-              exit 1
+            if ! reg_out="$(ensure_registry_identity "${{ env.API_APP_NAME }}" 2>&1)"; then
+              echo "$reg_out"
+              if is_acr_auth_error "$reg_out"; then
+                bootstrap_app_image "${{ env.API_APP_NAME }}"
+                ensure_registry_identity "${{ env.API_APP_NAME }}"
+              else
+                echo "::error::Failed to set ACR registry identity for '${{ env.API_APP_NAME }}'."
+                exit 1
+              fi
             fi
+
+            if ! update_out="$(az containerapp update \
+              --name ${{ env.API_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp" 2>&1)"; then
+              echo "$update_out"
+              if is_acr_auth_error "$update_out"; then
+                echo "Update failed due to ACR auth. Bootstrapping and retrying..."
+                bootstrap_app_image "${{ env.API_APP_NAME }}"
+                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+                ensure_registry_identity "${{ env.API_APP_NAME }}"
+                az containerapp update \
+                  --name ${{ env.API_APP_NAME }} \
+                  --resource-group ${{ env.RESOURCE_GROUP }} \
+                  --yaml "$tmp" \
+                  --only-show-errors
+              else
+                echo "::error::Failed to update Container App '${{ env.API_APP_NAME }}'. See output above."
+                exit 1
+              fi
+            fi
+          else
+            echo "Creating Container App from rendered YAML..."
+            az containerapp create \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --yaml "$tmp" \
+              --only-show-errors
           fi
 
       - name: Decommission Legacy UI App
