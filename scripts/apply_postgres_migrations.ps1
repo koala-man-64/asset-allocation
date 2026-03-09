@@ -69,8 +69,49 @@ function Invoke-Psql {
 
   if ($preferDocker) {
     Assert-CommandExists -Name "docker"
-    $cmd = @("run", "--rm", "postgres:16-alpine", "psql") + $Args
-    & docker @cmd
+    $dockerArgs = @()
+    $dockerStdinPath = $null
+
+    for ($i = 0; $i -lt $Args.Count; $i++) {
+      $arg = $Args[$i]
+      if ($arg -eq "-f") {
+        if (($i + 1) -ge $Args.Count) {
+          throw "psql -f requires a file path."
+        }
+
+        $fileArg = $Args[$i + 1]
+        $dockerArgs += "-f"
+        if ($fileArg -eq "-") {
+          $dockerArgs += "-"
+        }
+        else {
+          if ($dockerStdinPath) {
+            throw "Dockerized psql supports only one file-based -f input per invocation."
+          }
+          $dockerStdinPath = (Resolve-Path $fileArg -ErrorAction Stop).Path
+          $dockerArgs += "-"
+        }
+
+        $i++
+        continue
+      }
+
+      $dockerArgs += $arg
+    }
+
+    $cmd = @("run", "--rm")
+    if ($dockerStdinPath) {
+      $cmd += "-i"
+    }
+    $cmd += @("postgres:16-alpine", "psql") + $dockerArgs
+
+    if ($dockerStdinPath) {
+      # Stream SQL over stdin because host file paths are not visible inside `docker run`.
+      Get-Content -Path $dockerStdinPath -Raw -Encoding UTF8 | & docker @cmd
+    }
+    else {
+      & docker @cmd
+    }
     if (-not $?) { throw "psql (docker) failed." }
     return
   }

@@ -38,3 +38,18 @@ def test_move_public_tables_to_core_handles_legacy_public_symbols_shape() -> Non
         "0016 must not statically reference both legacy source columns in the SELECT list"
     )
 
+
+def test_apply_postgres_migrations_streams_file_inputs_to_docker_psql() -> None:
+    repo_root = _repo_root()
+    script = repo_root / "scripts" / "apply_postgres_migrations.ps1"
+    text = script.read_text(encoding="utf-8")
+
+    assert '$dockerArgs += "-f"' in text, (
+        "apply_postgres_migrations must preserve -f when rewriting Docker psql args"
+    )
+    assert '$dockerArgs += "-"' in text, (
+        "apply_postgres_migrations must rewrite Docker file inputs to stdin"
+    )
+    assert 'Get-Content -Path $dockerStdinPath -Raw -Encoding UTF8 | & docker @cmd' in text, (
+        "apply_postgres_migrations must stream migration SQL into dockerized psql"
+    )

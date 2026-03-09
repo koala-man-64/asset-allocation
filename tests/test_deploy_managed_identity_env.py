@@ -93,16 +93,37 @@ def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identit
     )
 
 
-def test_deploy_workflow_applies_repo_owned_postgres_migrations() -> None:
+def test_deploy_workflow_only_updates_preprovisioned_resources() -> None:
     repo_root = _repo_root()
     deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
     text = deploy_workflow.read_text(encoding="utf-8")
 
-    assert "Apply Repo-Owned Postgres Migrations" in text, (
-        "deploy workflow must apply repo-owned Postgres migrations during normal deploys"
+    assert "Validate Pre-Provisioned Deploy Targets" in text, (
+        "deploy workflow must validate infrastructure was provisioned outside GitHub Actions"
     )
-    assert 'pwsh ./scripts/apply_postgres_migrations.ps1 -Dsn "$POSTGRES_DSN" -UseDockerPsql' in text, (
-        "deploy workflow must run the migration script against the production POSTGRES_DSN"
+    assert "Provision it outside GitHub Actions before running deploy." in text, (
+        "deploy workflow must fail fast when prerequisite infrastructure is missing"
+    )
+    assert "Deploy workflow only updates existing apps. Provision it outside GitHub Actions." in text, (
+        "deploy workflow must treat missing Container Apps as an external provisioning issue"
+    )
+    assert "Deploy workflow only updates existing jobs. Provision it outside GitHub Actions." in text, (
+        "deploy workflow must treat missing Container App jobs as an external provisioning issue"
+    )
+    assert "az storage container create" not in text, (
+        "deploy workflow must not provision storage containers"
+    )
+    assert "az containerapp create" not in text, (
+        "deploy workflow must not create Container Apps"
+    )
+    assert "az containerapp job create" not in text, (
+        "deploy workflow must not create Container App jobs"
+    )
+    assert "Apply Repo-Owned Postgres Migrations" not in text, (
+        "deploy workflow must not apply repo-owned Postgres migrations"
+    )
+    assert "apply_postgres_migrations.ps1" not in text, (
+        "deploy workflow must not invoke the migration script"
     )
 
 

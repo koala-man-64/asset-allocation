@@ -265,13 +265,6 @@ jobs:
                   sys.exit(1)
           PY
 
-      - name: Apply Repo-Owned Postgres Migrations
-        env:
-          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-        run: |
-          set -euo pipefail
-          pwsh ./scripts/apply_postgres_migrations.ps1 -Dsn "$POSTGRES_DSN" -UseDockerPsql
-
       - name: Detect Market Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         id: market_changes
@@ -552,6 +545,57 @@ jobs:
         run: |
            echo "CONTAINER_APPS_ENVIRONMENT_ID=/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.App/managedEnvironments/asset-allocation-env" >> "$GITHUB_ENV"
 
+      - name: Validate Pre-Provisioned Deploy Targets
+        run: |
+          set -euo pipefail
+
+          require_container() {
+            local container_name="$1"
+            local exists
+            exists="$(az storage container exists \
+              --name "$container_name" \
+              --account-name "${{ env.AZURE_STORAGE_ACCOUNT_NAME }}" \
+              --auth-mode login \
+              --query exists \
+              -o tsv \
+              --only-show-errors | tr -d '\r')"
+            if [ "$exists" != "true" ]; then
+              echo "::error::Storage container '$container_name' is not provisioned in account '${{ env.AZURE_STORAGE_ACCOUNT_NAME }}'. Provision it outside GitHub Actions before running deploy."
+              exit 1
+            fi
+          }
+
+          require_container bronze
+          require_container silver
+          require_container gold
+          require_container platinum
+
+          if ! az containerapp show --name "${{ env.API_APP_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
+            echo "::error::Container App '${{ env.API_APP_NAME }}' is not provisioned in '${{ env.RESOURCE_GROUP }}'. Provision it outside GitHub Actions before running deploy."
+            exit 1
+          fi
+
+          for job_name in \
+            "${{ env.BRONZE_MARKET_JOB }}" \
+            "${{ env.SILVER_MARKET_JOB }}" \
+            "${{ env.GOLD_MARKET_JOB }}" \
+            "${{ env.BRONZE_FINANCE_JOB }}" \
+            "${{ env.SILVER_FINANCE_JOB }}" \
+            "${{ env.GOLD_FINANCE_JOB }}" \
+            "${{ env.BRONZE_PRICE_TARGET_JOB }}" \
+            "${{ env.SILVER_PRICE_TARGET_JOB }}" \
+            "${{ env.GOLD_PRICE_TARGET_JOB }}" \
+            "${{ env.BRONZE_EARNINGS_JOB }}" \
+            "${{ env.SILVER_EARNINGS_JOB }}" \
+            "${{ env.GOLD_EARNINGS_JOB }}" \
+            "${{ env.GOLD_REGIME_JOB }}" \
+            "${{ env.BACKTEST_JOB }}"; do
+            if ! az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
+              echo "::error::Container App Job '$job_name' is not provisioned in '${{ env.RESOURCE_GROUP }}'. Provision it outside GitHub Actions before running deploy."
+              exit 1
+            fi
+          done
+
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
 
@@ -575,36 +619,7 @@ jobs:
           should_build_tasks="false"
           should_build_app="false"
 
-          any_job_missing="false"
-          for job_name in \
-            "${{ env.BRONZE_MARKET_JOB }}" \
-            "${{ env.SILVER_MARKET_JOB }}" \
-            "${{ env.GOLD_MARKET_JOB }}" \
-            "${{ env.BRONZE_FINANCE_JOB }}" \
-            "${{ env.SILVER_FINANCE_JOB }}" \
-            "${{ env.GOLD_FINANCE_JOB }}" \
-            "${{ env.BRONZE_PRICE_TARGET_JOB }}" \
-            "${{ env.SILVER_PRICE_TARGET_JOB }}" \
-            "${{ env.GOLD_PRICE_TARGET_JOB }}" \
-            "${{ env.BRONZE_EARNINGS_JOB }}" \
-            "${{ env.SILVER_EARNINGS_JOB }}" \
-            "${{ env.GOLD_EARNINGS_JOB }}" \
-            "${{ env.GOLD_REGIME_JOB }}" \
-            "${{ env.BACKTEST_JOB }}"; do
-            if ! az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
-              any_job_missing="true"
-              break
-            fi
-          done
-
-          if ! az containerapp show --name "${{ env.API_APP_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
-            should_build_app="true"
-          fi
-          if ! az containerapp show --name "${{ env.UI_APP_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
-            should_build_app="true"
-          fi
-
-          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "$any_job_missing" = "true" ] || \
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || \
              [ "${{ steps.market_changes.outputs.bronze_market }}" = "true" ] || [ "${{ steps.market_changes.outputs.silver_market }}" = "true" ] || [ "${{ steps.market_changes.outputs.gold_market }}" = "true" ] || \
              [ "${{ steps.finance_changes.outputs.bronze_finance }}" = "true" ] || [ "${{ steps.finance_changes.outputs.silver_finance }}" = "true" ] || [ "${{ steps.finance_changes.outputs.gold_finance }}" = "true" ] || \
              [ "${{ steps.price_target_changes.outputs.bronze_price_target }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.silver_price_target }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.gold_price_target }}" = "true" ] || \
@@ -673,16 +688,6 @@ jobs:
             echo "API_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.API_IMAGE_NAME }}:${{ github.sha }}"
             echo "UI_IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.UI_IMAGE_NAME }}:${{ github.sha }}"
           } >> "$GITHUB_ENV"
-
-      - name: Ensure Storage Containers Exist
-        run: |
-          set -euo pipefail
-          for container in bronze silver gold platinum; do
-            az storage container create \
-              --name $container \
-              --account-name assetallocstorage001 \
-              --auth-mode login
-          done
 
       - name: Check API App Exists
         id: api_app_check
@@ -830,97 +835,64 @@ jobs:
           ' "$tmp"
 
           if ! az containerapp show --name ${{ env.API_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "App ${{ env.API_APP_NAME }} not found. Creating..."
-            if ! create_out="$(az containerapp create \
-              --name ${{ env.API_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp" 2>&1)"; then
-              echo "$create_out"
-              if is_acr_auth_error "$create_out"; then
-                echo "Create failed due to ACR auth. Bootstrapping app with a public image, then applying YAML..."
-                az containerapp create \
-                  --name ${{ env.API_APP_NAME }} \
-                  --resource-group ${{ env.RESOURCE_GROUP }} \
-                  --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-                  --image "$BOOTSTRAP_IMAGE" \
-                  --ingress internal \
-                  --target-port 80 \
-                  --only-show-errors
+            echo "::error::Container App '${{ env.API_APP_NAME }}' not found. Deploy workflow only updates existing apps. Provision it outside GitHub Actions."
+            exit 1
+          fi
 
-                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
-                ensure_registry_identity "${{ env.API_APP_NAME }}"
+          echo "Ensuring app can pull from ACR using managed identity..."
 
-                az containerapp update \
-                  --name ${{ env.API_APP_NAME }} \
-                  --resource-group ${{ env.RESOURCE_GROUP }} \
-                  --yaml "$tmp" \
-                  --only-show-errors
-              else
-                echo "::error::Failed to create Container App '${{ env.API_APP_NAME }}'. See output above."
-                exit 1
-              fi
+          # If the app is in a bad state (private image + bad registry credentials), identity
+          # assignment can deadlock because it triggers a revision pull. Bootstrap to a public
+          # image first so identity/registry updates can succeed, then apply the desired YAML.
+          current_registry_identity="$(az containerapp show \
+            --name ${{ env.API_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
+
+          if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
+            bootstrap_app_image "${{ env.API_APP_NAME }}" || true
+          fi
+
+          if ! assign_out="$(ensure_app_identity_assigned "${{ env.API_APP_NAME }}" 2>&1)"; then
+            echo "$assign_out"
+            if is_acr_auth_error "$assign_out"; then
+              bootstrap_app_image "${{ env.API_APP_NAME }}"
+              ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+            else
+              echo "::error::Failed to assign managed identity to '${{ env.API_APP_NAME }}'."
+              exit 1
             fi
+          fi
 
-            # Idempotent safety: ensure identity + registry use MI (and clears username/password).
-            ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
-            ensure_registry_identity "${{ env.API_APP_NAME }}"
-          else
-            echo "Ensuring app can pull from ACR using managed identity..."
-
-            # If the app is in a bad state (private image + bad registry credentials), identity
-            # assignment can deadlock because it triggers a revision pull. Bootstrap to a public
-            # image first so identity/registry updates can succeed, then apply the desired YAML.
-            current_registry_identity="$(az containerapp show \
-              --name ${{ env.API_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.registries[?server=='${ACR_NAME}.azurecr.io'].identity | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)"
-
-            if [ "$current_registry_identity" != "$ACR_PULL_IDENTITY_RESOURCE_ID" ]; then
-              bootstrap_app_image "${{ env.API_APP_NAME }}" || true
+          if ! reg_out="$(ensure_registry_identity "${{ env.API_APP_NAME }}" 2>&1)"; then
+            echo "$reg_out"
+            if is_acr_auth_error "$reg_out"; then
+              bootstrap_app_image "${{ env.API_APP_NAME }}"
+              ensure_registry_identity "${{ env.API_APP_NAME }}"
+            else
+              echo "::error::Failed to set ACR registry identity for '${{ env.API_APP_NAME }}'."
+              exit 1
             fi
+          fi
 
-            if ! assign_out="$(ensure_app_identity_assigned "${{ env.API_APP_NAME }}" 2>&1)"; then
-              echo "$assign_out"
-              if is_acr_auth_error "$assign_out"; then
-                bootstrap_app_image "${{ env.API_APP_NAME }}"
-                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
-              else
-                echo "::error::Failed to assign managed identity to '${{ env.API_APP_NAME }}'."
-                exit 1
-              fi
-            fi
-
-            if ! reg_out="$(ensure_registry_identity "${{ env.API_APP_NAME }}" 2>&1)"; then
-              echo "$reg_out"
-              if is_acr_auth_error "$reg_out"; then
-                bootstrap_app_image "${{ env.API_APP_NAME }}"
-                ensure_registry_identity "${{ env.API_APP_NAME }}"
-              else
-                echo "::error::Failed to set ACR registry identity for '${{ env.API_APP_NAME }}'."
-                exit 1
-              fi
-            fi
-
-            if ! update_out="$(az containerapp update \
-              --name ${{ env.API_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp" 2>&1)"; then
-              echo "$update_out"
-              if is_acr_auth_error "$update_out"; then
-                echo "Update failed due to ACR auth. Bootstrapping and retrying..."
-                bootstrap_app_image "${{ env.API_APP_NAME }}"
-                ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
-                ensure_registry_identity "${{ env.API_APP_NAME }}"
-                az containerapp update \
-                  --name ${{ env.API_APP_NAME }} \
-                  --resource-group ${{ env.RESOURCE_GROUP }} \
-                  --yaml "$tmp" \
-                  --only-show-errors
-              else
-                echo "::error::Failed to update Container App '${{ env.API_APP_NAME }}'. See output above."
-                exit 1
-              fi
+          if ! update_out="$(az containerapp update \
+            --name ${{ env.API_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp" 2>&1)"; then
+            echo "$update_out"
+            if is_acr_auth_error "$update_out"; then
+              echo "Update failed due to ACR auth. Bootstrapping and retrying..."
+              bootstrap_app_image "${{ env.API_APP_NAME }}"
+              ensure_app_identity_assigned "${{ env.API_APP_NAME }}"
+              ensure_registry_identity "${{ env.API_APP_NAME }}"
+              az containerapp update \
+                --name ${{ env.API_APP_NAME }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --yaml "$tmp" \
+                --only-show-errors
+            else
+              echo "::error::Failed to update Container App '${{ env.API_APP_NAME }}'. See output above."
+              exit 1
             fi
           fi
 
@@ -981,22 +953,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.BRONZE_MARKET_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.BRONZE_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.BRONZE_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.BRONZE_MARKET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.BRONZE_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1061,22 +1029,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.SILVER_MARKET_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.SILVER_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.SILVER_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.SILVER_MARKET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.SILVER_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Market Gold Job Exists
         id: market_feature_job_check
@@ -1119,22 +1083,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.GOLD_MARKET_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.GOLD_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.GOLD_MARKET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.GOLD_MARKET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.GOLD_MARKET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Finance Bronze Job Exists
         id: finance_data_job_check
@@ -1181,22 +1141,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.BRONZE_FINANCE_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.BRONZE_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.BRONZE_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.BRONZE_FINANCE_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.BRONZE_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1261,22 +1217,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.SILVER_FINANCE_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.SILVER_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.SILVER_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.SILVER_FINANCE_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.SILVER_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Finance Gold Job Exists
         id: finance_feature_job_check
@@ -1319,22 +1271,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.GOLD_FINANCE_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.GOLD_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.GOLD_FINANCE_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.GOLD_FINANCE_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.GOLD_FINANCE_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Price Target Job Exists
         id: price_target_job_check
@@ -1378,22 +1326,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1458,22 +1402,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Price Target Gold Job Exists
         id: price_target_feature_job_check
@@ -1516,22 +1456,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
       
       - name: Check Earnings Bronze Job Exists
         id: earnings_data_job_check
@@ -1578,22 +1514,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.BRONZE_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.BRONZE_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.BRONZE_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1658,22 +1590,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.SILVER_EARNINGS_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.SILVER_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.SILVER_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.SILVER_EARNINGS_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.SILVER_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Earnings Gold Job Exists
         id: earnings_feature_job_check
@@ -1716,22 +1644,18 @@ jobs:
           ' "$tmp"
           
           if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.GOLD_EARNINGS_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.GOLD_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            # Update the full job resource in one request so Azure validates the
-            # newly rendered image tag rather than any stale/purged tag on the
-            # existing job template.
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.GOLD_EARNINGS_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.GOLD_EARNINGS_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.GOLD_EARNINGS_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Gold Regime Job Exists
         id: regime_job_check
@@ -1773,19 +1697,18 @@ jobs:
           ' "$tmp"
 
           if ! az containerapp job show --name ${{ env.GOLD_REGIME_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.GOLD_REGIME_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.GOLD_REGIME_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.GOLD_REGIME_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.GOLD_REGIME_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.GOLD_REGIME_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
 
       - name: Check Backtest Job Exists
         id: backtest_job_check
@@ -1827,19 +1750,18 @@ jobs:
           ' "$tmp"
 
           if ! az containerapp job show --name ${{ env.BACKTEST_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "Job ${{ env.BACKTEST_JOB }} not found. Creating..."
-            az containerapp job create \
-              --name ${{ env.BACKTEST_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment "$CONTAINER_APPS_ENVIRONMENT_ID" \
-              --yaml "$tmp"
-          else
-            echo "Updating job from YAML (image + identity + registry)..."
-            az containerapp job update \
-              --name ${{ env.BACKTEST_JOB }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yaml "$tmp"
+            echo "::error::Job ${{ env.BACKTEST_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
+            exit 1
           fi
+
+          # Update the full job resource in one request so Azure validates the
+          # newly rendered image tag rather than any stale/purged tag on the
+          # existing job template.
+          echo "Updating job from YAML (image + identity + registry)..."
+          az containerapp job update \
+            --name ${{ env.BACKTEST_JOB }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yaml "$tmp"
       
       - name: Verify Updated Images
         run: |
