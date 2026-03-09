@@ -570,27 +570,6 @@ jobs:
           require_container gold
           require_container platinum
 
-          for job_name in \
-            "${{ env.BRONZE_MARKET_JOB }}" \
-            "${{ env.SILVER_MARKET_JOB }}" \
-            "${{ env.GOLD_MARKET_JOB }}" \
-            "${{ env.BRONZE_FINANCE_JOB }}" \
-            "${{ env.SILVER_FINANCE_JOB }}" \
-            "${{ env.GOLD_FINANCE_JOB }}" \
-            "${{ env.BRONZE_PRICE_TARGET_JOB }}" \
-            "${{ env.SILVER_PRICE_TARGET_JOB }}" \
-            "${{ env.GOLD_PRICE_TARGET_JOB }}" \
-            "${{ env.BRONZE_EARNINGS_JOB }}" \
-            "${{ env.SILVER_EARNINGS_JOB }}" \
-            "${{ env.GOLD_EARNINGS_JOB }}" \
-            "${{ env.GOLD_REGIME_JOB }}" \
-            "${{ env.BACKTEST_JOB }}"; do
-            if ! az containerapp job show --name "$job_name" --resource-group "${{ env.RESOURCE_GROUP }}" --only-show-errors > /dev/null 2>&1; then
-              echo "::error::Container App Job '$job_name' is not provisioned in '${{ env.RESOURCE_GROUP }}'. Provision it outside GitHub Actions before running deploy."
-              exit 1
-            fi
-          done
-
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
 
@@ -931,38 +910,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Market Job from YAML..."
-          tmp="deploy/job_bronze_market_data.tmp.yaml"
-          envsubst < deploy/job_bronze_market_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.BRONZE_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.BRONZE_MARKET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.BRONZE_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.BRONZE_MARKET_JOB }}" \
+            "deploy/job_bronze_market_data.yaml"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1007,38 +959,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Market Job from YAML..."
-          tmp="deploy/job_silver_market_data.tmp.yaml"
-          envsubst < deploy/job_silver_market_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.SILVER_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.SILVER_MARKET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.SILVER_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.SILVER_MARKET_JOB }}" \
+            "deploy/job_silver_market_data.yaml"
 
       - name: Check Market Gold Job Exists
         id: market_feature_job_check
@@ -1061,38 +986,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Market Job from YAML..."
-          tmp="deploy/job_gold_market_data.tmp.yaml"
-          envsubst < deploy/job_gold_market_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.GOLD_MARKET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.GOLD_MARKET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.GOLD_MARKET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.GOLD_MARKET_JOB }}" \
+            "deploy/job_gold_market_data.yaml"
 
       - name: Check Finance Bronze Job Exists
         id: finance_data_job_check
@@ -1119,38 +1017,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Finance Job from YAML..."
-          tmp="deploy/job_bronze_finance_data.tmp.yaml"
-          envsubst < deploy/job_bronze_finance_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.BRONZE_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.BRONZE_FINANCE_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.BRONZE_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.BRONZE_FINANCE_JOB }}" \
+            "deploy/job_bronze_finance_data.yaml"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1195,38 +1066,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Finance Job from YAML..."
-          tmp="deploy/job_silver_finance_data.tmp.yaml"
-          envsubst < deploy/job_silver_finance_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.SILVER_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.SILVER_FINANCE_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.SILVER_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.SILVER_FINANCE_JOB }}" \
+            "deploy/job_silver_finance_data.yaml"
 
       - name: Check Finance Gold Job Exists
         id: finance_feature_job_check
@@ -1249,38 +1093,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Finance Job from YAML..."
-          tmp="deploy/job_gold_finance_data.tmp.yaml"
-          envsubst < deploy/job_gold_finance_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.GOLD_FINANCE_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.GOLD_FINANCE_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.GOLD_FINANCE_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.GOLD_FINANCE_JOB }}" \
+            "deploy/job_gold_finance_data.yaml"
 
       - name: Check Price Target Job Exists
         id: price_target_job_check
@@ -1304,38 +1121,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Price Target Job from YAML..."
-          tmp="deploy/job_bronze_price_target_data.tmp.yaml"
-          envsubst < deploy/job_bronze_price_target_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.BRONZE_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.BRONZE_PRICE_TARGET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.BRONZE_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.BRONZE_PRICE_TARGET_JOB }}" \
+            "deploy/job_bronze_price_target_data.yaml"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1380,38 +1170,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Price Target Job from YAML..."
-          tmp="deploy/job_silver_price_target_data.tmp.yaml"
-          envsubst < deploy/job_silver_price_target_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.SILVER_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.SILVER_PRICE_TARGET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.SILVER_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.SILVER_PRICE_TARGET_JOB }}" \
+            "deploy/job_silver_price_target_data.yaml"
 
       - name: Check Price Target Gold Job Exists
         id: price_target_feature_job_check
@@ -1434,38 +1197,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Price Target Job from YAML..."
-          tmp="deploy/job_gold_price_target_data.tmp.yaml"
-          envsubst < deploy/job_gold_price_target_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.GOLD_PRICE_TARGET_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.GOLD_PRICE_TARGET_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.GOLD_PRICE_TARGET_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.GOLD_PRICE_TARGET_JOB }}" \
+            "deploy/job_gold_price_target_data.yaml"
       
       - name: Check Earnings Bronze Job Exists
         id: earnings_data_job_check
@@ -1492,38 +1228,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Bronze Earnings Job from YAML..."
-          tmp="deploy/job_bronze_earnings_data.tmp.yaml"
-          envsubst < deploy/job_bronze_earnings_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.BRONZE_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.BRONZE_EARNINGS_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.BRONZE_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.BRONZE_EARNINGS_JOB }}" \
+            "deploy/job_bronze_earnings_data.yaml"
           
           if [ "${BOOTSTRAP_BRONZE_RUNS}" = "true" ]; then
             set +e
@@ -1568,38 +1277,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Silver Earnings Job from YAML..."
-          tmp="deploy/job_silver_earnings_data.tmp.yaml"
-          envsubst < deploy/job_silver_earnings_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.SILVER_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.SILVER_EARNINGS_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.SILVER_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.SILVER_EARNINGS_JOB }}" \
+            "deploy/job_silver_earnings_data.yaml"
 
       - name: Check Earnings Gold Job Exists
         id: earnings_feature_job_check
@@ -1622,38 +1304,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Earnings Job from YAML..."
-          tmp="deploy/job_gold_earnings_data.tmp.yaml"
-          envsubst < deploy/job_gold_earnings_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-          
-          if ! az containerapp job show --name ${{ env.GOLD_EARNINGS_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.GOLD_EARNINGS_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.GOLD_EARNINGS_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.GOLD_EARNINGS_JOB }}" \
+            "deploy/job_gold_earnings_data.yaml"
 
       - name: Check Gold Regime Job Exists
         id: regime_job_check
@@ -1675,38 +1330,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Gold Regime Job from YAML..."
-          tmp="deploy/job_gold_regime_data.tmp.yaml"
-          envsubst < deploy/job_gold_regime_data.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-
-          if ! az containerapp job show --name ${{ env.GOLD_REGIME_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.GOLD_REGIME_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.GOLD_REGIME_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.GOLD_REGIME_JOB }}" \
+            "deploy/job_gold_regime_data.yaml"
 
       - name: Check Backtest Job Exists
         id: backtest_job_check
@@ -1728,38 +1356,11 @@ jobs:
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
           set -euo pipefail
-          : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
-          : "${JOB_IMAGE:?JOB_IMAGE is required}"
 
           echo "Deploying Backtest Job from YAML..."
-          tmp="deploy/job_backtests.tmp.yaml"
-          envsubst < deploy/job_backtests.yaml > "$tmp"
-          echo "Rendered YAML (secrets redacted):"
-          awk '
-            {
-              line=$0
-              match(line, /^ */)
-              indent=RLENGTH
-              if (match(line, /^[[:space:]]*secrets:[[:space:]]*$/)) { in_secrets=1; print line; next }
-              if (in_secrets && indent <= 2 && match(line, /^[[:space:]]*[A-Za-z0-9_-]+:/)) { in_secrets=0 }
-              if (in_secrets && match(line, /^[[:space:]]*value:/)) { sub(/value:.*/, "value: ***REDACTED***", line) }
-              print line
-            }
-          ' "$tmp"
-
-          if ! az containerapp job show --name ${{ env.BACKTEST_JOB }} --resource-group ${{ env.RESOURCE_GROUP }} > /dev/null 2>&1; then
-            echo "::error::Job ${{ env.BACKTEST_JOB }} not found. Deploy workflow only updates existing jobs. Provision it outside GitHub Actions."
-            exit 1
-          fi
-
-          # Update the full job resource in one request so Azure validates the
-          # newly rendered image tag rather than any stale/purged tag on the
-          # existing job template.
-          echo "Updating job from YAML (image + identity + registry)..."
-          az containerapp job update \
-            --name ${{ env.BACKTEST_JOB }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --yaml "$tmp"
+          bash scripts/deploy_containerapp_job.sh \
+            "${{ env.BACKTEST_JOB }}" \
+            "deploy/job_backtests.yaml"
       
       - name: Verify Updated Images
         run: |

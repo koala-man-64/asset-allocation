@@ -77,46 +77,59 @@ def test_deploy_workflow_exports_acr_pull_identity_client_id() -> None:
     assert "GOLD_REGIME_JOB" in text, "deploy workflow must define the gold regime job name"
 
 
-def test_deploy_workflow_updates_jobs_from_yaml_without_pre_mutating_job_identity() -> None:
+def test_deploy_workflow_deploys_jobs_from_yaml_without_pre_mutating_job_identity() -> None:
     repo_root = _repo_root()
     deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
-    text = deploy_workflow.read_text(encoding="utf-8")
+    deploy_job_helper = repo_root / "scripts" / "deploy_containerapp_job.sh"
+    workflow_text = deploy_workflow.read_text(encoding="utf-8")
+    helper_text = deploy_job_helper.read_text(encoding="utf-8")
 
-    assert "az containerapp job identity assign" not in text, (
+    assert "az containerapp job identity assign" not in workflow_text, (
         "deploy workflow should not mutate job identity before YAML update"
     )
-    assert "az containerapp job registry set" not in text, (
+    assert "az containerapp job registry set" not in workflow_text, (
         "deploy workflow should not mutate job registry before YAML update"
     )
-    assert "Updating job from YAML (image + identity + registry)..." in text, (
-        "deploy workflow should update jobs using the rendered manifest"
+    assert workflow_text.count("bash scripts/deploy_containerapp_job.sh") == 14, (
+        "deploy workflow must route every managed Container App job through the shared YAML deploy helper"
+    )
+    assert "Updating job from YAML (image + identity + registry)..." in helper_text, (
+        "job deploy helper should update existing jobs using the rendered manifest"
     )
 
 
-def test_deploy_workflow_only_updates_preprovisioned_resources() -> None:
+def test_deploy_workflow_only_requires_preprovisioned_shared_resources() -> None:
     repo_root = _repo_root()
     deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
-    text = deploy_workflow.read_text(encoding="utf-8")
+    deploy_job_helper = repo_root / "scripts" / "deploy_containerapp_job.sh"
+    workflow_text = deploy_workflow.read_text(encoding="utf-8")
+    helper_text = deploy_job_helper.read_text(encoding="utf-8")
 
-    assert "Validate Pre-Provisioned Deploy Targets" in text, (
+    assert "Validate Pre-Provisioned Deploy Targets" in workflow_text, (
         "deploy workflow must validate infrastructure was provisioned outside GitHub Actions"
     )
-    assert "Provision it outside GitHub Actions before running deploy." in text, (
+    assert "Provision it outside GitHub Actions before running deploy." in workflow_text, (
         "deploy workflow must fail fast when prerequisite infrastructure is missing"
     )
-    assert "Deploy workflow only updates existing jobs. Provision it outside GitHub Actions." in text, (
-        "deploy workflow must treat missing Container App jobs as an external provisioning issue"
+    assert "Container App Job '" not in workflow_text, (
+        "deploy workflow should no longer fail fast when a managed Container App job is absent"
     )
-    assert "az storage container create" not in text, (
+    assert "Deploy workflow only updates existing jobs. Provision it outside GitHub Actions." not in workflow_text, (
+        "deploy workflow should not treat missing Container App jobs as an external provisioning issue"
+    )
+    assert "az storage container create" not in workflow_text, (
         "deploy workflow must not provision storage containers"
     )
-    assert "az containerapp job create" not in text, (
-        "deploy workflow must not create Container App jobs"
+    assert "az containerapp job create" in helper_text, (
+        "job deploy helper must create missing Container App jobs from YAML"
     )
-    assert "Apply Repo-Owned Postgres Migrations" not in text, (
+    assert "Creating job from YAML (image + identity + registry)..." in helper_text, (
+        "job deploy helper must create missing jobs using the rendered manifest"
+    )
+    assert "Apply Repo-Owned Postgres Migrations" not in workflow_text, (
         "deploy workflow must not apply repo-owned Postgres migrations"
     )
-    assert "apply_postgres_migrations.ps1" not in text, (
+    assert "apply_postgres_migrations.ps1" not in workflow_text, (
         "deploy workflow must not invoke the migration script"
     )
 
