@@ -4765,6 +4765,14 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "JSON array of Log Analytics query specs used by system health (KQL templates).",
         "example": '[{"resourceType":"Microsoft.App/jobs","name":"job_errors_15m","query":"ContainerAppConsoleLogs_CL|...","warnAbove":1,"errorAbove":10,"unit":"count"}]',
     },
+    "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS": {
+        "description": "Lookback window (hours) for Bronze symbol-count jump detection in system health.",
+        "example": "168",
+    },
+    "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON": {
+        "description": "JSON object of Bronze job symbol-count jump thresholds keyed by job name or *.",
+        "example": '{"*":{"warnFactor":3.0,"errorFactor":10.0,"minPreviousSymbols":100,"minCurrentSymbols":1000}}',
+    },
     "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED": {
         "description": "When true, system health includes Azure Resource Health checks.",
         "example": "true",

@@ -250,3 +250,51 @@ def test_write_alpha26_earnings_buckets_writes_empty_bucket_when_schema_exists(m
     assert isinstance(df_written, pd.DataFrame)
     assert df_written.empty
     assert list(df_written.columns) == existing_cols
+
+
+def test_write_alpha26_earnings_buckets_partial_update_preserves_untouched_symbol_index(monkeypatch):
+    captured_index: dict = {}
+    captured_paths: list[str] = []
+
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("A", "M"))
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "load_layer_symbol_index",
+        lambda **_kwargs: pd.DataFrame({"symbol": ["AAPL", "MSFT"], "bucket": ["A", "M"]}),
+    )
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **kwargs: captured_index.update(kwargs) or "index",
+    )
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: ["date", "symbol"])
+    monkeypatch.setattr(
+        silver.delta_core,
+        "store_delta",
+        lambda _df, _container, path, mode="overwrite", **_kwargs: captured_paths.append(path),
+    )
+
+    written_symbols, index_path, _column_count = silver._write_alpha26_earnings_buckets(
+        {"A": [pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["AMZN"]})]},
+        touched_buckets={"A"},
+    )
+
+    assert written_symbols == 2
+    assert index_path == "index"
+    assert captured_paths == [DataPaths.get_silver_earnings_bucket_path("A")]
+    assert captured_index["symbol_to_bucket"] == {"AMZN": "A", "MSFT": "M"}
+
+
+def test_write_alpha26_earnings_buckets_partial_update_fails_closed_without_prior_index(monkeypatch):
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("A", "M"))
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "load_layer_symbol_index",
+        lambda **_kwargs: pd.DataFrame(columns=["symbol", "bucket"]),
+    )
+
+    with pytest.raises(RuntimeError, match="incremental alpha26 write blocked"):
+        silver._write_alpha26_earnings_buckets(
+            {"A": [pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["AMZN"]})]},
+            touched_buckets={"A"},
+        )

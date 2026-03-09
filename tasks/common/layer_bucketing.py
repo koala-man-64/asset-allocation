@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Optional
+from typing import Any, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -16,6 +16,10 @@ ALPHABET_BUCKETS: tuple[str, ...] = bronze_bucketing.ALPHABET_BUCKETS
 
 def _is_truthy(raw: Optional[str]) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def normalize_sub_domain(value: Optional[str]) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
 
 
 def silver_layout_mode() -> str:
@@ -124,7 +128,7 @@ def write_layer_symbol_index(
         return None
     ts = updated_at or datetime.now(timezone.utc)
     rows: list[dict[str, str]] = []
-    clean_sub_domain = str(sub_domain or "").strip().lower().replace("-", "_")
+    clean_sub_domain = normalize_sub_domain(sub_domain)
     for symbol, bucket in sorted(symbol_to_bucket.items()):
         row = {
             "symbol": str(symbol).strip().upper(),
@@ -136,19 +140,25 @@ def write_layer_symbol_index(
         rows.append(row)
     cols = ["symbol", "bucket", "updated_at", "sub_domain"]
     df = pd.DataFrame(rows, columns=cols)
-    if clean_sub_domain:
-        existing = load_layer_symbol_index(layer=layer, domain=domain)
-        if not existing.empty:
-            existing_sub = (
-                existing["sub_domain"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .str.lower()
-                .str.replace("-", "_", regex=False)
-            )
+    existing = load_layer_symbol_index(layer=layer, domain=domain)
+    if not existing.empty:
+        existing_sub = (
+            existing["sub_domain"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace("-", "_", regex=False)
+        )
+        if clean_sub_domain:
             preserved = existing[existing_sub != clean_sub_domain].copy()
             df = pd.concat([preserved[cols], df], ignore_index=True)
+        else:
+            # Preserve sub-domain rows when refreshing the root index so finance can
+            # safely rewrite aggregate rows without clobbering untouched sub-domains.
+            preserved = existing[existing_sub != ""].copy()
+            if not preserved.empty:
+                df = pd.concat([preserved[cols], df], ignore_index=True)
 
     if not df.empty:
         df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
@@ -187,11 +197,93 @@ def load_layer_symbol_set(*, layer: str, domain: str, sub_domain: Optional[str] 
     df = load_layer_symbol_index(layer=layer, domain=domain)
     if df.empty:
         return set()
-    clean_sub_domain = str(sub_domain or "").strip().lower().replace("-", "_")
+    clean_sub_domain = normalize_sub_domain(sub_domain)
     if clean_sub_domain and "sub_domain" in df.columns:
-        df = df[df["sub_domain"].astype(str).str.lower() == clean_sub_domain]
+        normalized = (
+            df["sub_domain"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace("-", "_", regex=False)
+        )
+        df = df[normalized == clean_sub_domain]
+    elif "sub_domain" in df.columns:
+        normalized = (
+            df["sub_domain"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace("-", "_", regex=False)
+        )
+        df = df[normalized == ""]
     return {
         str(value).strip().upper()
         for value in df["symbol"].dropna().astype(str).tolist()
         if str(value).strip()
     }
+
+
+def load_layer_symbol_to_bucket_map(
+    *,
+    layer: str,
+    domain: str,
+    sub_domain: Optional[str] = None,
+) -> dict[str, str]:
+    out: dict[str, str] = {}
+    existing = load_layer_symbol_index(layer=layer, domain=domain)
+    if existing is None or existing.empty:
+        return out
+    if "symbol" not in existing.columns or "bucket" not in existing.columns:
+        return out
+    if "sub_domain" not in existing.columns:
+        existing = existing.copy()
+        existing["sub_domain"] = pd.NA
+
+    normalized_sub = (
+        existing["sub_domain"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace("-", "_", regex=False)
+    )
+    target_sub_domain = normalize_sub_domain(sub_domain)
+    if target_sub_domain:
+        existing = existing[normalized_sub == target_sub_domain]
+    else:
+        existing = existing[normalized_sub == ""]
+
+    valid_buckets = set(ALPHABET_BUCKETS)
+    for _, row in existing.iterrows():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        bucket = str(row.get("bucket") or "").strip().upper()
+        if not symbol or bucket not in valid_buckets:
+            continue
+        out[symbol] = bucket
+    return out
+
+
+def merge_symbol_to_bucket_map(
+    existing: dict[str, str],
+    *,
+    touched_buckets: set[str],
+    touched_symbol_to_bucket: dict[str, str],
+) -> dict[str, str]:
+    out = {
+        symbol: bucket
+        for symbol, bucket in existing.items()
+        if bucket not in touched_buckets
+    }
+    out.update(touched_symbol_to_bucket)
+    return out
+
+
+def count_staged_frame_rows(bucket_frames: Mapping[Any, Sequence[pd.DataFrame]]) -> int:
+    total_rows = 0
+    for parts in bucket_frames.values():
+        for frame in parts:
+            if frame is not None:
+                total_rows += int(len(frame))
+    return total_rows

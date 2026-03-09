@@ -6,7 +6,7 @@ import os
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig, LastModifiedProbeResult
@@ -15,6 +15,7 @@ from monitoring.control_plane import ResourceHealthItem, collect_container_apps,
 from monitoring.log_analytics import (
     AzureLogAnalyticsClient,
     collect_log_analytics_signals,
+    extract_first_table_rows,
     parse_log_analytics_queries_json,
 )
 from monitoring.monitor_metrics import (
@@ -196,12 +197,249 @@ class JobScheduleMetadata:
     cron_expression: str
 
 
+@dataclass(frozen=True)
+class BronzeSymbolJumpThreshold:
+    warn_factor: float
+    error_factor: float
+    min_previous_symbols: int
+    min_current_symbols: int
+
+
 def _normalize_layer_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
 
 
 def _normalize_domain_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
+def _load_bronze_symbol_jump_threshold_overrides() -> Dict[str, Dict[str, Any]]:
+    raw = os.environ.get("SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON", "")
+    text = raw.strip()
+    if not text:
+        return {}
+
+    try:
+        payload = json.loads(text)
+    except Exception as exc:
+        logger.warning(
+            "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON parse error: %s",
+            exc,
+            exc_info=True,
+        )
+        return {}
+
+    if not isinstance(payload, dict):
+        logger.warning("SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON must be a JSON object.")
+        return {}
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for raw_key, raw_value in payload.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        if not isinstance(raw_value, dict):
+            logger.warning(
+                "Ignoring bronze symbol jump threshold for key=%s (expected object, got %s).",
+                key,
+                type(raw_value).__name__,
+            )
+            continue
+        normalized[key] = raw_value
+    return normalized
+
+
+def _resolve_bronze_symbol_jump_threshold(
+    job_name: str,
+    overrides: Dict[str, Dict[str, Any]],
+) -> Optional[BronzeSymbolJumpThreshold]:
+    candidates = [str(job_name or "").strip(), "*"]
+    node: Optional[Dict[str, Any]] = None
+    for key in candidates:
+        current = overrides.get(key)
+        if isinstance(current, dict):
+            node = current
+            break
+    if not node:
+        return None
+
+    enabled = node.get("enabled")
+    if enabled is not None:
+        try:
+            if isinstance(enabled, str):
+                if not _parse_bool(enabled):
+                    return None
+            elif not bool(enabled):
+                return None
+        except Exception:
+            return None
+
+    try:
+        warn_factor = float(node.get("warnFactor", 0))
+        error_factor = float(node.get("errorFactor", 0))
+        min_previous = int(node.get("minPreviousSymbols", 1))
+        min_current = int(node.get("minCurrentSymbols", 1))
+    except Exception:
+        logger.warning("Ignoring bronze symbol jump threshold for job=%s due to invalid numeric values.", job_name)
+        return None
+
+    if warn_factor <= 1.0 and error_factor <= 1.0:
+        logger.warning(
+            "Ignoring bronze symbol jump threshold for job=%s because warn/error factors must exceed 1.0.",
+            job_name,
+        )
+        return None
+    if error_factor > 0 and warn_factor > error_factor:
+        warn_factor = error_factor
+    return BronzeSymbolJumpThreshold(
+        warn_factor=warn_factor if warn_factor > 1.0 else error_factor,
+        error_factor=error_factor if error_factor > 1.0 else warn_factor,
+        min_previous_symbols=max(min_previous, 1),
+        min_current_symbols=max(min_current, 1),
+    )
+
+
+def _escape_kql_literal(value: str) -> str:
+    return str(value or "").replace("'", "''")
+
+
+def _query_job_system_log_messages(
+    client: AzureLogAnalyticsClient,
+    *,
+    workspace_id: str,
+    job_name: str,
+    execution_name: Optional[str],
+    start_time: Optional[datetime],
+    end_time: Optional[datetime],
+) -> List[str]:
+    job_kql = _escape_kql_literal(job_name)
+    exec_kql = _escape_kql_literal(str(execution_name or ""))
+    end = end_time or _utc_now()
+    start = start_time or (end - timedelta(minutes=30))
+    if end < start:
+        end = _utc_now()
+    start = start - timedelta(minutes=5)
+    end = end + timedelta(minutes=15)
+    if end - start > timedelta(hours=24):
+        start = end - timedelta(hours=24)
+    timespan = f"{start.isoformat()}/{end.isoformat()}"
+
+    query = f"""
+let jobName = '{job_kql}';
+let execName = '{exec_kql}';
+union isfuzzy=true ContainerAppSystemLogs_CL, ContainerAppSystemLogs
+| extend job = tostring(
+    column_ifexists('ContainerJobName_s',
+        column_ifexists('JobName_s',
+            column_ifexists('JobName',
+                column_ifexists('ContainerAppJobName_s', '')
+            )
+        )
+    )
+)
+| extend exec = tostring(
+    column_ifexists('ContainerAppJobExecutionName_s',
+        column_ifexists('ExecutionName_s',
+            column_ifexists('ExecutionName',
+                column_ifexists('ContainerGroupName_s',
+                    column_ifexists('ContainerGroupName', '')
+                )
+            )
+        )
+    )
+)
+| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+| extend reason = tostring(column_ifexists('Reason_s', column_ifexists('Reason', '')))
+| extend msg_raw = tostring(
+    column_ifexists('Log_s',
+        column_ifexists('Log',
+            column_ifexists('Message',
+                column_ifexists('message', '')
+            )
+        )
+    )
+)
+| extend msg = trim(@" ", strcat(reason, ' ', msg_raw))
+| extend jobMatch = (job != '' and job contains jobName) or (resource contains jobName)
+| extend execMatch = execName != '' and ((exec != '' and exec contains execName) or (resource contains execName))
+| where jobMatch or execMatch
+| order by execMatch desc, jobMatch desc, TimeGenerated desc
+| take 200
+| project msg
+""".strip()
+    payload = client.query(workspace_id=workspace_id, query=query, timespan=timespan)
+    rows = extract_first_table_rows(payload)
+    return [str(row.get("msg") or "").strip() for row in rows if str(row.get("msg") or "").strip()]
+
+
+def _query_recent_bronze_symbol_counts(
+    client: AzureLogAnalyticsClient,
+    *,
+    workspace_id: str,
+    job_name: str,
+    lookback_hours: int,
+) -> List[Dict[str, Any]]:
+    job_kql = _escape_kql_literal(job_name)
+    end = _utc_now()
+    start = end - timedelta(hours=max(lookback_hours, 1))
+    timespan = f"{start.isoformat()}/{end.isoformat()}"
+    query = f"""
+let jobName = '{job_kql}';
+union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+| extend job = tostring(
+    column_ifexists('ContainerJobName_s',
+        column_ifexists('ContainerName_s',
+            column_ifexists('ContainerAppJobName_s',
+                column_ifexists('JobName_s',
+                    column_ifexists('JobName',
+                        column_ifexists('ContainerAppName_s', '')
+                    )
+                )
+            )
+        )
+    )
+)
+| extend resource = tostring(column_ifexists('_ResourceId', column_ifexists('ResourceId', '')))
+| extend msg = tostring(
+    column_ifexists('Log_s',
+        column_ifexists('Log',
+            column_ifexists('LogMessage_s',
+                column_ifexists('Message',
+                    column_ifexists('message', '')
+                )
+            )
+        )
+    )
+)
+| where ((job != '' and job contains jobName) or (resource contains jobName))
+| where msg has 'alpha26 buckets written:'
+| extend symbol_count = tolong(extract(@"symbols=([0-9]+)", 1, msg))
+| where isnotnull(symbol_count)
+| order by TimeGenerated desc
+| take 5
+| project TimeGenerated, symbol_count, msg
+""".strip()
+    payload = client.query(workspace_id=workspace_id, query=query, timespan=timespan)
+    rows = extract_first_table_rows(payload)
+    out: List[Dict[str, Any]] = []
+    seen_timestamps: set[str] = set()
+    for row in rows:
+        timestamp = str(row.get("TimeGenerated") or "").strip()
+        if not timestamp or timestamp in seen_timestamps:
+            continue
+        seen_timestamps.add(timestamp)
+        try:
+            symbol_count = int(row.get("symbol_count") or 0)
+        except Exception:
+            continue
+        out.append(
+            {
+                "timeGenerated": timestamp,
+                "symbolCount": symbol_count,
+                "message": str(row.get("msg") or "").strip(),
+            }
+        )
+    return out
 
 
 def _load_freshness_overrides() -> Dict[str, Dict[str, Any]]:
@@ -818,6 +1056,146 @@ def _alert_id(*, severity: str, title: str, component: str) -> str:
     return f"{_slug(component)}--{_slug(title)}--{digest}"
 
 
+def _job_failure_reason_alerts(
+    *,
+    run: Dict[str, Any],
+    checked_iso: str,
+    log_client: Optional[AzureLogAnalyticsClient],
+    workspace_id: str,
+) -> List[Dict[str, Any]]:
+    if log_client is None or not workspace_id:
+        return []
+    if run.get("status") != "failed":
+        return []
+
+    job_name = str(run.get("jobName") or "").strip()
+    if not job_name:
+        return []
+    execution_name = str(run.get("executionName") or "").strip() or None
+    start_time = _parse_iso_start_time(str(run.get("startTime") or ""))
+    end_time = _parse_iso_start_time(str(run.get("endTime") or ""))
+
+    try:
+        messages = _query_job_system_log_messages(
+            log_client,
+            workspace_id=workspace_id,
+            job_name=job_name,
+            execution_name=execution_name,
+            start_time=start_time,
+            end_time=end_time,
+        )
+    except Exception as exc:
+        logger.warning("Job failure reason probe failed for job=%s: %s", job_name, exc, exc_info=True)
+        return []
+
+    normalized = "\n".join(message.lower() for message in messages)
+    alerts: List[Dict[str, Any]] = []
+    if "exit code 137" in normalized or "exit code '137'" in normalized:
+        alerts.append(
+            {
+                "id": _alert_id(
+                    severity="error",
+                    title="Job terminated with exit 137",
+                    component=job_name,
+                ),
+                "severity": "error",
+                "title": "Job terminated with exit 137",
+                "component": job_name,
+                "timestamp": checked_iso,
+                "message": "Latest execution was terminated with exit code 137.",
+            }
+        )
+    if "backofflimitexceeded" in normalized:
+        alerts.append(
+            {
+                "id": _alert_id(
+                    severity="error",
+                    title="Job hit BackoffLimitExceeded",
+                    component=job_name,
+                ),
+                "severity": "error",
+                "title": "Job hit BackoffLimitExceeded",
+                "component": job_name,
+                "timestamp": checked_iso,
+                "message": "Latest execution exhausted retries and hit BackoffLimitExceeded.",
+            }
+        )
+    return alerts
+
+
+def _bronze_symbol_jump_alerts(
+    *,
+    job_names: Sequence[str],
+    checked_iso: str,
+    log_client: Optional[AzureLogAnalyticsClient],
+    workspace_id: str,
+) -> List[Dict[str, Any]]:
+    if log_client is None or not workspace_id:
+        return []
+
+    try:
+        lookback_hours = _require_int(
+            "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS",
+            min_value=1,
+            max_value=24 * 365,
+        )
+    except ValueError:
+        lookback_hours = 24 * 7
+
+    overrides = _load_bronze_symbol_jump_threshold_overrides()
+    if not overrides:
+        return []
+
+    alerts: List[Dict[str, Any]] = []
+    for job_name in job_names:
+        threshold = _resolve_bronze_symbol_jump_threshold(job_name, overrides)
+        if threshold is None:
+            continue
+        if not str(job_name or "").startswith("bronze-"):
+            continue
+        try:
+            runs = _query_recent_bronze_symbol_counts(
+                log_client,
+                workspace_id=workspace_id,
+                job_name=job_name,
+                lookback_hours=lookback_hours,
+            )
+        except Exception as exc:
+            logger.warning("Bronze symbol jump probe failed for job=%s: %s", job_name, exc, exc_info=True)
+            continue
+        if len(runs) < 2:
+            continue
+
+        current = runs[0]
+        previous = runs[1]
+        current_count = int(current.get("symbolCount") or 0)
+        previous_count = int(previous.get("symbolCount") or 0)
+        if previous_count < threshold.min_previous_symbols or current_count < threshold.min_current_symbols:
+            continue
+        ratio = float(current_count) / float(previous_count)
+        if ratio < threshold.warn_factor:
+            continue
+        severity = "error" if ratio >= threshold.error_factor else "warning"
+        alerts.append(
+            {
+                "id": _alert_id(
+                    severity=severity,
+                    title="Bronze symbol count jump",
+                    component=job_name,
+                ),
+                "severity": severity,
+                "title": "Bronze symbol count jump",
+                "component": job_name,
+                "timestamp": checked_iso,
+                "message": (
+                    f"Latest Bronze symbol count jumped from {previous_count} to {current_count} "
+                    f"({ratio:.2f}x; previous={previous.get('timeGenerated')}, current={current.get('timeGenerated')})."
+                ),
+            }
+        )
+    return alerts
+
+
 def _make_container_portal_url(sub_id: str, rg: str, account: str, container: str) -> Optional[str]:
     if not all([sub_id, rg, account, container]):
         return None
@@ -1400,7 +1778,6 @@ def collect_system_health_snapshot(
                     log_analytics_queries = parse_log_analytics_queries_json(log_analytics_queries_raw)
                 except Exception as exc:
                     log_analytics_queries = []
-                    log_analytics_enabled = False
                     alerts.append(
                         {
                             "id": _alert_id(
@@ -1416,7 +1793,7 @@ def collect_system_health_snapshot(
                     }
                 )
 
-            if log_analytics_enabled and (not log_analytics_workspace_id or not log_analytics_queries):
+            if log_analytics_enabled and not log_analytics_workspace_id:
                 log_analytics_enabled = False
                 alerts.append(
                     {
@@ -1429,7 +1806,7 @@ def collect_system_health_snapshot(
                         "title": "Log Analytics monitoring disabled",
                         "component": "AzureLogAnalytics",
                         "timestamp": _iso(now),
-                        "message": "Log Analytics enabled but workspace ID or queries are missing.",
+                        "message": "Log Analytics enabled but workspace ID is missing.",
                     }
                     )
 
@@ -1586,11 +1963,20 @@ def collect_system_health_snapshot(
                             if run.get("status") != "failed":
                                 continue
                             job_name = str(run.get("jobName") or "job")
+                            statuses.append("error")
+                            reason_alerts = _job_failure_reason_alerts(
+                                run=run,
+                                checked_iso=checked_iso,
+                                log_client=log_client,
+                                workspace_id=log_analytics_workspace_id,
+                            )
+                            if reason_alerts:
+                                alerts.extend(reason_alerts)
+                                continue
                             start_time = str(run.get("startTime") or "")
                             message = "Latest execution reported failed."
                             if start_time:
                                 message = f"Latest execution reported failed (startTime={start_time})."
-                            statuses.append("error")
                             alerts.append(
                                 {
                                     "id": _alert_id(
@@ -1604,6 +1990,19 @@ def collect_system_health_snapshot(
                                     "timestamp": checked_iso,
                                     "message": message,
                                 }
+                            )
+
+                        bronze_jump_alerts = _bronze_symbol_jump_alerts(
+                            job_names=job_names,
+                            checked_iso=checked_iso,
+                            log_client=log_client,
+                            workspace_id=log_analytics_workspace_id,
+                        )
+                        if bronze_jump_alerts:
+                            alerts.extend(bronze_jump_alerts)
+                            statuses.extend(
+                                "error" if alert.get("severity") == "error" else "stale"
+                                for alert in bronze_jump_alerts
                             )
                 finally:
                     if log_client is not None:

@@ -272,6 +272,8 @@ $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID=" + (Prompt-Var "SYSTEM_HEA
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS" "5" "Optional: Log Analytics timeout seconds.")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES" "15" "Optional: timespan minutes (e.g., 15).")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON" "" "Optional: JSON array of query specs.")
+$Config += "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS=" + (Prompt-Var "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS" "168" "Optional: lookback window in hours for Bronze symbol-count jump detection.")
+$Config += "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON" "" "Optional: JSON object of Bronze symbol-count jump thresholds.")
 
 # -------------------------------------------------------------------------
 # Pipeline Controls

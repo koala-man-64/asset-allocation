@@ -87,3 +87,42 @@ def test_write_layer_symbol_index_merges_target_sub_domain_only(monkeypatch) -> 
     cash_flow_rows = written[written["sub_domain"].astype(str) == "cash_flow"]
     assert set(valuation_rows["symbol"].astype(str)) == {"NVDA"}
     assert set(cash_flow_rows["symbol"].astype(str)) == {"MSFT"}
+
+
+def test_write_layer_symbol_index_root_refresh_preserves_sub_domain_rows(monkeypatch) -> None:
+    saved: dict[str, bytes] = {}
+
+    existing = pd.DataFrame(
+        [
+            {"symbol": "AAPL", "bucket": "A", "updated_at": "2026-01-01T00:00:00+00:00", "sub_domain": None},
+            {"symbol": "MSFT", "bucket": "M", "updated_at": "2026-01-01T00:00:00+00:00", "sub_domain": "cash_flow"},
+        ]
+    )
+    existing_bytes = existing.to_parquet(index=False)
+
+    monkeypatch.setattr(layer_bucketing.mdc, "common_storage_client", object())
+    monkeypatch.setattr(
+        layer_bucketing.mdc,
+        "read_raw_bytes",
+        lambda path, client=None: existing_bytes
+        if path == "system/silver-index/finance/latest.parquet"
+        else b"",
+    )
+    monkeypatch.setattr(
+        layer_bucketing.mdc,
+        "store_raw_bytes",
+        lambda payload, path, client=None: saved.setdefault(path, payload),
+    )
+
+    out_path = layer_bucketing.write_layer_symbol_index(
+        layer="silver",
+        domain="finance",
+        symbol_to_bucket={"NVDA": "N"},
+    )
+
+    assert out_path == "system/silver-index/finance/latest.parquet"
+    written = pd.read_parquet(BytesIO(saved[out_path]))
+    root_rows = written[written["sub_domain"].isna()]
+    cash_flow_rows = written[written["sub_domain"].astype(str) == "cash_flow"]
+    assert set(root_rows["symbol"].astype(str)) == {"NVDA"}
+    assert set(cash_flow_rows["symbol"].astype(str)) == {"MSFT"}

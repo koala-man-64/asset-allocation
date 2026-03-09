@@ -468,6 +468,188 @@ def test_system_health_healthy_when_latest_job_execution_succeeds(monkeypatch: p
     assert not any(alert["title"] == "Job execution failed" for alert in payload["alerts"])
 
 
+def test_system_health_critical_on_job_failure_reason_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    job_url = "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob"
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob",
+            "properties": {"provisioningState": "Succeeded"},
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "name": "myjob-exec-1",
+                    "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob/executions/myjob-exec-1",
+                    "properties": {
+                        "status": "Failed",
+                        "startTime": "2024-01-01T00:00:00Z",
+                        "endTime": "2024-01-01T00:10:00Z",
+                    },
+                }
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    class FakeAzureLogAnalyticsClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def query(self, *, workspace_id: str, query: str, timespan: Optional[str] = None) -> Dict[str, Any]:
+            assert workspace_id == "workspace"
+            assert "ContainerAppSystemLogs" in query
+            return {
+                "tables": [
+                    {
+                        "columns": [{"name": "msg"}],
+                        "rows": [
+                            ["Replica terminated with exit code 137"],
+                            ["BackoffLimitExceeded"],
+                        ],
+                    }
+                ]
+            }
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr(system_health, "AzureLogAnalyticsClient", FakeAzureLogAnalyticsClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "critical"
+    assert any(alert["title"] == "Job terminated with exit 137" for alert in payload["alerts"])
+    assert any(alert["title"] == "Job hit BackoffLimitExceeded" for alert in payload["alerts"])
+    assert not any(alert["title"] == "Job execution failed" for alert in payload["alerts"])
+
+
+def test_system_health_degraded_on_bronze_symbol_jump(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-finance-job")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
+    monkeypatch.setenv("SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS", "168")
+    monkeypatch.setenv(
+        "SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_THRESHOLDS_JSON",
+        '{"*":{"warnFactor":3.0,"errorFactor":100.0,"minPreviousSymbols":100,"minCurrentSymbols":1000}}',
+    )
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    job_url = (
+        "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-finance-job"
+    )
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/bronze-finance-job",
+            "properties": {"provisioningState": "Succeeded"},
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "name": "bronze-finance-job-exec-1",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-01T00:00:00Z",
+                        "endTime": "2024-01-01T00:10:00Z",
+                    },
+                }
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    class FakeAzureLogAnalyticsClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def query(self, *, workspace_id: str, query: str, timespan: Optional[str] = None) -> Dict[str, Any]:
+            assert workspace_id == "workspace"
+            assert "alpha26 buckets written" in query
+            return {
+                "tables": [
+                    {
+                        "columns": [
+                            {"name": "TimeGenerated"},
+                            {"name": "symbol_count"},
+                            {"name": "msg"},
+                        ],
+                        "rows": [
+                            ["2024-01-01T00:05:00Z", 18246, "Bronze finance alpha26 buckets written: symbols=18246"],
+                            ["2023-12-31T00:05:00Z", 200, "Bronze finance alpha26 buckets written: symbols=200"],
+                        ],
+                    }
+                ]
+            }
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+    monkeypatch.setattr(system_health, "AzureLogAnalyticsClient", FakeAzureLogAnalyticsClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert payload["overall"] == "degraded"
+    assert any(alert["title"] == "Bronze symbol count jump" and alert["severity"] == "warning" for alert in payload["alerts"])
+
+
 def test_system_health_critical_on_resource_health_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")

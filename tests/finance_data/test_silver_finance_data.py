@@ -176,8 +176,9 @@ def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks
         watermarks=None,
         persist=True,
         alpha26_bucket_frames=None,
+        flush_state=None,
     ):
-        del desired_end, backfill_start, persist, alpha26_bucket_frames
+        del desired_end, backfill_start, persist, alpha26_bucket_frames, flush_state
         results = []
         for blob in candidate_blobs:
             name = str(blob.get("name", ""))
@@ -273,6 +274,13 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
                     rows_written=1,
                 )
             )
+        flush_state = _kwargs.get("flush_state")
+        if flush_state is not None and out:
+            flush_state.staged_rows += len(out)
+            flush_state.flush_count += len(out)
+            flush_state.written_symbols = len(out)
+            flush_state.index_path = "index"
+            flush_state.column_count = 14
         return out, 0.01
 
     saved_last_success = {}
@@ -286,7 +294,6 @@ def test_silver_finance_catchup_pass_processes_newly_discovered_blobs(monkeypatc
     )
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", _fake_list)
     monkeypatch.setattr(silver, "_process_alpha26_candidate_blobs", _fake_process)
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (2, "index", 14))
     monkeypatch.setattr(silver, "_get_catchup_max_passes", lambda: 3)
     monkeypatch.setattr(silver.layer_bucketing, "silver_alpha26_force_rebuild", lambda: False)
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
@@ -334,10 +341,24 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
     monkeypatch.setattr(silver, "_utc_today", lambda: pd.Timestamp("2026-01-31"))
     monkeypatch.setattr(silver, "load_watermarks", lambda _key: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _key: None)
-    monkeypatch.setattr(
-        silver,
-        "_process_alpha26_candidate_blobs",
-        lambda *, candidate_blobs, desired_end, backfill_start=None, watermarks=None, **_kwargs: (
+
+    def _fake_process_alpha26_candidate_blobs(
+        *,
+        candidate_blobs,
+        desired_end,
+        backfill_start=None,
+        watermarks=None,
+        flush_state=None,
+        **_kwargs,
+    ):
+        del desired_end, backfill_start, watermarks, _kwargs
+        assert flush_state is not None
+        flush_state.staged_rows = 1
+        flush_state.flush_count = 1
+        flush_state.written_symbols = 1
+        flush_state.index_path = "index"
+        flush_state.column_count = 14
+        return (
             [
                 silver.BlobProcessResult(
                     blob_name=candidate_blobs[0]["name"],
@@ -353,9 +374,13 @@ def test_silver_finance_main_records_alpha26_listing_source(monkeypatch):
                 )
             ],
             0.01,
-        ),
+        )
+
+    monkeypatch.setattr(
+        silver,
+        "_process_alpha26_candidate_blobs",
+        _fake_process_alpha26_candidate_blobs,
     )
-    monkeypatch.setattr(silver, "_write_alpha26_finance_silver_buckets", lambda _frames: (1, "index", 14))
     monkeypatch.setattr(
         silver,
         "save_last_success",
@@ -454,11 +479,11 @@ def test_silver_finance_main_acks_manifest_on_success(monkeypatch):
     assert exit_code == 0
     assert len(ack_calls) == 1
     assert ack_calls[0]["run_id"].endswith("abcd1234")
-    assert ack_calls[0]["metadata"]["column_count"] == 14
+    assert ack_calls[0]["metadata"]["column_count"] is None
     assert saved_last_success["metadata"]["source"] == "bronze-manifest"
     assert saved_last_success["metadata"]["manifest_run_id"].endswith("abcd1234")
     assert saved_last_success["metadata"]["manifest_path"].endswith("run.json")
-    assert saved_last_success["metadata"]["column_count"] == 14
+    assert saved_last_success["metadata"]["column_count"] is None
 
 
 def test_silver_finance_main_does_not_ack_manifest_when_failed(monkeypatch):
@@ -606,6 +631,53 @@ def test_write_alpha26_finance_silver_buckets_writes_sub_domain_indexes(monkeypa
     assert aggregate["symbol_to_bucket"] == {"AAPL": "A", "MSFT": "A"}
     sub_domains = sorted(call.get("sub_domain") for call in index_calls if call.get("sub_domain"))
     assert sub_domains == ["balance_sheet", "cash_flow"]
+
+
+def test_write_alpha26_finance_silver_buckets_partial_update_preserves_untouched_sub_domains(monkeypatch):
+    balance_df = pd.DataFrame({"date": [pd.Timestamp("2024-01-01")], "symbol": ["AMZN"]})
+    bucket_frames = {
+        ("balance_sheet", "A"): [balance_df],
+    }
+    index_calls: list[dict] = []
+
+    monkeypatch.setattr(silver, "_FINANCE_ALPHA26_SUBDOMAINS", ("balance_sheet", "cash_flow"))
+    monkeypatch.setattr(silver.layer_bucketing, "ALPHABET_BUCKETS", ("A", "M"))
+    monkeypatch.setattr(silver.delta_core, "get_delta_schema_columns", lambda *_args, **_kwargs: ["date", "symbol"])
+    monkeypatch.setattr(silver.delta_core, "store_delta", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        silver.layer_bucketing,
+        "load_layer_symbol_index",
+        lambda **_kwargs: pd.DataFrame(
+            {
+                "symbol": ["AAPL", "MSFT"],
+                "bucket": ["A", "M"],
+                "sub_domain": ["balance_sheet", "cash_flow"],
+            }
+        ),
+    )
+
+    def _fake_index(**kwargs):
+        index_calls.append(dict(kwargs))
+        return "index"
+
+    monkeypatch.setattr(silver.layer_bucketing, "write_layer_symbol_index", _fake_index)
+    monkeypatch.setattr(
+        silver.domain_artifacts,
+        "load_domain_artifact",
+        lambda **kwargs: {"subDomain": kwargs.get("sub_domain"), "symbolCount": 1},
+    )
+
+    written_symbols, index_path, _column_count = silver._write_alpha26_finance_silver_buckets(
+        bucket_frames,
+        touched_bucket_keys={("balance_sheet", "A")},
+    )
+
+    assert written_symbols == 2
+    assert index_path == "index"
+    aggregate = next(call for call in index_calls if call.get("sub_domain") is None)
+    balance = next(call for call in index_calls if call.get("sub_domain") == "balance_sheet")
+    assert aggregate["symbol_to_bucket"] == {"AMZN": "A", "MSFT": "M"}
+    assert balance["symbol_to_bucket"] == {"AMZN": "A"}
 
 
 def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_watermark(monkeypatch):

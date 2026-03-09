@@ -26,7 +26,9 @@ import {
   buildEmptyUniverseCondition,
   buildEmptyUniverseGroup,
   cloneUniverse,
+  collectUniverseTables,
   coerceDraftValue,
+  countUniverseConditions,
   formatUniverseOperator,
   isMultiValueOperator,
   isNullOperator,
@@ -36,7 +38,11 @@ import {
 type NodePath = number[];
 
 const selectClassName =
-  'h-10 w-full rounded-xl border-2 border-mcm-walnut bg-input-background px-3 text-sm font-semibold text-foreground outline-none transition-[color,box-shadow] focus-visible:border-mcm-teal focus-visible:ring-mcm-teal/40 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50';
+  'h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground shadow-sm outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50';
+
+const sectionClassName = 'rounded-xl border border-border/60 bg-card shadow-sm';
+const surfaceClassName = 'rounded-lg border border-border/60 bg-background p-4';
+const mutedSurfaceClassName = 'rounded-lg border border-border/60 bg-muted/20 p-4';
 
 interface UniverseRuleBuilderProps {
   value: UniverseDefinition;
@@ -135,6 +141,8 @@ function parseMultiValueText(raw: string, kind: UniverseValueKind) {
 export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProps) {
   const [preview, setPreview] = useState<UniversePreviewResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const conditionCount = countUniverseConditions(value.root);
+  const tableCount = collectUniverseTables(value.root).length;
 
   const catalogQuery = useQuery({
     queryKey: ['strategies', 'universe-catalog'],
@@ -298,7 +306,7 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
 
     if (isNullOperator(condition.operator)) {
       return (
-        <div className="rounded-xl border border-dashed border-mcm-walnut/35 px-4 py-3 text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-3 text-xs text-muted-foreground">
           This operator does not require a value.
         </div>
       );
@@ -358,7 +366,7 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
     );
   };
 
-  const renderNode = (node: UniverseNode, path: NodePath = [], depth: number = 0): JSX.Element => {
+  const renderNode = (node: UniverseNode, path: NodePath = [], depth: number = 0) => {
     if (!isUniverseGroup(node)) {
       const table = getCatalogTable(catalogQuery.data, node.table);
       const selectedColumn = getCatalogColumn(catalogQuery.data, node.table, node.column);
@@ -367,11 +375,23 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
       return (
         <div
           key={path.join('-') || 'condition-root'}
-          className="space-y-3 rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4"
+          className={surfaceClassName}
         >
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
-              Condition
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Condition
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {node.table && node.column
+                  ? `${node.table}.${node.column}`
+                  : 'Select a table, column, and operator to define this rule.'}
+              </div>
+              {selectedColumn ? (
+                <div className="text-xs text-muted-foreground">
+                  Data type: <span className="font-medium text-foreground">{selectedColumn.dataType}</span>
+                </div>
+              ) : null}
             </div>
             <Button
               type="button"
@@ -444,12 +464,6 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
           </div>
 
           {renderConditionValueEditor(node, path)}
-
-          {selectedColumn ? (
-            <div className="text-xs text-muted-foreground">
-              Data type: <span className="font-semibold text-foreground">{selectedColumn.dataType}</span>
-            </div>
-          ) : null}
         </div>
       );
     }
@@ -458,16 +472,17 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
       <div
         key={path.join('-') || 'group-root'}
         className={cn(
-          'space-y-4 rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/45 p-4',
-          depth > 0 && 'bg-mcm-paper/60'
+          'space-y-4 rounded-xl border border-border/60 p-4',
+          depth === 0 ? 'bg-muted/20' : 'bg-background'
         )}
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
-            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
               {path.length === 0 ? 'Root Group' : 'Nested Group'}
             </div>
-            <div className="text-sm text-muted-foreground">{formatUniverseOperator(node.operator)}</div>
+            <div className="text-sm font-medium text-foreground">{formatUniverseOperator(node.operator)}</div>
+            <div className="text-xs text-muted-foreground">{node.clauses.length} clauses</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <select
@@ -516,7 +531,7 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
 
         <div className="space-y-3">
           {node.clauses.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-mcm-walnut/35 px-4 py-3 text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-3 text-sm text-muted-foreground">
               This group has no clauses yet.
             </div>
           ) : (
@@ -528,34 +543,38 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-5">
+      <div className={sectionClassName}>
+        <div className="flex flex-col gap-4 border-b border-border/60 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h4 className="font-display text-lg text-foreground">Universe Rules</h4>
+            <h4 className="text-base font-semibold text-foreground">Universe Definition</h4>
             <p className="text-sm text-muted-foreground">
-              Filter the investable symbol set from Postgres gold tables before saving the strategy.
+              Define the rule tree that determines symbol eligibility from Postgres gold data.
             </p>
           </div>
-          <Badge variant="secondary">Source: Postgres Gold</Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">Source: Postgres Gold</Badge>
+            <Badge variant="outline">{conditionCount} conditions</Badge>
+            <Badge variant="outline">{tableCount} tables</Badge>
+          </div>
         </div>
 
         {catalogQuery.isLoading ? (
-          <p className="mt-4 text-sm text-muted-foreground">Loading gold tables and columns...</p>
+          <p className="px-5 pt-5 text-sm text-muted-foreground">Loading gold tables and columns...</p>
         ) : null}
         {catalogQuery.error ? (
-          <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          <div className="mx-5 mt-5 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
             {formatSystemStatusText(catalogQuery.error) || 'Failed to load universe catalog.'}
           </div>
         ) : null}
 
-        <div className="mt-4">{renderNode(value.root)}</div>
+        <div className="px-5 py-5">{renderNode(value.root)}</div>
       </div>
 
-      <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-cream/60 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className={sectionClassName}>
+        <div className="flex flex-col gap-4 border-b border-border/60 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h4 className="font-display text-lg text-foreground">Universe Preview</h4>
+            <h4 className="text-base font-semibold text-foreground">Universe Preview</h4>
             <p className="text-sm text-muted-foreground">
               Preview the symbols that match the current rule set using the latest available gold rows.
             </p>
@@ -571,46 +590,74 @@ export function UniverseRuleBuilder({ value, onChange }: UniverseRuleBuilderProp
           </Button>
         </div>
 
-        {previewError ? (
-          <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-            {previewError}
-          </div>
-        ) : null}
-
-        {preview ? (
-          <div className="mt-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <Badge variant="default">{preview.symbolCount} symbols</Badge>
-              {preview.tablesUsed.map((tableName) => (
-                <Badge key={tableName} variant="outline">
-                  {tableName}
-                </Badge>
-              ))}
+        <div className="space-y-4 px-5 py-5">
+          {previewError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+              {previewError}
             </div>
+          ) : null}
 
-            {preview.sampleSymbols.length ? (
-              <div className="flex flex-wrap gap-2">
-                {preview.sampleSymbols.map((symbol) => (
-                  <Badge key={symbol} variant="secondary">
-                    {symbol}
+          {preview ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className={mutedSurfaceClassName}>
+                  <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Matching universe
+                  </div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">{preview.symbolCount}</div>
+                </div>
+                <div className={mutedSurfaceClassName}>
+                  <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Tables used
+                  </div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">{preview.tablesUsed.length}</div>
+                </div>
+                <div className={mutedSurfaceClassName}>
+                  <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Sample returned
+                  </div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-foreground">{preview.sampleSymbols.length}</div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge variant="outline">{preview.symbolCount} symbols</Badge>
+                {preview.tablesUsed.map((tableName) => (
+                  <Badge key={tableName} variant="outline">
+                    {tableName}
                   </Badge>
                 ))}
               </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No symbols matched the current universe.</div>
-            )}
 
-            {preview.warnings.length ? (
-              <div className="rounded-xl border border-mcm-walnut/25 bg-mcm-paper/70 p-3 text-sm text-muted-foreground">
-                {preview.warnings.join(' ')}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <p className="mt-4 text-sm text-muted-foreground">
-            Run a preview to inspect the current symbol count before saving.
-          </p>
-        )}
+              {preview.sampleSymbols.length ? (
+                <div className={mutedSurfaceClassName}>
+                  <div className="mb-3 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Sample symbols
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {preview.sampleSymbols.map((symbol) => (
+                      <Badge key={symbol} variant="outline" className="font-mono">
+                        {symbol}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">No symbols matched the current universe.</div>
+              )}
+
+              {preview.warnings.length ? (
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm text-muted-foreground">
+                  {preview.warnings.join(' ')}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/15 p-4 text-sm text-muted-foreground">
+              Run a preview to inspect the current symbol count and table coverage before saving.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

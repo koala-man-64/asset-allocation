@@ -115,6 +115,30 @@ def extract_primary_scalar(payload: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+def extract_first_table_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    tables = payload.get("tables") if isinstance(payload.get("tables"), list) else []
+    if not tables:
+        return []
+    table = tables[0] if isinstance(tables[0], dict) else {}
+    columns = table.get("columns") if isinstance(table.get("columns"), list) else []
+    rows = table.get("rows") if isinstance(table.get("rows"), list) else []
+
+    names: List[str] = []
+    for idx, column in enumerate(columns):
+        if not isinstance(column, dict):
+            names.append(f"col_{idx}")
+            continue
+        name = str(column.get("name") or "").strip()
+        names.append(name or f"col_{idx}")
+
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        out.append({name: row[idx] if idx < len(row) else None for idx, name in enumerate(names)})
+    return out
+
+
 class AzureLogAnalyticsClient:
     def __init__(
         self,

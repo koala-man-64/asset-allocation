@@ -150,20 +150,7 @@ def _split_market_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str)
 
 
 def _load_existing_silver_symbol_to_bucket_map() -> dict[str, str]:
-    out: dict[str, str] = {}
-    existing = layer_bucketing.load_layer_symbol_index(layer="silver", domain="market")
-    if existing is None or existing.empty:
-        return out
-    if "symbol" not in existing.columns or "bucket" not in existing.columns:
-        return out
-    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
-    for _, row in existing.iterrows():
-        symbol = str(row.get("symbol") or "").strip().upper()
-        bucket = str(row.get("bucket") or "").strip().upper()
-        if not symbol or bucket not in valid_buckets:
-            continue
-        out[symbol] = bucket
-    return out
+    return layer_bucketing.load_layer_symbol_to_bucket_map(layer="silver", domain="market")
 
 
 def _merge_symbol_to_bucket_map(
@@ -172,13 +159,11 @@ def _merge_symbol_to_bucket_map(
     touched_buckets: set[str],
     touched_symbol_to_bucket: dict[str, str],
 ) -> dict[str, str]:
-    out = {
-        symbol: bucket
-        for symbol, bucket in existing.items()
-        if bucket not in touched_buckets
-    }
-    out.update(touched_symbol_to_bucket)
-    return out
+    return layer_bucketing.merge_symbol_to_bucket_map(
+        existing,
+        touched_buckets=touched_buckets,
+        touched_symbol_to_bucket=touched_symbol_to_bucket,
+    )
 
 
 def _validate_bronze_to_silver_market_bucket_contract(df_bucket: pd.DataFrame, *, source_name: str) -> None:
@@ -787,12 +772,19 @@ def _write_alpha26_market_buckets(
 
 
 def _count_staged_bucket_rows(bucket_frames: dict[str, list[pd.DataFrame]]) -> int:
-    total_rows = 0
-    for parts in bucket_frames.values():
-        for frame in parts:
-            if frame is not None:
-                total_rows += int(len(frame))
-    return total_rows
+    return layer_bucketing.count_staged_frame_rows(bucket_frames)
+
+
+def _restore_blob_watermark(
+    watermarks: dict,
+    *,
+    blob_name: str,
+    prior_signature: Optional[dict],
+) -> None:
+    if prior_signature is None:
+        watermarks.pop(blob_name, None)
+        return
+    watermarks[blob_name] = dict(prior_signature)
 
 
 def _detect_missing_alpha26_market_buckets() -> tuple[bool, set[str]]:
@@ -956,9 +948,15 @@ def main():
     failed = 0
     skipped_unchanged = 0
     skipped_other = 0
-    alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
-    touched_buckets: set[str] = set()
+    alpha26_staged_rows = 0
+    alpha26_flush_count = 0
+    alpha26_written_symbols = 0
+    alpha26_index_path: Optional[str] = None
+    alpha26_column_count: Optional[int] = len(_ALPHA26_MARKET_MIN_COLUMNS)
     for blob in candidate_blobs:
+        blob_name = str(blob.get("name", ""))
+        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
         status = process_alpha26_bucket_blob(
             blob,
             watermarks=watermarks,
@@ -969,15 +967,36 @@ def main():
         )
         if status == "ok":
             processed += 1
-            watermarks_dirty = True
             touched = _parse_alpha26_bucket_from_blob_name(str(blob.get("name", "")))
+            staged_rows = _count_staged_bucket_rows(alpha26_bucket_frames)
+            alpha26_staged_rows += staged_rows
+            if staged_rows == 0:
+                watermarks_dirty = True
+                continue
             if not touched:
+                _restore_blob_watermark(watermarks, blob_name=blob_name, prior_signature=prior_signature)
                 failed += 1
                 mdc.write_error(
                     f"Silver market alpha26 write failed: unable to resolve bucket from blob {blob.get('name')!r}."
                 )
-            else:
-                touched_buckets.add(touched)
+                break
+            try:
+                alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_market_buckets(
+                    alpha26_bucket_frames,
+                    touched_buckets={touched},
+                )
+                alpha26_flush_count += 1
+                watermarks_dirty = True
+                mdc.write_line(
+                    "Silver market alpha26 buckets written: "
+                    f"touched_buckets=1 symbols={alpha26_written_symbols} "
+                    f"index_path={alpha26_index_path or 'unavailable'}"
+                )
+            except Exception as exc:
+                _restore_blob_watermark(watermarks, blob_name=blob_name, prior_signature=prior_signature)
+                failed += 1
+                mdc.write_error(f"Silver market alpha26 bucket write failed: {exc}")
+                break
         elif status == "skipped_unchanged":
             skipped_unchanged += 1
         elif status.startswith("skipped"):
@@ -985,32 +1004,12 @@ def main():
         else:
             failed += 1
 
-    alpha26_written_symbols = 0
-    alpha26_index_path: Optional[str] = None
-    alpha26_column_count: Optional[int] = len(_ALPHA26_MARKET_MIN_COLUMNS)
-    alpha26_staged_rows = _count_staged_bucket_rows(alpha26_bucket_frames)
     if failed == 0:
         if alpha26_staged_rows == 0:
             mdc.write_line("Silver market alpha26 bucket write skipped: no staged rows.")
-        elif not touched_buckets:
+        elif alpha26_flush_count == 0:
             failed += 1
-            mdc.write_error(
-                "Silver market alpha26 bucket write blocked: staged rows exist but touched bucket set is empty."
-            )
-        else:
-            try:
-                alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_market_buckets(
-                    alpha26_bucket_frames,
-                    touched_buckets=touched_buckets,
-                )
-                mdc.write_line(
-                    "Silver market alpha26 buckets written: "
-                    f"touched_buckets={len(touched_buckets)} symbols={alpha26_written_symbols} "
-                    f"index_path={alpha26_index_path or 'unavailable'}"
-                )
-            except Exception as exc:
-                failed += 1
-                mdc.write_error(f"Silver market alpha26 bucket write failed: {exc}")
+            mdc.write_error("Silver market alpha26 bucket write blocked: staged rows were never flushed.")
 
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0

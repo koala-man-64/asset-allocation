@@ -78,6 +78,15 @@ class _ManifestSelection:
     manifest_filtered_bucket_blob_count: int = 0
 
 
+@dataclass
+class _FinanceAlpha26FlushState:
+    staged_rows: int = 0
+    flush_count: int = 0
+    written_symbols: int = 0
+    index_path: Optional[str] = None
+    column_count: Optional[int] = None
+
+
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]+")
 _ALPHA26_REPORT_TYPE_TO_TABLE: dict[str, tuple[str, str]] = dict(SILVER_FINANCE_REPORT_TYPE_TO_LAYOUT)
 _DEFAULT_FINANCE_SHARED_LOCK = "finance-pipeline-shared"
@@ -464,70 +473,165 @@ def _split_finance_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str
     return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
 
 
+def _restore_blob_watermark(
+    watermarks: dict,
+    *,
+    blob_name: str,
+    prior_signature: Optional[dict],
+) -> None:
+    if prior_signature is None:
+        watermarks.pop(blob_name, None)
+        return
+    watermarks[blob_name] = dict(prior_signature)
+
+
+def _load_existing_finance_symbol_maps() -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {sub_domain: {} for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS}
+    existing = layer_bucketing.load_layer_symbol_index(layer="silver", domain="finance")
+    if existing is None or existing.empty:
+        return out
+    if "symbol" not in existing.columns or "bucket" not in existing.columns:
+        return out
+
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    normalized_sub = (
+        existing["sub_domain"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace("-", "_", regex=False)
+    )
+    existing = existing.assign(_normalized_sub_domain=normalized_sub)
+    for _, row in existing.iterrows():
+        sub_domain = str(row.get("_normalized_sub_domain") or "").strip()
+        if not sub_domain or sub_domain not in out:
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        bucket = str(row.get("bucket") or "").strip().upper()
+        if not symbol or bucket not in valid_buckets:
+            continue
+        out[sub_domain][symbol] = bucket
+    return out
+
+
 def _write_alpha26_finance_silver_buckets(
     bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
+    *,
+    touched_bucket_keys: Optional[set[tuple[str, str]]] = None,
 ) -> tuple[int, Optional[str], Optional[int]]:
-    symbol_to_bucket: dict[str, str] = {}
-    symbols_by_sub_domain: dict[str, dict[str, str]] = {key: {} for key in _FINANCE_ALPHA26_SUBDOMAINS}
-    for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
-        for bucket in layer_bucketing.ALPHABET_BUCKETS:
-            silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
-            parts = bucket_frames.get((sub_domain, bucket), [])
-            if parts:
-                df_bucket = pd.concat(parts, ignore_index=True)
-                if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
-                    df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
-                    df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
-                    df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
-                    df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
-                        subset=["symbol", "date"], keep="last"
-                    )
-                    for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
-                        if symbol:
-                            symbol_to_bucket[symbol] = bucket
-                            symbols_by_sub_domain[sub_domain][symbol] = bucket
-                else:
-                    df_bucket = pd.DataFrame(columns=["date", "symbol"])
+    valid_keys = {
+        (sub_domain, str(bucket).strip().upper())
+        for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS
+        for bucket in layer_bucketing.ALPHABET_BUCKETS
+    }
+    selected_keys = {
+        (str(sub_domain).strip().lower().replace("-", "_"), str(bucket).strip().upper())
+        for sub_domain, bucket in (touched_bucket_keys if touched_bucket_keys is not None else valid_keys)
+        if str(sub_domain).strip() and str(bucket).strip()
+    }
+    if not selected_keys:
+        return 0, None, None
+
+    invalid_keys = selected_keys.difference(valid_keys)
+    if invalid_keys:
+        raise ValueError(f"Invalid alpha26 finance bucket key(s) for Silver write: {sorted(invalid_keys)}")
+
+    existing_symbols_by_sub_domain = _load_existing_finance_symbol_maps()
+    is_partial_update = selected_keys != valid_keys
+    if is_partial_update and not any(existing_symbols_by_sub_domain.values()):
+        raise RuntimeError(
+            "Silver finance incremental alpha26 write blocked: existing silver finance symbol indexes are missing."
+        )
+
+    touched_symbols_by_sub_domain: dict[str, dict[str, str]] = {key: {} for key in _FINANCE_ALPHA26_SUBDOMAINS}
+    for sub_domain, bucket in sorted(selected_keys):
+        silver_bucket_path = DataPaths.get_silver_finance_bucket_path(sub_domain, bucket)
+        parts = bucket_frames.get((sub_domain, bucket), [])
+        if parts:
+            df_bucket = pd.concat(parts, ignore_index=True)
+            if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
+                df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
+                df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")
+                df_bucket = df_bucket.dropna(subset=["symbol", "date"]).copy()
+                df_bucket = df_bucket.sort_values(["symbol", "date"]).drop_duplicates(
+                    subset=["symbol", "date"], keep="last"
+                )
+                for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
+                    if symbol:
+                        touched_symbols_by_sub_domain[sub_domain][symbol] = bucket
             else:
                 df_bucket = pd.DataFrame(columns=["date", "symbol"])
+        else:
+            df_bucket = pd.DataFrame(columns=["date", "symbol"])
 
-            write_decision = prepare_delta_write_frame(
-                df_bucket.reset_index(drop=True),
-                container=cfg.AZURE_CONTAINER_SILVER,
-                path=silver_bucket_path,
-            )
+        write_decision = prepare_delta_write_frame(
+            df_bucket.reset_index(drop=True),
+            container=cfg.AZURE_CONTAINER_SILVER,
+            path=silver_bucket_path,
+        )
+        mdc.write_line(
+            "delta_write_decision layer=silver domain=finance "
+            f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
+            f"reason={write_decision.reason} path={silver_bucket_path}"
+        )
+        if write_decision.action == "skip_empty_no_schema":
             mdc.write_line(
-                "delta_write_decision layer=silver domain=finance "
-                f"bucket={bucket} action={'skip' if write_decision.action == 'skip_empty_no_schema' else 'write'} "
-                f"reason={write_decision.reason} path={silver_bucket_path}"
+                f"Skipping Silver finance empty bucket write for {silver_bucket_path}: no existing Delta schema."
             )
-            if write_decision.action == "skip_empty_no_schema":
-                mdc.write_line(
-                    f"Skipping Silver finance empty bucket write for {silver_bucket_path}: no existing Delta schema."
-                )
-                continue
+            continue
 
-            delta_core.store_delta(
-                write_decision.frame,
-                cfg.AZURE_CONTAINER_SILVER,
-                silver_bucket_path,
-                mode="overwrite",
+        delta_core.store_delta(
+            write_decision.frame,
+            cfg.AZURE_CONTAINER_SILVER,
+            silver_bucket_path,
+            mode="overwrite",
+        )
+        try:
+            domain_artifacts.write_bucket_artifact(
+                layer="silver",
+                domain="finance",
+                sub_domain=sub_domain,
+                bucket=bucket,
+                df=write_decision.frame,
+                date_column="date",
+                client=silver_client,
+                job_name="silver-finance-job",
             )
-            try:
-                domain_artifacts.write_bucket_artifact(
-                    layer="silver",
-                    domain="finance",
-                    sub_domain=sub_domain,
-                    bucket=bucket,
-                    df=write_decision.frame,
-                    date_column="date",
-                    client=silver_client,
-                    job_name="silver-finance-job",
-                )
-            except Exception as exc:
-                mdc.write_warning(
-                    f"Silver finance metadata bucket artifact write failed sub_domain={sub_domain} bucket={bucket}: {exc}"
-                )
+        except Exception as exc:
+            mdc.write_warning(
+                f"Silver finance metadata bucket artifact write failed sub_domain={sub_domain} bucket={bucket}: {exc}"
+            )
+
+    symbols_by_sub_domain: dict[str, dict[str, str]] = {}
+    touched_sub_domains = {
+        sub_domain
+        for sub_domain, _bucket in selected_keys
+    }
+    if is_partial_update:
+        touched_buckets_by_sub_domain: dict[str, set[str]] = {sub_domain: set() for sub_domain in touched_sub_domains}
+        for sub_domain, bucket in selected_keys:
+            touched_buckets_by_sub_domain.setdefault(sub_domain, set()).add(bucket)
+
+        for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+            if sub_domain not in touched_sub_domains:
+                symbols_by_sub_domain[sub_domain] = dict(existing_symbols_by_sub_domain.get(sub_domain, {}))
+                continue
+            symbols_by_sub_domain[sub_domain] = layer_bucketing.merge_symbol_to_bucket_map(
+                existing_symbols_by_sub_domain.get(sub_domain, {}),
+                touched_buckets=touched_buckets_by_sub_domain.get(sub_domain, set()),
+                touched_symbol_to_bucket=touched_symbols_by_sub_domain.get(sub_domain, {}),
+            )
+    else:
+        symbols_by_sub_domain = {
+            sub_domain: dict(touched_symbols_by_sub_domain.get(sub_domain, {}))
+            for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS
+        }
+
+    symbol_to_bucket: dict[str, str] = {}
+    for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+        symbol_to_bucket.update(symbols_by_sub_domain.get(sub_domain, {}))
+
     root_index_path = layer_bucketing.write_layer_symbol_index(
         layer="silver",
         domain="finance",
@@ -536,7 +640,8 @@ def _write_alpha26_finance_silver_buckets(
     index_path = root_index_path
     column_count: Optional[int] = None
     finance_subdomain_artifacts: dict[str, dict[str, Any]] = {}
-    for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+    sub_domains_to_write = sorted(touched_sub_domains) if is_partial_update else list(_FINANCE_ALPHA26_SUBDOMAINS)
+    for sub_domain in sub_domains_to_write:
         sub_index_path = layer_bucketing.write_layer_symbol_index(
             layer="silver",
             domain="finance",
@@ -562,6 +667,18 @@ def _write_alpha26_finance_silver_buckets(
                     f"Silver finance metadata artifact write failed for sub_domain={sub_domain}: {exc}"
                 )
             index_path = sub_index_path
+    if is_partial_update:
+        for sub_domain in _FINANCE_ALPHA26_SUBDOMAINS:
+            if sub_domain in finance_subdomain_artifacts:
+                continue
+            payload = domain_artifacts.load_domain_artifact(
+                layer="silver",
+                domain="finance",
+                client=silver_client,
+                sub_domain=sub_domain,
+            )
+            if payload is not None:
+                finance_subdomain_artifacts[sub_domain] = payload
     if root_index_path:
         try:
             payload = domain_artifacts.write_domain_artifact(
@@ -578,6 +695,27 @@ def _write_alpha26_finance_silver_buckets(
         except Exception as exc:
             mdc.write_warning(f"Silver finance metadata artifact write failed: {exc}")
     return len(symbol_to_bucket), index_path, column_count
+
+
+def _flush_alpha26_finance_staged_frames(
+    bucket_frames: dict[tuple[str, str], list[pd.DataFrame]],
+    *,
+    touched_bucket_keys: set[tuple[str, str]],
+    flush_state: _FinanceAlpha26FlushState,
+) -> None:
+    staged_rows = layer_bucketing.count_staged_frame_rows(bucket_frames)
+    if staged_rows == 0:
+        return
+
+    written_symbols, index_path, column_count = _write_alpha26_finance_silver_buckets(
+        bucket_frames,
+        touched_bucket_keys=touched_bucket_keys,
+    )
+    flush_state.staged_rows += staged_rows
+    flush_state.flush_count += 1
+    flush_state.written_symbols = written_symbols
+    flush_state.index_path = index_path
+    flush_state.column_count = column_count
 
 
 def _run_finance_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[int, int]:
@@ -970,6 +1108,7 @@ def _process_alpha26_candidate_blobs(
     watermarks: dict,
     persist: bool = True,
     alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
+    flush_state: Optional[_FinanceAlpha26FlushState] = None,
 ) -> tuple[list[BlobProcessResult], float]:
     ingest_started = time.perf_counter()
     results: list[BlobProcessResult] = []
@@ -982,10 +1121,50 @@ def _process_alpha26_candidate_blobs(
         call_kwargs["persist"] = persist
         call_kwargs["alpha26_bucket_frames"] = alpha26_bucket_frames
     for blob in candidate_blobs:
+        blob_name = str(blob.get("name", ""))
+        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        blob_bucket_frames = (
+            {}
+            if flush_state is not None and not persist
+            else alpha26_bucket_frames
+        )
+        if blob_bucket_frames is not None:
+            call_kwargs["alpha26_bucket_frames"] = blob_bucket_frames
         blob_results = process_alpha26_bucket_blob(
             blob,
             **call_kwargs,
         )
+        if flush_state is not None and not persist:
+            has_failed = any(result.status == "failed" for result in blob_results)
+            if not has_failed:
+                touched_bucket_keys = {
+                    key
+                    for key, parts in (blob_bucket_frames or {}).items()
+                    if any(frame is not None and len(frame) > 0 for frame in parts)
+                }
+                try:
+                    _flush_alpha26_finance_staged_frames(
+                        blob_bucket_frames or {},
+                        touched_bucket_keys=touched_bucket_keys,
+                        flush_state=flush_state,
+                    )
+                    if touched_bucket_keys:
+                        mdc.write_line(
+                            "Silver finance alpha26 buckets written: "
+                            f"touched_keys={len(touched_bucket_keys)} symbols={flush_state.written_symbols} "
+                            f"index_path={flush_state.index_path or 'unavailable'}"
+                        )
+                except Exception as exc:
+                    _restore_blob_watermark(watermarks, blob_name=blob_name, prior_signature=prior_signature)
+                    blob_results = [
+                        BlobProcessResult(
+                            blob_name=blob_name,
+                            silver_path=None,
+                            ticker=None,
+                            status="failed",
+                            error=f"Silver finance alpha26 bucket write failed: {exc}",
+                        )
+                    ]
         results.extend(blob_results)
         # Watermarks are updated per-bucket internally on all-success.
         for result in blob_results:
@@ -1029,6 +1208,7 @@ def main() -> int:
     all_results: list[BlobProcessResult] = []
     total_ingest_elapsed = 0.0
     alpha26_bucket_frames: dict[tuple[str, str], list[pd.DataFrame]] = {}
+    alpha26_flush_state = _FinanceAlpha26FlushState()
 
     while pass_count < max_passes:
         pass_count += 1
@@ -1085,6 +1265,7 @@ def main() -> int:
             watermarks=watermarks,
             persist=False,
             alpha26_bucket_frames=alpha26_bucket_frames,
+            flush_state=alpha26_flush_state,
         )
         watermarks_dirty = True if candidate_blobs else watermarks_dirty
         total_ingest_elapsed += pass_elapsed
@@ -1110,21 +1291,30 @@ def main() -> int:
     attempts = len(all_results)
     distinct_tickers = len({str(r.ticker).strip() for r in all_results if r.ticker})
     rows_written = sum(int(r.rows_written or 0) for r in all_results if r.status == "ok")
-    alpha26_written_symbols = 0
-    alpha26_index_path: Optional[str] = None
-    alpha26_column_count: Optional[int] = None
+    alpha26_staged_rows = alpha26_flush_state.staged_rows
+    alpha26_written_symbols = alpha26_flush_state.written_symbols
+    alpha26_index_path: Optional[str] = alpha26_flush_state.index_path
+    alpha26_column_count: Optional[int] = alpha26_flush_state.column_count
     if failed == 0:
-        try:
-            alpha26_written_symbols, alpha26_index_path, alpha26_column_count = (
-                _write_alpha26_finance_silver_buckets(alpha26_bucket_frames)
-            )
-            mdc.write_line(
-                "Silver finance alpha26 buckets written: "
-                f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
-            )
-        except Exception as exc:
+        residual_staged_rows = layer_bucketing.count_staged_frame_rows(alpha26_bucket_frames)
+        if residual_staged_rows > 0:
+            try:
+                alpha26_written_symbols, alpha26_index_path, alpha26_column_count = (
+                    _write_alpha26_finance_silver_buckets(alpha26_bucket_frames)
+                )
+                alpha26_staged_rows += residual_staged_rows
+                mdc.write_line(
+                    "Silver finance alpha26 buckets written: "
+                    f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
+                )
+            except Exception as exc:
+                failed += 1
+                mdc.write_error(f"Silver finance alpha26 bucket write failed: {exc}")
+        elif alpha26_staged_rows == 0:
+            mdc.write_line("Silver finance alpha26 bucket write skipped: no staged rows.")
+        elif alpha26_flush_state.flush_count == 0:
             failed += 1
-            mdc.write_error(f"Silver finance alpha26 bucket write failed: {exc}")
+            mdc.write_error("Silver finance alpha26 bucket write blocked: staged rows were never flushed.")
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
     reconciliation_failed = 0
@@ -1134,7 +1324,8 @@ def main() -> int:
         "Silver finance ingest complete: "
         f"attempts={attempts}, ok={processed}, skipped={skipped}, failed={total_failed}, "
         f"skippedCheckpoint={checkpoint_skipped_first_pass}, "
-        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, alpha26Symbols={alpha26_written_symbols}, "
+        f"distinctSymbols={distinct_tickers}, rowsWritten={rows_written}, alpha26StagedRows={alpha26_staged_rows}, "
+        f"alpha26Symbols={alpha26_written_symbols}, "
         f"elapsedSec={total_ingest_elapsed:.2f}, "
         f"passes={pass_count}, newlyDiscoveredAfterFirstPass={len(newly_discovered_blob_names)}, "
         f"lagCandidates={lag_candidate_count}, source={initial_source}, "
@@ -1184,6 +1375,7 @@ def main() -> int:
             "skipped_checkpoint": checkpoint_skipped_first_pass,
             "skipped_checkpoint_total": checkpoint_skipped_total,
             "rows_written": rows_written,
+            "alpha26_staged_rows": alpha26_staged_rows,
             "alpha26_symbols": alpha26_written_symbols,
             "alpha26_index_path": alpha26_index_path,
             "column_count": alpha26_column_count,

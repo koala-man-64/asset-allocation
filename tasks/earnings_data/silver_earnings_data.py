@@ -95,6 +95,34 @@ def _utc_today() -> pd.Timestamp:
     return pd.Timestamp(datetime.utcnow().date())
 
 
+def _parse_alpha26_bucket_from_blob_name(blob_name: str, *, prefix: str) -> Optional[str]:
+    text = str(blob_name or "").strip("/")
+    parts = text.split("/")
+    if len(parts) < 3:
+        return None
+    if parts[0] != prefix or parts[1] != "buckets":
+        return None
+    filename = parts[2]
+    if "." in filename:
+        filename = filename.split(".", 1)[0]
+    bucket = filename.strip().upper()
+    if bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
+        return None
+    return bucket
+
+
+def _restore_blob_watermark(
+    watermarks: dict,
+    *,
+    blob_name: str,
+    prior_signature: Optional[dict],
+) -> None:
+    if prior_signature is None:
+        watermarks.pop(blob_name, None)
+        return
+    watermarks[blob_name] = dict(prior_signature)
+
+
 def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, ticker: Optional[str] = None) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
@@ -431,9 +459,31 @@ def process_alpha26_bucket_blob(
 
 def _write_alpha26_earnings_buckets(
     bucket_frames: dict[str, list[pd.DataFrame]],
+    *,
+    touched_buckets: Optional[set[str]] = None,
 ) -> tuple[int, Optional[str], Optional[int]]:
-    symbol_to_bucket: dict[str, str] = {}
-    for bucket in layer_bucketing.ALPHABET_BUCKETS:
+    valid_buckets = set(layer_bucketing.ALPHABET_BUCKETS)
+    selected_buckets = {
+        str(bucket).strip().upper()
+        for bucket in (touched_buckets if touched_buckets is not None else valid_buckets)
+        if str(bucket).strip()
+    }
+    if not selected_buckets:
+        return 0, None, len(_ALPHA26_EARNINGS_MIN_COLUMNS)
+
+    invalid_buckets = selected_buckets.difference(valid_buckets)
+    if invalid_buckets:
+        raise ValueError(f"Invalid alpha26 bucket(s) for Silver write: {sorted(invalid_buckets)}")
+
+    existing_symbol_to_bucket = layer_bucketing.load_layer_symbol_to_bucket_map(layer="silver", domain="earnings")
+    is_partial_update = selected_buckets != valid_buckets
+    if is_partial_update and not existing_symbol_to_bucket:
+        raise RuntimeError(
+            "Silver earnings incremental alpha26 write blocked: existing silver earnings symbol index is missing."
+        )
+
+    touched_symbol_to_bucket: dict[str, str] = {}
+    for bucket in sorted(selected_buckets):
         bucket_path = DataPaths.get_silver_earnings_bucket_path(bucket)
         parts = bucket_frames.get(bucket, [])
         if parts:
@@ -447,7 +497,7 @@ def _write_alpha26_earnings_buckets(
                 )
                 for symbol in df_bucket["symbol"].dropna().astype(str).tolist():
                     if symbol:
-                        symbol_to_bucket[symbol] = bucket
+                        touched_symbol_to_bucket[symbol] = bucket
             else:
                 df_bucket = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
         else:
@@ -503,6 +553,11 @@ def _write_alpha26_earnings_buckets(
             )
         except Exception as exc:
             mdc.write_warning(f"Silver earnings metadata bucket artifact write failed bucket={bucket}: {exc}")
+    symbol_to_bucket = layer_bucketing.merge_symbol_to_bucket_map(
+        existing_symbol_to_bucket,
+        touched_buckets=selected_buckets,
+        touched_symbol_to_bucket=touched_symbol_to_bucket,
+    )
     index_path = layer_bucketing.write_layer_symbol_index(
         layer="silver",
         domain="earnings",
@@ -642,8 +697,15 @@ def main():
     failed = 0
     skipped_unchanged = 0
     skipped_other = 0
-    alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
+    alpha26_staged_rows = 0
+    alpha26_flush_count = 0
+    alpha26_written_symbols = 0
+    alpha26_index_path: Optional[str] = None
+    alpha26_column_count: Optional[int] = len(_ALPHA26_EARNINGS_MIN_COLUMNS)
     for blob in candidate_blobs:
+        blob_name = str(blob.get("name", ""))
+        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
         status = process_alpha26_bucket_blob(
             blob,
             watermarks=watermarks,
@@ -653,7 +715,36 @@ def main():
         )
         if status == "ok":
             processed += 1
-            watermarks_dirty = True
+            staged_rows = layer_bucketing.count_staged_frame_rows(alpha26_bucket_frames)
+            alpha26_staged_rows += staged_rows
+            if staged_rows == 0:
+                watermarks_dirty = True
+                continue
+            touched_bucket = _parse_alpha26_bucket_from_blob_name(blob_name, prefix=earnings_prefix)
+            if not touched_bucket:
+                _restore_blob_watermark(watermarks, blob_name=blob_name, prior_signature=prior_signature)
+                failed += 1
+                mdc.write_error(
+                    f"Silver earnings alpha26 write failed: unable to resolve bucket from blob {blob_name!r}."
+                )
+                break
+            try:
+                alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_earnings_buckets(
+                    alpha26_bucket_frames,
+                    touched_buckets={touched_bucket},
+                )
+                alpha26_flush_count += 1
+                watermarks_dirty = True
+                mdc.write_line(
+                    "Silver earnings alpha26 buckets written: "
+                    f"touched_buckets=1 symbols={alpha26_written_symbols} "
+                    f"index_path={alpha26_index_path or 'unavailable'}"
+                )
+            except Exception as exc:
+                _restore_blob_watermark(watermarks, blob_name=blob_name, prior_signature=prior_signature)
+                failed += 1
+                mdc.write_error(f"Silver earnings alpha26 bucket write failed: {exc}")
+                break
         elif status == "skipped_unchanged":
             skipped_unchanged += 1
         elif status.startswith("skipped"):
@@ -661,21 +752,12 @@ def main():
         else:
             failed += 1
 
-    alpha26_written_symbols = 0
-    alpha26_index_path: Optional[str] = None
-    alpha26_column_count: Optional[int] = len(_ALPHA26_EARNINGS_MIN_COLUMNS)
     if failed == 0:
-        try:
-            alpha26_written_symbols, alpha26_index_path, alpha26_column_count = _write_alpha26_earnings_buckets(
-                alpha26_bucket_frames
-            )
-            mdc.write_line(
-                "Silver earnings alpha26 buckets written: "
-                f"symbols={alpha26_written_symbols} index_path={alpha26_index_path or 'unavailable'}"
-            )
-        except Exception as exc:
+        if alpha26_staged_rows == 0:
+            mdc.write_line("Silver earnings alpha26 bucket write skipped: no staged rows.")
+        elif alpha26_flush_count == 0:
             failed += 1
-            mdc.write_error(f"Silver earnings alpha26 bucket write failed: {exc}")
+            mdc.write_error("Silver earnings alpha26 bucket write blocked: staged rows were never flushed.")
 
     reconciliation_orphans = 0
     reconciliation_deleted_blobs = 0
@@ -686,6 +768,7 @@ def main():
         "Silver earnings job complete: "
         f"processed={processed} skipped_unchanged={skipped_unchanged} "
         f"skipped_other={skipped_other} skipped_checkpoint={checkpoint_skipped} "
+        f"alpha26_staged_rows={alpha26_staged_rows} "
         f"alpha26_symbols={alpha26_written_symbols} "
         f"reconciled_orphans={reconciliation_orphans} "
         f"reconciliation_deleted_blobs={reconciliation_deleted_blobs} "
@@ -703,6 +786,7 @@ def main():
                 "skipped_checkpoint": checkpoint_skipped,
                 "skipped_unchanged": skipped_unchanged,
                 "skipped_other": skipped_other,
+                "alpha26_staged_rows": alpha26_staged_rows,
                 "alpha26_symbols": alpha26_written_symbols,
                 "alpha26_index_path": alpha26_index_path,
                 "column_count": alpha26_column_count,

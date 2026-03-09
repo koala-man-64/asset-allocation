@@ -285,7 +285,10 @@ def collect_jobs_and_executions(
                         "jobType": _job_type_from_name(name),
                         "status": _map_job_execution_status(raw_status),
                         "statusCode": raw_status or None,
+                        "executionName": str(item.get("name") or "") or None,
+                        "executionId": str(item.get("id") or "") or None,
                         "startTime": normalized_start_time,
+                        "endTime": end_time or None,
                         "duration": duration,
                         "triggeredBy": "azure",
                     }
