@@ -62,6 +62,7 @@ _TRANSITIONS_COLUMNS = (
     "trigger_rule_id",
     "computed_at",
 )
+_REQUIRED_MARKET_SYMBOLS = ("SPY", "^VIX", "^VIX3M")
 
 
 def _require_postgres_dsn() -> str:
@@ -92,6 +93,69 @@ def _frame_rows(frame: pd.DataFrame, columns: tuple[str, ...]) -> list[tuple[Any
     ]
 
 
+def _normalize_market_series(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out["date"] = pd.to_datetime(out.get("date"), errors="coerce").dt.date
+    out["symbol"] = out.get("symbol", pd.Series(dtype="string")).astype(str).str.strip().str.upper()
+    out = out.dropna(subset=["date"]).reset_index(drop=True)
+    return out
+
+
+def _summarize_market_series_coverage(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return "no rows"
+
+    summary: list[str] = []
+    for symbol in _REQUIRED_MARKET_SYMBOLS:
+        symbol_frame = frame[frame["symbol"] == symbol]
+        if symbol_frame.empty:
+            summary.append(f"{symbol}=missing")
+            continue
+
+        parsed_dates = pd.to_datetime(symbol_frame["date"], errors="coerce").dropna()
+        if parsed_dates.empty:
+            summary.append(f"{symbol}=no_valid_dates rows={len(symbol_frame)}")
+            continue
+
+        summary.append(
+            f"{symbol}={parsed_dates.min().date().isoformat()}..{parsed_dates.max().date().isoformat()} "
+            f"rows={len(symbol_frame)}"
+        )
+    return ", ".join(summary)
+
+
+def _validate_required_market_series(frame: pd.DataFrame) -> pd.DataFrame:
+    present_symbols = {str(value).strip().upper() for value in frame["symbol"].dropna().tolist()}
+    missing = [symbol for symbol in _REQUIRED_MARKET_SYMBOLS if symbol not in present_symbols]
+    if missing:
+        coverage = _summarize_market_series_coverage(frame)
+        raise ValueError(
+            "gold.market_data is missing required regime symbols "
+            f"{missing}. coverage={coverage}. "
+            "Check upstream bronze/silver/gold market jobs and market-data blacklist state."
+        )
+    return frame
+
+
+def _assert_complete_regime_inputs(inputs: pd.DataFrame, *, market_series: pd.DataFrame) -> None:
+    complete_rows = inputs["inputs_complete_flag"].fillna(False) if "inputs_complete_flag" in inputs.columns else pd.Series(dtype="bool")
+    if bool(complete_rows.any()):
+        return
+
+    inputs_range = "n/a"
+    if not inputs.empty and "as_of_date" in inputs.columns:
+        parsed_dates = pd.to_datetime(inputs["as_of_date"], errors="coerce").dropna()
+        if not parsed_dates.empty:
+            inputs_range = f"{parsed_dates.min().date().isoformat()}..{parsed_dates.max().date().isoformat()}"
+
+    coverage = _summarize_market_series_coverage(market_series)
+    raise ValueError(
+        "gold regime inputs contain no complete SPY/^VIX/^VIX3M rows. "
+        f"inputs_range={inputs_range}. coverage={coverage}. "
+        "Check upstream market jobs for missing or non-overlapping index history."
+    )
+
+
 def _load_market_series(dsn: str) -> pd.DataFrame:
     sql = """
         SELECT symbol, date, close, return_1d, return_20d
@@ -101,12 +165,8 @@ def _load_market_series(dsn: str) -> pd.DataFrame:
     """
     with connect(dsn) as conn:
         frame = pd.read_sql_query(sql, conn)
-    if frame.empty:
-        raise ValueError("gold.market_data does not contain SPY, ^VIX, and ^VIX3M history.")
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.date
-    frame["symbol"] = frame["symbol"].astype(str).str.strip().str.upper()
-    frame = frame.dropna(subset=["date"]).reset_index(drop=True)
-    return frame
+    normalized = _normalize_market_series(frame)
+    return _validate_required_market_series(normalized)
 
 
 def _build_inputs_daily(market_series: pd.DataFrame, *, computed_at: datetime) -> pd.DataFrame:
@@ -277,6 +337,7 @@ def main() -> int:
 
     market_series = _load_market_series(dsn)
     inputs = _build_inputs_daily(market_series, computed_at=computed_at)
+    _assert_complete_regime_inputs(inputs, market_series=market_series)
 
     history_frames: list[pd.DataFrame] = []
     latest_frames: list[pd.DataFrame] = []
