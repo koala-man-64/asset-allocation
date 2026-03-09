@@ -227,26 +227,28 @@ describe('PostgresExplorerPage', () => {
   it('purges the selected table after confirmation', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    renderWithProviders(<PostgresExplorerPage />);
+    try {
+      renderWithProviders(<PostgresExplorerPage />);
 
-    await waitFor(() => {
-      expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /purge table/i }));
-
-    await waitFor(() => {
-      expect(PostgresService.purgeTable).toHaveBeenCalledWith({
-        schema_name: 'core',
-        table_name: 'symbols'
+      await waitFor(() => {
+        expect(PostgresService.getTableMetadata).toHaveBeenCalledWith('core', 'symbols');
       });
-    });
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      'Purge all rows from core.symbols? This action cannot be undone.'
-    );
-    expect(screen.getByText(/Purged 12 rows from core\.symbols\./i)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /purge table/i }));
 
-    confirmSpy.mockRestore();
+      await waitFor(() => {
+        expect(PostgresService.purgeTable).toHaveBeenCalledWith({
+          schema_name: 'core',
+          table_name: 'symbols'
+        });
+      });
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        'Purge all rows from core.symbols? This action cannot be undone.'
+      );
+      expect(await screen.findByText(/Purged 12 rows from core\.symbols\./i)).toBeInTheDocument();
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 });
