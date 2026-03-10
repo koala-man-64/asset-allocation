@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  ChevronDown,
   CirclePause,
   CirclePlay,
   EllipsisVertical,
@@ -75,7 +76,6 @@ const LAYER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const;
 type LayerKey = (typeof LAYER_ORDER)[number];
 const CHECKPOINT_RESET_LAYERS = new Set<LayerKey>(['silver', 'gold']);
 const DOMAIN_COLUMN_WIDTH_PX = 320;
-const LAYER_COLUMN_MIN_WIDTH_PX = 190;
 const PURGE_POLL_INTERVAL_MS = 1000;
 const PURGE_POLL_TIMEOUT_MS = 5 * 60_000;
 type LayerVisualConfig = {
@@ -168,10 +168,6 @@ function makeCellKey(layerKey: LayerKey, domainKey: string): string {
 
 function makeSnapshotKey(layerKey: LayerKey, domainKey: string): string {
   return `${layerKey}/${domainKey}`;
-}
-
-function getExpandedRowGridTemplate(layerCount: number): string {
-  return `repeat(${layerCount}, minmax(${LAYER_COLUMN_MIN_WIDTH_PX}px, 1fr))`;
 }
 
 function formatInt(value: number | null | undefined): string {
@@ -1467,8 +1463,6 @@ export function DomainLayerComparisonPanel({
                     const domainsForRow = domainsByLayer.get(row.key);
                     if (!domainsForRow) return null;
                     const isExpanded = expandedRowKey === row.key;
-                    const expandedMaxHeightClass =
-                      row.key === 'finance' ? 'max-h-[320px]' : 'max-h-[240px]';
 
                     const layerModels = layerColumns.map((layerColumn, layerIndex) => {
                       const isConfigured = domainsForRow.has(layerColumn.key);
@@ -1668,13 +1662,20 @@ export function DomainLayerComparisonPanel({
                     const isDomainRefreshing = configuredModels.some(
                       (model) => model.isCellRefreshing
                     );
+                    const detailRegionIds = new Map(
+                      configuredModels.map((model) => [
+                        model.key,
+                        `domain-layer-details-${row.key}-${model.layerColumn.key}`
+                      ])
+                    );
+                    const detailRegionControls = Array.from(detailRegionIds.values()).join(' ');
                     const toggleRowExpanded = () =>
                       setExpandedRowKey((previous) => (previous === row.key ? null : row.key));
 
-                    return [
+                    return (
                       <TableRow
                         key={`summary-${row.key}`}
-                        className="h-[52px] cursor-pointer even:[&>td]:bg-mcm-cream/20"
+                        className="cursor-pointer even:[&>td]:bg-mcm-cream/20"
                         onClick={(event) => {
                           const target = event.target as HTMLElement | null;
                           if (
@@ -1688,13 +1689,13 @@ export function DomainLayerComparisonPanel({
                         }}
                       >
                         <TableCell
-                          className="sticky left-0 z-10 border-b border-mcm-walnut/20 bg-mcm-paper/95 py-1.5"
+                          className="sticky left-0 z-10 border-b border-mcm-walnut/20 bg-mcm-paper/95 py-1.5 align-top"
                           style={{
                             width: DOMAIN_COLUMN_WIDTH_PX,
                             minWidth: DOMAIN_COLUMN_WIDTH_PX
                           }}
                         >
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex flex-col gap-0.5">
                               <span className="truncate font-semibold text-mcm-walnut">
                                 {row.label}
@@ -1714,6 +1715,21 @@ export function DomainLayerComparisonPanel({
                                 </span>
                               ) : null}
                             </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 rounded-full border border-transparent text-mcm-walnut/70 hover:border-mcm-walnut/20 hover:bg-mcm-paper/55 hover:text-mcm-walnut"
+                              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${row.label} details`}
+                              aria-expanded={isExpanded}
+                              aria-controls={detailRegionControls || undefined}
+                              data-no-row-toggle="true"
+                              onClick={() => toggleRowExpanded()}
+                            >
+                              <ChevronDown
+                                className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`}
+                              />
+                            </Button>
                           </div>
                         </TableCell>
 
@@ -1722,7 +1738,7 @@ export function DomainLayerComparisonPanel({
                             return (
                               <TableCell
                                 key={`summary-${row.key}-${model.layerColumn.key}`}
-                                className={`${StatusTypos.MONO} border-b border-mcm-walnut/20 py-1.5 text-center text-[12px] text-mcm-walnut/65`}
+                                className={`${StatusTypos.MONO} border-b border-mcm-walnut/20 py-1.5 text-center text-[12px] text-mcm-walnut/65 align-top whitespace-normal`}
                                 style={{
                                   backgroundColor: model.layerVisual.softBg,
                                   boxShadow: `inset 3px 0 0 ${model.layerVisual.border}, inset -1px 0 0 ${model.layerVisual.border}`
@@ -1744,517 +1760,413 @@ export function DomainLayerComparisonPanel({
 
                           const DataIcon = model.dataConfig.icon;
                           const JobIcon = model.jobConfig.icon;
+                          const detailRegionId = detailRegionIds.get(model.key);
                           return (
                             <TableCell
                               key={`summary-${row.key}-${model.layerColumn.key}`}
-                              className="border-b border-mcm-walnut/20 py-1.5"
+                              className="border-b border-mcm-walnut/20 py-1.5 align-top whitespace-normal"
                               style={{
                                 backgroundColor: model.layerVisual.softBg,
                                 boxShadow: `inset 3px 0 0 ${model.layerVisual.border}, inset -1px 0 0 ${model.layerVisual.border}`
                               }}
                             >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <span
-                                    className={`${StatusTypos.MONO} tabular-nums text-right text-sm font-bold text-mcm-walnut`}
-                                  >
-                                    {formatSymbolCount(model.metadata?.symbolCount)}
-                                  </span>
-                                  {model.columnStorageSummary ? (
-                                    <div
-                                      className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
-                                    >
-                                      {model.columnStorageSummary}
-                                    </div>
-                                  ) : null}
-                                  {model.dateRangeDisplay ? (
-                                    <div
-                                      className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
-                                      title={model.dateRangeTooltip || undefined}
-                                    >
-                                      range {model.dateRangeDisplay}
-                                    </div>
-                                  ) : null}
-                                  {model.metadataUpdatedAt ? (
-                                    <div
-                                      className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
-                                      title={model.metadataUpdatedAt}
-                                    >
-                                      updated {formatMetadataTimestamp(model.metadataUpdatedAt)}
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <div className="flex items-center gap-2 self-center">
-                                  {model.isCellRefreshing ? (
+                              <div className="flex h-full flex-col">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
                                     <span
-                                      data-testid={`cell-refresh-icon-summary-${row.key}-${model.layerColumn.key}`}
-                                      aria-label={`${model.layerColumn.label} ${row.label} subpanel refreshing`}
-                                      title="Refreshing metadata and job state"
-                                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-mcm-teal/35 bg-mcm-teal/10 text-mcm-teal shadow-[0_0_0_1px_rgba(34,138,126,0.08)]"
+                                      className={`${StatusTypos.MONO} tabular-nums text-sm font-bold text-mcm-walnut`}
                                     >
-                                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                      {formatSymbolCount(model.metadata?.symbolCount)}
                                     </span>
-                                  ) : null}
-                                  <div className="flex flex-col items-end gap-1">
-                                    <span
-                                      tabIndex={0}
-                                      className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
-                                      style={{
-                                        backgroundColor: model.dataConfig.bg,
-                                        color: model.dataConfig.text,
-                                        borderColor: model.dataConfig.border
-                                      }}
-                                    >
-                                      <DataIcon className="h-3 w-3" />
-                                      {model.dataLabel}
-                                    </span>
-                                    <span
-                                      tabIndex={0}
-                                      title={model.jobStatusCode || undefined}
-                                      className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
-                                      style={{
-                                        backgroundColor: model.jobConfig.bg,
-                                        color: model.jobConfig.text,
-                                        borderColor: model.jobConfig.border
-                                      }}
-                                    >
-                                      <JobIcon className="h-3 w-3" />
-                                      {model.jobLabel}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                              {model.isPending ? (
-                                <div
-                                  className={`${StatusTypos.MONO} mt-1 text-[11px] text-mcm-walnut/70`}
-                                >
-                                  loading metadata...
-                                </div>
-                              ) : null}
-                              {model.error ? (
-                                <div
-                                  className={`${StatusTypos.MONO} mt-1 text-[11px] text-destructive/90`}
-                                >
-                                  metadata warning
-                                </div>
-                              ) : null}
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>,
-
-                      <TableRow
-                        key={`details-${row.key}`}
-                        className="border-0 hover:bg-transparent"
-                      >
-                        <TableCell
-                          colSpan={layerColumns.length + 1}
-                          className="border-0 bg-transparent p-0"
-                        >
-                          <div
-                            className={`transition-[max-height,opacity,transform] duration-300 ${
-                              isExpanded
-                                ? `${expandedMaxHeightClass} opacity-100 translate-y-0 overflow-hidden`
-                                : 'max-h-0 opacity-0 -translate-y-1 overflow-hidden pointer-events-none'
-                            }`}
-                            aria-hidden={!isExpanded}
-                          >
-                            <div className="border-t border-mcm-walnut/20 bg-mcm-paper/50 p-3">
-                              <div
-                                className="grid items-stretch gap-y-2"
-                                style={{
-                                  paddingLeft: DOMAIN_COLUMN_WIDTH_PX,
-                                  gridTemplateColumns: getExpandedRowGridTemplate(
-                                    layerColumns.length
-                                  )
-                                }}
-                              >
-                                {configuredModels.map((model) => {
-                                  const DataIcon = model.dataConfig.icon;
-                                  const JobIcon = model.jobConfig.icon;
-                                  return (
-                                    <div
-                                      key={`detail-card-${row.key}-${model.layerColumn.key}`}
-                                      className="min-w-0 px-1"
-                                      style={{ gridColumn: model.layerIndex + 1 }}
-                                    >
+                                    {model.columnStorageSummary ? (
                                       <div
-                                        className="flex min-h-[124px] flex-col rounded-lg border border-mcm-walnut/20 bg-mcm-cream/35 p-2.5"
+                                        className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
+                                      >
+                                        {model.columnStorageSummary}
+                                      </div>
+                                    ) : null}
+                                    {model.dateRangeDisplay ? (
+                                      <div
+                                        className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/70`}
+                                        title={model.dateRangeTooltip || undefined}
+                                      >
+                                        range {model.dateRangeDisplay}
+                                      </div>
+                                    ) : null}
+                                    {model.metadataUpdatedAt ? (
+                                      <div
+                                        className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
+                                        title={model.metadataUpdatedAt}
+                                      >
+                                        updated {formatMetadataTimestamp(model.metadataUpdatedAt)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex items-center gap-2 self-start">
+                                    {model.isCellRefreshing ? (
+                                      <span
+                                        data-testid={`cell-refresh-icon-summary-${row.key}-${model.layerColumn.key}`}
+                                        aria-label={`${model.layerColumn.label} ${row.label} refreshing`}
+                                        title="Refreshing metadata and job state"
+                                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-mcm-teal/35 bg-mcm-teal/10 text-mcm-teal shadow-[0_0_0_1px_rgba(34,138,126,0.08)]"
+                                      >
+                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                      </span>
+                                    ) : null}
+                                    <div className="flex flex-col items-end gap-1">
+                                      <span
+                                        tabIndex={0}
+                                        className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
                                         style={{
-                                          backgroundColor: model.layerVisual.strongBg,
-                                          borderColor: model.layerVisual.border,
-                                          boxShadow: `inset 4px 0 0 ${model.layerVisual.border}, inset 0 2px 0 ${model.layerVisual.border}`
+                                          backgroundColor: model.dataConfig.bg,
+                                          color: model.dataConfig.text,
+                                          borderColor: model.dataConfig.border
                                         }}
                                       >
-                                        <div className="flex items-start justify-between gap-2">
-                                          <div className="min-w-0">
-                                            <div
-                                              className="text-[11px] font-black uppercase tracking-widest"
-                                              style={{ color: model.layerVisual.accent }}
-                                            >
-                                              {model.layerColumn.label}
-                                            </div>
-                                            <div
-                                              className={`${StatusTypos.MONO} tabular-nums text-lg font-black text-mcm-walnut`}
-                                            >
-                                              {formatSymbolCount(model.metadata?.symbolCount)}
-                                            </div>
-                                            {model.columnStorageSummary ? (
-                                              <div
-                                                className={`${StatusTypos.MONO} mt-0.5 text-[11px] text-mcm-walnut/70`}
-                                              >
-                                                {model.columnStorageSummary}
-                                              </div>
-                                            ) : null}
-                                          </div>
-                                          <div className="flex max-w-[48%] flex-wrap items-start justify-end gap-1">
-                                            {model.isCellRefreshing ? (
-                                              <span
-                                                data-testid={`cell-refresh-icon-detail-${row.key}-${model.layerColumn.key}`}
-                                                aria-label={`${model.layerColumn.label} ${row.label} detail subpanel refreshing`}
-                                                title="Refreshing metadata and job state"
-                                                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-mcm-teal/35 bg-mcm-paper/55 text-mcm-teal"
-                                              >
-                                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                              </span>
-                                            ) : null}
-                                            <span
-                                              className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
-                                              style={{
-                                                backgroundColor: model.dataConfig.bg,
-                                                color: model.dataConfig.text,
-                                                borderColor: model.dataConfig.border
-                                              }}
-                                            >
-                                              <DataIcon className="h-3 w-3" />
-                                              {model.dataLabel}
-                                            </span>
-                                            <span
-                                              title={model.jobStatusCode || undefined}
-                                              className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest"
-                                              style={{
-                                                backgroundColor: model.jobConfig.bg,
-                                                color: model.jobConfig.text,
-                                                borderColor: model.jobConfig.border
-                                              }}
-                                            >
-                                              <JobIcon className="h-3 w-3" />
-                                              {model.jobLabel}
-                                            </span>
-                                          </div>
-                                        </div>
-
-                                        <div className="mt-2 grid gap-2 text-[11px] leading-snug">
-                                          {model.symbolComparison ? (
-                                            <div
-                                              className={`${StatusTypos.MONO} flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px]`}
-                                            >
-                                              <span className="text-mcm-walnut/70">
-                                                vs {model.previousLabel}:
-                                              </span>
-                                              <span className={model.symbolComparison.className}>
-                                                {model.symbolComparison.text}
-                                              </span>
-                                              <span className="text-mcm-walnut/50">•</span>
-                                              <span className={model.blacklistSummary.className}>
-                                                {model.blacklistSummary.text}
-                                              </span>
-                                            </div>
-                                          ) : (
-                                            <div
-                                              className={`${StatusTypos.MONO} flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px]`}
-                                            >
-                                              <span className={model.blacklistSummary.className}>
-                                                {model.blacklistSummary.text}
-                                              </span>
-                                            </div>
-                                          )}
-                                          <dl
-                                            className={`${StatusTypos.MONO} grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10.5px]`}
+                                        <DataIcon className="h-3 w-3" />
+                                        {model.dataLabel}
+                                      </span>
+                                      <span
+                                        tabIndex={0}
+                                        title={model.jobStatusCode || undefined}
+                                        className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mcm-teal/50"
+                                        style={{
+                                          backgroundColor: model.jobConfig.bg,
+                                          color: model.jobConfig.text,
+                                          borderColor: model.jobConfig.border
+                                        }}
+                                      >
+                                        <JobIcon className="h-3 w-3" />
+                                        {model.jobLabel}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                                {model.isPending ? (
+                                  <div
+                                    className={`${StatusTypos.MONO} mt-1 text-[11px] text-mcm-walnut/70`}
+                                  >
+                                    loading metadata...
+                                  </div>
+                                ) : null}
+                                {model.error ? (
+                                  <div
+                                    className={`${StatusTypos.MONO} mt-1 text-[11px] text-destructive/90`}
+                                  >
+                                    metadata warning
+                                  </div>
+                                ) : null}
+                                {isExpanded ? (
+                                  <div
+                                    id={detailRegionId}
+                                    data-no-row-toggle="true"
+                                    className="mt-2 flex flex-1 flex-col gap-2 border-t border-mcm-walnut/15 pt-2"
+                                  >
+                                    {model.symbolComparison ? (
+                                      <div
+                                        className={`${StatusTypos.MONO} flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px]`}
+                                      >
+                                        <span className="text-mcm-walnut/70">
+                                          vs {model.previousLabel}:
+                                        </span>
+                                        <span className={model.symbolComparison.className}>
+                                          {model.symbolComparison.text}
+                                        </span>
+                                        <span className="text-mcm-walnut/50">•</span>
+                                        <span className={model.blacklistSummary.className}>
+                                          {model.blacklistSummary.text}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <div
+                                        className={`${StatusTypos.MONO} flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10.5px]`}
+                                      >
+                                        <span className={model.blacklistSummary.className}>
+                                          {model.blacklistSummary.text}
+                                        </span>
+                                      </div>
+                                    )}
+                                    <dl
+                                      className={`${StatusTypos.MONO} grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10.5px]`}
+                                    >
+                                      <dt className="text-mcm-walnut/70">last start:</dt>
+                                      <dd
+                                        className="min-w-0 truncate text-right text-mcm-walnut/90"
+                                        title={model.run?.startTime || undefined}
+                                      >
+                                        {model.lastStartDisplay}
+                                      </dd>
+                                      <dt className="text-mcm-walnut/70">job updated:</dt>
+                                      <dd
+                                        className="min-w-0 truncate text-right text-mcm-walnut/90"
+                                        title={model.jobUpdatedAt || undefined}
+                                      >
+                                        {model.jobUpdatedDisplay}
+                                      </dd>
+                                      <dt className="text-mcm-walnut/70">schedule:</dt>
+                                      <dd
+                                        className="min-w-0 truncate text-right text-mcm-walnut/90"
+                                        title={model.scheduleRaw || undefined}
+                                      >
+                                        {model.scheduleDisplay}
+                                      </dd>
+                                      <dt className="self-start text-mcm-walnut/70">date range:</dt>
+                                      <dd
+                                        className="min-w-0 break-words text-right text-mcm-walnut/90"
+                                        title={model.dateRangeTooltip || undefined}
+                                      >
+                                        {model.dateRangeDisplay || 'N/A'}
+                                      </dd>
+                                      <dt className="text-mcm-walnut/70">adls modified:</dt>
+                                      <dd
+                                        className="min-w-0 truncate text-right text-mcm-walnut/90"
+                                        title={model.adlsModifiedAt || undefined}
+                                      >
+                                        {model.adlsModifiedDisplay}
+                                      </dd>
+                                    </dl>
+                                    {model.showFinanceSubfolders ? (
+                                      <div className="grid grid-cols-2 gap-x-2 gap-y-1 rounded-md border border-mcm-walnut/12 bg-mcm-paper/25 px-2 py-1.5">
+                                        {model.financeSubfolderCounts.map((item) => (
+                                          <div
+                                            key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
+                                            className="flex items-center justify-between"
                                           >
-                                            <dt className="text-mcm-walnut/70">last start:</dt>
-                                            <dd
-                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
-                                              title={model.run?.startTime || undefined}
+                                            <span className="text-mcm-walnut/80">
+                                              {item.label}
+                                            </span>
+                                            <span
+                                              className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/95`}
                                             >
-                                              {model.lastStartDisplay}
-                                            </dd>
-                                            <dt className="text-mcm-walnut/70">job updated:</dt>
-                                            <dd
-                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
-                                              title={model.jobUpdatedAt || undefined}
-                                            >
-                                              {model.jobUpdatedDisplay}
-                                            </dd>
-                                            <dt className="text-mcm-walnut/70">schedule:</dt>
-                                            <dd
-                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
-                                              title={model.scheduleRaw || undefined}
-                                            >
-                                              {model.scheduleDisplay}
-                                            </dd>
-                                            <dt className="self-start text-mcm-walnut/70">
-                                              date range:
-                                            </dt>
-                                            <dd
-                                              className="min-w-0 break-words text-right text-mcm-walnut/90"
-                                              title={model.dateRangeTooltip || undefined}
-                                            >
-                                              {model.dateRangeDisplay || 'N/A'}
-                                            </dd>
-                                            <dt className="text-mcm-walnut/70">adls modified:</dt>
-                                            <dd
-                                              className="min-w-0 truncate text-right text-mcm-walnut/90"
-                                              title={model.adlsModifiedAt || undefined}
-                                            >
-                                              {model.adlsModifiedDisplay}
-                                            </dd>
-                                          </dl>
-                                          {model.showFinanceSubfolders ? (
-                                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 rounded-md border border-mcm-walnut/12 bg-mcm-paper/25 px-2 py-1.5">
-                                              {model.financeSubfolderCounts.map((item) => (
-                                                <div
-                                                  key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
-                                                  className="flex items-center justify-between"
-                                                >
-                                                  <span className="text-mcm-walnut/80">
-                                                    {item.label}
-                                                  </span>
-                                                  <span
-                                                    className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/95`}
-                                                  >
-                                                    {formatInt(item.count)}
-                                                  </span>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          ) : null}
-                                        </div>
-
-                                        <div className="mt-auto flex items-center justify-end gap-1 border-t border-mcm-walnut/15 pt-2">
+                                              {formatInt(item.count)}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    <div className="mt-auto flex items-center justify-end gap-1 border-t border-mcm-walnut/15 pt-2">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 px-2 text-[11px]"
+                                        disabled={
+                                          !model.actionJobName || model.isJobControlBlocked
+                                        }
+                                        onClick={() => {
+                                          if (!model.actionJobName) return;
+                                          if (model.isRunning) {
+                                            void setJobSuspended(model.actionJobName, true);
+                                          } else {
+                                            void triggerJob(model.actionJobName);
+                                          }
+                                        }}
+                                      >
+                                        {model.isControlling || model.isTriggeringThisJob ? (
+                                          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                        ) : model.isRunning ? (
+                                          <Square className="mr-1 h-3.5 w-3.5" />
+                                        ) : (
+                                          <Play className="mr-1 h-3.5 w-3.5" />
+                                        )}
+                                        {model.isRunning ? 'Stop' : 'Run'}
+                                      </Button>
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
                                           <Button
                                             type="button"
-                                            size="sm"
-                                            variant="outline"
-                                            className="h-7 px-2 text-[11px]"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            aria-label={`More ${model.layerColumn.label} actions for ${row.label}`}
+                                          >
+                                            <EllipsisVertical className="h-4 w-4" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-56">
+                                          <DropdownMenuLabel className="flex items-center justify-between gap-2">
+                                            <span>
+                                              {model.layerColumn.label} • {row.label}
+                                            </span>
+                                            {model.isCellRefreshing ? (
+                                              <span
+                                                className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-mcm-walnut/75`}
+                                              >
+                                                <RefreshCw className="h-3 w-3 animate-spin" />
+                                                refreshing
+                                              </span>
+                                            ) : null}
+                                          </DropdownMenuLabel>
+                                          <DropdownMenuItem
+                                            disabled={
+                                              model.isCellBusy ||
+                                              isResettingAllLists ||
+                                              isResettingCheckpoints
+                                            }
+                                            onSelect={(event) => {
+                                              event.preventDefault();
+                                              void refreshDomainMetadataAndStatus([
+                                                {
+                                                  layerKey: model.layerColumn.key,
+                                                  domainKey: row.key
+                                                }
+                                              ]);
+                                            }}
+                                          >
+                                            <RefreshCw
+                                              className={`h-4 w-4 ${model.isCellRefreshing ? 'animate-spin' : ''}`}
+                                            />
+                                            {model.isCellRefreshing
+                                              ? 'Refreshing...'
+                                              : model.isPending
+                                                ? 'Loading metadata...'
+                                                : 'Refresh'}
+                                          </DropdownMenuItem>
+                                          {model.baseFolderUrl ? (
+                                            <DropdownMenuItem asChild>
+                                              <a
+                                                href={model.baseFolderUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                              >
+                                                <FolderOpen className="h-4 w-4" />
+                                                Open ADLS folder
+                                              </a>
+                                            </DropdownMenuItem>
+                                          ) : null}
+                                          {model.jobPortalUrl ? (
+                                            <DropdownMenuItem asChild>
+                                              <a
+                                                href={model.jobPortalUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                              >
+                                                <ExternalLink className="h-4 w-4" />
+                                                Open job in Azure
+                                              </a>
+                                            </DropdownMenuItem>
+                                          ) : null}
+                                          {model.executionsUrl ? (
+                                            <DropdownMenuItem asChild>
+                                              <a
+                                                href={model.executionsUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                              >
+                                                <ScrollText className="h-4 w-4" />
+                                                Execution history
+                                              </a>
+                                            </DropdownMenuItem>
+                                          ) : null}
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
                                             disabled={
                                               !model.actionJobName || model.isJobControlBlocked
                                             }
-                                            onClick={() => {
+                                            onSelect={(event) => {
+                                              event.preventDefault();
                                               if (!model.actionJobName) return;
-                                              if (model.isRunning) {
-                                                void setJobSuspended(model.actionJobName, true);
-                                              } else {
-                                                void triggerJob(model.actionJobName);
-                                              }
+                                              void setJobSuspended(
+                                                model.actionJobName,
+                                                !model.isSuspended
+                                              );
                                             }}
                                           >
-                                            {model.isControlling || model.isTriggeringThisJob ? (
-                                              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                                            ) : model.isRunning ? (
-                                              <Square className="mr-1 h-3.5 w-3.5" />
+                                            {model.isSuspended ? (
+                                              <CirclePlay className="h-4 w-4" />
                                             ) : (
-                                              <Play className="mr-1 h-3.5 w-3.5" />
+                                              <CirclePause className="h-4 w-4" />
                                             )}
-                                            {model.isRunning ? 'Stop' : 'Run'}
-                                          </Button>
-                                          <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                              <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-7 w-7"
-                                                aria-label={`More ${model.layerColumn.label} actions for ${row.label}`}
-                                              >
-                                                <EllipsisVertical className="h-4 w-4" />
-                                              </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end" className="w-56">
-                                              <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                                                <span>
-                                                  {model.layerColumn.label} • {row.label}
-                                                </span>
-                                                {model.isCellRefreshing ? (
-                                                  <span
-                                                    className={`${StatusTypos.MONO} inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-mcm-walnut/75`}
-                                                  >
-                                                    <RefreshCw className="h-3 w-3 animate-spin" />
-                                                    refreshing
-                                                  </span>
-                                                ) : null}
-                                              </DropdownMenuLabel>
-                                              <DropdownMenuItem
-                                                disabled={
-                                                  model.isCellBusy ||
-                                                  isResettingAllLists ||
-                                                  isResettingCheckpoints
-                                                }
-                                                onSelect={(event) => {
-                                                  event.preventDefault();
-                                                  void refreshDomainMetadataAndStatus([
-                                                    {
-                                                      layerKey: model.layerColumn.key,
-                                                      domainKey: row.key
-                                                    }
-                                                  ]);
-                                                }}
-                                              >
-                                                <RefreshCw
-                                                  className={`h-4 w-4 ${model.isCellRefreshing ? 'animate-spin' : ''}`}
-                                                />
-                                                {model.isCellRefreshing
-                                                  ? 'Refreshing...'
-                                                  : model.isPending
-                                                    ? 'Loading metadata...'
-                                                    : 'Refresh'}
-                                              </DropdownMenuItem>
-                                              {model.baseFolderUrl ? (
-                                                <DropdownMenuItem asChild>
-                                                  <a
-                                                    href={model.baseFolderUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                  >
-                                                    <FolderOpen className="h-4 w-4" />
-                                                    Open ADLS folder
-                                                  </a>
-                                                </DropdownMenuItem>
-                                              ) : null}
-                                              {model.jobPortalUrl ? (
-                                                <DropdownMenuItem asChild>
-                                                  <a
-                                                    href={model.jobPortalUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                  >
-                                                    <ExternalLink className="h-4 w-4" />
-                                                    Open job in Azure
-                                                  </a>
-                                                </DropdownMenuItem>
-                                              ) : null}
-                                              {model.executionsUrl ? (
-                                                <DropdownMenuItem asChild>
-                                                  <a
-                                                    href={model.executionsUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                  >
-                                                    <ScrollText className="h-4 w-4" />
-                                                    Execution history
-                                                  </a>
-                                                </DropdownMenuItem>
-                                              ) : null}
-                                              <DropdownMenuSeparator />
-                                              <DropdownMenuItem
-                                                disabled={
-                                                  !model.actionJobName || model.isJobControlBlocked
-                                                }
-                                                onSelect={(event) => {
-                                                  event.preventDefault();
-                                                  if (!model.actionJobName) return;
-                                                  void setJobSuspended(
-                                                    model.actionJobName,
-                                                    !model.isSuspended
-                                                  );
-                                                }}
-                                              >
-                                                {model.isSuspended ? (
-                                                  <CirclePlay className="h-4 w-4" />
-                                                ) : (
-                                                  <CirclePause className="h-4 w-4" />
-                                                )}
-                                                {model.isSuspended ? 'Resume job' : 'Suspend job'}
-                                              </DropdownMenuItem>
-                                              <DropdownMenuItem
-                                                disabled={
-                                                  !model.supportsCheckpointReset ||
-                                                  model.isCellBusy ||
-                                                  isResettingCheckpoints ||
-                                                  isResettingLists ||
-                                                  isRefreshingPanelCounts ||
-                                                  isResettingAllLists
-                                                }
-                                                onSelect={() =>
-                                                  setCheckpointResetTarget({
-                                                    layerKey: model.layerColumn.key,
-                                                    layerLabel: model.layerColumn.label,
-                                                    domainKey: row.key,
-                                                    domainLabel: row.label
-                                                  })
-                                                }
-                                              >
-                                                <RotateCcw className="h-4 w-4" />
-                                                {model.isResettingThisCheckpointCell
-                                                  ? 'Resetting checkpoints...'
-                                                  : model.supportsCheckpointReset
-                                                    ? 'Reset checkpoints'
-                                                    : 'Checkpoint reset unavailable'}
-                                              </DropdownMenuItem>
-                                              <DropdownMenuItem
-                                                disabled={
-                                                  model.isCellBusy ||
-                                                  isResettingCheckpoints ||
-                                                  isResettingLists ||
-                                                  isRefreshingPanelCounts ||
-                                                  isResettingAllLists
-                                                }
-                                                onSelect={() =>
-                                                  setListResetTarget({
-                                                    layerKey: model.layerColumn.key,
-                                                    layerLabel: model.layerColumn.label,
-                                                    domainKey: row.key,
-                                                    domainLabel: row.label
-                                                  })
-                                                }
-                                              >
-                                                <Trash2 className="h-4 w-4" />
-                                                {model.isResettingThisCell
-                                                  ? 'Resetting lists...'
-                                                  : 'Reset lists'}
-                                              </DropdownMenuItem>
-                                              <DropdownMenuItem
-                                                disabled={
-                                                  isPurging ||
-                                                  model.isCellBusy ||
-                                                  isResettingCheckpoints ||
-                                                  isResettingLists ||
-                                                  isResettingAllLists ||
-                                                  isRefreshingPanelCounts
-                                                }
-                                                onSelect={() =>
-                                                  setPurgeTarget({
-                                                    layerKey: model.layerColumn.key,
-                                                    layerLabel: model.layerColumn.label,
-                                                    domainKey: row.key,
-                                                    domainLabel: row.label
-                                                  })
-                                                }
-                                              >
-                                                <Trash2
-                                                  className={`h-4 w-4 ${
-                                                    model.isPurgingThisTarget
-                                                      ? 'animate-spin text-rose-600'
-                                                      : ''
-                                                  }`}
-                                                />
-                                                {model.isPurgingThisTarget
-                                                  ? 'Purging data...'
-                                                  : 'Purge data'}
-                                              </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                          </DropdownMenu>
-                                        </div>
-                                      </div>
+                                            {model.isSuspended ? 'Resume job' : 'Suspend job'}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
+                                            disabled={
+                                              !model.supportsCheckpointReset ||
+                                              model.isCellBusy ||
+                                              isResettingCheckpoints ||
+                                              isResettingLists ||
+                                              isRefreshingPanelCounts ||
+                                              isResettingAllLists
+                                            }
+                                            onSelect={() =>
+                                              setCheckpointResetTarget({
+                                                layerKey: model.layerColumn.key,
+                                                layerLabel: model.layerColumn.label,
+                                                domainKey: row.key,
+                                                domainLabel: row.label
+                                              })
+                                            }
+                                          >
+                                            <RotateCcw className="h-4 w-4" />
+                                            {model.isResettingThisCheckpointCell
+                                              ? 'Resetting checkpoints...'
+                                              : model.supportsCheckpointReset
+                                                ? 'Reset checkpoints'
+                                                : 'Checkpoint reset unavailable'}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
+                                            disabled={
+                                              model.isCellBusy ||
+                                              isResettingCheckpoints ||
+                                              isResettingLists ||
+                                              isRefreshingPanelCounts ||
+                                              isResettingAllLists
+                                            }
+                                            onSelect={() =>
+                                              setListResetTarget({
+                                                layerKey: model.layerColumn.key,
+                                                layerLabel: model.layerColumn.label,
+                                                domainKey: row.key,
+                                                domainLabel: row.label
+                                              })
+                                            }
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                            {model.isResettingThisCell
+                                              ? 'Resetting lists...'
+                                              : 'Reset lists'}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
+                                            className="text-destructive focus:text-destructive"
+                                            disabled={
+                                              isPurging ||
+                                              model.isCellBusy ||
+                                              isResettingCheckpoints ||
+                                              isResettingLists ||
+                                              isResettingAllLists ||
+                                              isRefreshingPanelCounts
+                                            }
+                                            onSelect={() =>
+                                              setPurgeTarget({
+                                                layerKey: model.layerColumn.key,
+                                                layerLabel: model.layerColumn.label,
+                                                domainKey: row.key,
+                                                domainLabel: row.label
+                                              })
+                                            }
+                                          >
+                                            <Trash2
+                                              className={`h-4 w-4 ${
+                                                model.isPurgingThisTarget
+                                                  ? 'animate-spin text-rose-600'
+                                                  : ''
+                                              }`}
+                                            />
+                                            {model.isPurgingThisTarget
+                                              ? 'Purging data...'
+                                              : 'Purge data'}
+                                          </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
                                     </div>
-                                  );
-                                })}
+                                  </div>
+                                ) : null}
                               </div>
-                            </div>
-                          </div>
-                        </TableCell>
+                            </TableCell>
+                          );
+                        })}
                       </TableRow>
-                    ];
+                    );
                   })}
                 </TableBody>
               </Table>

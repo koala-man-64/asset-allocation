@@ -338,7 +338,36 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     expect((await screen.findAllByText('9 cols • 2.0 KB')).length).toBeGreaterThan(0);
   });
 
+  it('uses an explicit disclosure button for inline domain details', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <DomainLayerComparisonPanel
+        overall="healthy"
+        dataLayers={makeLayers()}
+        recentJobs={makeJobs()}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        isRefreshing={false}
+        isFetching={false}
+      />
+    );
+
+    const disclosureButton = await screen.findByRole('button', { name: 'Expand market details' });
+
+    expect(disclosureButton).toHaveAttribute('aria-expanded', 'false');
+    expect(disclosureButton).toHaveAttribute('aria-controls');
+    expect(screen.queryByText('date range:')).not.toBeInTheDocument();
+
+    await user.click(disclosureButton);
+
+    expect(disclosureButton).toHaveAttribute('aria-expanded', 'true');
+    expect(disclosureButton).toHaveAttribute('aria-label', 'Collapse market details');
+    expect(screen.getByText('date range:')).toBeInTheDocument();
+  });
+
   it('shows the date range in medallion-domain metadata and detail subpanels', async () => {
+    const user = userEvent.setup();
+
     primeSnapshot({
       layer: 'bronze',
       domain: 'market',
@@ -367,7 +396,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     );
 
     expect(await screen.findByText('range 2026-01-02 → 2026-03-03')).toBeInTheDocument();
-    expect(screen.getAllByText('date range:').length).toBeGreaterThan(0);
+    expect(screen.queryByText('date range:')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Expand market details' }));
+    expect(screen.getByText('date range:')).toBeInTheDocument();
     expect(screen.getAllByTitle('column=Date • source=stats').length).toBeGreaterThan(0);
   });
 
@@ -425,23 +456,24 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
 
     expect(await screen.findByTestId('domain-refresh-indicator-market')).toBeInTheDocument();
     expect(screen.getByTestId('cell-refresh-icon-summary-market-bronze')).toBeInTheDocument();
-    expect(screen.getByTestId('cell-refresh-icon-detail-market-bronze')).toBeInTheDocument();
+    expect(screen.queryByTestId('cell-refresh-icon-detail-market-bronze')).not.toBeInTheDocument();
 
-    resolveMetadata?.({
-      layer: 'bronze',
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta',
-      computedAt: NOW,
-      metadataSource: 'artifact',
-      symbolCount: 123,
-      warnings: []
-    });
+    if (resolveMetadata) {
+      resolveMetadata({
+        layer: 'bronze',
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta',
+        computedAt: NOW,
+        metadataSource: 'artifact',
+        symbolCount: 123,
+        warnings: []
+      });
+    }
 
     await waitFor(() => {
       expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();
       expect(screen.queryByTestId('cell-refresh-icon-summary-market-bronze')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('cell-refresh-icon-detail-market-bronze')).not.toBeInTheDocument();
     });
   });
 
