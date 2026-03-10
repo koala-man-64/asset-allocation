@@ -50,6 +50,7 @@ if az containerapp job show \
 else
   echo "Creating job from YAML (image + identity + registry)..."
   az containerapp job create \
+    --name "$job_name" \
     --resource-group "$RESOURCE_GROUP" \
     --yaml "$tmp_file" \
     --only-show-errors

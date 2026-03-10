@@ -123,6 +123,9 @@ def test_deploy_workflow_only_requires_preprovisioned_shared_resources() -> None
     assert "az containerapp job create" in helper_text, (
         "job deploy helper must create missing Container App jobs from YAML"
     )
+    assert 'az containerapp job create \\\n    --name "$job_name" \\\n    --resource-group "$RESOURCE_GROUP" \\\n    --yaml "$tmp_file" \\\n    --only-show-errors' in helper_text, (
+        "job deploy helper must pass the explicit job name when creating from YAML"
+    )
     assert "Creating job from YAML (image + identity + registry)..." in helper_text, (
         "job deploy helper must create missing jobs using the rendered manifest"
     )
@@ -144,6 +147,9 @@ def test_deploy_workflow_creates_missing_api_app_from_yaml() -> None:
     )
     assert "az containerapp create" in text, (
         "deploy workflow must create the unified Container App from YAML"
+    )
+    assert 'az containerapp create \\\n              --name ${{ env.API_APP_NAME }} \\\n              --resource-group ${{ env.RESOURCE_GROUP }} \\\n              --yaml "$tmp" \\\n              --only-show-errors' in text, (
+        "deploy workflow must pass the explicit Container App name when creating from YAML"
     )
     assert '--yaml "$tmp"' in text, (
         "deploy workflow must create the unified Container App from the rendered manifest"

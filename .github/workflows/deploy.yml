@@ -868,6 +868,7 @@ jobs:
           else
             echo "Creating Container App from rendered YAML..."
             az containerapp create \
+              --name ${{ env.API_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --yaml "$tmp" \
               --only-show-errors
