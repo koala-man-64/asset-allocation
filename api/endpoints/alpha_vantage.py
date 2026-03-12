@@ -12,7 +12,6 @@ from api.service.alpha_vantage_gateway import (
     AlphaVantageGateway,
     AlphaVantageNotConfiguredError,
     normalize_earnings_calendar_horizon,
-    FinanceReport,
     alpha_vantage_caller_context,
 )
 from api.service.dependencies import validate_auth
@@ -146,22 +145,3 @@ def get_earnings_calendar(
         raise
     return Response(content=csv_text, media_type="text/csv", headers={"Cache-Control": "no-store"})
 
-
-@router.get("/finance/{report}")
-def get_finance_report(
-    request: Request,
-    report: FinanceReport,
-    symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
-    gateway: AlphaVantageGateway = Depends(_get_gateway),
-) -> JSONResponse:
-    validate_auth(request)
-    sym = str(symbol or "").strip().upper()
-    if not sym:
-        raise HTTPException(status_code=400, detail="symbol is required.")
-    try:
-        with _caller_context(request):
-            payload = gateway.get_finance_report(symbol=sym, report=report)
-    except Exception as exc:
-        _handle_alpha_vantage_error(exc)
-        raise
-    return JSONResponse(payload, headers={"Cache-Control": "no-store"})

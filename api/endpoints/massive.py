@@ -224,6 +224,10 @@ def get_finance_report(
     request: Request,
     report: FinanceReport,
     symbol: str = Query(..., description="Ticker symbol (e.g. AAPL)."),
+    timeframe: Optional[str] = Query(default=None, description="Optional statement timeframe (quarterly|annual)."),
+    sort: Optional[str] = Query(default=None, description="Optional Massive sort key (for example period_end.asc)."),
+    limit: Optional[int] = Query(default=None, ge=1, description="Optional page size."),
+    pagination: bool = Query(default=True, description="Follow Massive next_url pagination when true."),
     gateway: MassiveGateway = Depends(_get_gateway),
 ) -> JSONResponse:
     validate_auth(request)
@@ -232,7 +236,14 @@ def get_finance_report(
         raise HTTPException(status_code=400, detail="symbol is required.")
     try:
         with _caller_context(request):
-            payload = gateway.get_finance_report(symbol=sym, report=report)
+            payload = gateway.get_finance_report(
+                symbol=sym,
+                report=report,
+                timeframe=timeframe,
+                sort=sort,
+                limit=limit,
+                pagination=bool(pagination),
+            )
     except Exception as exc:
         _handle_massive_error(exc)
         raise

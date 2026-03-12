@@ -146,3 +146,125 @@ def test_gateway_unified_snapshot_batches_symbols() -> None:
     assert captured["tickers"] == ["AAPL", "MSFT", "AAPL"]
     assert captured["asset_type"] == "stocks"
     assert captured["limit"] == 250
+
+
+def test_daily_time_series_maps_regime_index_symbols_to_provider_aliases() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def get_daily_ticker_summary(self, *, ticker, date, adjusted=True):
+            captured["ticker"] = ticker
+            captured["date"] = date
+            captured["adjusted"] = adjusted
+            return {
+                "symbol": ticker,
+                "from": date,
+                "open": 20.0,
+                "high": 21.0,
+                "low": 19.0,
+                "close": 20.5,
+                "volume": 100.0,
+            }
+
+        def list_ohlcv(self, **kwargs):
+            raise AssertionError("list_ohlcv should not be called for the single-day summary path")
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    csv_text = gateway.get_daily_time_series_csv(
+        symbol="^VIX",
+        from_date="2026-03-09",
+        to_date="2026-03-09",
+        adjusted=True,
+    )
+
+    assert "2026-03-09,20.0,21.0,19.0,20.5,100.0" in csv_text
+    assert captured["ticker"] == "I:VIX"
+    assert captured["date"] == "2026-03-09"
+    assert captured["adjusted"] is True
+
+
+def test_gateway_unified_snapshot_rewrites_provider_aliases_to_canonical_symbols() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def get_unified_snapshot(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "results": [
+                    {"ticker": "I:VIX", "value": 21.5},
+                    {"ticker": "I:VIX3M", "value": 22.1},
+                    {"ticker": "SPY", "value": 580.0},
+                ]
+            }
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    payload = gateway.get_unified_snapshot(symbols=["^VIX", "^VIX3M", "SPY"], asset_type="stocks")
+
+    assert captured["tickers"] == ["I:VIX", "I:VIX3M", "SPY"]
+    assert [row["ticker"] for row in payload["results"]] == ["^VIX", "^VIX3M", "SPY"]
+
+
+def test_gateway_finance_report_passes_docs_aligned_statement_params() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def get_balance_sheet(self, **kwargs):
+            captured.update(kwargs)
+            return {"results": []}
+
+        def get_cash_flow_statement(self, **kwargs):
+            raise AssertionError("unexpected cash flow call")
+
+        def get_income_statement(self, **kwargs):
+            raise AssertionError("unexpected income statement call")
+
+        def get_ratios(self, **kwargs):
+            raise AssertionError("unexpected ratios call")
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    payload = gateway.get_finance_report(
+        symbol="AAPL",
+        report="balance_sheet",
+        timeframe="quarterly",
+        sort="period_end.asc",
+        limit=100,
+        pagination=True,
+    )
+
+    assert payload == {"results": []}
+    assert captured["ticker"] == "AAPL"
+    assert captured["params"] == {"timeframe": "quarterly", "sort": "period_end.asc", "limit": 100}
+    assert captured["pagination"] is True
+
+
+def test_gateway_finance_report_maps_valuation_to_ratios() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def get_balance_sheet(self, **kwargs):
+            raise AssertionError("unexpected balance sheet call")
+
+        def get_cash_flow_statement(self, **kwargs):
+            raise AssertionError("unexpected cash flow call")
+
+        def get_income_statement(self, **kwargs):
+            raise AssertionError("unexpected income statement call")
+
+        def get_ratios(self, **kwargs):
+            captured.update(kwargs)
+            return {"results": []}
+
+    gateway = MassiveGateway()
+    gateway.get_client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    gateway.get_finance_report(symbol="AAPL", report="valuation", sort="date.desc", limit=1, pagination=False)
+
+    assert captured["ticker"] == "AAPL"
+    assert captured["params"] == {"sort": "date.desc", "limit": 1}
+    assert captured["pagination"] is False

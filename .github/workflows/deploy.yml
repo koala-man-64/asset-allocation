@@ -874,11 +874,11 @@ jobs:
               --only-show-errors
           fi
 
-      - name: Decommission Legacy UI App
+      - name: Decommission Previous UI App
         if: steps.ui_app_check.outputs.app_exists == 'true' && (env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.app_changes.outputs.ui_app == 'true' || steps.api_app_check.outputs.app_exists == 'false')
         run: |
           set -euo pipefail
-          echo "Deleting legacy UI app '${{ env.UI_APP_NAME }}' after unified app deployment..."
+          echo "Deleting previous UI app '${{ env.UI_APP_NAME }}' after unified app deployment..."
           az containerapp delete \
             --name "${{ env.UI_APP_NAME }}" \
             --resource-group "${{ env.RESOURCE_GROUP }}" \

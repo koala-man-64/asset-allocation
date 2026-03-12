@@ -314,7 +314,7 @@ Always respond with this exact section structure and order:
   - Be explicit about browser support limits, multi-tab constraints, and any gaps in Safari or true cross-browser parity.
 
 - WebDriver or Selenium
-  - Best fit when the team must support legacy browsers, an existing Selenium grid, or enterprise device-cloud workflows.
+  - Best fit when the team must support older browsers, an existing Selenium grid, or enterprise device-cloud workflows.
   - Useful when the organization already has mature WebDriver infrastructure and reporting.
   - Accept the heavier plumbing and slower feedback loop in exchange for breadth and compatibility.
 

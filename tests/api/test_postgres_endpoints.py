@@ -44,6 +44,28 @@ async def test_list_tables(monkeypatch):
     assert resp.json() == ["table1", "table2"]
 
 @pytest.mark.asyncio
+async def test_list_tables_hides_noncanonical_gold_tables(monkeypatch):
+    mock_engine = MagicMock()
+    mock_inspector = MagicMock()
+    mock_inspector.get_schema_names.return_value = ["gold"]
+    mock_inspector.get_table_names.return_value = [
+        "market_data",
+        "market_data_backup",
+        "finance_data",
+    ]
+
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        with patch("api.endpoints.postgres.inspect", return_value=mock_inspector):
+            app = create_app()
+            async with get_test_client(app) as client:
+                resp = await client.get("/api/system/postgres/schemas/gold/tables")
+
+    assert resp.status_code == 200
+    assert resp.json() == ["finance_data", "market_data"]
+
+@pytest.mark.asyncio
 async def test_list_tables_404_schema(monkeypatch):
     mock_engine = MagicMock()
     mock_inspector = MagicMock()

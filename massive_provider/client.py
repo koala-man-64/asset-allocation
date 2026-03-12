@@ -402,40 +402,76 @@ class MassiveClient:
             pagination=bool(pagination),
         )
 
-    def get_income_statement(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def get_income_statement(
+        self,
+        *,
+        ticker: str,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Income statements.
 
         REST endpoint: ``GET /stocks/financials/v1/income-statements``.
         """
 
-        q = {"ticker": str(ticker).strip().upper()}
+        q = {"tickers": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json(_ENDPOINT_FINANCIALS_INCOME, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            _ENDPOINT_FINANCIALS_INCOME,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
-    def get_cash_flow_statement(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def get_cash_flow_statement(
+        self,
+        *,
+        ticker: str,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Cash-flow statements.
 
         REST endpoint: ``GET /stocks/financials/v1/cash-flow-statements``.
         """
 
-        q = {"ticker": str(ticker).strip().upper()}
+        q = {"tickers": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json(_ENDPOINT_FINANCIALS_CASH_FLOW, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            _ENDPOINT_FINANCIALS_CASH_FLOW,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
-    def get_balance_sheet(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def get_balance_sheet(
+        self,
+        *,
+        ticker: str,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Balance sheets.
 
         REST endpoint: ``GET /stocks/financials/v1/balance-sheets``.
         """
 
-        q = {"ticker": str(ticker).strip().upper()}
+        q = {"tickers": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json(_ENDPOINT_FINANCIALS_BALANCE_SHEET, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            _ENDPOINT_FINANCIALS_BALANCE_SHEET,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
-    def get_ratios(self, *, ticker: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def get_ratios(
+        self,
+        *,
+        ticker: str,
+        params: Optional[dict[str, Any]] = None,
+        pagination: bool = True,
+    ) -> Any:
         """Financial ratios.
 
         REST endpoint: ``GET /stocks/financials/v1/ratios``.
@@ -444,7 +480,11 @@ class MassiveClient:
         q = {"ticker": str(ticker).strip().upper()}
         if params:
             q.update(params)
-        return self._request_json(_ENDPOINT_FINANCIALS_RATIOS, params=filter_none(q)).payload
+        return self._request_paginated_results(
+            _ENDPOINT_FINANCIALS_RATIOS,
+            params=filter_none(q),
+            pagination=bool(pagination),
+        )
 
     def _normalize_tickers(self, tickers: list[str]) -> list[str]:
         normalized: list[str] = []

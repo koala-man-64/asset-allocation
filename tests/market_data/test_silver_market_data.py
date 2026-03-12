@@ -145,7 +145,7 @@ def test_silver_processing_merges_history_symbol_without_duplicate_symbol_column
         assert set(df_saved["symbol"].dropna().astype(str).unique()) == {symbol}
 
 
-def test_silver_processing_repairs_legacy_symbol_suffix_columns(unique_ticker):
+def test_silver_processing_repairs_duplicate_symbol_suffix_columns(unique_ticker):
     symbol = unique_ticker
     blob_name = f"market-data/{symbol}.csv"
     csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,10.5,12,10,11.0,150\n"

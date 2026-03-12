@@ -91,7 +91,6 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 
 - `.github/workflows/deploy.yml` builds and deploys the repo to Azure.
 - `deploy/app_api.yaml` is the active unified API and UI Container App manifest.
-- `deploy/app_ui.yaml` is explicitly marked legacy.
 - Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
 
 ## Evidence
@@ -108,6 +107,5 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 - `ui/src/app/components/pages/LiveTradingPage.tsx`
 - `.github/workflows/deploy.yml`
 - `deploy/app_api.yaml`
-- `deploy/app_ui.yaml`
 - `tests/api/test_swagger_docs.py`
 - `tests/api/test_config_js_contract.py`

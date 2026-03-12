@@ -13,6 +13,18 @@ router = APIRouter()
 _HIDDEN_EXPLORER_SCHEMAS = frozenset({"information_schema", "public"})
 _BOOLEAN_TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on"})
 _BOOLEAN_FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off"})
+_SUPPORTED_GOLD_EXPLORER_TABLES = frozenset(
+    {
+        "market_data",
+        "finance_data",
+        "earnings_data",
+        "price_target_data",
+        "regime_inputs_daily",
+        "regime_history",
+        "regime_latest",
+        "regime_transitions",
+    }
+)
 
 
 class QueryFilter(BaseModel):
@@ -138,12 +150,26 @@ def _quote_identifier(identifier: str) -> str:
     return '"' + str(identifier or "").replace('"', '""') + '"'
 
 
+def _is_hidden_explorer_table(*, schema_name: str, table_name: str) -> bool:
+    normalized_schema = str(schema_name or "").strip().lower()
+    normalized_table = str(table_name or "").strip().lower()
+    return normalized_schema == "gold" and normalized_table not in _SUPPORTED_GOLD_EXPLORER_TABLES
+
+
+def _visible_table_names(insp: Any, *, schema_name: str) -> List[str]:
+    return sorted(
+        table_name
+        for table_name in insp.get_table_names(schema=schema_name)
+        if not _is_hidden_explorer_table(schema_name=schema_name, table_name=str(table_name or ""))
+    )
+
+
 def _validate_table_target(insp: Any, *, schema_name: str, table_name: str) -> None:
     schema_names = insp.get_schema_names()
     if schema_name not in schema_names:
         raise HTTPException(status_code=404, detail=f"Schema '{schema_name}' not found.")
 
-    if table_name not in insp.get_table_names(schema=schema_name):
+    if table_name not in _visible_table_names(insp, schema_name=schema_name):
         raise HTTPException(
             status_code=404,
             detail=f"Table '{table_name}' not found in schema '{schema_name}'.",
@@ -433,8 +459,7 @@ def list_tables(schema_name: str, request: Request) -> List[str]:
         if schema_name not in insp.get_schema_names():
             raise HTTPException(status_code=404, detail=f"Schema '{schema_name}' not found.")
 
-        tables = insp.get_table_names(schema=schema_name)
-        return sorted(tables)
+        return _visible_table_names(insp, schema_name=schema_name)
     except HTTPException:
         raise
     except Exception as e:

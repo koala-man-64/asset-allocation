@@ -66,8 +66,7 @@ function Should-SkipParityKey {
     # Keys in this list are local-only, deprecated, or intentionally excluded from
     # .env -> .env.web parity enforcement.
     $ignoredKeys = @(
-        "RUNTIME_CONFIG_REFRESH_SECONDS",
-        "MARKET_BACKFILL_START_DATE"
+        "RUNTIME_CONFIG_REFRESH_SECONDS"
     )
 
     return $ignoredKeys -contains $Key

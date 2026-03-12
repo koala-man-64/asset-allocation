@@ -36,6 +36,7 @@ _RECOVERY_SLEEP_SECONDS = 5.0
 _FULL_HISTORY_START_DATE = "1970-01-01"
 _SNAPSHOT_BATCH_SIZE = 250
 _SNAPSHOT_ASSET_TYPE = "stocks"
+_REGIME_REQUIRED_MARKET_SYMBOLS = frozenset({"SPY", "^VIX", "^VIX3M"})
 _BUCKET_COLUMNS = [
     "symbol",
     "date",
@@ -53,6 +54,20 @@ _BUCKET_COLUMNS = [
 
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _is_regime_required_market_symbol(symbol: object) -> bool:
+    normalized = str(symbol or "").strip().upper()
+    return normalized in _REGIME_REQUIRED_MARKET_SYMBOLS
+
+
+def _should_skip_blacklisted_market_symbol(symbol: object) -> bool:
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return False
+    if _is_regime_required_market_symbol(normalized):
+        return False
+    return bool(list_manager.is_blacklisted(normalized))
 
 
 def _validate_environment() -> None:
@@ -642,7 +657,7 @@ def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tup
     return len(symbol_to_bucket), index_path
 
 
-def _delete_legacy_symbol_blobs() -> int:
+def _delete_flat_symbol_blobs() -> int:
     deleted = 0
     for blob in bronze_client.list_blob_infos(name_starts_with="market-data/"):
         name = str(blob.get("name") or "")
@@ -656,7 +671,7 @@ def _delete_legacy_symbol_blobs() -> int:
             bronze_client.delete_file(name)
             deleted += 1
         except Exception as exc:
-            mdc.write_warning(f"Failed deleting legacy market blob {name}: {exc}")
+            mdc.write_warning(f"Failed deleting flat market blob {name}: {exc}")
     return deleted
 
 
@@ -984,7 +999,7 @@ def download_and_save_raw(
     """
     # Backfill is intentionally disabled for Bronze market; retain arg for local tooling compatibility.
     _ = backfill_start
-    if list_manager.is_blacklisted(symbol):
+    if _should_skip_blacklisted_market_symbol(symbol):
         return
 
     if existing_symbol_df is not None and not existing_symbol_df.empty:
@@ -1175,7 +1190,7 @@ async def main_async() -> int:
     for raw in df_symbols["Symbol"].dropna().astype(str).tolist():
         if "." in raw:
             continue
-        if list_manager.is_blacklisted(raw):
+        if _should_skip_blacklisted_market_symbol(raw):
             continue
         symbols.append(raw)
     # Preserve original ordering while de-duping.
@@ -1224,7 +1239,7 @@ async def main_async() -> int:
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
-        if list_manager.is_blacklisted(symbol):
+        if _should_skip_blacklisted_market_symbol(symbol):
             raise MassiveGatewayNotFoundError("Symbol is blacklisted.")
 
         _download_and_save_raw_with_recovery(
@@ -1322,10 +1337,10 @@ async def main_async() -> int:
     if alpha26_mode:
         try:
             written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames)
-            legacy_deleted = _delete_legacy_symbol_blobs()
+            flat_deleted = _delete_flat_symbol_blobs()
             mdc.write_line(
                 "Bronze market alpha26 buckets written: "
-                f"symbols={written_symbols} index={index_path or 'n/a'} legacy_deleted={legacy_deleted}"
+                f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
             )
         except Exception as exc:
             progress["failed"] += 1

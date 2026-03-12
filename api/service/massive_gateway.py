@@ -23,8 +23,15 @@ from massive_provider.utils import ms_to_iso_date
 
 logger = logging.getLogger("asset-allocation.api.massive")
 _FULL_HISTORY_START_DATE = "1970-01-01"
+_CANONICAL_TO_PROVIDER_SYMBOL = {
+    "^VIX": "I:VIX",
+    "^VIX3M": "I:VIX3M",
+}
+_PROVIDER_TO_CANONICAL_SYMBOL = {
+    provider: canonical for canonical, provider in _CANONICAL_TO_PROVIDER_SYMBOL.items()
+}
 
-FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "overview", "ratios"]
+FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "valuation"]
 
 
 class MassiveNotConfiguredError(RuntimeError):
@@ -61,6 +68,20 @@ def _normalize_caller_component(value: object, *, default: str) -> str:
     if len(text) > 128:
         return text[:128]
     return text
+
+
+def _to_provider_symbol(symbol: object) -> str:
+    canonical = str(symbol or "").strip().upper()
+    if not canonical:
+        return ""
+    return _CANONICAL_TO_PROVIDER_SYMBOL.get(canonical, canonical)
+
+
+def _to_canonical_symbol(symbol: object) -> str:
+    provider = str(symbol or "").strip().upper()
+    if not provider:
+        return ""
+    return _PROVIDER_TO_CANONICAL_SYMBOL.get(provider, provider)
 
 
 _CALLER_JOB: ContextVar[str] = ContextVar("massive_caller_job", default="api")
@@ -283,6 +304,7 @@ class MassiveGateway:
         sym = str(symbol or "").strip().upper()
         if not sym:
             raise ValueError("symbol is required.")
+        provider_symbol = _to_provider_symbol(sym)
 
         end_date = to_date or _utc_today_iso()
         start_date = from_date or _FULL_HISTORY_START_DATE
@@ -290,7 +312,7 @@ class MassiveGateway:
         if str(start_date) == str(end_date):
             try:
                 summary_payload = self.get_client().get_daily_ticker_summary(
-                    ticker=sym,
+                    ticker=provider_symbol,
                     date=str(start_date),
                     adjusted=bool(adjusted),
                 )
@@ -302,7 +324,7 @@ class MassiveGateway:
                 pass
 
         bars = self.get_client().list_ohlcv(
-            ticker=sym,
+            ticker=provider_symbol,
             multiplier=1,
             timespan="day",
             from_=str(start_date),
@@ -328,7 +350,7 @@ class MassiveGateway:
         if settlement_date_lte:
             params["settlement_date.lte"] = settlement_date_lte
         return self.get_client().get_short_interest(
-            ticker=str(symbol).strip().upper(),
+            ticker=_to_provider_symbol(symbol),
             params=params,
             pagination=True,
         )
@@ -346,7 +368,7 @@ class MassiveGateway:
         if date_lte:
             params["date.lte"] = date_lte
         return self.get_client().get_short_volume(
-            ticker=str(symbol).strip().upper(),
+            ticker=_to_provider_symbol(symbol),
             params=params,
             pagination=True,
         )
@@ -355,23 +377,42 @@ class MassiveGateway:
         # Massive's current float endpoint does not document as-of/date filters.
         # Keep the parameter for compatibility but do not forward query filters.
         return self.get_client().get_float(
-            ticker=str(symbol).strip().upper(),
+            ticker=_to_provider_symbol(symbol),
             params={"sort": "effective_date.asc", "limit": 5000},
             pagination=True,
         )
 
-    def get_finance_report(self, *, symbol: str, report: FinanceReport) -> Any:
+    def get_finance_report(
+        self,
+        *,
+        symbol: str,
+        report: FinanceReport,
+        timeframe: Optional[str] = None,
+        sort: Optional[str] = None,
+        limit: Optional[int] = None,
+        pagination: bool = True,
+    ) -> Any:
         by_report = {
             "balance_sheet": self.get_client().get_balance_sheet,
             "cash_flow": self.get_client().get_cash_flow_statement,
             "income_statement": self.get_client().get_income_statement,
-            "overview": self.get_client().get_ratios,  # closest stable replacement for AV overview in existing flow
-            "ratios": self.get_client().get_ratios,
+            "valuation": self.get_client().get_ratios,
         }
         handler = by_report.get(str(report))
         if handler is None:
             raise ValueError(f"Unknown finance report={report!r}")
-        return handler(ticker=str(symbol).strip().upper())
+        params: dict[str, Any] = {}
+        if timeframe:
+            params["timeframe"] = str(timeframe).strip().lower()
+        if sort:
+            params["sort"] = str(sort).strip()
+        if limit is not None:
+            params["limit"] = int(limit)
+        return handler(
+            ticker=_to_provider_symbol(symbol),
+            params=params or None,
+            pagination=bool(pagination),
+        )
 
     def get_unified_snapshot(
         self,
@@ -383,12 +424,35 @@ class MassiveGateway:
         normalized = [symbol for symbol in normalized if symbol]
         if not normalized:
             raise ValueError("symbols is required.")
-        return self.get_client().get_unified_snapshot(
-            tickers=normalized,
+        provider_symbols = [_to_provider_symbol(symbol) for symbol in normalized]
+        payload = self.get_client().get_unified_snapshot(
+            tickers=provider_symbols,
             asset_type=asset_type,
             limit=250,
         )
+        if not isinstance(payload, dict):
+            return payload
+        results = payload.get("results")
+        if not isinstance(results, list):
+            return payload
 
+        translated_results: list[Any] = []
+        for row in results:
+            if not isinstance(row, dict):
+                translated_results.append(row)
+                continue
+            translated = dict(row)
+            ticker = _to_canonical_symbol(translated.get("ticker"))
+            if ticker:
+                translated["ticker"] = ticker
+            symbol_value = _to_canonical_symbol(translated.get("symbol"))
+            if symbol_value:
+                translated["symbol"] = symbol_value
+            translated_results.append(translated)
+        translated_payload = dict(payload)
+        translated_payload["results"] = translated_results
+        return translated_payload
+ 
 
 __all__ = [
     "FinanceReport",

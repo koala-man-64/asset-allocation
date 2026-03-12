@@ -161,10 +161,6 @@ def _rolling_slope_fixed_window(values: pd.Series, window: int) -> pd.Series:
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = _snake_case_columns(df)
 
-    # Backward compatibility: older tables used `ticker` instead of `symbol`.
-    if "symbol" not in out.columns and "ticker" in out.columns:
-        out = out.rename(columns={"ticker": "symbol"})
-
     required = {
         "symbol",
         "obs_date",

@@ -1,7 +1,7 @@
 import asyncio
-import uuid
 import json
-from datetime import date, datetime, timedelta, timezone
+import uuid
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -15,18 +15,32 @@ def unique_ticker():
     return f"TEST_FIN_{uuid.uuid4().hex[:8].upper()}"
 
 
-def test_fetch_and_save_raw_writes_json(unique_ticker):
-    symbol = unique_ticker
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = {
-        "symbol": symbol,
-        "quarterlyReports": [{"fiscalDateEnding": "2024-01-01"}],
+def _statement_payload(*, period_end: str, total_assets: float) -> dict:
+    return {
+        "results": [
+            {
+                "period_end": period_end,
+                "financials": {
+                    "balance_sheet": {
+                        "total_assets": total_assets,
+                        "total_current_assets": total_assets / 2.0,
+                        "total_current_liabilities": total_assets / 4.0,
+                        "long_term_debt_and_capital_lease_obligations": total_assets / 5.0,
+                    }
+                },
+            }
+        ]
     }
 
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = False
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+
+def test_fetch_and_save_raw_writes_canonical_v2_balance_sheet_row(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.side_effect = [
+        _statement_payload(period_end="2024-03-31", total_assets=1000.0),
+        _statement_payload(period_end="2024-12-31", total_assets=1200.0),
+    ]
+    row_store: dict[tuple[str, str], dict[str, object]] = {}
 
     report = {
         "folder": "Balance Sheet",
@@ -34,95 +48,93 @@ def test_fetch_and_save_raw_writes_json(unique_ticker):
         "report": "balance_sheet",
     }
 
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
 
-        wrote = bronze.fetch_and_save_raw(symbol, report, mock_av)
-        assert wrote is True
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_massive,
+            alpha26_mode=True,
+            alpha26_rows=row_store,
+        )
 
-        mock_store.assert_called_once()
-        args, kwargs = mock_store.call_args
-        assert args[1] == f"finance-data/Balance Sheet/{symbol}_quarterly_balance-sheet.json"
-        assert b"quarterlyReports" in args[0]
+    assert wrote is True
+    stored = row_store[(symbol, "balance_sheet")]
+    payload = json.loads(str(stored["payload_json"]))
+    assert payload["schema_version"] == 2
+    assert payload["provider"] == "massive"
+    assert payload["report_type"] == "balance_sheet"
+    assert payload["rows"] == [
+        {
+            "date": "2024-03-31",
+            "timeframe": "quarterly",
+            "long_term_debt": 200.0,
+            "total_assets": 1000.0,
+            "current_assets": 500.0,
+            "current_liabilities": 250.0,
+            "shares_outstanding": None,
+        },
+        {
+            "date": "2024-12-31",
+            "timeframe": "annual",
+            "long_term_debt": 240.0,
+            "total_assets": 1200.0,
+            "current_assets": 600.0,
+            "current_liabilities": 300.0,
+            "shares_outstanding": None,
+        },
+    ]
+    assert stored["source_min_date"] == "2024-03-31"
+    assert stored["source_max_date"] == "2024-12-31"
 
 
-def test_fetch_and_save_raw_blacklists_empty_quarterly_reports(unique_ticker):
+def test_fetch_and_save_raw_blacklists_empty_valuation_payload(unique_ticker):
     symbol = unique_ticker
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = {"symbol": symbol, "quarterlyReports": []}
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = False
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
-
-    report = {
-        "folder": "Balance Sheet",
-        "file_suffix": "quarterly_balance-sheet",
-        "report": "balance_sheet",
-    }
-
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
-        mock_list_manager.is_blacklisted.return_value = False
-
-        with pytest.raises(bronze.AlphaVantageGatewayInvalidSymbolError):
-            bronze.fetch_and_save_raw(symbol, report, mock_av)
-
-        mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
-        mock_store.assert_not_called()
-
-
-def test_fetch_and_save_raw_blacklists_empty_overview_payload(unique_ticker):
-    symbol = unique_ticker
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = {"Symbol": symbol}
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = False
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.return_value = {"results": []}
 
     report = {
         "folder": "Valuation",
         "file_suffix": "quarterly_valuation_measures",
-        "report": "overview",
+        "report": "valuation",
     }
 
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
 
-        with pytest.raises(bronze.AlphaVantageGatewayInvalidSymbolError):
-            bronze.fetch_and_save_raw(symbol, report, mock_av)
+        with pytest.raises(bronze.MassiveGatewayNotFoundError):
+            bronze.fetch_and_save_raw(symbol, report, mock_massive, alpha26_mode=True, alpha26_rows={})
 
         mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
-        mock_store.assert_not_called()
 
 
-def test_fetch_and_save_raw_applies_backfill_start_cutoff(unique_ticker):
+def test_fetch_and_save_raw_applies_backfill_cutoff_to_canonical_rows(unique_ticker):
     symbol = unique_ticker
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = {
-        "symbol": symbol,
-        "quarterlyReports": [
-            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
-            {"fiscalDateEnding": "2024-03-31", "reportedCurrency": "USD"},
-        ],
-        "annualReports": [
-            {"fiscalDateEnding": "2022-12-31", "reportedCurrency": "USD"},
-            {"fiscalDateEnding": "2024-12-31", "reportedCurrency": "USD"},
-        ],
-    }
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = False
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.side_effect = [
+        {
+            "results": [
+                {
+                    "period_end": "2023-12-31",
+                    "financials": {"balance_sheet": {"total_assets": 900.0}},
+                },
+                {
+                    "period_end": "2024-03-31",
+                    "financials": {"balance_sheet": {"total_assets": 1000.0}},
+                },
+            ]
+        },
+        {
+            "results": [
+                {
+                    "period_end": "2024-12-31",
+                    "financials": {"balance_sheet": {"total_assets": 1200.0}},
+                }
+            ]
+        },
+    ]
+    row_store: dict[tuple[str, str], dict[str, object]] = {}
 
     report = {
         "folder": "Balance Sheet",
@@ -130,118 +142,100 @@ def test_fetch_and_save_raw_applies_backfill_start_cutoff(unique_ticker):
         "report": "balance_sheet",
     }
 
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
 
-        wrote = bronze.fetch_and_save_raw(symbol, report, mock_av, backfill_start=date(2024, 1, 1))
-        assert wrote is True
-
-        args, _ = mock_store.call_args
-        payload = json.loads(args[0].decode("utf-8"))
-        assert [row["fiscalDateEnding"] for row in payload["quarterlyReports"]] == ["2024-03-31"]
-        assert [row["fiscalDateEnding"] for row in payload["annualReports"]] == ["2024-12-31"]
-
-
-def test_fetch_and_save_raw_deletes_blob_when_cutoff_removes_all_rows(unique_ticker):
-    symbol = unique_ticker
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = {
-        "symbol": symbol,
-        "quarterlyReports": [
-            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
-        ],
-        "annualReports": [
-            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
-        ],
-    }
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = MagicMock(
-        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
-    )
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
-
-    report = {
-        "folder": "Balance Sheet",
-        "file_suffix": "quarterly_balance-sheet",
-        "report": "balance_sheet",
-    }
-
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch("core.core.store_raw_bytes") as mock_store:
-        mock_list_manager.is_blacklisted.return_value = False
-
-        wrote = bronze.fetch_and_save_raw(symbol, report, mock_av, backfill_start=date(2024, 1, 1))
-        assert wrote is True
-
-        mock_store.assert_not_called()
-        mock_bronze_client.delete_file.assert_called_once_with(
-            f"finance-data/Balance Sheet/{symbol}_quarterly_balance-sheet.json"
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_massive,
+            backfill_start=date(2024, 1, 1),
+            alpha26_mode=True,
+            alpha26_rows=row_store,
         )
-        mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+
+    assert wrote is True
+    stored = row_store[(symbol, "balance_sheet")]
+    payload = json.loads(str(stored["payload_json"]))
+    assert [row["date"] for row in payload["rows"]] == ["2024-03-31", "2024-12-31"]
 
 
-def test_fetch_and_save_raw_skips_write_when_no_new_finance_dates(unique_ticker):
+def test_fetch_and_save_raw_coverage_gap_overrides_fresh_current_payload(unique_ticker):
     symbol = unique_ticker
-    payload = {
-        "symbol": symbol,
-        "quarterlyReports": [
-            {"fiscalDateEnding": "2024-03-31", "reportedCurrency": "USD"},
-            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
+    existing_payload = {
+        "schema_version": 2,
+        "provider": "massive",
+        "report_type": "balance_sheet",
+        "rows": [
+            {
+                "date": "2025-01-01",
+                "timeframe": "quarterly",
+                "total_assets": 100.0,
+            }
         ],
     }
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = payload
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = MagicMock(
-        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
+    existing_row = bronze._build_finance_bucket_row(
+        symbol=symbol,
+        report_type="balance_sheet",
+        payload=existing_payload,
+        source_min_date=date(2025, 1, 1),
+        source_max_date=date(2025, 1, 1),
     )
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
-    existing_raw = json.dumps(payload).encode("utf-8")
+    existing_row["ingested_at"] = datetime.now(timezone.utc).isoformat()
 
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.side_effect = [
+        _statement_payload(period_end="2023-12-31", total_assets=90.0),
+        _statement_payload(period_end="2025-03-31", total_assets=110.0),
+    ]
+    row_store = {(symbol, "balance_sheet"): dict(existing_row)}
     report = {
         "folder": "Balance Sheet",
         "file_suffix": "quarterly_balance-sheet",
         "report": "balance_sheet",
     }
+    coverage_summary = bronze._empty_coverage_summary()
 
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch(
-        "core.core.read_raw_bytes",
-        return_value=existing_raw,
-    ), patch("core.core.store_raw_bytes") as mock_store:
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager, patch(
+        "tasks.finance_data.bronze_finance_data.load_coverage_marker",
+        return_value=None,
+    ), patch("tasks.finance_data.bronze_finance_data._mark_coverage") as mock_mark_coverage:
         mock_list_manager.is_blacklisted.return_value = False
 
-        wrote = bronze.fetch_and_save_raw(symbol, report, mock_av)
-        assert wrote is False
-        mock_store.assert_not_called()
-        mock_list_manager.add_to_whitelist.assert_called_with(symbol)
+        wrote = bronze.fetch_and_save_raw(
+            symbol,
+            report,
+            mock_massive,
+            backfill_start=date(2024, 1, 1),
+            coverage_summary=coverage_summary,
+            alpha26_mode=True,
+            alpha26_existing_row=dict(existing_row),
+            alpha26_rows=row_store,
+        )
+
+    assert wrote is True
+    assert coverage_summary["coverage_checked"] == 1
+    assert coverage_summary["coverage_forced_refetch"] == 1
+    assert mock_massive.get_finance_report.call_count == 2
+    mock_mark_coverage.assert_called_once()
 
 
 def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     symbol = unique_ticker
-    mock_av = MagicMock()
+    mock_massive = MagicMock()
     manager = MagicMock()
-    manager.get_client.return_value = mock_av
+    manager.get_client.return_value = mock_massive
     attempts: dict[str, int] = {"balance_sheet": 0}
 
-    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None, coverage_summary=None):
+    def _fake_fetch(symbol_arg, report, massive_client, *, backfill_start=None, coverage_summary=None):
         assert symbol_arg == symbol
-        assert av_client is mock_av
+        assert massive_client is mock_massive
+        del backfill_start, coverage_summary
         report_name = report["report"]
         if report_name == "balance_sheet":
             attempts["balance_sheet"] += 1
             if attempts["balance_sheet"] == 1:
-                raise bronze.AlphaVantageGatewayThrottleError("throttled", status_code=429)
+                raise bronze.MassiveGatewayRateLimitError("throttled", status_code=429)
             return True
         return False
 
@@ -264,53 +258,21 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     mock_sleep.assert_called_once_with(0.5)
 
 
-def test_process_symbol_with_recovery_continues_after_nonrecoverable_report_failure(unique_ticker):
-    symbol = unique_ticker
-    mock_av = MagicMock()
-    manager = MagicMock()
-    manager.get_client.return_value = mock_av
-    seen_reports: list[str] = []
-
-    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None, coverage_summary=None):
-        assert symbol_arg == symbol
-        assert av_client is mock_av
-        report_name = report["report"]
-        seen_reports.append(report_name)
-        if report_name == "cash_flow":
-            raise bronze.AlphaVantageGatewayError("bad request", status_code=400)
-        return True
-
-    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
-        wrote, blacklisted, failures, coverage_summary = bronze._process_symbol_with_recovery(
-            symbol,
-            manager,
-            max_attempts=3,
-            sleep_seconds=0.0,
-        )
-
-    assert blacklisted is False
-    assert wrote == 3
-    assert len(failures) == 1
-    assert failures[0][0] == "cash_flow"
-    assert coverage_summary["coverage_checked"] == 0
-    manager.reset_current.assert_not_called()
-    assert seen_reports == [report["report"] for report in bronze.REPORTS]
-
-
 def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
     symbol = unique_ticker
-    mock_av = MagicMock()
+    mock_massive = MagicMock()
     manager = MagicMock()
-    manager.get_client.return_value = mock_av
+    manager.get_client.return_value = mock_massive
     seen_reports: list[str] = []
 
-    def _fake_fetch(symbol_arg, report, av_client, *, backfill_start=None, coverage_summary=None):
+    def _fake_fetch(symbol_arg, report, massive_client, *, backfill_start=None, coverage_summary=None):
         assert symbol_arg == symbol
-        assert av_client is mock_av
+        assert massive_client is mock_massive
+        del backfill_start, coverage_summary
         report_name = report["report"]
         seen_reports.append(report_name)
         if report_name == "balance_sheet":
-            raise bronze.AlphaVantageGatewayInvalidSymbolError("invalid", status_code=404)
+            raise bronze.MassiveGatewayNotFoundError("invalid", status_code=404)
         return True
 
     with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
@@ -330,155 +292,39 @@ def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
     assert seen_reports == ["balance_sheet"]
 
 
-def test_fetch_and_save_raw_coverage_gap_overrides_freshness(unique_ticker):
-    symbol = unique_ticker
-    existing_payload = {
-        "symbol": symbol,
-        "quarterlyReports": [{"fiscalDateEnding": "2025-01-01", "reportedCurrency": "USD"}],
-        "annualReports": [],
-    }
-    incoming_payload = {
-        "symbol": symbol,
-        "quarterlyReports": [{"fiscalDateEnding": "2024-03-31", "reportedCurrency": "USD"}],
-        "annualReports": [],
-    }
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = incoming_payload
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = MagicMock(last_modified=datetime.now(timezone.utc))
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
-
-    report = {
-        "folder": "Balance Sheet",
-        "file_suffix": "quarterly_balance-sheet",
-        "report": "balance_sheet",
-    }
-    coverage_summary = bronze._empty_coverage_summary()
-
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch(
-        "core.core.read_raw_bytes",
-        return_value=json.dumps(existing_payload).encode("utf-8"),
-    ), patch(
-        "tasks.finance_data.bronze_finance_data.load_coverage_marker",
-        return_value=None,
-    ), patch(
-        "tasks.finance_data.bronze_finance_data._mark_coverage"
-    ) as mock_mark_coverage, patch(
-        "core.core.store_raw_bytes"
-    ) as mock_store:
-        mock_list_manager.is_blacklisted.return_value = False
-
-        wrote = bronze.fetch_and_save_raw(
-            symbol,
-            report,
-            mock_av,
-            backfill_start=date(2024, 1, 1),
-            coverage_summary=coverage_summary,
-        )
-
-    assert wrote is True
-    assert coverage_summary["coverage_checked"] == 1
-    assert coverage_summary["coverage_forced_refetch"] == 1
-    mock_av.get_finance_report.assert_called_once()
-    mock_store.assert_called_once()
-    mock_mark_coverage.assert_called_once()
-
-
-def test_fetch_and_save_raw_coverage_uses_unfiltered_payload_earliest(unique_ticker):
-    symbol = unique_ticker
-    existing_payload = {
-        "symbol": symbol,
-        "quarterlyReports": [{"fiscalDateEnding": "2025-01-01", "reportedCurrency": "USD"}],
-        "annualReports": [],
-    }
-    incoming_payload = {
-        "symbol": symbol,
-        "quarterlyReports": [
-            {"fiscalDateEnding": "2023-12-31", "reportedCurrency": "USD"},
-            {"fiscalDateEnding": "2025-03-31", "reportedCurrency": "USD"},
-        ],
-        "annualReports": [],
-    }
-    mock_av = MagicMock()
-    mock_av.get_finance_report.return_value = incoming_payload
-
-    mock_blob_client = MagicMock()
-    mock_blob_client.exists.return_value = True
-    mock_blob_client.get_blob_properties.return_value = MagicMock(
-        last_modified=datetime.now(timezone.utc) - timedelta(days=20)
-    )
-    mock_bronze_client = MagicMock()
-    mock_bronze_client.get_blob_client.return_value = mock_blob_client
-
-    report = {
-        "folder": "Balance Sheet",
-        "file_suffix": "quarterly_balance-sheet",
-        "report": "balance_sheet",
-    }
-    coverage_summary = bronze._empty_coverage_summary()
-
-    with patch("tasks.finance_data.bronze_finance_data.bronze_client", mock_bronze_client), patch(
-        "tasks.finance_data.bronze_finance_data.list_manager"
-    ) as mock_list_manager, patch(
-        "core.core.read_raw_bytes",
-        return_value=json.dumps(existing_payload).encode("utf-8"),
-    ), patch(
-        "tasks.finance_data.bronze_finance_data.load_coverage_marker",
-        return_value=None,
-    ), patch(
-        "tasks.finance_data.bronze_finance_data._mark_coverage"
-    ) as mock_mark_coverage, patch(
-        "core.core.store_raw_bytes"
-    ):
-        mock_list_manager.is_blacklisted.return_value = False
-
-        wrote = bronze.fetch_and_save_raw(
-            symbol,
-            report,
-            mock_av,
-            backfill_start=date(2024, 1, 1),
-            coverage_summary=coverage_summary,
-        )
-
-    assert wrote is True
-    assert coverage_summary["coverage_forced_refetch"] == 1
-    assert mock_mark_coverage.call_count == 1
-    _, kwargs = mock_mark_coverage.call_args
-    assert kwargs["status"] == "covered"
-    assert kwargs["earliest_available"] == date(2023, 12, 31)
-
-
 def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticker):
     symbol = unique_ticker
     client_manager = MagicMock()
     coverage_summary = bronze._empty_coverage_summary()
-    invalid_error = bronze.AlphaVantageGatewayInvalidSymbolError("invalid", status_code=404)
+    invalid_error = bronze.MassiveGatewayNotFoundError("invalid", status_code=404)
 
     async def run_test():
-        with patch(
-            "tasks.finance_data.bronze_finance_data._validate_environment"
-        ), patch(
+        with patch("tasks.finance_data.bronze_finance_data._validate_environment"), patch(
             "tasks.finance_data.bronze_finance_data.mdc.log_environment_diagnostics"
         ), patch(
             "tasks.finance_data.bronze_finance_data.mdc.get_symbols",
             return_value=pd.DataFrame({"Symbol": [symbol]}),
         ), patch(
             "tasks.finance_data.bronze_finance_data.bronze_bucketing.is_alpha26_mode",
-            return_value=False,
+            return_value=True,
+        ), patch(
+            "tasks.finance_data.bronze_finance_data._load_alpha26_finance_row_map",
+            return_value={},
         ), patch(
             "tasks.finance_data.bronze_finance_data.resolve_backfill_start_date",
             return_value=None,
         ), patch(
-            "tasks.finance_data.bronze_finance_data._ThreadLocalAlphaVantageClientManager",
+            "tasks.finance_data.bronze_finance_data._ThreadLocalMassiveClientManager",
             return_value=client_manager,
         ), patch(
             "tasks.finance_data.bronze_finance_data._process_symbol_with_recovery",
             return_value=(0, True, [("balance_sheet", invalid_error)], coverage_summary),
+        ), patch(
+            "tasks.finance_data.bronze_finance_data._write_alpha26_finance_buckets",
+            return_value=(0, "index", len(bronze._BUCKET_COLUMNS)),
+        ), patch(
+            "tasks.finance_data.bronze_finance_data._delete_flat_finance_symbol_blobs",
+            return_value=0,
         ), patch(
             "tasks.finance_data.bronze_finance_data.bronze_client"
         ) as mock_bronze_client, patch(

@@ -1,9 +1,9 @@
 ---
-name: legacy-cleanup-change-debris-auditor
+name: cleanup-change-debris-auditor
 description: Audit PRs, diffs, changed files, modules, and whole repositories for accidental leftovers, stale compatibility code, debug residue, dead code, duplicate logic, stale tests and fixtures, temp artifacts, and other change debris. Use when reviewing feature work, migrations, refactors, test scaffolding, feature flags, fallback paths, or repo hygiene debt and when a safe, prioritized cleanup plan with evidence and validation steps is needed.
 ---
 
-# Legacy Cleanup & Change Debris Auditor
+# Cleanup & Change Debris Auditor
 
 ## Overview
 Audit accidental leftovers and maintainability debris the way a senior maintainer would: identify what looks unintentionally retained, explain why it looks stale, separate strong evidence from uncertainty, and produce a staged cleanup plan that reduces maintenance cost without breaking production.
@@ -37,7 +37,7 @@ Audit accidental leftovers and maintainability debris the way a senior maintaine
 - Transitional and compatibility debt: dual-path logic, deprecated wrappers, adapters, shims, permanent feature-flag branches, migration code after cutover, rollback scaffolding that outlived the window, old and new implementations living side by side.
 - Dead code and duplicate logic: unreachable branches, unused symbols, orphaned files, copied quick-fix logic, superseded interfaces or DTOs.
 - Repo and workflow hygiene leftovers: generated files, stale build outputs, duplicate config variants, obsolete env samples, retired CI steps, dead deploy paths, orphaned cron jobs or scripts.
-- Suspicious intent markers: `temp`, `tmp`, `old`, `new`, `backup`, `copy`, `debug`, `testonly`, `draft`, `wip`, `legacy`, `compat`, `fallback`, `v2_old`, and stale `TODO` or `FIXME` or `HACK` comments.
+- Suspicious intent markers: `temp`, `tmp`, `old`, `new`, `backup`, `copy`, `debug`, `testonly`, `draft`, `wip`, `compat`, `fallback`, `v2_old`, and stale `TODO` or `FIXME` or `HACK` comments.
 
 ## Evidence Standard
 - Cite concrete evidence from code, config, file layout, naming, references, runtime and build wiring, and test usage.

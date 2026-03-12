@@ -50,10 +50,6 @@ def _parse_env_timestamp(name: str) -> Optional[pd.Timestamp]:
 def get_backfill_range() -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
     start = _parse_env_timestamp("BACKFILL_START_DATE")
     if start is None:
-        start = _parse_env_timestamp("MARKET_BACKFILL_START_DATE")
-        if start is not None:
-            mdc.write_warning("MARKET_BACKFILL_START_DATE is deprecated; use BACKFILL_START_DATE instead.")
-    if start is None:
         start = _DEFAULT_BACKFILL_START
     if start < _DEFAULT_BACKFILL_START:
         mdc.write_warning(

@@ -50,6 +50,12 @@ def test_build_table_specs_marks_timestamp_tables_as_intraday() -> None:
     assert specs["intraday_features"].as_of_kind == "intraday"
 
 
+def test_catalog_table_name_filter_excludes_noncanonical_gold_tables() -> None:
+    assert universe_service._is_catalog_table_name("market_data")
+    assert not universe_service._is_catalog_table_name("market_data_backup")
+    assert not universe_service._is_catalog_table_name("market_data_by_date")
+
+
 def test_preview_gold_universe_combines_nested_and_or_groups(monkeypatch) -> None:
     universe = UniverseDefinition.model_validate(
         {

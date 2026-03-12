@@ -291,23 +291,23 @@ def _ensure_numeric_market_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFrame:
     out = df.copy()
-    legacy_symbol_cols = [
+    duplicate_symbol_cols = [
         col
         for col in out.columns
         if isinstance(col, str) and col.startswith("symbol_") and col[7:].isdigit()
     ]
-    if not legacy_symbol_cols:
+    if not duplicate_symbol_cols:
         return out
 
     if "symbol" not in out.columns:
-        first_legacy = legacy_symbol_cols[0]
-        out = out.rename(columns={first_legacy: "symbol"})
-        legacy_symbol_cols = legacy_symbol_cols[1:]
+        first_duplicate = duplicate_symbol_cols[0]
+        out = out.rename(columns={first_duplicate: "symbol"})
+        duplicate_symbol_cols = duplicate_symbol_cols[1:]
         mdc.write_warning(
-            f"Silver market {ticker}: renamed legacy column {first_legacy} -> symbol."
+            f"Silver market {ticker}: renamed duplicate column {first_duplicate} -> symbol."
         )
 
-    for col in legacy_symbol_cols:
+    for col in duplicate_symbol_cols:
         if col not in out.columns:
             continue
         primary = out["symbol"].astype("string")
@@ -321,7 +321,7 @@ def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFr
         out["symbol"] = out["symbol"].combine_first(out[col])
         out = out.drop(columns=[col])
         mdc.write_warning(
-            f"Silver market {ticker}: collapsed legacy column {col} into symbol."
+            f"Silver market {ticker}: collapsed duplicate column {col} into symbol."
         )
 
     return out

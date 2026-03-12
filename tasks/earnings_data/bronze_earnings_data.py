@@ -609,7 +609,7 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
     return len(symbol_to_bucket), index_path
 
 
-def _delete_legacy_symbol_blobs() -> int:
+def _delete_flat_symbol_blobs() -> int:
     deleted = 0
     prefix = str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/")
     for blob in bronze_client.list_blob_infos(name_starts_with=f"{prefix}/"):
@@ -624,7 +624,7 @@ def _delete_legacy_symbol_blobs() -> int:
             bronze_client.delete_file(name)
             deleted += 1
         except Exception as exc:
-            mdc.write_warning(f"Failed deleting legacy earnings blob {name}: {exc}")
+            mdc.write_warning(f"Failed deleting flat earnings blob {name}: {exc}")
     return deleted
 
 
@@ -987,10 +987,10 @@ async def main_async() -> int:
     if alpha26_mode:
         try:
             written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames)
-            legacy_deleted = _delete_legacy_symbol_blobs()
+            flat_deleted = _delete_flat_symbol_blobs()
             mdc.write_line(
                 "Bronze earnings alpha26 buckets written: "
-                f"symbols={written_symbols} index={index_path or 'n/a'} legacy_deleted={legacy_deleted}"
+                f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
             )
         except Exception as exc:
             progress["failed"] += 1

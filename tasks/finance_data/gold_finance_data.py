@@ -101,7 +101,6 @@ _CASH_AND_EQUIVALENTS_FALLBACK_ALIASES: Tuple[str, ...] = (
 _OPTIONAL_OUTPUT_COLUMN_ALIASES: Dict[str, Tuple[str, ...]] = {
     "market_cap": ("market_cap", "Market Cap", "MarketCapitalization"),
     "pe_ratio": ("pe_ratio", "PE Ratio", "P/E", "PERatio"),
-    "forward_pe": ("forward_pe", "Forward PE", "Forward P/E", "ForwardPE"),
 }
 _GOLD_FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
 _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
@@ -109,7 +108,6 @@ _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
     "symbol",
     "market_cap",
     "pe_ratio",
-    "forward_pe",
     "piotroski_roa_pos",
     "piotroski_cfo_pos",
     "piotroski_delta_roa_pos",
@@ -124,7 +122,6 @@ _GOLD_FINANCE_PIOTROSKI_COLUMNS: Tuple[str, ...] = (
 _GOLD_FINANCE_FLOAT_COLUMNS: Tuple[str, ...] = (
     "market_cap",
     "pe_ratio",
-    "forward_pe",
 )
 _GOLD_FINANCE_PIOTROSKI_INTEGER_COLUMNS: Tuple[str, ...] = tuple(
     column for column in _GOLD_FINANCE_PIOTROSKI_COLUMNS if column.startswith("piotroski_")

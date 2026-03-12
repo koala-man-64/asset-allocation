@@ -85,7 +85,7 @@ def test_bronze_finance_defaults_to_first_blob_when_ticker_missing(monkeypatch):
     monkeypatch.setattr(data_service_module.mdc, "get_storage_client", lambda _container: StubClient())
 
     payload = pd.DataFrame(
-        [{"symbol": "AAPL", "report_type": "overview", "metric": 123}],
+        [{"symbol": "AAPL", "report_type": "valuation", "metric": 123}],
     ).to_parquet(index=False)
 
     def fake_read_raw_bytes(path, client=None):

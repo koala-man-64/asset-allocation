@@ -65,10 +65,6 @@ def _split_price_target_bucket_rows(
         return empty, empty
 
     out = df_bucket.copy()
-    if "Date" in out.columns and "obs_date" not in out.columns:
-        out = out.rename(columns={"Date": "obs_date"})
-    if "date" in out.columns and "obs_date" not in out.columns:
-        out = out.rename(columns={"date": "obs_date"})
     if "obs_date" in out.columns:
         out["obs_date"] = pd.to_datetime(out["obs_date"], errors="coerce")
     if "symbol" not in out.columns:
@@ -77,22 +73,6 @@ def _split_price_target_bucket_rows(
     symbol = str(ticker or "").strip().upper()
     symbol_mask = out["symbol"] == symbol
     return out.loc[symbol_mask].copy(), out.loc[~symbol_mask].copy()
-
-
-def _needs_obs_date_migration(silver_path: str) -> bool:
-    """
-    Determine whether an existing Silver table still uses legacy date naming.
-
-    We migrate legacy `Date`/`date` schemas to canonical `obs_date` even when
-    the source blob watermark is unchanged.
-    """
-    schema = delta_core.get_delta_schema_columns(cfg.AZURE_CONTAINER_SILVER, silver_path)
-    if not schema:
-        return False
-
-    lowered = {str(col).strip().lower() for col in schema}
-    return "obs_date" not in lowered and "date" in lowered
-
 
 def _extract_ticker(blob_name: str) -> str:
     return blob_name.replace("price-target-data/", "").replace(".parquet", "")
@@ -160,7 +140,7 @@ def _process_symbol_frame(
         out = normalize_date_column(
             out,
             context=f"price target date parse {source_name}",
-            aliases=("obs_date", "Date", "date"),
+            aliases=("obs_date",),
             canonical="obs_date",
         )
         out = assert_no_unexpected_mixed_empty(out, context=f"price target date filter {source_name}", alias="obs_date")
@@ -230,17 +210,9 @@ def _process_symbol_frame(
         df_merged = out
     else:
         df_history = align_to_existing_schema(df_history, container=cfg.AZURE_CONTAINER_SILVER, path=silver_path)
-        if "Date" in df_history.columns and "obs_date" not in df_history.columns:
-            df_history = df_history.rename(columns={"Date": "obs_date"})
-        if "date" in df_history.columns and "obs_date" not in df_history.columns:
-            df_history = df_history.rename(columns={"date": "obs_date"})
         if "obs_date" in df_history.columns:
             df_history["obs_date"] = pd.to_datetime(df_history["obs_date"], errors="coerce")
         df_merged = pd.concat([df_history, out], ignore_index=True)
-
-    for legacy_col in ("Date", "date"):
-        if legacy_col in df_merged.columns:
-            df_merged = df_merged.drop(columns=[legacy_col])
 
     df_merged = df_merged.drop_duplicates(subset=["obs_date", "symbol"], keep="last")
     df_merged = df_merged.sort_values(by=["obs_date", "symbol"])
@@ -348,9 +320,7 @@ def process_blob(
     silver_path = DataPaths.get_silver_price_target_bucket_path(bucket)
     unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
     if unchanged:
-        if not _needs_obs_date_migration(silver_path):
-            return "skipped_unchanged"
-        mdc.write_line(f"Schema migration required for {ticker}; processing despite unchanged source blob.")
+        return "skipped_unchanged"
 
     mdc.write_line(f"Processing {ticker}...")
     try:
@@ -583,7 +553,7 @@ def _run_price_target_reconciliation(*, bronze_blob_list: list[dict]) -> tuple[i
         load_table=lambda path: delta_core.load_delta(cfg.AZURE_CONTAINER_SILVER, path),
         store_table=lambda df, path: delta_core.store_delta(df, cfg.AZURE_CONTAINER_SILVER, path, mode="overwrite"),
         delete_prefix=silver_client.delete_prefix,
-        date_column_candidates=("obs_date", "date", "Date"),
+        date_column_candidates=("obs_date",),
         backfill_start=backfill_start,
         context="silver price-target reconciliation cutoff",
         vacuum_table=lambda path: delta_core.vacuum_delta_table(

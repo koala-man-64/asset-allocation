@@ -66,9 +66,16 @@ def test_massive_client_paths_align_with_docs() -> None:
     assert seen[3][0] == "/stocks/v1/short-volume"
     assert seen[4][0] == "/stocks/vX/float"
     assert seen[5][0] == "/stocks/financials/v1/income-statements"
+    assert seen[5][1].get("tickers") == "AAPL"
+    assert seen[5][1].get("ticker") is None
     assert seen[6][0] == "/stocks/financials/v1/cash-flow-statements"
+    assert seen[6][1].get("tickers") == "AAPL"
+    assert seen[6][1].get("ticker") is None
     assert seen[7][0] == "/stocks/financials/v1/balance-sheets"
+    assert seen[7][1].get("tickers") == "AAPL"
+    assert seen[7][1].get("ticker") is None
     assert seen[8][0] == "/stocks/financials/v1/ratios"
+    assert seen[8][1].get("ticker") == "AAPL"
     assert seen[9][0] == "/v3/snapshot"
     assert seen[9][1].get("type") is None
     assert seen[9][1].get("ticker.any_of") == "AAPL,MSFT"
@@ -89,6 +96,39 @@ def test_massive_client_float_endpoint_can_be_overridden() -> None:
         client.close()
 
     assert seen == ["/stocks/v1/float"]
+
+
+def test_massive_client_financial_statements_follow_next_url_pagination() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.path == "/stocks/financials/v1/balance-sheets" and request.url.params.get("cursor") != "next":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": 1}],
+                    "next_url": "https://api.massive.com/stocks/financials/v1/balance-sheets?cursor=next",
+                },
+            )
+        return httpx.Response(200, json={"results": [{"id": 2}], "next_url": None})
+
+    client = _build_client(handler)
+    try:
+        payload = client.get_balance_sheet(
+            ticker="AAPL",
+            params={"timeframe": "quarterly", "sort": "period_end.asc", "limit": 100},
+            pagination=True,
+        )
+    finally:
+        client.close()
+
+    assert [row["id"] for row in payload["results"]] == [1, 2]
+    assert "tickers=AAPL" in seen[0]
+    assert "timeframe=quarterly" in seen[0]
+    assert "sort=period_end.asc" in seen[0]
+    assert "limit=100" in seen[0]
+    assert seen[1].endswith("cursor=next")
 
 
 def test_list_ohlcv_passes_adjusted_and_sort_to_sdk_when_supported(monkeypatch) -> None:
@@ -136,7 +176,7 @@ def test_list_ohlcv_passes_adjusted_and_sort_to_sdk_when_supported(monkeypatch) 
 def test_list_ohlcv_falls_back_for_older_sdk_without_adjusted_sort(monkeypatch) -> None:
     import massive_provider.client as client_module
 
-    class _LegacySDK:
+    class _OlderSDK:
         def __init__(self, *args, **kwargs) -> None:
             self.calls: list[dict[str, object]] = []
 
@@ -156,7 +196,7 @@ def test_list_ohlcv_falls_back_for_older_sdk_without_adjusted_sort(monkeypatch) 
         def close(self) -> None:
             return None
 
-    monkeypatch.setattr(client_module, "_SDKRestClient", _LegacySDK)
+    monkeypatch.setattr(client_module, "_SDKRestClient", _OlderSDK)
 
     cfg = MassiveConfig(
         api_key="test-key",

@@ -1,6 +1,6 @@
 ---
 name: software-testing-validation-architect
-description: Assess how well a codebase or system is tested and design pragmatic validation strategies across unit, integration, contract, workflow, regression, and end-to-end layers. Use when Codex needs to review a test suite, coverage report, pull request, repository, or CI/CD pipeline for missing tests, weak assertions, flakiness, regression risk, distorted test layering, or poor use-case coverage; determine what belongs in unit vs integration vs end-to-end tests; or create a risk-based testing plan for APIs, services, jobs, event-driven systems, distributed systems, and legacy codebases.
+description: Assess how well a codebase or system is tested and design pragmatic validation strategies across unit, integration, contract, workflow, regression, and end-to-end layers. Use when Codex needs to review a test suite, coverage report, pull request, repository, or CI/CD pipeline for missing tests, weak assertions, flakiness, regression risk, distorted test layering, or poor use-case coverage; determine what belongs in unit vs integration vs end-to-end tests; or create a risk-based testing plan for APIs, services, jobs, event-driven systems, distributed systems, and long-lived codebases.
 ---
 
 # Software Testing & Validation Architect

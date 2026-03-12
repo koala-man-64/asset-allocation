@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from unittest.mock import patch
 
-import pytest
 import anyio
+import pytest
 
 from api.service.app import create_app
 from tests.api._websocket import connect_websocket
@@ -64,3 +66,66 @@ async def test_websocket_pubsub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         # 5. Verify connection stays alive (and no unexpected queued messages)
         await ws.send_text("ping")
         assert await ws.receive_text() == "pong"
+
+
+class _FakeStreamingLogAnalyticsClient:
+    def __init__(self, *, timeout_seconds: float = 5.0) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.queries: list[tuple[str, str, str | None]] = []
+
+    def __enter__(self) -> "_FakeStreamingLogAnalyticsClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def query(self, *, workspace_id: str, query: str, timespan: str | None = None):
+        self.queries.append((workspace_id, query, timespan))
+        return {
+            "tables": [
+                {
+                    "columns": [
+                        {"name": "TimeGenerated", "type": "datetime"},
+                        {"name": "executionName", "type": "string"},
+                        {"name": "msg", "type": "string"},
+                    ],
+                    "rows": [
+                        ["2026-02-10T00:00:00Z", "bronze-market-job-exec-001", "stream log line"],
+                    ],
+                }
+            ]
+        }
+
+
+@pytest.mark.asyncio
+async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-market-job")
+    monkeypatch.setenv("REALTIME_LOG_STREAM_POLL_SECONDS", "1")
+    monkeypatch.setenv("REALTIME_LOG_STREAM_LOOKBACK_SECONDS", "30")
+    monkeypatch.setenv("REALTIME_LOG_STREAM_BATCH_SIZE", "20")
+
+    from api.service.app import realtime_manager
+
+    fake_logs = _FakeStreamingLogAnalyticsClient()
+    with patch("api.service.log_streaming.AzureLogAnalyticsClient", return_value=fake_logs):
+        app = create_app()
+        realtime_manager.active_connections.clear()
+        realtime_manager.subscriptions.clear()
+
+        async with connect_websocket(app, "/api/ws/updates") as ws:
+            await ws.send_text(json.dumps({"action": "subscribe", "topics": ["job-logs:bronze-market-job"]}))
+
+            with anyio.fail_after(2):
+                msg = await ws.receive_json()
+
+    assert msg["topic"] == "job-logs:bronze-market-job"
+    assert msg["data"]["type"] == "CONSOLE_LOG_STREAM"
+    payload = msg["data"]["payload"]
+    assert payload["resourceType"] == "job"
+    assert payload["resourceName"] == "bronze-market-job"
+    assert payload["lines"][0]["message"] == "stream log line"
+    assert payload["lines"][0]["executionName"] == "bronze-market-job-exec-001"
+    assert fake_logs.queries

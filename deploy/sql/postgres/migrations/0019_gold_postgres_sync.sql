@@ -11,11 +11,7 @@ BEGIN
        FROM information_schema.columns
        WHERE table_schema = 'gold' AND table_name = 'market_data' AND column_name = 'return_5d'
      ) THEN
-    IF to_regclass('gold.market_data_legacy_0006') IS NULL THEN
-      ALTER TABLE gold.market_data RENAME TO market_data_legacy_0006;
-    ELSE
-      DROP TABLE gold.market_data;
-    END IF;
+    DROP TABLE gold.market_data;
   END IF;
 
   IF to_regclass('gold.finance_data') IS NOT NULL
@@ -24,11 +20,7 @@ BEGIN
        FROM information_schema.columns
        WHERE table_schema = 'gold' AND table_name = 'finance_data' AND column_name = 'market_cap'
      ) THEN
-    IF to_regclass('gold.finance_data_legacy_0006') IS NULL THEN
-      ALTER TABLE gold.finance_data RENAME TO finance_data_legacy_0006;
-    ELSE
-      DROP TABLE gold.finance_data;
-    END IF;
+    DROP TABLE gold.finance_data;
   END IF;
 
   IF to_regclass('gold.earnings_data') IS NOT NULL
@@ -37,11 +29,7 @@ BEGIN
        FROM information_schema.columns
        WHERE table_schema = 'gold' AND table_name = 'earnings_data' AND column_name = 'surprise_std_8q'
      ) THEN
-    IF to_regclass('gold.earnings_data_legacy_0006') IS NULL THEN
-      ALTER TABLE gold.earnings_data RENAME TO earnings_data_legacy_0006;
-    ELSE
-      DROP TABLE gold.earnings_data;
-    END IF;
+    DROP TABLE gold.earnings_data;
   END IF;
 
   IF to_regclass('gold.price_target_data') IS NOT NULL
@@ -50,11 +38,7 @@ BEGIN
        FROM information_schema.columns
        WHERE table_schema = 'gold' AND table_name = 'price_target_data' AND column_name = 'obs_date'
      ) THEN
-    IF to_regclass('gold.price_target_data_legacy_0006') IS NULL THEN
-      ALTER TABLE gold.price_target_data RENAME TO price_target_data_legacy_0006;
-    ELSE
-      DROP TABLE gold.price_target_data;
-    END IF;
+    DROP TABLE gold.price_target_data;
   END IF;
 END $$;
 

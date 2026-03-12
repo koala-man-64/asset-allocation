@@ -96,7 +96,6 @@ _FINANCE_ALPHA26_SUBDOMAINS: Tuple[str, ...] = SILVER_FINANCE_SUBDOMAINS
 _FINANCE_VALUATION_CALCULATED_COLUMNS = {
     "market_cap",
     "pe_ratio",
-    "forward_pe",
 }
 
 
@@ -253,11 +252,6 @@ def _get_first_value(payload: dict[str, Any], candidates: tuple[str, ...]) -> An
     return None
 
 
-def _get_first_float(payload: dict[str, Any], candidates: tuple[str, ...]) -> Optional[float]:
-    value = _get_first_value(payload, candidates)
-    return _try_parse_float(value)
-
-
 def _load_close_prices(ticker: str) -> pd.DataFrame:
     symbol = str(ticker or "").strip().upper()
     if not symbol:
@@ -280,33 +274,33 @@ def _load_close_prices(ticker: str) -> pd.DataFrame:
     return out
 
 
-def _build_valuation_timeseries_from_overview(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
+def _build_valuation_timeseries(payload: dict[str, Any], *, ticker: str) -> pd.DataFrame:
     df_prices = _load_close_prices(ticker)
     if df_prices.empty:
         return pd.DataFrame()
 
-    alias_map = SILVER_FINANCE_SOURCE_ALIASES_BY_SUBDOMAIN["valuation"]
-    market_cap_now = _get_first_float(payload, alias_map["market_cap"])
-    pe_ratio_now = _get_first_float(payload, alias_map["pe_ratio"])
-    forward_pe_now = _get_first_float(payload, alias_map["forward_pe"])
-    shares_outstanding_now = _get_first_float(payload, ("SharesOutstanding", "Shares Outstanding"))
-
-    close_now = float(df_prices["Close"].iloc[-1])
-    if close_now <= 0:
+    as_of = pd.to_datetime(payload.get("as_of"), errors="coerce", utc=True)
+    if pd.isna(as_of):
+        return pd.DataFrame()
+    as_of = as_of.tz_convert(None)
+    df_prices = df_prices[df_prices["Date"] <= as_of].copy()
+    if df_prices.empty:
         return pd.DataFrame()
 
-    scale = df_prices["Close"] / close_now
+    market_cap_now = _try_parse_float(payload.get("market_cap"))
+    pe_ratio_now = _try_parse_float(payload.get("pe_ratio"))
+    anchor_close = float(df_prices["Close"].iloc[-1])
+    if anchor_close <= 0:
+        return pd.DataFrame()
+
+    scale = df_prices["Close"] / anchor_close
     out = pd.DataFrame({"Date": df_prices["Date"], "Symbol": ticker})
 
-    if shares_outstanding_now is not None:
-        out["market_cap"] = df_prices["Close"] * float(shares_outstanding_now)
-    elif market_cap_now is not None:
+    if market_cap_now is not None:
         out["market_cap"] = float(market_cap_now) * scale
 
     if pe_ratio_now is not None:
         out["pe_ratio"] = float(pe_ratio_now) * scale
-    if forward_pe_now is not None:
-        out["forward_pe"] = float(forward_pe_now) * scale
 
     expected_columns = SILVER_FINANCE_COLUMNS_BY_SUBDOMAIN["valuation"][2:]
     for column in expected_columns:
@@ -329,10 +323,24 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
     if sub_domain is None:
         return pd.DataFrame()
 
-    if sub_domain == "valuation" and isinstance(payload, dict):
-        return _build_valuation_timeseries_from_overview(payload, ticker=ticker)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Finance payload for {ticker}/{sub_domain} must be a JSON object.")
+    if "quarterlyReports" in payload or "annualReports" in payload or "fiscalDateEnding" in payload:
+        raise ValueError(f"Alpha Vantage finance payload is not supported for {ticker}/{sub_domain}.")
+    if payload.get("schema_version") != 2 or str(payload.get("provider") or "").strip().lower() != "massive":
+        raise ValueError(f"Unsupported finance payload schema for {ticker}/{sub_domain}.")
+    payload_report_type = str(payload.get("report_type") or "").strip().lower()
+    if payload_report_type != sub_domain:
+        raise ValueError(
+            f"Finance payload report_type mismatch for {ticker}: expected {sub_domain}, got {payload_report_type or 'missing'}."
+        )
 
-    reports = payload.get("quarterlyReports") or []
+    if sub_domain == "valuation":
+        return _build_valuation_timeseries(payload, ticker=ticker)
+
+    reports = payload.get("rows")
+    if reports is None:
+        raise ValueError(f"Finance payload rows are required for {ticker}/{sub_domain}.")
     if not isinstance(reports, list) or not reports:
         return pd.DataFrame()
 
@@ -342,12 +350,17 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
     for item in reports:
         if not isinstance(item, dict):
             continue
-        date_raw = item.get("fiscalDateEnding")
+        date_raw = item.get("date")
         if not date_raw:
             continue
         row: dict[str, Any] = {"Date": str(date_raw).strip(), "Symbol": ticker}
         for column in expected_columns[2:]:
-            row[column] = _try_parse_float(_get_first_value(item, alias_map[column]))
+            value = _get_first_value(item, alias_map[column])
+            if column == "timeframe":
+                normalized = str(value or "").strip().lower()
+                row[column] = normalized or None
+            else:
+                row[column] = _try_parse_float(value)
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -356,7 +369,10 @@ def _read_finance_json(raw_bytes: bytes, *, ticker: str, suffix: str) -> pd.Data
 
     for column in expected_columns[2:]:
         if column not in df.columns:
-            df[column] = pd.Series(dtype="float64")
+            if column == "timeframe":
+                df[column] = pd.Series(dtype="string")
+            else:
+                df[column] = pd.Series(dtype="float64")
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce", utc=True).dt.tz_convert(None)
     df = df.dropna(subset=["Date"]).sort_values(["Date"]).reset_index(drop=True)
     return df[["Date", "Symbol", *expected_columns[2:]]]
@@ -403,23 +419,23 @@ def _align_to_existing_schema(df: pd.DataFrame, container: str, path: str) -> pd
 
 def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFrame:
     out = df.copy()
-    legacy_symbol_cols = [
+    duplicate_symbol_cols = [
         col
         for col in out.columns
         if isinstance(col, str) and col.startswith("symbol_") and col[7:].isdigit()
     ]
-    if not legacy_symbol_cols:
+    if not duplicate_symbol_cols:
         return out
 
     if "symbol" not in out.columns:
-        first_legacy = legacy_symbol_cols[0]
-        out = out.rename(columns={first_legacy: "symbol"})
-        legacy_symbol_cols = legacy_symbol_cols[1:]
+        first_duplicate = duplicate_symbol_cols[0]
+        out = out.rename(columns={first_duplicate: "symbol"})
+        duplicate_symbol_cols = duplicate_symbol_cols[1:]
         mdc.write_warning(
-            f"Silver finance {ticker}: renamed legacy column {first_legacy} -> symbol."
+            f"Silver finance {ticker}: renamed duplicate column {first_duplicate} -> symbol."
         )
 
-    for col in legacy_symbol_cols:
+    for col in duplicate_symbol_cols:
         if col not in out.columns:
             continue
         primary = out["symbol"].astype("string")
@@ -433,7 +449,7 @@ def _repair_symbol_column_aliases(df: pd.DataFrame, *, ticker: str) -> pd.DataFr
         out["symbol"] = out["symbol"].combine_first(out[col])
         out = out.drop(columns=[col])
         mdc.write_warning(
-            f"Silver finance {ticker}: collapsed legacy column {col} into symbol."
+            f"Silver finance {ticker}: collapsed duplicate column {col} into symbol."
         )
 
     return out

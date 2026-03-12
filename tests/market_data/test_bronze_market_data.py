@@ -180,6 +180,34 @@ def test_header_only_with_existing_data_does_not_blacklist(unique_ticker):
         mock_store.assert_not_called()
 
 
+def test_download_allows_regime_required_symbol_even_when_blacklisted():
+    symbol = "^VIX"
+    mock_massive = MagicMock()
+    mock_massive.get_daily_time_series_csv.return_value = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-02,20,21,19,20.5,100\n"
+    )
+    mock_massive.get_short_interest.return_value = {}
+    mock_massive.get_short_volume.return_value = {}
+
+    with patch("core.core.store_raw_bytes") as mock_store, patch(
+        "core.core.read_raw_bytes",
+        return_value=b"",
+    ), patch(
+        "tasks.market_data.bronze_market_data.list_manager"
+    ) as mock_list_manager, patch(
+        "tasks.market_data.bronze_market_data._utc_today",
+        return_value=date(2024, 1, 2),
+    ):
+        mock_list_manager.is_blacklisted.return_value = True
+
+        bronze.download_and_save_raw(symbol, mock_massive)
+
+        mock_massive.get_daily_time_series_csv.assert_called_once()
+        mock_store.assert_called_once()
+        mock_list_manager.add_to_whitelist.assert_called_once_with(symbol)
+
+
 def test_download_uses_existing_data_window_and_merges(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
@@ -571,6 +599,51 @@ def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticke
         assert exit_code == 0
         mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
         mock_list_manager.flush.assert_called_once()
+        client_manager.close_all.assert_called_once()
+
+    asyncio.run(run_test())
+
+
+def test_main_async_schedules_regime_required_symbol_even_when_blacklisted():
+    symbol = "^VIX"
+    client_manager = MagicMock()
+
+    async def run_test():
+        with patch(
+            "tasks.market_data.bronze_market_data._validate_environment"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.get_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.market_data.bronze_market_data.bronze_bucketing.is_alpha26_mode",
+            return_value=False,
+        ), patch(
+            "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.market_data.bronze_market_data._get_max_workers",
+            return_value=1,
+        ), patch(
+            "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
+        ) as mock_download, patch(
+            "tasks.market_data.bronze_market_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.market_data.bronze_market_data.mdc.write_line"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.write_warning"
+        ):
+            mock_list_manager.is_blacklisted.return_value = True
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_download.assert_called_once()
+        assert mock_download.call_args.args[0] == symbol
         client_manager.close_all.assert_called_once()
 
     asyncio.run(run_test())

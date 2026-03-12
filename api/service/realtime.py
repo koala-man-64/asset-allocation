@@ -42,6 +42,9 @@ class RealtimeManager:
             if websocket in self.subscriptions[topic]:
                 self.subscriptions[topic].discard(websocket)
 
+    def has_subscribers(self, topic: str) -> bool:
+        return bool(self.subscriptions.get(str(topic or "").strip()))
+
     async def broadcast(self, topic: str, message: Dict[str, Any]) -> None:
         """
         Broadcast a message to all clients subscribed to the specific topic.

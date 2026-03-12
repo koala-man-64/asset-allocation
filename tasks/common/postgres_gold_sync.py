@@ -224,7 +224,6 @@ _FINANCE_COLUMNS: tuple[str, ...] = (
     "symbol",
     "market_cap",
     "pe_ratio",
-    "forward_pe",
     "piotroski_roa_pos",
     "piotroski_cfo_pos",
     "piotroski_delta_roa_pos",

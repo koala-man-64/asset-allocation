@@ -76,9 +76,8 @@ export const getStatusIcon = (status: string) => {
 };
 
 /**
- * Updated to use legacy Badge component but with new colors if possible,
- * or mapped to standard styles. Retaining basic Badge for backward compat
- * if used outside new Overview.
+ * Keep the shared Badge styling aligned with the new overview colors while
+ * preserving the existing component contract for other consumers.
  */
 export const getStatusBadge = (status: string) => {
   const styles: Record<string, string> = {

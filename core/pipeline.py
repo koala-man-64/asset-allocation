@@ -64,10 +64,6 @@ class DataPaths:
         return f"finance/buckets/{str(bucket).strip().upper()}"
 
     @staticmethod
-    def get_legacy_gold_finance_bucket_path(bucket: str) -> str:
-        return DataPaths.get_gold_finance_alpha26_bucket_path(bucket)
-
-    @staticmethod
     def get_gold_price_targets_bucket_path(bucket: str) -> str:
         return f"targets/buckets/{str(bucket).strip().upper()}"
 

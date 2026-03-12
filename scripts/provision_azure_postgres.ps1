@@ -739,7 +739,7 @@ if ($ApplyMigrations) {
   Write-Host "Ensuring supporting indexes..."
   Ensure-PostgresIndexes -Dsn $adminDsn
 
-  Write-Host "Dropping legacy migration ledger table..."
+  Write-Host "Dropping previous migration ledger table..."
   Invoke-Psql -Args @($adminDsn, "-v", "ON_ERROR_STOP=1", "-c", "DROP TABLE IF EXISTS public.schema_migrations;")
 
   Write-Host "Verifying runtime-config debug-symbol schema state..."
@@ -751,7 +751,7 @@ BEGIN
   END IF;
 
   IF to_regclass('core.debug_symbols') IS NOT NULL THEN
-    RAISE EXCEPTION 'Legacy table core.debug_symbols still exists after migrations.';
+    RAISE EXCEPTION 'Deprecated table core.debug_symbols still exists after migrations.';
   END IF;
 END $$;
 '@

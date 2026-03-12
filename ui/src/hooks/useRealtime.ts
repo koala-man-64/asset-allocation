@@ -3,6 +3,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { config } from '@/config';
 import { backtestKeys } from '@/services/backtestHooks';
 import { queryKeys } from '@/hooks/useDataQueries';
+import {
+  CONSOLE_LOG_STREAM_EVENT_TYPE,
+  REALTIME_SUBSCRIBE_EVENT,
+  REALTIME_UNSUBSCRIBE_EVENT,
+  emitConsoleLogStream
+} from '@/services/realtimeBus';
 
 const SUBSCRIPTION_TOPICS = [
   'backtests',
@@ -27,6 +33,10 @@ type RealtimeEnvelope = {
   payload?: unknown;
 };
 
+type TopicSubscriptionDetail = {
+  topics?: unknown;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
@@ -36,6 +46,7 @@ export function useRealtime() {
   const wsRef = useRef<WebSocket | null>(null);
   const keepAliveRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const dynamicTopicCountsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     // `config.apiBaseUrl` is the API base (expected to include `/api`).
@@ -44,6 +55,66 @@ export function useRealtime() {
     const wsPath = `${httpBase}/ws/updates`;
     const wsUrl = new URL(wsPath, window.location.origin);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    function normalizeTopics(value: unknown): string[] {
+      if (!Array.isArray(value)) return [];
+      return value
+        .map((topic) => String(topic || '').trim())
+        .filter((topic) => topic.length > 0);
+    }
+
+    function getDynamicTopics(): string[] {
+      return Array.from(dynamicTopicCountsRef.current.entries())
+        .filter(([, count]) => count > 0)
+        .map(([topic]) => topic);
+    }
+
+    function sendSubscription(action: 'subscribe' | 'unsubscribe', topics: string[]): void {
+      const filtered = normalizeTopics(topics);
+      if (filtered.length === 0 || wsRef.current?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      wsRef.current.send(JSON.stringify({ action, topics: filtered }));
+    }
+
+    function updateDynamicSubscriptions(action: 'subscribe' | 'unsubscribe', topics: string[]): void {
+      const filtered = normalizeTopics(topics);
+      if (filtered.length === 0) return;
+
+      const changed: string[] = [];
+      filtered.forEach((topic) => {
+        const currentCount = dynamicTopicCountsRef.current.get(topic) ?? 0;
+        if (action === 'subscribe') {
+          dynamicTopicCountsRef.current.set(topic, currentCount + 1);
+          if (currentCount === 0) {
+            changed.push(topic);
+          }
+          return;
+        }
+
+        if (currentCount <= 1) {
+          dynamicTopicCountsRef.current.delete(topic);
+          if (currentCount > 0) {
+            changed.push(topic);
+          }
+          return;
+        }
+
+        dynamicTopicCountsRef.current.set(topic, currentCount - 1);
+      });
+
+      sendSubscription(action, changed);
+    }
+
+    function handleTopicSubscriptionRequest(event: Event): void {
+      const customEvent = event as CustomEvent<TopicSubscriptionDetail>;
+      updateDynamicSubscriptions('subscribe', normalizeTopics(customEvent.detail?.topics));
+    }
+
+    function handleTopicUnsubscriptionRequest(event: Event): void {
+      const customEvent = event as CustomEvent<TopicSubscriptionDetail>;
+      updateDynamicSubscriptions('unsubscribe', normalizeTopics(customEvent.detail?.topics));
+    }
 
     function connect() {
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -54,7 +125,8 @@ export function useRealtime() {
 
       ws.onopen = () => {
         // Subscribe to server topics so publish events are delivered.
-        ws.send(JSON.stringify({ action: 'subscribe', topics: [...SUBSCRIPTION_TOPICS] }));
+        const topics = [...SUBSCRIPTION_TOPICS, ...getDynamicTopics()];
+        sendSubscription('subscribe', topics);
 
         // Keep the connection active behind ingress/load-balancers.
         if (keepAliveRef.current) {
@@ -127,6 +199,34 @@ export function useRealtime() {
         eventType = envelope.type;
       }
 
+      if (eventType === CONSOLE_LOG_STREAM_EVENT_TYPE && topic && isRecord(payload)) {
+        const resourceType =
+          payload.resourceType === 'job' || payload.resourceType === 'container-app'
+            ? payload.resourceType
+            : null;
+        const resourceName = typeof payload.resourceName === 'string' ? payload.resourceName : null;
+        const lines = Array.isArray(payload.lines)
+          ? payload.lines.filter((line): line is Record<string, unknown> => isRecord(line))
+          : [];
+
+        if (resourceType && resourceName) {
+          emitConsoleLogStream({
+            topic,
+            resourceType,
+            resourceName,
+            lines: lines.map((line) => ({
+              id: typeof line.id === 'string' ? line.id : '',
+              timestamp: typeof line.timestamp === 'string' ? line.timestamp : undefined,
+              message: typeof line.message === 'string' ? line.message : '',
+              executionName:
+                typeof line.executionName === 'string' ? line.executionName : null
+            })),
+            polledAt: typeof payload.polledAt === 'string' ? payload.polledAt : undefined
+          });
+        }
+        return;
+      }
+
       if (eventType === 'RUN_UPDATE') {
         if (isRecord(payload)) {
           const runId = payload.run_id;
@@ -162,9 +262,13 @@ export function useRealtime() {
       }
     }
 
+    window.addEventListener(REALTIME_SUBSCRIBE_EVENT, handleTopicSubscriptionRequest);
+    window.addEventListener(REALTIME_UNSUBSCRIBE_EVENT, handleTopicUnsubscriptionRequest);
     connect();
 
     return () => {
+      window.removeEventListener(REALTIME_SUBSCRIBE_EVENT, handleTopicSubscriptionRequest);
+      window.removeEventListener(REALTIME_UNSUBSCRIBE_EVENT, handleTopicUnsubscriptionRequest);
       if (keepAliveRef.current) {
         window.clearInterval(keepAliveRef.current);
         keepAliveRef.current = null;

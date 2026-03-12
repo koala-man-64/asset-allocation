@@ -414,8 +414,6 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
     }
     if result.refresh_error:
         headers["X-System-Health-Cache-Degraded"] = "1"
-        # Backward-compatible legacy signal.
-        headers["X-System-Health-Stale"] = "1"
     return JSONResponse(payload, headers=headers)
 
 
@@ -608,13 +606,7 @@ def _read_cached_domain_metadata_snapshot(
         return None
 
     raw_metadata = raw_entry.get("metadata")
-    if isinstance(raw_metadata, dict):
-        metadata = dict(raw_metadata)
-    else:
-        # Backward compatibility if older cache files stored payload directly.
-        legacy_payload = raw_entry.get("payload")
-        metadata = dict(legacy_payload) if isinstance(legacy_payload, dict) else {}
-
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
     if not metadata:
         return None
 
@@ -624,9 +616,8 @@ def _read_cached_domain_metadata_snapshot(
     metadata["domain"] = normalized_domain
 
     cached_at = raw_entry.get("cachedAt")
-    if not isinstance(cached_at, str) or not cached_at.strip():
-        legacy_cached = metadata.get("cachedAt") or raw_entry.get("updatedAt") or payload.get("updatedAt")
-        cached_at = str(legacy_cached).strip() if isinstance(legacy_cached, str) else ""
+    if not isinstance(cached_at, str):
+        cached_at = ""
     if cached_at:
         metadata["cachedAt"] = cached_at
     metadata["cacheSource"] = "snapshot"
@@ -700,11 +691,7 @@ def _extract_cached_domain_metadata_snapshots(payload: Dict[str, Any]) -> Dict[s
             continue
 
         raw_metadata = raw_entry.get("metadata")
-        if isinstance(raw_metadata, dict):
-            metadata = dict(raw_metadata)
-        else:
-            legacy_payload = raw_entry.get("payload")
-            metadata = dict(legacy_payload) if isinstance(legacy_payload, dict) else {}
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
         if not metadata:
             continue
 
@@ -723,9 +710,8 @@ def _extract_cached_domain_metadata_snapshots(payload: Dict[str, Any]) -> Dict[s
         metadata["domain"] = domain
 
         cached_at = raw_entry.get("cachedAt")
-        if not isinstance(cached_at, str) or not cached_at.strip():
-            legacy_cached = metadata.get("cachedAt") or raw_entry.get("updatedAt") or payload.get("updatedAt")
-            cached_at = str(legacy_cached).strip() if isinstance(legacy_cached, str) else ""
+        if not isinstance(cached_at, str):
+            cached_at = ""
         if cached_at:
             metadata["cachedAt"] = cached_at
         metadata["cacheSource"] = "snapshot"
@@ -4670,7 +4656,7 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "example": '{"silver.market":{"maxAgeSeconds":43200},"gold.*":{"maxAgeSeconds":172800}}',
     },
     "SYSTEM_HEALTH_MARKERS_ENABLED": {
-        "description": "When true, prefer system-health marker blobs before legacy freshness probes.",
+        "description": "When true, use system-health marker blobs for freshness probes.",
         "example": "true",
     },
     "SYSTEM_HEALTH_MARKERS_CONTAINER": {
@@ -4680,14 +4666,6 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
     "SYSTEM_HEALTH_MARKERS_PREFIX": {
         "description": "Prefix path for marker blobs inside marker container.",
         "example": "system/health_markers",
-    },
-    "SYSTEM_HEALTH_MARKERS_DUAL_READ": {
-        "description": "When true, run marker and legacy probes for parity checks.",
-        "example": "false",
-    },
-    "SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS": {
-        "description": "Allowed marker-vs-legacy timestamp skew before warning (integer seconds).",
-        "example": "21600",
     },
     "SYSTEM_HEALTH_VERBOSE_IDS": {
         "description": "Comma-separated list of alert IDs/components to include in verbose mode.",

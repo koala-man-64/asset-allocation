@@ -36,14 +36,45 @@ import {
 } from './SystemStatusHelpers';
 import { getDomainOrderIndex } from './domainOrdering';
 import { apiService } from '@/services/apiService';
+import {
+  addConsoleLogStreamListener,
+  buildJobLogTopic,
+  requestRealtimeSubscription,
+  requestRealtimeUnsubscription
+} from '@/services/realtimeBus';
 import { normalizeDomainKey } from './SystemPurgeControls';
+import { formatSystemStatusText } from './systemStatusText';
 
 import { CalendarDays, ChevronDown, ExternalLink, Loader2, Play, ScrollText, Square } from 'lucide-react';
+
+const LIVE_LOG_LINE_LIMIT = 200;
 
 const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 };
+
+function mergeLogLines(existing: string[], incoming: string[], limit = LIVE_LOG_LINE_LIMIT): string[] {
+  const next = [...existing];
+  const windowed = new Set(existing.slice(-limit));
+
+  incoming.forEach((line) => {
+    const text = String(line || '').trim();
+    if (!text || windowed.has(text)) {
+      return;
+    }
+    next.push(text);
+    windowed.add(text);
+    while (next.length > limit) {
+      const removed = next.shift();
+      if (removed && !next.includes(removed)) {
+        windowed.delete(removed);
+      }
+    }
+  });
+
+  return next.slice(-limit);
+}
 
 type ScheduledJobRow = {
   jobName: string;
@@ -237,6 +268,14 @@ export function ScheduledJobMonitor({
     return groups;
   }, [scheduledJobs]);
 
+  const expandedJobName = useMemo(() => {
+    if (!expandedRow) return null;
+    const expanded = scheduledJobs.find(
+      (job) => `${job.layerName}:${job.domainName}:${job.jobName}` === expandedRow
+    );
+    return expanded?.jobName ?? null;
+  }, [expandedRow, scheduledJobs]);
+
   const fetchLogs = (jobName: string, runStart: string | null) => {
     logControllers.current[jobName]?.abort();
     const controller = new AbortController();
@@ -270,7 +309,7 @@ export function ScheduledJobMonitor({
 
         const firstError = (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
         const formattedFirstError = formatSystemStatusText(firstError);
-        const logs = combined.slice(-50);
+        const logs = combined.slice(-LIVE_LOG_LINE_LIMIT);
         setLogStateByJob((prev) => ({
           ...prev,
           [jobName]: {
@@ -294,6 +333,44 @@ export function ScheduledJobMonitor({
         }));
       });
   };
+
+  useEffect(() => {
+    if (!expandedJobName) return;
+    const topic = buildJobLogTopic(expandedJobName);
+    requestRealtimeSubscription([topic]);
+    return () => requestRealtimeUnsubscription([topic]);
+  }, [expandedJobName]);
+
+  useEffect(() => {
+    if (!expandedJobName) return;
+    const topic = buildJobLogTopic(expandedJobName);
+    return addConsoleLogStreamListener((detail) => {
+      if (detail.topic !== topic) {
+        return;
+      }
+
+      const incoming = detail.lines
+        .map((line) => formatSystemStatusText(line.message))
+        .filter((line) => line.length > 0);
+
+      if (incoming.length === 0) {
+        return;
+      }
+
+      setLogStateByJob((prev) => {
+        const current = prev[expandedJobName];
+        return {
+          ...prev,
+          [expandedJobName]: {
+            lines: mergeLogLines(current?.lines ?? [], incoming),
+            loading: false,
+            error: null,
+            runStart: current?.runStart ?? null
+          }
+        };
+      });
+    });
+  }, [expandedJobName]);
 
   useEffect(() => {
     const controllers = logControllers.current;
@@ -647,8 +724,11 @@ export function ScheduledJobMonitor({
                                   </div>
 
                                   <div className="rounded-md border bg-background">
-                                    <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
-                                      Console Logs
+                                    <div className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
+                                      <span>Console Logs</span>
+                                      <span className="text-[11px] font-normal text-muted-foreground/80">
+                                        Live tail while open
+                                      </span>
                                     </div>
                                     <div className="max-h-64 overflow-auto overflow-x-hidden break-words px-3 py-2 text-xs font-mono leading-relaxed">
                                       {logState?.loading && (
@@ -671,7 +751,7 @@ export function ScheduledJobMonitor({
                                         (logState?.lines?.length ?? 0) > 0 && (
                                           <div className="space-y-1">
                                             {(logState?.lines ?? [])
-                                              .slice(-50)
+                                              .slice(-LIVE_LOG_LINE_LIMIT)
                                               .map((line, index) => (
                                                 <div
                                                   key={`${job.jobName}-log-${index}`}

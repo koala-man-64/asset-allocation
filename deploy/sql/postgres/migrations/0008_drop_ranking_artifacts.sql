@@ -1,6 +1,6 @@
 BEGIN;
 
--- Ranking has been removed from this project. Clean up any legacy objects from
+-- Ranking has been removed from this project. Clean up any retired objects from
 -- earlier deployments (safe to run even if they do not exist).
 
 DROP SCHEMA IF EXISTS ranking CASCADE;

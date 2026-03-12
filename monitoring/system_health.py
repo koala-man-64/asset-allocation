@@ -7,7 +7,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from monitoring.azure_blob_store import AzureBlobStore, AzureBlobStoreConfig, LastModifiedProbeResult
 from monitoring.arm_client import ArmConfig, AzureArmClient
@@ -28,7 +28,6 @@ from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
 DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
 DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
-DEFAULT_SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS = 6 * 3600
 
 
 def _utc_now() -> datetime:
@@ -187,8 +186,6 @@ class MarkerProbeConfig:
     enabled: bool
     container: str
     prefix: str
-    dual_read: bool
-    dual_read_tolerance_seconds: int
 
 
 @dataclass(frozen=True)
@@ -527,7 +524,6 @@ def _resolve_freshness_policy(
 
 def _marker_probe_config() -> MarkerProbeConfig:
     enabled_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_ENABLED", "true")
-    dual_read_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_DUAL_READ", "false")
 
     container = (
         os.environ.get("SYSTEM_HEALTH_MARKERS_CONTAINER")
@@ -535,23 +531,11 @@ def _marker_probe_config() -> MarkerProbeConfig:
         or ""
     ).strip()
     prefix = os.environ.get("SYSTEM_HEALTH_MARKERS_PREFIX", DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX).strip()
-    tolerance_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS", "").strip()
-    if tolerance_raw:
-        try:
-            tolerance = int(tolerance_raw)
-        except Exception:
-            tolerance = DEFAULT_SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS
-    else:
-        tolerance = DEFAULT_SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS
-    if tolerance < 0:
-        tolerance = 0
 
     return MarkerProbeConfig(
         enabled=_is_truthy(enabled_raw),
         container=container,
         prefix=prefix or DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX,
-        dual_read=_is_truthy(dual_read_raw),
-        dual_read_tolerance_seconds=tolerance,
     )
 
 
@@ -635,7 +619,7 @@ def _probe_container_last_modified(
         return LastModifiedProbeResult(state="ok", last_modified=lm)
     if lm is None:
         return LastModifiedProbeResult(state="not_found")
-    return LastModifiedProbeResult(state="error", error="Invalid legacy probe timestamp.")
+    return LastModifiedProbeResult(state="error", error="Invalid container probe timestamp.")
 
 
 @dataclass(frozen=True)
@@ -653,125 +637,61 @@ def _resolve_last_updated_with_marker_probes(
     domain_name: str,
     store: AzureBlobStore,
     marker_cfg: MarkerProbeConfig,
-    legacy_source: str,
-    legacy_probe_fn: Callable[[], LastModifiedProbeResult],
 ) -> DomainTimestampResolution:
-    warnings: List[str] = []
-    marker_last_updated: Optional[datetime] = None
-
-    if marker_cfg.enabled:
-        if not marker_cfg.container:
-            message = "Marker probes enabled but marker container is not configured."
-            logger.error(message)
-            return DomainTimestampResolution(
-                status="error",
-                last_updated=None,
-                source="marker",
-                warnings=[message],
-                error=message,
-            )
-        else:
-            marker_blob = _marker_blob_name(
-                layer_name=layer_name,
-                domain_name=domain_name,
-                prefix=marker_cfg.prefix,
-            )
-            marker_probe = _probe_marker_last_modified(
-                store=store,
-                container=marker_cfg.container,
-                marker_blob=marker_blob,
-            )
-            if marker_probe.state == "ok":
-                marker_last_updated = marker_probe.last_modified
-            elif marker_probe.state == "error":
-                message = (
-                    f"Marker probe failed for {marker_blob}: "
-                    f"{marker_probe.error or 'unknown error'}"
-                )
-                logger.error(message)
-                return DomainTimestampResolution(
-                    status="error",
-                    last_updated=None,
-                    source="marker",
-                    warnings=[message],
-                    error=message,
-                )
-            else:
-                message = f"Marker missing for {marker_blob}."
-                logger.error(message)
-                return DomainTimestampResolution(
-                    status="error",
-                    last_updated=None,
-                    source="marker",
-                    warnings=[message],
-                    error=message,
-                )
-    else:
-        warnings.append("Marker probes disabled; using legacy freshness probe mode.")
-
-    if marker_last_updated is not None and not marker_cfg.dual_read:
-        return DomainTimestampResolution(
-            status="ok",
-            last_updated=marker_last_updated,
-            source="marker",
-            warnings=warnings,
-        )
-
-    legacy_probe: LastModifiedProbeResult = legacy_probe_fn()
-    if legacy_probe.state == "error":
-        message = legacy_probe.error or "Legacy freshness probe failed."
-        if marker_last_updated is not None:
-            warnings.append(f"Legacy parity probe failed: {message}")
-            return DomainTimestampResolution(
-                status="ok",
-                last_updated=marker_last_updated,
-                source="marker",
-                warnings=warnings,
-            )
+    if not marker_cfg.enabled:
+        message = "Marker probes are disabled."
+        logger.error(message)
         return DomainTimestampResolution(
             status="error",
             last_updated=None,
-            source=legacy_source,
-            warnings=warnings,
+            source="marker",
+            warnings=[message],
             error=message,
         )
 
-    if legacy_probe.state == "ok":
-        legacy_last_updated = legacy_probe.last_modified
-        if marker_last_updated is None:
-            return DomainTimestampResolution(
-                status="ok",
-                last_updated=legacy_last_updated,
-                source=legacy_source,
-                warnings=warnings,
-            )
-        if marker_cfg.dual_read and legacy_last_updated is not None:
-            skew_seconds = abs((marker_last_updated - legacy_last_updated).total_seconds())
-            if skew_seconds > float(marker_cfg.dual_read_tolerance_seconds):
-                warnings.append(
-                    "Marker/legacy freshness mismatch exceeds tolerance "
-                    f"({int(skew_seconds)}s > {marker_cfg.dual_read_tolerance_seconds}s)."
-                )
+    if not marker_cfg.container:
+        message = "Marker probes enabled but marker container is not configured."
+        logger.error(message)
         return DomainTimestampResolution(
-            status="ok",
-            last_updated=marker_last_updated,
+            status="error",
+            last_updated=None,
             source="marker",
-            warnings=warnings,
+            warnings=[message],
+            error=message,
         )
 
-    if marker_last_updated is not None:
+    marker_blob = _marker_blob_name(
+        layer_name=layer_name,
+        domain_name=domain_name,
+        prefix=marker_cfg.prefix,
+    )
+    marker_probe = _probe_marker_last_modified(
+        store=store,
+        container=marker_cfg.container,
+        marker_blob=marker_blob,
+    )
+    if marker_probe.state == "ok":
         return DomainTimestampResolution(
             status="ok",
-            last_updated=marker_last_updated,
+            last_updated=marker_probe.last_modified,
             source="marker",
-            warnings=warnings,
+            warnings=[],
         )
 
+    if marker_probe.state == "error":
+        message = (
+            f"Marker probe failed for {marker_blob}: "
+            f"{marker_probe.error or 'unknown error'}"
+        )
+    else:
+        message = f"Marker missing for {marker_blob}."
+    logger.error(message)
     return DomainTimestampResolution(
-        status="ok",
+        status="error",
         last_updated=None,
-        source=legacy_source,
-        warnings=warnings,
+        source="marker",
+        warnings=[message],
+        error=message,
     )
 
 
@@ -1367,83 +1287,6 @@ def collect_system_health_snapshot(
         else:
             container = str(container_attr or "")
 
-        marker_blobs = getattr(spec, "marker_blobs", None)
-        delta_tables = getattr(spec, "delta_tables", None)
-        has_modern_domains = isinstance(marker_blobs, (list, tuple)) or isinstance(delta_tables, (list, tuple))
-
-        if not has_modern_domains and hasattr(spec, "blob_prefix"):
-            prefix = str(getattr(spec, "blob_prefix") or "").strip()
-            max_age = int(getattr(spec, "freshness_threshold") or 0)
-            layer_name = str(getattr(spec, "layer") or "Layer")
-            probe = _probe_container_last_modified(
-                store=store,
-                container=container,
-                prefix=prefix,
-            )
-            if probe.state == "error":
-                had_layer_error = True
-                domain_items.append(
-                    {
-                        "name": prefix,
-                        "description": "",
-                        "type": "blob",
-                        "path": prefix,
-                        "maxAgeSeconds": max_age,
-                        "cron": "",
-                        "frequency": "",
-                        "lastUpdated": None,
-                        "status": "error",
-                        "portalUrl": None,
-                        "jobUrl": None,
-                        "jobName": None,
-                        "freshnessSource": "legacy-prefix",
-                        "freshnessPolicySource": "legacy",
-                        "warnings": [probe.error or "Legacy layer probe failed."],
-                    }
-                )
-            else:
-                lm = probe.last_modified
-                status = _compute_layer_status(now, lm, max_age_seconds=max_age, had_error=False)
-                domain_items.append(
-                    {
-                        "name": prefix,
-                        "description": "",
-                        "type": "blob",
-                        "path": prefix,
-                        "maxAgeSeconds": max_age,
-                        "cron": "",
-                        "frequency": "",
-                        "lastUpdated": _iso(lm),
-                        "status": status,
-                        "portalUrl": None,
-                        "jobUrl": None,
-                        "jobName": None,
-                        "freshnessSource": "legacy-prefix",
-                        "freshnessPolicySource": "legacy",
-                        "warnings": [],
-                    }
-                )
-                layer_last_updated = lm
-
-            layer_status = (
-                "error" if any(d["status"] == "error" for d in domain_items) else _compute_layer_status(now, layer_last_updated, max_age_seconds=max_age, had_error=had_layer_error)
-            )
-            statuses.append(layer_status)
-            layers.append(
-                {
-                    "name": layer_name,
-                    "description": "",
-                    "lastUpdated": _iso(layer_last_updated),
-                    "status": layer_status,
-                    "maxAgeSeconds": max_age,
-                    "refreshFrequency": "",
-                    "portalUrl": None,
-                    "domains": domain_items,
-                }
-            )
-            alerts.extend(_layer_alerts(now, layer_name=layer_name, status=layer_status, last_updated=layer_last_updated, error=None))
-            continue
-
         # Collect markers (CSV/Blobs)
         for domain_spec in spec.marker_blobs:
             blob_name = domain_spec.path
@@ -1465,23 +1308,11 @@ def collect_system_health_snapshot(
                 overrides=freshness_overrides,
             )
 
-            # If the config points to a specific file (e.g. whitelist.csv), we want to scan the folder it's in.
-            # If it points to a folder (e.g. data/), dirname handles it appropriately (usually).
-            search_prefix = os.path.dirname(blob_name) 
-            # If search_prefix is empty (file at root), we scan the whole container (prefix=None or "").
-            # Ideally we might want to restrict this, but for "latest update" in a container used for data, scanning root is correct.
-
             probe_resolution = _resolve_last_updated_with_marker_probes(
                 layer_name=spec.name,
                 domain_name=name_clean,
                 store=store,
                 marker_cfg=marker_cfg,
-                legacy_source="legacy-prefix",
-                legacy_probe_fn=lambda container_name=container, prefix=search_prefix: _probe_container_last_modified(
-                    store=store,
-                    container=container_name,
-                    prefix=prefix,
-                ),
             )
             lm = probe_resolution.last_updated
             if probe_resolution.status == "error":
@@ -1554,25 +1385,25 @@ def collect_system_health_snapshot(
             )
 
             delta_version: Optional[int] = None
-
-            def _legacy_delta_probe() -> LastModifiedProbeResult:
-                nonlocal delta_version
-                try:
-                    ver, lm = store.get_delta_table_last_modified(container=container, table_path=table_path)
-                    delta_version = ver
-                    if lm is None:
-                        return LastModifiedProbeResult(state="not_found")
-                    return LastModifiedProbeResult(state="ok", last_modified=lm)
-                except Exception as exc:
-                    return LastModifiedProbeResult(state="error", error=str(exc))
+            try:
+                delta_version, _ = store.get_delta_table_last_modified(
+                    container=container,
+                    table_path=table_path,
+                )
+            except Exception as exc:
+                logger.info(
+                    "Skipping delta version probe for table=%s container=%s: %s",
+                    table_path,
+                    container,
+                    exc,
+                )
+                delta_version = None
 
             probe_resolution = _resolve_last_updated_with_marker_probes(
                 layer_name=spec.name,
                 domain_name=name_clean,
                 store=store,
                 marker_cfg=marker_cfg,
-                legacy_source="legacy-delta-log",
-                legacy_probe_fn=_legacy_delta_probe,
             )
             lm = probe_resolution.last_updated
 

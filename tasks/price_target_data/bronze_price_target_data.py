@@ -237,7 +237,7 @@ def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) 
     return len(symbol_to_bucket), index_path
 
 
-def _delete_legacy_symbol_blobs() -> int:
+def _delete_flat_symbol_blobs() -> int:
     deleted = 0
     for blob in bronze_client.list_blob_infos(name_starts_with="price-target-data/"):
         name = str(blob.get("name") or "")
@@ -249,7 +249,7 @@ def _delete_legacy_symbol_blobs() -> int:
             bronze_client.delete_file(name)
             deleted += 1
         except Exception as exc:
-            mdc.write_warning(f"Failed deleting legacy price target blob {name}: {exc}")
+            mdc.write_warning(f"Failed deleting flat price target blob {name}: {exc}")
     return deleted
 
 
@@ -564,15 +564,15 @@ async def main_async() -> int:
     finally:
         alpha26_written_symbols = 0
         alpha26_index_path: Optional[str] = None
-        legacy_deleted = 0
+        flat_deleted = 0
         if alpha26_mode:
             try:
                 alpha26_written_symbols, alpha26_index_path = _write_alpha26_price_target_buckets(bucket_symbol_frames)
-                legacy_deleted = _delete_legacy_symbol_blobs()
+                flat_deleted = _delete_flat_symbol_blobs()
                 mdc.write_line(
                     "Bronze price-target alpha26 buckets written: "
                     f"symbols={alpha26_written_symbols} index={alpha26_index_path or 'n/a'} "
-                    f"legacy_deleted={legacy_deleted}"
+                    f"flat_deleted={flat_deleted}"
                 )
             except Exception as exc:
                 batch_exception_count += 1

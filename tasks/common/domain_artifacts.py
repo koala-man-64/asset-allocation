@@ -51,7 +51,6 @@ _FINANCE_SUBDOMAIN_ALIASES: dict[str, str] = {
     "income-statement": "income_statement",
     "cash_flow": "cash_flow",
     "cash-flow": "cash_flow",
-    "overview": "valuation",
     "valuation": "valuation",
 }
 

@@ -59,6 +59,9 @@ _BOOLEAN_OPERATORS: tuple[UniverseConditionOperator, ...] = (
     "is_null",
     "is_not_null",
 )
+def _is_catalog_table_name(table_name: str) -> bool:
+    normalized = str(table_name or "").strip().lower()
+    return bool(normalized) and not normalized.endswith(("_backup", "_by_date"))
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,7 @@ def _load_gold_table_specs(dsn: str) -> dict[str, UniverseTableSpec]:
         with conn.cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
+    rows = [row for row in rows if _is_catalog_table_name(str(row[0] or ""))]
     return _build_table_specs(rows)
 
 

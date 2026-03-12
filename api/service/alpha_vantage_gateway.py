@@ -17,7 +17,6 @@ from alpha_vantage import (
 
 logger = logging.getLogger("asset-allocation.api.alpha_vantage")
 
-FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "overview"]
 EarningsCalendarHorizon = Literal["3month", "6month", "12month"]
 
 
@@ -229,18 +228,3 @@ class AlphaVantageGateway:
     ) -> str:
         normalized_horizon = normalize_earnings_calendar_horizon(horizon)
         return str(self.get_client().get_earnings_calendar(symbol=symbol, horizon=normalized_horizon))
-
-    def get_finance_report(self, *, symbol: str, report: FinanceReport) -> dict[str, Any]:
-        function_by_report: dict[str, str] = {
-            "balance_sheet": "BALANCE_SHEET",
-            "cash_flow": "CASH_FLOW",
-            "income_statement": "INCOME_STATEMENT",
-            "overview": "OVERVIEW",
-        }
-        func = function_by_report.get(str(report))
-        if not func:
-            raise ValueError(f"Unknown finance report={report!r}")
-        payload = self.get_client().fetch(func, symbol)
-        if not isinstance(payload, dict):
-            raise AlphaVantageError("Unexpected Alpha Vantage finance response type.", code="invalid_payload")
-        return payload

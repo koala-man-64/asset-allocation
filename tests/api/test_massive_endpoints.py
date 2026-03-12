@@ -75,9 +75,13 @@ async def test_massive_unified_snapshot_returns_json(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_massive_financials_returns_json(monkeypatch):
-    def fake_financials(self, *, symbol, report):
+    def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
         assert symbol == "AAPL"
         assert report == "balance_sheet"
+        assert timeframe is None
+        assert sort is None
+        assert limit is None
+        assert pagination is True
         return {"results": [{"ticker": symbol}]}
 
     monkeypatch.setattr(MassiveGateway, "get_finance_report", fake_financials)
@@ -92,7 +96,8 @@ async def test_massive_financials_returns_json(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_massive_missing_symbol_maps_to_404(monkeypatch):
-    def fake_financials(self, *, symbol, report):
+    def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
+        del symbol, report, timeframe, sort, limit, pagination
         raise MassiveNotFoundError("not found")
 
     monkeypatch.setattr(MassiveGateway, "get_finance_report", fake_financials)

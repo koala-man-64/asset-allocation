@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from api.endpoints import alpha_vantage, backtests, data, massive, postgres, rankings, regimes, strategies, system, universes
 from api.service.auth import AuthManager
 from api.service.alpha_vantage_gateway import AlphaVantageGateway
+from api.service.log_streaming import LogStreamManager
 from api.service.massive_gateway import MassiveGateway
 from api.service.settings import ServiceSettings
 from api.service.realtime import manager as realtime_manager
@@ -144,6 +145,7 @@ def _get_cors_allow_origins() -> list[str]:
 
 def create_app() -> FastAPI:
     # ... (existing inner functions) ...
+    log_stream_manager = LogStreamManager(realtime_manager)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -153,6 +155,7 @@ def create_app() -> FastAPI:
         app.state.auth = AuthManager(settings)
         app.state.alpha_vantage_gateway = AlphaVantageGateway()
         app.state.massive_gateway = MassiveGateway()
+        app.state.log_stream_manager = log_stream_manager
 
         workers_enabled = _background_workers_enabled()
         logger.info(
@@ -275,6 +278,8 @@ def create_app() -> FastAPI:
             app.state.massive_gateway.close()
         except Exception:
             pass
+
+        await log_stream_manager.shutdown()
 
     app = FastAPI(
         title="Asset Allocation API",
@@ -437,14 +442,17 @@ def create_app() -> FastAPI:
 
                     if action == "subscribe":
                         await realtime_manager.subscribe(websocket, topics)
+                        await log_stream_manager.ensure_streams(topics)
                     elif action == "unsubscribe":
                         await realtime_manager.unsubscribe(websocket, topics)
+                        await log_stream_manager.prune_unused_streams(topics)
 
                 except json.JSONDecodeError:
                     pass  # Ignore non-JSON messages (unless it was ping)
 
         except WebSocketDisconnect:
             realtime_manager.disconnect(websocket)
+            await log_stream_manager.prune_unused_streams()
 
     for api_prefix in api_prefixes:
         app.add_api_websocket_route(f"{api_prefix}/ws/updates", websocket_endpoint)

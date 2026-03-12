@@ -523,6 +523,24 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/fundamentals/float", params=params)
         return resp.json()
 
-    def get_finance_report(self, *, symbol: str, report: str) -> dict[str, Any]:
-        resp = self._request(f"/api/providers/massive/financials/{report}", params={"symbol": symbol})
+    def get_finance_report(
+        self,
+        *,
+        symbol: str,
+        report: str,
+        timeframe: Optional[str] = None,
+        sort: Optional[str] = None,
+        limit: Optional[int] = None,
+        pagination: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if timeframe:
+            params["timeframe"] = timeframe
+        if sort:
+            params["sort"] = sort
+        if limit is not None:
+            params["limit"] = int(limit)
+        if pagination is not None:
+            params["pagination"] = "true" if pagination else "false"
+        resp = self._request(f"/api/providers/massive/financials/{report}", params=params)
         return resp.json()

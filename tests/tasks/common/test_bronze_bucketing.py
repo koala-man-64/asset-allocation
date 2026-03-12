@@ -25,9 +25,9 @@ def test_all_bucket_blob_paths_returns_26_alpha_files() -> None:
 
 
 def test_layout_modes_fail_fast_when_not_alpha26(monkeypatch) -> None:
-    monkeypatch.setenv("BRONZE_LAYOUT_MODE", "legacy")
-    monkeypatch.setenv("SILVER_LAYOUT_MODE", "legacy")
-    monkeypatch.setenv("GOLD_LAYOUT_MODE", "legacy")
+    monkeypatch.setenv("BRONZE_LAYOUT_MODE", "unsupported")
+    monkeypatch.setenv("SILVER_LAYOUT_MODE", "unsupported")
+    monkeypatch.setenv("GOLD_LAYOUT_MODE", "unsupported")
 
     with pytest.raises(ValueError, match="BRONZE_LAYOUT_MODE must be 'alpha26' when set."):
         bronze_bucketing.bronze_layout_mode()

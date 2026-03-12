@@ -303,7 +303,7 @@
     @apply italic text-mcm-olive;
   }
 
-  /* Global readability pass for micro text and low-contrast legacy shades. */
+  /* Global readability pass for micro text and low-contrast accent shades. */
   .text-xs {
     font-size: 0.8125rem;
     line-height: 1.4;

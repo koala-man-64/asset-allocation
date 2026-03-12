@@ -23,7 +23,7 @@ API Root
     │   ├── /runtime-config [GET] (system.get_runtime_config) - Lists runtime-config overrides for a scope :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config [POST] (system.set_runtime_config) - Upserts a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /runtime-config/{key} [DELETE] (system.remove_runtime_config) - Deletes a runtime-config override :: api/endpoints/system.py <== ui/src/services/DataService.ts
-    │   ├── /purge-candidates [GET] (system.get_purge_candidates) - Synchronous purge-candidate preview (legacy/manual) :: api/endpoints/system.py
+    │   ├── /purge-candidates [GET] (system.get_purge_candidates) - Synchronous purge-candidate preview (manual) :: api/endpoints/system.py
     │   ├── /purge-candidates [POST] (system.create_purge_candidates_operation) - Queues async purge-candidate preview operation (202 + operationId) :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /purge [POST] (system.purge_data) - Queues layer/domain purge operation :: api/endpoints/system.py <== ui/src/services/DataService.ts
     │   ├── /purge/{operation_id} [GET] (system.get_purge_operation) - Polls purge/preview operation status/result :: api/endpoints/system.py <== ui/src/services/DataService.ts
@@ -53,14 +53,14 @@ API Root
     │       ├── /listing-status [GET] (alpha_vantage.get_listing_status) - Alpha Vantage LISTING_STATUS CSV :: api/endpoints/alpha_vantage.py
     │       ├── /time-series/daily [GET] (alpha_vantage.get_daily_time_series) - Alpha Vantage TIME_SERIES_DAILY CSV :: api/endpoints/alpha_vantage.py
     │       ├── /earnings [GET] (alpha_vantage.get_earnings) - Alpha Vantage EARNINGS payload :: api/endpoints/alpha_vantage.py
-    │       └── /finance/{report} [GET] (alpha_vantage.get_finance_report) - Alpha Vantage finance payload :: api/endpoints/alpha_vantage.py
+    │       └── /earnings-calendar [GET] (alpha_vantage.get_earnings_calendar) - Alpha Vantage earnings calendar CSV :: api/endpoints/alpha_vantage.py
     │   └── /massive
     │       ├── /time-series/daily [GET] (massive.get_daily_time_series) - Massive OHLCV CSV normalized to Date,Open,High,Low,Close,Volume :: api/endpoints/massive.py
     │       ├── /fundamentals/short-interest [GET] (massive.get_short_interest) - Massive short interest payload :: api/endpoints/massive.py
     │       ├── /fundamentals/short-volume [GET] (massive.get_short_volume) - Massive short volume payload :: api/endpoints/massive.py
     │       ├── /fundamentals/float [GET] (massive.get_float) - Massive float payload :: api/endpoints/massive.py
     │       ├── /financials/{report} [GET] (massive.get_finance_report) - Massive financial payload :: api/endpoints/massive.py
-    │       └── /finance/{report} [GET] (massive.get_finance_report) - Backward-compatible alias for Massive financial payload :: api/endpoints/massive.py
+    │       └── /finance/{report} [GET] (massive.get_finance_report) - Alias for Massive financial payload :: api/endpoints/massive.py
 
     # Raw Data Layer
     ├── /data

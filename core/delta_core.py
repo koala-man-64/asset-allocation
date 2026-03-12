@@ -203,7 +203,7 @@ def _log_delta_schema_mismatch(df: pd.DataFrame, container: str, path: str) -> N
             order_matches,
         )
 
-        # Helpful hint for the known rename (legacy -> current name).
+        # Helpful hint for the known rename from the previous column name.
         if "drawdown_1y" in df_cols and "drawdown" in table_cols and "drawdown" not in df_cols:
             logger.error(
                 "Delta schema hint for %s: existing table has 'drawdown' but DataFrame has 'drawdown_1y'.",

@@ -75,7 +75,8 @@ def test_compute_features_requires_expected_columns():
         compute_features(pd.DataFrame({"symbol": ["AAPL"], "obs_date": ["2020-01-01"]}))
 
 
-def test_compute_features_accepts_legacy_ticker_column():
+def test_compute_features_requires_symbol_column():
     df = _make_price_target_df(10).rename(columns={"symbol": "ticker"})
-    out = compute_features(df)
-    assert "symbol" in out.columns
+
+    with pytest.raises(ValueError, match="Missing required columns"):
+        compute_features(df)

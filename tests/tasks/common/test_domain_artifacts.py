@@ -11,7 +11,7 @@ def test_summarize_frame_tracks_finance_subdomains() -> None:
         {
             "symbol": ["AAPL", "AAPL", "MSFT"],
             "date": ["2026-01-01", "2026-01-02", "2026-01-03"],
-            "report_type": ["balance_sheet", "overview", "income_statement"],
+            "report_type": ["balance_sheet", "valuation", "income_statement"],
             "value": [1, 2, 3],
         }
     )

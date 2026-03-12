@@ -27,7 +27,7 @@ _FINANCE_SUBDOMAIN_TO_REPORT_TYPE: dict[str, str] = {
     "balance_sheet": "balance_sheet",
     "income_statement": "income_statement",
     "cash_flow": "cash_flow",
-    "valuation": "overview",
+    "valuation": "valuation",
 }
 _FINANCE_LAYER_FOLDERS: dict[str, tuple[str, str]] = {
     sub_domain: _FINANCE_BRONZE_FOLDERS[sub_domain] for sub_domain in SILVER_FINANCE_SUBDOMAINS

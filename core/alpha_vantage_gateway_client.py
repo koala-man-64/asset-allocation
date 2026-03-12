@@ -467,7 +467,3 @@ class AlphaVantageGatewayClient:
             params["symbol"] = symbol
         resp = self._request("/api/providers/alpha-vantage/earnings-calendar", params=params)
         return str(resp.text or "")
-
-    def get_finance_report(self, *, symbol: str, report: str) -> dict[str, Any]:
-        resp = self._request(f"/api/providers/alpha-vantage/finance/{report}", params={"symbol": symbol})
-        return resp.json()

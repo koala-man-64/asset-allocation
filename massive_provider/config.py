@@ -39,7 +39,7 @@ class MassiveConfig:
     -----
     * **REST base URL** defaults to ``https://api.massive.com`` (the current SDK
       default). The previous base (``https://api.polygon.io``) is still supported
-      by Massive, but should be treated as legacy.
+      by Massive, but should not be used for new configuration.
     * We do not include the official Massive SDK as a hard dependency in this
       repo artifact, because this environment can't resolve new packages.
       The module will use the SDK if present; otherwise it falls back to a small

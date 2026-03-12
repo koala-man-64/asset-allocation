@@ -20,7 +20,7 @@ class BlobStorageClient:
     def __init__(self, account_name=None, connection_string=None, container_name='market-data', ensure_container_exists: bool = True):
         # 1. Try config/env for Account Name (Preferred)
         self.account_name = account_name or os.environ.get('AZURE_STORAGE_ACCOUNT_NAME')
-        # 2. Try config/env for Connection String (Legacy)
+        # 2. Try config/env for Connection String.
         self.connection_string = connection_string or os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
         
         self.container_name = container_name

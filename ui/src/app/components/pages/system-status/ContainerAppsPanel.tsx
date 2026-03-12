@@ -4,6 +4,12 @@ import { toast } from 'sonner';
 import { Activity, ChevronDown, ExternalLink, Loader2, RefreshCw, ScrollText, Server } from 'lucide-react';
 import { DataService } from '@/services/DataService';
 import type { ContainerAppStatusItem } from '@/services/apiService';
+import {
+  addConsoleLogStreamListener,
+  buildContainerAppLogTopic,
+  requestRealtimeSubscription,
+  requestRealtimeUnsubscription
+} from '@/services/realtimeBus';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -29,6 +35,28 @@ type AppLogState = {
   error: string | null;
   marker: string | null;
 };
+
+function mergeLogLines(existing: string[], incoming: string[], limit = LOG_TAIL_LINES * 4): string[] {
+  const next = [...existing];
+  const windowed = new Set(existing.slice(-limit));
+
+  incoming.forEach((line) => {
+    const text = String(line || '').trim();
+    if (!text || windowed.has(text)) {
+      return;
+    }
+    next.push(text);
+    windowed.add(text);
+    while (next.length > limit) {
+      const removed = next.shift();
+      if (removed && !next.includes(removed)) {
+        windowed.delete(removed);
+      }
+    }
+  });
+
+  return next.slice(-limit);
+}
 
 function normalizeState(value?: string | null): string {
   return String(value || '')
@@ -206,6 +234,44 @@ export function ContainerAppsPanel() {
   }, [apps, expandedAppName, logStateByName]);
 
   useEffect(() => {
+    if (!expandedAppName) return;
+    const topic = buildContainerAppLogTopic(expandedAppName);
+    requestRealtimeSubscription([topic]);
+    return () => requestRealtimeUnsubscription([topic]);
+  }, [expandedAppName]);
+
+  useEffect(() => {
+    if (!expandedAppName) return;
+    const topic = buildContainerAppLogTopic(expandedAppName);
+    return addConsoleLogStreamListener((detail) => {
+      if (detail.topic !== topic) {
+        return;
+      }
+
+      const incoming = detail.lines
+        .map((line) => formatSystemStatusText(line.message))
+        .filter((line) => line.length > 0);
+
+      if (incoming.length === 0) {
+        return;
+      }
+
+      setLogStateByName((prev) => {
+        const current = prev[expandedAppName];
+        return {
+          ...prev,
+          [expandedAppName]: {
+            lines: mergeLogLines(current?.lines ?? [], incoming),
+            loading: false,
+            error: null,
+            marker: current?.marker ?? null
+          }
+        };
+      });
+    });
+  }, [expandedAppName]);
+
+  useEffect(() => {
     const controllers = logControllers.current;
     return () => {
       Object.values(controllers).forEach((controller) => controller.abort());
@@ -379,9 +445,14 @@ export function ContainerAppsPanel() {
                         >
                           <div className="p-4">
                             <div className="rounded-md border bg-background">
-                              <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground flex items-center gap-2">
-                                <ScrollText className="h-3.5 w-3.5" />
-                                Recent Console Logs
+                              <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground flex items-center justify-between gap-3">
+                                <span className="flex items-center gap-2">
+                                  <ScrollText className="h-3.5 w-3.5" />
+                                  Recent Console Logs
+                                </span>
+                                <span className="text-[11px] font-normal text-muted-foreground/80">
+                                  Live tail while open
+                                </span>
                               </div>
                               <div className="max-h-64 overflow-auto overflow-x-hidden break-words px-3 py-2 text-xs font-mono leading-relaxed">
                                 {logState?.loading && (
@@ -401,7 +472,7 @@ export function ContainerAppsPanel() {
                                   !logState?.error &&
                                   (logState?.lines?.length ?? 0) > 0 && (
                                     <div className="space-y-1">
-                                      {(logState?.lines ?? []).slice(-LOG_TAIL_LINES).map((line, index) => (
+                                      {(logState?.lines ?? []).slice(-(LOG_TAIL_LINES * 4)).map((line, index) => (
                                         <div
                                           key={`${name}-log-${index}`}
                                           className={`whitespace-pre-wrap break-words text-foreground/90 px-2 py-1 max-w-full ${
