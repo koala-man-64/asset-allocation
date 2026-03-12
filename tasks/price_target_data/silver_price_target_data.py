@@ -316,8 +316,6 @@ def process_blob(
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
         return "skipped_debug_symbols"
 
-    bucket = layer_bucketing.bucket_letter(ticker)
-    silver_path = DataPaths.get_silver_price_target_bucket_path(bucket)
     unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
     if unchanged:
         return "skipped_unchanged"
