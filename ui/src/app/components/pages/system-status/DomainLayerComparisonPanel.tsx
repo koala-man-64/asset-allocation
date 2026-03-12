@@ -60,6 +60,7 @@ import type { ManagedContainerJob } from './JobKillSwitchPanel';
 import { useJobSuspend } from '@/hooks/useJobSuspend';
 import { useJobTrigger } from '@/hooks/useJobTrigger';
 import {
+  buildLatestJobRunIndex,
   formatSchedule,
   formatTimeAgo,
   getStatusConfig,
@@ -130,11 +131,6 @@ const LAYER_VISUALS: Record<LayerKey, LayerVisualConfig> = {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const runStartEpoch = (raw?: string | null): number => {
-  const value = raw ? Date.parse(raw) : NaN;
-  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
-};
 
 function extractAzureJobName(jobUrl?: string | null): string | null {
   const normalized = normalizeAzurePortalUrl(jobUrl);
@@ -367,17 +363,7 @@ export function DomainLayerComparisonPanel({
   }, [layersByKey]);
 
   const jobIndex = useMemo(() => {
-    const index = new Map<string, JobRun>();
-    for (const job of recentJobs) {
-      if (!job?.jobName) continue;
-      const key = normalizeAzureJobName(job.jobName);
-      if (!key) continue;
-      const existing = index.get(key);
-      if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
-        index.set(key, job);
-      }
-    }
-    return index;
+    return buildLatestJobRunIndex(recentJobs);
   }, [recentJobs]);
 
   const managedJobIndex = useMemo(() => {

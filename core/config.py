@@ -114,7 +114,7 @@ class AppSettings(BaseSettings):
     AZURE_CONTAINER_PLATINUM: Optional[str] = "platinum"
     
     # API Configuration
-    API_PORT: int = os.environ.get("API_PORT", 8000)
+    API_PORT: int = os.environ.get("API_PORT", 9000)
 
     # Alpha Vantage (market + fundamentals data source).
     ALPHA_VANTAGE_API_KEY: Optional[str] = None

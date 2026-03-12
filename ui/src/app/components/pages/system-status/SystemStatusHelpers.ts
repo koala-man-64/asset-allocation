@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { StatusColors } from './StatusTokens';
 import { Badge } from '@/app/components/ui/badge';
+import type { JobRun } from '@/types/strategy';
 
 interface StatusConfig {
   bg: string;
@@ -22,6 +23,11 @@ interface StatusConfig {
 }
 
 export type NormalizedJobStatus = 'success' | 'warning' | 'failed' | 'running' | 'pending';
+
+const runStartEpoch = (raw?: string | null): number => {
+  const value = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+};
 
 /**
  * Returns a configuration object (color, icon) for a given status.
@@ -281,6 +287,22 @@ export const normalizeAzureJobName = (value?: string | null) => {
   }
 
   return trimmed.toLowerCase().replace(/_/g, '-');
+};
+
+export const buildLatestJobRunIndex = (recentJobs: JobRun[] = []): Map<string, JobRun> => {
+  const index = new Map<string, JobRun>();
+
+  for (const job of recentJobs) {
+    const key = normalizeAzureJobName(job?.jobName);
+    if (!key) continue;
+
+    const existing = index.get(key);
+    if (!existing || runStartEpoch(job.startTime) > runStartEpoch(existing.startTime)) {
+      index.set(key, job);
+    }
+  }
+
+  return index;
 };
 
 export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus => {

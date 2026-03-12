@@ -10,20 +10,20 @@ describe('normalizeApiBaseUrl', () => {
   });
 
   it('adds /api to bare origin URLs', () => {
-    expect(normalizeApiBaseUrl('http://localhost:8000')).toBe('http://localhost:8000/api');
+    expect(normalizeApiBaseUrl('http://localhost:9000')).toBe('http://localhost:9000/api');
     expect(normalizeApiBaseUrl('https://example.com')).toBe('https://example.com/api');
   });
 
   it('keeps explicit paths', () => {
     expect(normalizeApiBaseUrl('/api')).toBe('/api');
     expect(normalizeApiBaseUrl('/api/')).toBe('/api');
-    expect(normalizeApiBaseUrl('http://localhost:8000/api')).toBe('http://localhost:8000/api');
+    expect(normalizeApiBaseUrl('http://localhost:9000/api')).toBe('http://localhost:9000/api');
   });
 });
 
 describe('toWebSocketBaseUrl', () => {
   it('converts http(s) to ws(s)', () => {
-    expect(toWebSocketBaseUrl('http://localhost:8000/api')).toBe('ws://localhost:8000/api');
+    expect(toWebSocketBaseUrl('http://localhost:9000/api')).toBe('ws://localhost:9000/api');
     expect(toWebSocketBaseUrl('https://example.com/api')).toBe('wss://example.com/api');
   });
 

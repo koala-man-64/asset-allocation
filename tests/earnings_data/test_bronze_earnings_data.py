@@ -1,10 +1,13 @@
 import asyncio
-import pytest
-import uuid
 import json
-import pandas as pd
+import threading
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+
 from tasks.earnings_data import bronze_earnings_data as bronze
 
 @pytest.fixture
@@ -665,3 +668,34 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
         )
 
     asyncio.run(run_test())
+
+
+def test_thread_local_alpha_vantage_client_manager_reuses_per_thread_and_closes_all():
+    created: list[MagicMock] = []
+
+    def make_client() -> MagicMock:
+        client = MagicMock()
+        created.append(client)
+        return client
+
+    manager = bronze._ThreadLocalAlphaVantageClientManager(factory=make_client)
+    first = manager.get_client()
+    second = manager.get_client()
+    assert first is second
+
+    observed_from_thread: list[MagicMock] = []
+
+    def worker() -> None:
+        observed_from_thread.append(manager.get_client())
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert len(created) == 2
+    assert observed_from_thread[0] is not first
+
+    manager.close_all()
+
+    for client in created:
+        client.close.assert_called_once_with()

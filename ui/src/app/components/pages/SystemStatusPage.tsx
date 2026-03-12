@@ -11,6 +11,7 @@ import { Skeleton } from '@/app/components/ui/skeleton';
 import { PageLoader } from '@/app/components/common/PageLoader';
 import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
 import type { SystemHealth } from '@/types/strategy';
+import type { JobLogStreamTarget } from './system-status/JobLogStreamPanel';
 
 // Lazy load components to reduce initial bundle size of the page
 const DomainLayerComparisonPanel = lazy(() =>
@@ -21,8 +22,12 @@ const DomainLayerComparisonPanel = lazy(() =>
 const ContainerAppsPanel = lazy(() =>
   import('./system-status/ContainerAppsPanel').then((m) => ({ default: m.ContainerAppsPanel }))
 );
+const JobLogStreamPanel = lazy(() =>
+  import('./system-status/JobLogStreamPanel').then((m) => ({ default: m.JobLogStreamPanel }))
+);
 
 import {
+  buildLatestJobRunIndex,
   normalizeAzureJobName,
 } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
@@ -144,6 +149,108 @@ export function SystemStatusPage() {
     return items;
   }, [systemHealth]);
 
+  const latestJobRuns = useMemo(
+    () => buildLatestJobRunIndex(systemHealth?.recentJobs || []),
+    [systemHealth?.recentJobs]
+  );
+
+  const jobLogStreamJobs = useMemo<JobLogStreamTarget[]>(() => {
+    type MutableJobTarget = Omit<JobLogStreamTarget, 'runningState' | 'recentStatus' | 'startTime'> & {
+      sortLayerName: string;
+    };
+    const items = new Map<string, MutableJobTarget>();
+
+    for (const layer of displayDataLayers || []) {
+      for (const domain of layer.domains || []) {
+        const rawJobName =
+          String(domain.jobName || '').trim() || normalizeAzureJobName(domain.jobUrl) || '';
+        if (!rawJobName) continue;
+        const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
+        if (items.has(key)) continue;
+        items.set(key, {
+          name: rawJobName,
+          label: `${layer.name} / ${domain.name} / ${rawJobName}`,
+          layerName: layer.name,
+          domainName: domain.name,
+          jobUrl: domain.jobUrl || null,
+          sortLayerName: layer.name,
+        });
+      }
+    }
+
+    for (const resource of systemHealth?.resources || []) {
+      if (resource.resourceType !== 'Microsoft.App/jobs') continue;
+      const rawJobName = String(resource.name || '').trim();
+      if (!rawJobName) continue;
+      const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
+      if (items.has(key)) continue;
+      items.set(key, {
+        name: rawJobName,
+        label: rawJobName,
+        layerName: null,
+        domainName: null,
+        jobUrl: null,
+        sortLayerName: '',
+      });
+    }
+
+    for (const run of latestJobRuns.values()) {
+      const rawJobName = String(run.jobName || '').trim();
+      if (!rawJobName) continue;
+      const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
+      if (items.has(key)) continue;
+      items.set(key, {
+        name: rawJobName,
+        label: rawJobName,
+        layerName: null,
+        domainName: null,
+        jobUrl: null,
+        sortLayerName: '',
+      });
+    }
+
+    return Array.from(items.entries())
+      .map(([key, item]) => {
+        const latestRun = latestJobRuns.get(key);
+        return {
+          ...item,
+          runningState: jobStates[key] || null,
+          recentStatus: latestRun?.status || null,
+          startTime: latestRun?.startTime || null,
+        };
+      })
+      .sort((left, right) => {
+        const leftRunning = String(left.runningState || left.recentStatus || '')
+          .trim()
+          .toLowerCase()
+          .includes('running')
+          ? 1
+          : 0;
+        const rightRunning = String(right.runningState || right.recentStatus || '')
+          .trim()
+          .toLowerCase()
+          .includes('running')
+          ? 1
+          : 0;
+        if (leftRunning !== rightRunning) {
+          return rightRunning - leftRunning;
+        }
+
+        const leftStart = left.startTime ? Date.parse(left.startTime) : Number.NEGATIVE_INFINITY;
+        const rightStart = right.startTime ? Date.parse(right.startTime) : Number.NEGATIVE_INFINITY;
+        if (leftStart !== rightStart) {
+          return rightStart - leftStart;
+        }
+
+        if (left.sortLayerName !== right.sortLayerName) {
+          return left.sortLayerName.localeCompare(right.sortLayerName);
+        }
+
+        return left.label.localeCompare(right.label);
+      })
+      .map(({ sortLayerName: _sortLayerName, ...item }) => item);
+  }, [displayDataLayers, jobStates, latestJobRuns, systemHealth?.resources]);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -194,6 +301,12 @@ export function SystemStatusPage() {
       <ErrorBoundary>
         <Suspense fallback={<Skeleton className="h-[220px] w-full rounded-xl bg-muted/20" />}>
           <ContainerAppsPanel />
+        </Suspense>
+      </ErrorBoundary>
+
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-[260px] w-full rounded-xl bg-muted/20" />}>
+          <JobLogStreamPanel jobs={jobLogStreamJobs} />
         </Suspense>
       </ErrorBoundary>
 

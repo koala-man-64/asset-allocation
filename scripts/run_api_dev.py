@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 
-def _parse_port(raw: str | None, default: int = 8000) -> int:
+def _parse_port(raw: str | None, default: int = 9000) -> int:
     text = (raw or "").strip()
     if not text:
         return default
@@ -60,7 +60,7 @@ def main() -> int:
     load_dotenv(env_path, override=False)
 
     try:
-        api_port = _parse_port(os.environ.get("API_PORT"), default=8000)
+        api_port = _parse_port(os.environ.get("API_PORT"), default=9000)
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

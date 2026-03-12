@@ -4,10 +4,11 @@ import asyncio
 import json
 import os
 import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO, StringIO
-from typing import Any, Optional, Dict, Sequence
+from typing import Any, Callable, Optional, Dict, Sequence
 
 import pandas as pd
 
@@ -609,6 +610,38 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
     return len(symbol_to_bucket), index_path
 
 
+def _safe_close_alpha_vantage_client(client: AlphaVantageGatewayClient | None) -> None:
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
+class _ThreadLocalAlphaVantageClientManager:
+    def __init__(self, factory: Callable[[], AlphaVantageGatewayClient] | None = None) -> None:
+        self._factory = factory or AlphaVantageGatewayClient.from_env
+        self._lock = threading.Lock()
+        self._clients: dict[int, AlphaVantageGatewayClient] = {}
+
+    def get_client(self) -> AlphaVantageGatewayClient:
+        thread_id = threading.get_ident()
+        with self._lock:
+            current = self._clients.get(thread_id)
+            if current is not None:
+                return current
+            fresh_client = self._factory()
+            self._clients[thread_id] = fresh_client
+            return fresh_client
+
+    def close_all(self) -> None:
+        with self._lock:
+            for client in list(self._clients.values()):
+                _safe_close_alpha_vantage_client(client)
+            self._clients.clear()
+
+
 def _delete_flat_symbol_blobs() -> int:
     deleted = 0
     prefix = str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")).strip("/")
@@ -658,6 +691,7 @@ def fetch_and_save_raw(
     calendar_rows: Optional[pd.DataFrame] = None,
     write_symbol_file: bool = True,
     collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    collected_lock: Optional[threading.Lock] = None,
     alpha26_mode: bool = False,
 ) -> bool:
     """
@@ -814,7 +848,11 @@ def fetch_and_save_raw(
 
     if not write_symbol_file:
         if merged is not None and not merged.empty and collected_symbol_frames is not None:
-            collected_symbol_frames[symbol] = merged.copy()
+            if collected_lock is not None:
+                with collected_lock:
+                    collected_symbol_frames[symbol] = merged.copy()
+            else:
+                collected_symbol_frames[symbol] = merged.copy()
         list_manager.add_to_whitelist(symbol)
         return bool(merged is not None and not merged.empty)
 
@@ -867,11 +905,14 @@ async def main_async() -> int:
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
 
     av = AlphaVantageGatewayClient.from_env()
+    try:
+        calendar_rows_by_symbol, calendar_summary = _fetch_earnings_calendar_by_symbol(av=av, symbols=symbols)
+    finally:
+        _safe_close_alpha_vantage_client(av)
     backfill_start = resolve_backfill_start_date()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to bronze earnings data: {backfill_start.isoformat()}")
 
-    calendar_rows_by_symbol, calendar_summary = _fetch_earnings_calendar_by_symbol(av=av, symbols=symbols)
     mdc.write_line(
         "Bronze AV earnings calendar: "
         f"horizon={calendar_summary.get('calendar_horizon', '12month')} "
@@ -885,6 +926,7 @@ async def main_async() -> int:
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="alpha-vantage-earnings")
     loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(max_workers)
+    client_manager = _ThreadLocalAlphaVantageClientManager()
 
     progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
     coverage_progress = _empty_coverage_summary()
@@ -893,8 +935,10 @@ async def main_async() -> int:
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
     collected_symbol_frames: Dict[str, pd.DataFrame] = {}
+    collected_lock: Optional[threading.Lock] = threading.Lock() if alpha26_mode else None
 
     def worker(symbol: str) -> tuple[bool, dict[str, int], dict[str, int]]:
+        av = client_manager.get_client()
         coverage_summary = _empty_coverage_summary()
         event_summary = _empty_event_summary()
         wrote = fetch_and_save_raw(
@@ -906,6 +950,7 @@ async def main_async() -> int:
             calendar_rows=calendar_rows_by_symbol.get(symbol),
             write_symbol_file=not alpha26_mode,
             collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
+            collected_lock=collected_lock if alpha26_mode else None,
             alpha26_mode=alpha26_mode,
         )
         return wrote, coverage_summary, event_summary
@@ -976,7 +1021,7 @@ async def main_async() -> int:
         except Exception:
             pass
         try:
-            av.close()
+            client_manager.close_all()
         except Exception:
             pass
         try:

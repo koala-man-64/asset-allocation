@@ -38,9 +38,9 @@ python3 scripts/run_api_dev.py
 
 Then open:
 
-- `http://127.0.0.1:8000/api/docs`
-- `http://127.0.0.1:8000/api/openapi.json`
-- `http://127.0.0.1:8000/config.js`
+- `http://127.0.0.1:9000/api/docs`
+- `http://127.0.0.1:9000/api/openapi.json`
+- `http://127.0.0.1:9000/config.js`
 
 ### Run the UI Locally
 
@@ -50,7 +50,7 @@ pnpm install
 pnpm dev
 ```
 
-The UI proxies API calls to `VITE_API_PROXY_TARGET`, which defaults to `http://127.0.0.1:8000` in `.env.template`.
+The UI proxies API calls to `VITE_API_PROXY_TARGET`, which defaults to `http://127.0.0.1:9000` in `.env.template`.
 
 ## Common Workflows
 

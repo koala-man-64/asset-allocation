@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import requests
 
 
-LOCAL_API_BASE_URL = "http://localhost:8000"
+LOCAL_API_BASE_URL = "http://localhost:9000"
 LOCAL_UI_BASE_URL = "http://localhost:5174"
 # Unified Container App deployment: UI and API share one external FQDN.
 CLOUD_BASE_URL = "https://asset-allocation-api.bluesea-887e7a19.eastus.azurecontainerapps.io"

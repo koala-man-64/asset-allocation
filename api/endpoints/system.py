@@ -1,5 +1,6 @@
 import logging
 import json
+import math
 import os
 import re
 import threading
@@ -72,6 +73,51 @@ from core.purge_rules import (
 logger = logging.getLogger("asset-allocation.api.system")
 
 router = APIRouter()
+
+
+def _sanitize_system_health_json_value(value: Any) -> tuple[Any, int]:
+    if value is None or isinstance(value, (str, bool)):
+        return value, 0
+
+    if isinstance(value, int):
+        return value, 0
+
+    if isinstance(value, float):
+        return (value, 0) if math.isfinite(value) else (None, 1)
+
+    if isinstance(value, dict):
+        sanitized: Dict[Any, Any] = {}
+        replacements = 0
+        for key, item in value.items():
+            sanitized_item, item_replacements = _sanitize_system_health_json_value(item)
+            sanitized[key] = sanitized_item
+            replacements += item_replacements
+        return sanitized, replacements
+
+    if isinstance(value, (list, tuple)):
+        sanitized_items: List[Any] = []
+        replacements = 0
+        for item in value:
+            sanitized_item, item_replacements = _sanitize_system_health_json_value(item)
+            sanitized_items.append(sanitized_item)
+            replacements += item_replacements
+        return sanitized_items, replacements
+
+    try:
+        if hasattr(value, "isoformat") and callable(value.isoformat):
+            return value.isoformat(), 0
+    except Exception:
+        pass
+
+    try:
+        coerced = value.item() if hasattr(value, "item") and callable(value.item) else value
+    except Exception:
+        coerced = value
+
+    if coerced is not value:
+        return _sanitize_system_health_json_value(coerced)
+
+    return value, 0
 
 
 REALTIME_TOPIC_BACKTESTS = "backtests"
@@ -407,6 +453,14 @@ def system_health(request: Request, refresh: bool = Query(False)) -> JSONRespons
         logger.info("System health recentJobs preview: %s", " | ".join(recent_runs_preview))
     elif payload.get("recentJobs") == []:
         logger.warning("System health recentJobs is empty.")
+
+    payload, sanitization_replacements = _sanitize_system_health_json_value(payload)
+    if sanitization_replacements:
+        logger.warning(
+            "System health payload sanitized before JSON response: replacements=%s request_id=%s",
+            sanitization_replacements,
+            request_id,
+        )
 
     headers: Dict[str, str] = {
         "Cache-Control": "no-store",

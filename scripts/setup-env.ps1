@@ -45,9 +45,9 @@ Write-Host "This writes plaintext values to .env. Do NOT commit .env to git." -F
 Write-Host "Press [Enter] to accept the suggestion in [brackets].`n"
 
 $DefaultSystemHealthArmJobs = "bronze-market-job,bronze-finance-job,bronze-price-target-job,bronze-earnings-job,silver-market-job,silver-finance-job,silver-price-target-job,silver-earnings-job,gold-market-job,gold-finance-job,gold-price-target-job,gold-earnings-job,gold-regime-job,platinum-rankings-job,backtests-job"
-$DefaultAssetAllocationApiBaseUrl = if ($IsGitHubSyncTarget) { "http://asset-allocation-api" } else { "http://localhost:8000" }
+$DefaultAssetAllocationApiBaseUrl = if ($IsGitHubSyncTarget) { "http://asset-allocation-api" } else { "http://localhost:9000" }
 $DefaultJobStartupApiContainerApps = if ($IsGitHubSyncTarget) { "asset-allocation-api" } else { "" }
-$DefaultViteApiProxyTarget = if ($IsGitHubSyncTarget) { "http://asset-allocation-api" } else { "http://127.0.0.1:8000" }
+$DefaultViteApiProxyTarget = if ($IsGitHubSyncTarget) { "http://asset-allocation-api" } else { "http://127.0.0.1:9000" }
 
 function ConvertFrom-SecureStringPlain {
     param([Parameter(Mandatory = $true)][System.Security.SecureString]$Secure)
@@ -209,7 +209,7 @@ $Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required if API_AUTH_
 $Config += "API_KEY_HEADER=" + (Prompt-Var "API_KEY_HEADER" "X-API-Key" "Header name for API keys.")
 $Config += "API_ROOT_PREFIX=" + (Prompt-Var "API_ROOT_PREFIX" "" "Optional: mount API under /{API_ROOT_PREFIX}/api/* (e.g. asset-allocation).")
 $Config += "API_INGRESS_EXTERNAL=" + (Prompt-Var "API_INGRESS_EXTERNAL" "true" "Deploy only: true for external ingress, false for internal only.")
-$Config += "API_PORT=" + (Prompt-Var "API_PORT" "8000" "Local API port (used by core/config.py).")
+$Config += "API_PORT=" + (Prompt-Var "API_PORT" "9000" "Local API port (used by core/config.py).")
 $Config += "API_CSP=" + (Prompt-Var "API_CSP" "" "Optional: Content-Security-Policy header value.")
 $Config += "API_CORS_ALLOW_ORIGINS=" + (Prompt-Var "API_CORS_ALLOW_ORIGINS" "" "Optional: comma-separated or JSON list of allowed origins.")
 

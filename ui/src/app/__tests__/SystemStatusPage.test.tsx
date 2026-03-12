@@ -9,9 +9,18 @@ import { getDomainOrderEntries } from '@/app/components/pages/system-status/doma
 import { queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 
+const { MOCK_RUN_TIMESTAMPS, domainLayerCoverageSpy, jobLogStreamSpy } = vi.hoisted(() => ({
+  MOCK_RUN_TIMESTAMPS: {
+    latest: '2026-03-11T12:00:00.000Z',
+    older: '2026-03-10T12:00:00.000Z'
+  },
+  domainLayerCoverageSpy: vi.fn(),
+  jobLogStreamSpy: vi.fn()
+}));
+
 vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useDataQueries')>();
-  const now = new Date().toISOString();
+  const now = MOCK_RUN_TIMESTAMPS.latest;
 
   return {
     ...actual,
@@ -105,6 +114,13 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
             triggeredBy: 'azure'
           },
           {
+            jobName: 'aca-job-market',
+            jobType: 'data-ingest',
+            status: 'failed',
+            startTime: MOCK_RUN_TIMESTAMPS.older,
+            triggeredBy: 'azure'
+          },
+          {
             jobName: 'aca-job-platinum',
             jobType: 'data-ingest',
             status: 'success',
@@ -143,8 +159,6 @@ vi.mock('@/hooks/useDataQueries', async (importOriginal) => {
   };
 });
 
-const domainLayerCoverageSpy = vi.fn();
-
 vi.mock('@/app/components/pages/system-status/DomainLayerComparisonPanel', () => ({
   DomainLayerComparisonPanel: (props: unknown) => {
     domainLayerCoverageSpy(props);
@@ -160,10 +174,19 @@ vi.mock('@/app/components/pages/system-status/ContainerAppsPanel', () => ({
   )
 }));
 
+vi.mock('@/app/components/pages/system-status/JobLogStreamPanel', () => ({
+  JobLogStreamPanel: (props: unknown) => {
+    jobLogStreamSpy(props);
+    return <div data-testid="mock-job-log-stream-panel">Mock Job Log Stream Panel</div>;
+  }
+}));
+
 describe('SystemStatusPage', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    domainLayerCoverageSpy.mockClear();
+    jobLogStreamSpy.mockClear();
   });
 
   const createQueryClient = () =>
@@ -198,8 +221,9 @@ describe('SystemStatusPage', () => {
     // Depending on test runner timing, lazy modules can remain in Suspense fallback.
     const lazyComponentsLoaded =
       Boolean(screen.queryByTestId('mock-domain-layer-coverage-panel')) &&
-      Boolean(screen.queryByTestId('mock-container-apps-panel'));
-    const suspenseFallbackVisible = document.querySelectorAll('[data-slot="skeleton"]').length >= 2;
+      Boolean(screen.queryByTestId('mock-container-apps-panel')) &&
+      Boolean(screen.queryByTestId('mock-job-log-stream-panel'));
+    const suspenseFallbackVisible = document.querySelectorAll('[data-slot="skeleton"]').length >= 3;
     expect(lazyComponentsLoaded || suspenseFallbackVisible).toBe(true);
 
     // Check loading state of footer
@@ -250,6 +274,35 @@ describe('SystemStatusPage', () => {
     const coverageOrder = getDomainOrderEntries(coverageProps.dataLayers).map((entry) => entry.key);
 
     expect(coverageOrder).toEqual(['alpha', 'market', 'zeta']);
+  });
+
+  it('passes the latest job run status and start time to the job console stream panel', async () => {
+    jobLogStreamSpy.mockClear();
+
+    renderWithProviders(<SystemStatusPage />);
+    await waitFor(() => {
+      expect(jobLogStreamSpy).toHaveBeenCalled();
+    });
+
+    const jobStreamProps = jobLogStreamSpy.mock.calls.at(-1)?.[0] as {
+      jobs: Array<{
+        name: string;
+        runningState?: string | null;
+        recentStatus?: string | null;
+        startTime?: string | null;
+      }>;
+    };
+
+    expect(jobStreamProps.jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'aca-job-market',
+          runningState: 'Running',
+          recentStatus: 'success',
+          startTime: MOCK_RUN_TIMESTAMPS.latest
+        })
+      ])
+    );
   });
 
   it('merges optimistic running overrides into the system status props', async () => {

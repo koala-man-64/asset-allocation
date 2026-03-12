@@ -98,11 +98,11 @@ def test_ensure_api_awake_local_waits_for_local_health(monkeypatch: pytest.Monke
     job_trigger.ensure_api_awake_from_env(required=True)
 
     assert probe_calls == [
-        "http://127.0.0.1:8000/healthz",
-        "http://127.0.0.1:8000/healthz",
-        "http://127.0.0.1:8000/healthz",
+        "http://127.0.0.1:9000/healthz",
+        "http://127.0.0.1:9000/healthz",
+        "http://127.0.0.1:9000/healthz",
     ]
-    assert (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip() == "http://127.0.0.1:8000"
+    assert (os.environ.get("ASSET_ALLOCATION_API_BASE_URL") or "").strip() == "http://127.0.0.1:9000"
 
 
 def test_resolve_startup_container_apps_matches_allowlist_from_domain(monkeypatch: pytest.MonkeyPatch) -> None:
