@@ -55,7 +55,7 @@ def test_run_alpha26_market_gold_blocks_watermark_when_compute_fails(monkeypatch
         failed,
         watermarks_dirty,
         _alpha26_symbols,
-        _index_path,
+        index_path,
         bucket_results,
     ) = gold._run_alpha26_market_gold(
         silver_container="silver",
@@ -67,7 +67,8 @@ def test_run_alpha26_market_gold_blocks_watermark_when_compute_fails(monkeypatch
     assert failed == 1
     assert watermarks_dirty is False
     assert watermarks == {}
-    assert captured_index["symbol_to_bucket"] == {"OLD": "A"}
+    assert index_path is None
+    assert captured_index == {}
     assert len(bucket_results) == 1
     assert bucket_results[0].status == "failed_compute"
     assert bucket_results[0].watermark_updated is False
@@ -133,7 +134,7 @@ def test_run_alpha26_market_gold_updates_only_successful_bucket_watermarks(monke
         failed,
         watermarks_dirty,
         _alpha26_symbols,
-        _index_path,
+        index_path,
         bucket_results,
     ) = gold._run_alpha26_market_gold(
         silver_container="silver",
@@ -144,11 +145,11 @@ def test_run_alpha26_market_gold_updates_only_successful_bucket_watermarks(monke
 
     assert processed == 1
     assert failed == 1
-    assert watermarks_dirty is True
+    assert watermarks_dirty is False
+    assert index_path is None
     assert set(written_paths) == {"market/buckets/A"}
-    assert set(watermarks.keys()) == {"bucket::A"}
-    assert watermarks["bucket::A"]["silver_last_commit"] == 100.0
-    assert captured_index["symbol_to_bucket"] == {"AAPL": "A", "MSFT": "B"}
+    assert watermarks == {}
+    assert captured_index == {}
     assert sorted(result.status for result in bucket_results) == ["failed_compute", "ok"]
 
 
@@ -329,7 +330,7 @@ def test_run_alpha26_market_gold_blocks_watermark_when_postgres_sync_fails(monke
         failed,
         watermarks_dirty,
         _alpha26_symbols,
-        _index_path,
+        index_path,
         bucket_results,
     ) = gold._run_alpha26_market_gold(
         silver_container="silver",
@@ -341,6 +342,7 @@ def test_run_alpha26_market_gold_blocks_watermark_when_postgres_sync_fails(monke
     assert processed == 0
     assert failed == 1
     assert watermarks_dirty is False
+    assert index_path is None
     assert watermarks["bucket::A"]["silver_last_commit"] == 90.0
     assert written_paths == ["market/buckets/A"]
     assert bucket_results[0].status == "failed_write"

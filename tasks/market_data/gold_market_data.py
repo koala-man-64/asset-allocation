@@ -31,6 +31,7 @@ from tasks.technical_analysis.technical_indicators import (
 )
 from tasks.common.silver_contracts import normalize_columns_to_snake_case
 from tasks.common.delta_write_policy import prepare_delta_write_frame
+from tasks.common.gold_output_contracts import project_gold_output_frame
 from tasks.common.market_reconciliation import (
     collect_delta_market_symbols,
     enforce_backfill_cutoff_on_bucket_tables,
@@ -305,7 +306,7 @@ def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict
         }
 
     # Persist canonical snake_case names in the gold layer.
-    df_features = normalize_columns_to_snake_case(df_features)
+    df_features = project_gold_output_frame(df_features, domain="market")
 
     # Overwrite to keep output fully derived from current source inputs.
     try:
@@ -700,9 +701,9 @@ def _run_alpha26_market_gold(
             # Consolidate symbol outputs into one bucket table.
             if symbol_frames:
                 df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)
-                df_gold_bucket = normalize_columns_to_snake_case(df_gold_bucket)
+                df_gold_bucket = project_gold_output_frame(df_gold_bucket, domain="market")
             else:
-                df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+                df_gold_bucket = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="market")
 
         write_decision = prepare_delta_write_frame(
             df_gold_bucket.reset_index(drop=True),
@@ -826,38 +827,51 @@ def _run_alpha26_market_gold(
                 )
             )
 
-    # Write symbol index so consumers can resolve symbols to bucket locations.
     index_path: Optional[str] = None
-    try:
-        index_path = layer_bucketing.write_layer_symbol_index(
-            layer="gold",
-            domain="market",
-            symbol_to_bucket=symbol_to_bucket,
-        )
-    except Exception as exc:
-        failed += 1
-        mdc.write_error(f"Gold market symbol index write failed: {exc}")
-
-    if index_path is not None:
+    publication_reason: Optional[str] = None
+    if failed > 0:
+        publication_reason = "failed_buckets"
+    else:
         try:
-            domain_artifacts.write_domain_artifact(
+            index_path = layer_bucketing.write_layer_symbol_index(
                 layer="gold",
                 domain="market",
-                date_column="date",
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="gold-market-job",
+                symbol_to_bucket=symbol_to_bucket,
             )
         except Exception as exc:
-            mdc.write_warning(f"Gold market metadata artifact write failed: {exc}")
-        if pending_watermark_updates:
-            watermarks.update(pending_watermark_updates)
-            watermarks_dirty = True
+            failed += 1
+            publication_reason = "index_write_failed"
+            mdc.write_error(f"Gold market symbol index write failed: {exc}")
+
+        if index_path is not None:
+            try:
+                domain_artifacts.write_domain_artifact(
+                    layer="gold",
+                    domain="market",
+                    date_column="date",
+                    symbol_count_override=len(symbol_to_bucket),
+                    symbol_index_path=index_path,
+                    job_name="gold-market-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold market metadata artifact write failed: {exc}")
+            if pending_watermark_updates:
+                watermarks.update(pending_watermark_updates)
+                watermarks_dirty = True
+        elif publication_reason is None:
+            publication_reason = "index_unavailable"
+
+    if publication_reason is None:
+        mdc.write_line(
+            "artifact_publication_status "
+            f"layer=gold domain=market status=published buckets_ok={processed}"
+        )
     else:
-        if pending_watermark_updates:
-            mdc.write_warning(
-                "Gold market symbol index unavailable; skipping watermark updates to keep index/watermark state consistent."
-            )
+        mdc.write_line(
+            "artifact_publication_status "
+            f"layer=gold domain=market status=blocked reason={publication_reason} "
+            f"failed={failed} processed={processed}"
+        )
 
     return (
         processed,

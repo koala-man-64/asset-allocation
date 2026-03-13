@@ -68,6 +68,26 @@ def _sanitize_df_for_delta_write(df: pd.DataFrame) -> tuple[pd.DataFrame, Dict[s
     }
 
 
+def _log_all_null_column_profiles(df: pd.DataFrame, *, path: str) -> None:
+    if df is None or df.empty:
+        return
+
+    all_null_columns = [
+        f"{column}(dtype={df[column].dtype})"
+        for column in df.columns
+        if df[column].isna().all()
+    ]
+    if not all_null_columns:
+        return
+
+    logger.warning(
+        "Pre-write Delta all-null columns for %s: rows=%d columns=%s",
+        path,
+        int(len(df)),
+        all_null_columns,
+    )
+
+
 def _split_artifact_and_non_artifact_columns(columns: List[str]) -> tuple[List[str], List[str]]:
     artifact_columns: List[str] = []
     non_artifact_columns: List[str] = []
@@ -562,6 +582,7 @@ def store_delta(
             index_was_reset,
             dropped_artifact_columns,
         )
+        _log_all_null_column_profiles(df_to_write, path=path)
 
         write_deltalake(
             uri,

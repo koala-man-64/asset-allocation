@@ -135,6 +135,28 @@ def test_store_delta_logs_prewrite_column_comparison_warning(monkeypatch, tmp_pa
     assert any(record.levelno == logging.WARNING for record in matching)
 
 
+def test_store_delta_logs_all_null_column_profiles(monkeypatch, tmp_path, caplog):
+    _patch_delta_core_for_unit(monkeypatch, tmp_path)
+    monkeypatch.setattr(delta_core, "write_deltalake", lambda *_args, **_kwargs: None)
+
+    logger_name = delta_core.logger.name
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        delta_core.store_delta(
+            pd.DataFrame(
+                {
+                    "a": [1.0],
+                    "all_null_text": pd.Series([pd.NA], dtype="string"),
+                }
+            ),
+            container="container",
+            path="gold/test",
+            mode="overwrite",
+        )
+
+    assert "Pre-write Delta all-null columns for gold/test" in caplog.text
+    assert "all_null_text(dtype=string)" in caplog.text
+
+
 def test_store_delta_incompatible_rename_preserves_existing_table_schema(monkeypatch, tmp_path):
     table_dir = tmp_path / "price_targets_gold"
     monkeypatch.setattr(delta_core, "_ensure_container_exists", lambda _container: None)

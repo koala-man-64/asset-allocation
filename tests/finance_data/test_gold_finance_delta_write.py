@@ -302,7 +302,12 @@ def test_run_alpha26_finance_gold_projects_optional_valuation_metrics(monkeypatc
 
 def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(monkeypatch):
     monkeypatch.setattr(gold_finance_data.layer_bucketing, "ALPHABET_BUCKETS", ("A",))
-    monkeypatch.setattr(gold_finance_data.layer_bucketing, "write_layer_symbol_index", lambda **_kwargs: "index")
+    index_calls = {"count": 0}
+    monkeypatch.setattr(
+        gold_finance_data.layer_bucketing,
+        "write_layer_symbol_index",
+        lambda **_kwargs: index_calls.__setitem__("count", int(index_calls["count"]) + 1) or "index",
+    )
     monkeypatch.setattr(
         delta_core,
         "get_delta_last_commit",
@@ -349,7 +354,12 @@ def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(m
             return balance_df
         if "cash_flow" in path:
             return cashflow_df
-        return pd.DataFrame()
+        return pd.DataFrame(
+            {
+                "date": pd.Series(dtype="datetime64[ns]"),
+                "symbol": pd.Series(dtype="string"),
+            }
+        )
 
     monkeypatch.setattr(delta_core, "load_delta", _fake_load_delta)
     compute_calls = {"count": 0}
@@ -381,5 +391,6 @@ def test_run_alpha26_finance_gold_preflight_blocks_nonrecoverable_schema_drift(m
     assert failed == 1
     assert watermarks_dirty is False
     assert alpha26_symbols == 0
-    assert index_path == "index"
+    assert index_path is None
     assert compute_calls["count"] == 0
+    assert index_calls["count"] == 0

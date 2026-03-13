@@ -7,7 +7,7 @@ from typing import Sequence, Tuple, Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
 from tasks.common.delta_write_policy import prepare_delta_write_frame
-from tasks.common.silver_contracts import normalize_columns_to_snake_case
+from tasks.common.gold_output_contracts import project_gold_output_frame
 
 from tasks.common.watermarks import load_watermarks, save_watermarks
 from tasks.common.backfill import apply_backfill_start_cutoff, get_backfill_range
@@ -33,6 +33,14 @@ class FeatureJobConfig:
     gold_container: str
     max_workers: int
     tickers: Sequence[str]
+
+
+@dataclass(frozen=True)
+class BucketExecutionResult:
+    bucket: str
+    status: str
+    symbols_written: int
+    watermark_updated: bool
 
 
 def _load_existing_gold_earnings_symbol_to_bucket_map() -> dict[str, str]:
@@ -442,7 +450,7 @@ def _process_ticker(task: Tuple[str, str, str, str, str, Optional[str]]) -> Dict
             "purged_blobs": deleted,
         }
 
-    df_features = normalize_columns_to_snake_case(df_features)
+    df_features = project_gold_output_frame(df_features, domain="earnings")
 
     try:
         delta_core.store_delta(df_features, gold_container, gold_path, mode="overwrite")
@@ -611,6 +619,7 @@ def _run_alpha26_earnings_gold(
     postgres_dsn = resolve_postgres_dsn()
     sync_state = load_domain_sync_state(postgres_dsn, domain="earnings") if postgres_dsn else {}
     pending_watermark_updates: dict[str, dict[str, Any]] = {}
+    bucket_results: list[BucketExecutionResult] = []
 
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         silver_path = DataPaths.get_silver_earnings_bucket_path(bucket)
@@ -632,16 +641,25 @@ def _run_alpha26_earnings_gold(
             and postgres_sync_current
         ):
             skipped_unchanged += 1
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="skipped_unchanged",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
+            )
             continue
 
         prior_bucket_symbols = sorted(
             symbol for symbol, current_bucket in symbol_to_bucket.items() if current_bucket == bucket
         )
         bucket_symbol_to_bucket: dict[str, str] = {}
+        bucket_symbol_failures = 0
         scheduled_rows_retained = 0
         if silver_commit is None:
             skipped_missing_source += 1
-            df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+            df_gold_bucket = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="earnings")
         else:
             df_silver_bucket = delta_core.load_delta(silver_container, silver_path)
             if (
@@ -672,12 +690,15 @@ def _run_alpha26_earnings_gold(
                         bucket_symbol_to_bucket[ticker] = bucket
                     except Exception as exc:
                         failed += 1
+                        bucket_symbol_failures += 1
                         mdc.write_warning(f"Gold earnings alpha26 compute failed for {ticker}: {exc}")
             if symbol_frames:
-                df_gold_bucket = pd.concat(symbol_frames, ignore_index=True)
-                df_gold_bucket = normalize_columns_to_snake_case(df_gold_bucket)
+                df_gold_bucket = project_gold_output_frame(
+                    pd.concat(symbol_frames, ignore_index=True),
+                    domain="earnings",
+                )
             else:
-                df_gold_bucket = pd.DataFrame(columns=["date", "symbol"])
+                df_gold_bucket = project_gold_output_frame(pd.DataFrame(columns=["date", "symbol"]), domain="earnings")
 
         future_date_range_max = None
         symbols_with_upcoming_earnings = 0
@@ -719,6 +740,22 @@ def _run_alpha26_earnings_gold(
         if write_decision.action == "skip_empty_no_schema":
             mdc.write_line(
                 f"Skipping Gold earnings empty bucket write for {gold_path}: no existing Delta schema."
+            )
+            mdc.write_line(
+                f"layer_handoff_status transition=silver_to_gold status=skipped bucket={bucket} "
+                "reason=empty_bucket_no_existing_schema symbols_in=0 symbols_out=0 failures=0"
+            )
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=earnings bucket={bucket} "
+                "status=blocked reason=empty_bucket_no_existing_schema"
+            )
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="skipped_empty_no_schema",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
             )
             continue
         try:
@@ -765,40 +802,109 @@ def _run_alpha26_earnings_gold(
                 touched_bucket=bucket,
                 touched_symbol_to_bucket=bucket_symbol_to_bucket,
             )
+            watermark_updated = False
             if silver_commit is not None:
                 pending_watermark_updates[watermark_key] = {
                     "silver_last_commit": silver_commit,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
+                watermark_updated = True
+                mdc.write_line(
+                    f"watermark_update_status layer=gold domain=earnings bucket={bucket} status=updated reason=success"
+                )
+            else:
+                mdc.write_line(
+                    f"watermark_update_status layer=gold domain=earnings bucket={bucket} "
+                    "status=blocked reason=missing_source_commit"
+                )
+            symbols_written = len(bucket_symbol_to_bucket)
+            mdc.write_line(
+                f"layer_handoff_status transition=silver_to_gold status=ok bucket={bucket} "
+                f"symbols_in={symbols_written + bucket_symbol_failures} "
+                f"symbols_out={symbols_written} failures={bucket_symbol_failures}"
+            )
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="ok" if bucket_symbol_failures == 0 else "ok_with_failures",
+                    symbols_written=symbols_written,
+                    watermark_updated=watermark_updated,
+                )
+            )
         except Exception as exc:
             failed += 1
             mdc.write_error(f"Gold earnings alpha26 write failed bucket={bucket}: {exc}")
+            mdc.write_line(
+                f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
+                f"reason=write_failure symbols_in={len(bucket_symbol_to_bucket)} symbols_out=0 "
+                f"failures={bucket_symbol_failures + 1}"
+            )
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=earnings bucket={bucket} "
+                "status=blocked reason=write_failure"
+            )
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="failed_write",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
+            )
 
-    index_path = layer_bucketing.write_layer_symbol_index(
-        layer="gold",
-        domain="earnings",
-        symbol_to_bucket=symbol_to_bucket,
+    status_counts: dict[str, int] = {}
+    for result in bucket_results:
+        status_counts[result.status] = int(status_counts.get(result.status, 0)) + 1
+    mdc.write_line(
+        "layer_handoff_status transition=silver_to_gold status=complete "
+        f"bucket_statuses={status_counts} failed={failed}"
     )
-    if index_path:
+
+    index_path: Optional[str] = None
+    publication_reason: Optional[str] = None
+    if failed > 0:
+        publication_reason = "failed_buckets"
+    else:
         try:
-            domain_artifacts.write_domain_artifact(
+            index_path = layer_bucketing.write_layer_symbol_index(
                 layer="gold",
                 domain="earnings",
-                date_column="date",
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="gold-earnings-job",
+                symbol_to_bucket=symbol_to_bucket,
             )
         except Exception as exc:
-            mdc.write_warning(f"Gold earnings metadata artifact write failed: {exc}")
-        if pending_watermark_updates:
-            watermarks.update(pending_watermark_updates)
-            watermarks_dirty = True
+            failed += 1
+            publication_reason = "index_write_failed"
+            mdc.write_error(f"Gold earnings symbol index write failed: {exc}")
+
+        if index_path:
+            try:
+                domain_artifacts.write_domain_artifact(
+                    layer="gold",
+                    domain="earnings",
+                    date_column="date",
+                    symbol_count_override=len(symbol_to_bucket),
+                    symbol_index_path=index_path,
+                    job_name="gold-earnings-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold earnings metadata artifact write failed: {exc}")
+            if pending_watermark_updates:
+                watermarks.update(pending_watermark_updates)
+                watermarks_dirty = True
+        elif publication_reason is None:
+            publication_reason = "index_unavailable"
+
+    if publication_reason is None:
+        mdc.write_line(
+            "artifact_publication_status "
+            f"layer=gold domain=earnings status=published buckets_ok={processed}"
+        )
     else:
-        if pending_watermark_updates:
-            mdc.write_warning(
-                "Gold earnings symbol index unavailable; skipping watermark updates to keep index/watermark state consistent."
-            )
+        mdc.write_line(
+            "artifact_publication_status "
+            f"layer=gold domain=earnings status=blocked reason={publication_reason} "
+            f"failed={failed} processed={processed}"
+        )
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 

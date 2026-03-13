@@ -34,6 +34,14 @@ class FeatureJobConfig:
     gold_container: str
 
 
+@dataclass(frozen=True)
+class BucketExecutionResult:
+    bucket: str
+    status: str
+    symbols_written: int
+    watermark_updated: bool
+
+
 _NUMBER_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)\s*([kKmMbBtT])?\s*$")
 _FREE_CASH_FLOW_DERIVATION_LABEL = (
     "free_cash_flow missing in source; derivable via operating_cash_flow - abs(capital_expenditures)"
@@ -854,6 +862,7 @@ def _run_alpha26_finance_gold(
     postgres_dsn = resolve_postgres_dsn()
     sync_state = load_domain_sync_state(postgres_dsn, domain="finance") if postgres_dsn else {}
     pending_watermark_updates: dict[str, dict[str, Any]] = {}
+    bucket_results: list[BucketExecutionResult] = []
 
     for bucket in layer_bucketing.ALPHABET_BUCKETS:
         from core.pipeline import DataPaths
@@ -882,6 +891,14 @@ def _run_alpha26_finance_gold(
         )
         if skip_due_watermark and gold_commit is not None and postgres_sync_current:
             skipped_unchanged += 1
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="skipped_unchanged",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
+            )
             continue
 
         prior_bucket_symbols = sorted(
@@ -889,6 +906,7 @@ def _run_alpha26_finance_gold(
         )
         df_gold_bucket: Optional[pd.DataFrame] = None
         bucket_symbol_to_bucket: dict[str, str] = {}
+        bucket_symbol_failures = 0
         template_schema_available = False
 
         if df_gold_bucket is None and silver_commit is None:
@@ -941,6 +959,7 @@ def _run_alpha26_finance_gold(
                     )
                 except Exception as exc:
                     failed += 1
+                    bucket_symbol_failures += 1
                     mdc.write_warning(f"Gold finance alpha26 source failed for {ticker}: {exc}")
                     continue
 
@@ -965,6 +984,7 @@ def _run_alpha26_finance_gold(
                 preflight = _preflight_feature_schema(merged)
                 if preflight["missing_requirements"]:
                     failed += 1
+                    bucket_symbol_failures += 1
                     mdc.write_warning(
                         "Gold finance alpha26 schema preflight failed for "
                         f"{ticker}: missing={preflight['missing_requirements']} "
@@ -990,6 +1010,7 @@ def _run_alpha26_finance_gold(
                     bucket_symbol_to_bucket[ticker] = bucket
                 except Exception as exc:
                     failed += 1
+                    bucket_symbol_failures += 1
                     mdc.write_warning(f"Gold finance alpha26 compute failed for {ticker}: {exc}")
 
             if recoverable_schema_drift > 0:
@@ -1029,6 +1050,22 @@ def _run_alpha26_finance_gold(
         if write_decision.action == "skip_empty_no_schema":
             mdc.write_line(
                 f"Skipping Gold finance empty bucket write for {gold_path}: no existing Delta schema."
+            )
+            mdc.write_line(
+                f"layer_handoff_status transition=silver_to_gold status=skipped bucket={bucket} "
+                "reason=empty_bucket_no_existing_schema symbols_in=0 symbols_out=0 failures=0"
+            )
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=finance bucket={bucket} "
+                "status=blocked reason=empty_bucket_no_existing_schema"
+            )
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="skipped_empty_no_schema",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
             )
             continue
         try:
@@ -1079,6 +1116,23 @@ def _run_alpha26_finance_gold(
             bucket_failed = True
             failed += 1
             mdc.write_error(f"Gold finance alpha26 write failed bucket={bucket} path={gold_path}: {exc}")
+            mdc.write_line(
+                f"layer_handoff_status transition=silver_to_gold status=failed bucket={bucket} "
+                f"reason=write_failure symbols_in={len(bucket_symbol_to_bucket)} symbols_out=0 "
+                f"failures={bucket_symbol_failures + 1}"
+            )
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=finance bucket={bucket} "
+                "status=blocked reason=write_failure"
+            )
+            bucket_results.append(
+                BucketExecutionResult(
+                    bucket=bucket,
+                    status="failed_write",
+                    symbols_written=0,
+                    watermark_updated=False,
+                )
+            )
 
         if bucket_failed or writes_completed <= 0:
             continue
@@ -1089,37 +1143,89 @@ def _run_alpha26_finance_gold(
             touched_bucket=bucket,
             touched_symbol_to_bucket=bucket_symbol_to_bucket,
         )
+        watermark_updated = False
         if silver_commit is not None:
             pending_watermark_updates[watermark_key] = {
                 "silver_last_commit": silver_commit,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+            watermark_updated = True
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=finance bucket={bucket} status=updated reason=success"
+            )
+        else:
+            mdc.write_line(
+                f"watermark_update_status layer=gold domain=finance bucket={bucket} "
+                "status=blocked reason=missing_source_commit"
+            )
+        symbols_written = len(bucket_symbol_to_bucket)
+        mdc.write_line(
+            f"layer_handoff_status transition=silver_to_gold status=ok bucket={bucket} "
+            f"symbols_in={symbols_written + bucket_symbol_failures} "
+            f"symbols_out={symbols_written} failures={bucket_symbol_failures}"
+        )
+        bucket_results.append(
+            BucketExecutionResult(
+                bucket=bucket,
+                status="ok" if bucket_symbol_failures == 0 else "ok_with_failures",
+                symbols_written=symbols_written,
+                watermark_updated=watermark_updated,
+            )
+        )
 
-    index_path = layer_bucketing.write_layer_symbol_index(
-        layer="gold",
-        domain="finance",
-        symbol_to_bucket=symbol_to_bucket,
+    status_counts: dict[str, int] = {}
+    for result in bucket_results:
+        status_counts[result.status] = int(status_counts.get(result.status, 0)) + 1
+    mdc.write_line(
+        "layer_handoff_status transition=silver_to_gold status=complete "
+        f"bucket_statuses={status_counts} failed={failed}"
     )
-    if index_path:
+
+    index_path: Optional[str] = None
+    publication_reason: Optional[str] = None
+    if failed > 0:
+        publication_reason = "failed_buckets"
+    else:
         try:
-            domain_artifacts.write_domain_artifact(
+            index_path = layer_bucketing.write_layer_symbol_index(
                 layer="gold",
                 domain="finance",
-                date_column="date",
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="gold-finance-job",
+                symbol_to_bucket=symbol_to_bucket,
             )
         except Exception as exc:
-            mdc.write_warning(f"Gold finance metadata artifact write failed: {exc}")
-        if pending_watermark_updates:
-            watermarks.update(pending_watermark_updates)
-            watermarks_dirty = True
+            failed += 1
+            publication_reason = "index_write_failed"
+            mdc.write_error(f"Gold finance symbol index write failed: {exc}")
+
+        if index_path:
+            try:
+                domain_artifacts.write_domain_artifact(
+                    layer="gold",
+                    domain="finance",
+                    date_column="date",
+                    symbol_count_override=len(symbol_to_bucket),
+                    symbol_index_path=index_path,
+                    job_name="gold-finance-job",
+                )
+            except Exception as exc:
+                mdc.write_warning(f"Gold finance metadata artifact write failed: {exc}")
+            if pending_watermark_updates:
+                watermarks.update(pending_watermark_updates)
+                watermarks_dirty = True
+        elif publication_reason is None:
+            publication_reason = "index_unavailable"
+
+    if publication_reason is None:
+        mdc.write_line(
+            "artifact_publication_status "
+            f"layer=gold domain=finance status=published buckets_ok={processed}"
+        )
     else:
-        if pending_watermark_updates:
-            mdc.write_warning(
-                "Gold finance symbol index unavailable; skipping watermark updates to keep index/watermark state consistent."
-            )
+        mdc.write_line(
+            "artifact_publication_status "
+            f"layer=gold domain=finance status=blocked reason={publication_reason} "
+            f"failed={failed} processed={processed}"
+        )
     return processed, skipped_unchanged, skipped_missing_source, failed, watermarks_dirty, len(symbol_to_bucket), index_path
 
 
