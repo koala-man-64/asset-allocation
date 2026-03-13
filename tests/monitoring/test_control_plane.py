@@ -119,3 +119,36 @@ def test_collect_jobs_and_executions_preserves_warning_status_codes() -> None:
     assert runs[0]["status"] == "warning"
     assert runs[0]["statusCode"] == "SucceededWithWarnings"
 
+
+def test_collect_jobs_and_executions_treats_running_with_end_time_as_completed() -> None:
+    arm = FakeArmClient(
+        responses={
+            "https://example.test/Microsoft.App/jobs/bronze-earnings-job": {
+                "properties": {"provisioningState": "Succeeded"}
+            },
+            "https://example.test/Microsoft.App/jobs/bronze-earnings-job/executions": {
+                "value": [
+                    {
+                        "properties": {
+                            "status": "Running",
+                            "startTime": "2024-01-05T00:00:00Z",
+                            "endTime": "2024-01-05T00:01:00Z",
+                        }
+                    }
+                ]
+            },
+        }
+    )
+
+    _, runs = collect_jobs_and_executions(
+        arm,
+        job_names=["bronze-earnings-job"],
+        last_checked_iso="2024-01-10T00:00:00+00:00",
+        include_ids=False,
+        max_executions_per_job=1,
+    )
+
+    assert len(runs) == 1
+    assert runs[0]["status"] == "success"
+    assert runs[0]["statusCode"] == "Running"
+

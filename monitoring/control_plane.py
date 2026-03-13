@@ -30,14 +30,19 @@ def _duration_seconds(start: Optional[datetime], end: Optional[datetime]) -> Opt
     return seconds if seconds >= 0 else None
 
 
-def _map_job_execution_status(raw: str) -> str:
+def _map_job_execution_status(raw: str, *, end_time: Optional[str] = None) -> str:
     status = (raw or "").strip().lower()
+    has_end_time = bool((end_time or "").strip())
     if status in {"succeeded", "success", "completed", "complete"}:
         return "success"
     if status in {"succeededwithwarnings", "completedwithwarnings", "warning"}:
         return "warning"
     if status in {"failed", "error", "failure", "terminated", "terminatedwitherror"}:
         return "failed"
+    if has_end_time and status in {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}:
+        # Azure job executions can surface a terminal endTime while leaving status as Running in the ARM response.
+        # Treat the execution as completed so dashboards do not report a finished job as still active.
+        return "success"
     if status in {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}:
         return "running"
     if status in {"stopped", "canceled", "cancelled", "canceling", "cancellationrequested"}:
@@ -283,7 +288,7 @@ def collect_jobs_and_executions(
                     {
                         "jobName": name,
                         "jobType": _job_type_from_name(name),
-                        "status": _map_job_execution_status(raw_status),
+                        "status": _map_job_execution_status(raw_status, end_time=end_time),
                         "statusCode": raw_status or None,
                         "executionName": str(item.get("name") or "") or None,
                         "executionId": str(item.get("id") or "") or None,

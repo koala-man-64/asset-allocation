@@ -28,6 +28,15 @@ def test_normalize_env_override_alpha_vantage_throttle_cooldown_float():
     assert normalize_env_override("ALPHA_VANTAGE_THROTTLE_COOLDOWN_SECONDS", "60.5") == "60.5"
 
 
+def test_normalize_env_override_alpha_vantage_gateway_retry_attempts_int():
+    assert normalize_env_override("ALPHA_VANTAGE_GATEWAY_RETRY_ATTEMPTS", "3") == "3"
+
+
+def test_normalize_env_override_alpha_vantage_gateway_retry_backoff_float():
+    assert normalize_env_override("ALPHA_VANTAGE_GATEWAY_RETRY_BASE_SECONDS", "120.5") == "120.5"
+    assert normalize_env_override("ALPHA_VANTAGE_GATEWAY_RETRY_MAX_SECONDS", "300.5") == "300.5"
+
+
 def test_normalize_env_override_required_nonempty_rejects_blank():
     try:
         normalize_env_override("SYSTEM_HEALTH_TTL_SECONDS", "")

@@ -20,8 +20,12 @@ _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS = 5.0
 _DEFAULT_API_READINESS_ENABLED = True
 _DEFAULT_API_READINESS_MAX_ATTEMPTS = 6
 _DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
+_DEFAULT_REQUEST_RETRY_ATTEMPTS = 3
+_DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS = 120.0
+_DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS = 300.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+_RETRYABLE_REQUEST_STATUS_CODES = {504}
 
 
 class AlphaVantageGatewayError(RuntimeError):
@@ -108,6 +112,9 @@ class AlphaVantageGatewayClientConfig:
     readiness_enabled: bool = _DEFAULT_API_READINESS_ENABLED
     readiness_max_attempts: int = _DEFAULT_API_READINESS_MAX_ATTEMPTS
     readiness_sleep_seconds: float = _DEFAULT_API_READINESS_SLEEP_SECONDS
+    request_retry_attempts: int = _DEFAULT_REQUEST_RETRY_ATTEMPTS
+    request_retry_base_delay_seconds: float = _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS
+    request_retry_max_delay_seconds: float = _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS
 
 
 class AlphaVantageGatewayClient:
@@ -183,6 +190,18 @@ class AlphaVantageGatewayClient:
             0.0,
             _env_float("ASSET_ALLOCATION_API_READINESS_SLEEP_SECONDS", _DEFAULT_API_READINESS_SLEEP_SECONDS),
         )
+        request_retry_attempts = max(
+            1,
+            _env_int("ALPHA_VANTAGE_GATEWAY_RETRY_ATTEMPTS", _DEFAULT_REQUEST_RETRY_ATTEMPTS),
+        )
+        request_retry_base_delay_seconds = max(
+            0.0,
+            _env_float("ALPHA_VANTAGE_GATEWAY_RETRY_BASE_SECONDS", _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS),
+        )
+        request_retry_max_delay_seconds = max(
+            request_retry_base_delay_seconds,
+            _env_float("ALPHA_VANTAGE_GATEWAY_RETRY_MAX_SECONDS", _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS),
+        )
 
         return AlphaVantageGatewayClient(
             AlphaVantageGatewayClientConfig(
@@ -198,6 +217,9 @@ class AlphaVantageGatewayClient:
                 readiness_enabled=readiness_enabled,
                 readiness_max_attempts=readiness_max_attempts,
                 readiness_sleep_seconds=readiness_sleep_seconds,
+                request_retry_attempts=request_retry_attempts,
+                request_retry_base_delay_seconds=request_retry_base_delay_seconds,
+                request_retry_max_delay_seconds=request_retry_max_delay_seconds,
             )
         )
 
@@ -385,52 +407,100 @@ class AlphaVantageGatewayClient:
             self._readiness_succeeded = ready
             return ready
 
+    def _reset_gateway_state(self) -> None:
+        with self._warmup_lock:
+            self._warmup_attempted = False
+            self._warmup_succeeded = not self.config.warmup_enabled
+        with self._readiness_lock:
+            self._readiness_attempted = False
+            self._readiness_succeeded = not self.config.readiness_enabled
+
+    def _retry_request_delay(self, delay_seconds: float) -> float:
+        current = max(0.0, float(delay_seconds))
+        if current <= 0.0:
+            return 0.0
+        return min(float(self.config.request_retry_max_delay_seconds), max(current * 2.0, 1.0))
+
     def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> httpx.Response:
-        if not self._ensure_gateway_ready():
-            raise AlphaVantageGatewayUnavailableError(
-                "API gateway readiness check failed.",
-                status_code=503,
-                detail="Gateway health probe did not become ready.",
-                payload={"path": path, "probe_path": _API_WARMUP_PROBE_PATH},
-            )
         url = f"{self.config.base_url}{path}"
-        try:
-            resp = self._http.get(url, params=params or {}, headers=self._build_headers())
-        except httpx.TimeoutException as exc:
-            raise AlphaVantageGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
-        except Exception as exc:
+        attempts = max(1, int(self.config.request_retry_attempts))
+        delay_seconds = max(0.0, float(self.config.request_retry_base_delay_seconds))
+
+        for attempt in range(1, attempts + 1):
+            if not self._ensure_gateway_ready():
+                raise AlphaVantageGatewayUnavailableError(
+                    "API gateway readiness check failed.",
+                    status_code=503,
+                    detail="Gateway health probe did not become ready.",
+                    payload={"path": path, "probe_path": _API_WARMUP_PROBE_PATH},
+                )
+            try:
+                resp = self._http.get(url, params=params or {}, headers=self._build_headers())
+            except httpx.TimeoutException as exc:
+                if attempt < attempts:
+                    logger.warning(
+                        "Alpha Vantage gateway request timed out (path=%s, attempt=%s/%s, sleep=%.1fs).",
+                        path,
+                        attempt,
+                        attempts,
+                        delay_seconds,
+                    )
+                    if delay_seconds > 0.0:
+                        time.sleep(delay_seconds)
+                    delay_seconds = self._retry_request_delay(delay_seconds)
+                    self._reset_gateway_state()
+                    continue
+                raise AlphaVantageGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
+            except Exception as exc:
+                raise AlphaVantageGatewayError(
+                    f"API gateway call failed: {type(exc).__name__}: {exc}", payload={"path": path}
+                ) from exc
+
+            if resp.status_code < 400:
+                return resp
+
+            detail = self._extract_detail(resp)
+            payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
+            if resp.status_code in _RETRYABLE_REQUEST_STATUS_CODES and attempt < attempts:
+                logger.warning(
+                    "Alpha Vantage gateway request retrying after status=%s (path=%s, attempt=%s/%s, sleep=%.1fs, detail=%s).",
+                    resp.status_code,
+                    path,
+                    attempt,
+                    attempts,
+                    delay_seconds,
+                    detail[:220],
+                )
+                if delay_seconds > 0.0:
+                    time.sleep(delay_seconds)
+                delay_seconds = self._retry_request_delay(delay_seconds)
+                self._reset_gateway_state()
+                continue
+
+            if resp.status_code in {401, 403}:
+                raise AlphaVantageGatewayAuthError(
+                    "API gateway auth failed.", status_code=resp.status_code, detail=detail, payload=payload
+                )
+            if resp.status_code == 404:
+                raise AlphaVantageGatewayInvalidSymbolError(
+                    detail or "Symbol not found.", status_code=resp.status_code, detail=detail, payload=payload
+                )
+            if resp.status_code == 429:
+                raise AlphaVantageGatewayThrottleError(
+                    detail or "Throttled.", status_code=resp.status_code, detail=detail, payload=payload
+                )
+            if resp.status_code == 503:
+                raise AlphaVantageGatewayUnavailableError(
+                    detail or "Gateway unavailable.", status_code=resp.status_code, detail=detail, payload=payload
+                )
             raise AlphaVantageGatewayError(
-                f"API gateway call failed: {type(exc).__name__}: {exc}", payload={"path": path}
-            ) from exc
+                f"API gateway error (status={resp.status_code}).",
+                status_code=resp.status_code,
+                detail=detail,
+                payload=payload,
+            )
 
-        if resp.status_code < 400:
-            return resp
-
-        detail = self._extract_detail(resp)
-        payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
-
-        if resp.status_code in {401, 403}:
-            raise AlphaVantageGatewayAuthError(
-                "API gateway auth failed.", status_code=resp.status_code, detail=detail, payload=payload
-            )
-        if resp.status_code == 404:
-            raise AlphaVantageGatewayInvalidSymbolError(
-                detail or "Symbol not found.", status_code=resp.status_code, detail=detail, payload=payload
-            )
-        if resp.status_code == 429:
-            raise AlphaVantageGatewayThrottleError(
-                detail or "Throttled.", status_code=resp.status_code, detail=detail, payload=payload
-            )
-        if resp.status_code == 503:
-            raise AlphaVantageGatewayUnavailableError(
-                detail or "Gateway unavailable.", status_code=resp.status_code, detail=detail, payload=payload
-            )
-        raise AlphaVantageGatewayError(
-            f"API gateway error (status={resp.status_code}).",
-            status_code=resp.status_code,
-            detail=detail,
-            payload=payload,
-        )
+        raise AlphaVantageGatewayError(f"API gateway retry budget exhausted calling {path}", payload={"path": path})
 
     def get_listing_status_csv(self, *, state: str = "active", date: Optional[str] = None) -> str:
         params: dict[str, Any] = {"state": state}

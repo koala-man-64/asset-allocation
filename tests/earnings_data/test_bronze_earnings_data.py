@@ -670,6 +670,34 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
     asyncio.run(run_test())
 
 
+def test_coerce_datetime_column_skips_numeric_parse_for_iso_dates(monkeypatch):
+    original = bronze.pd.to_datetime
+
+    def guarded_to_datetime(*args, **kwargs):
+        if kwargs.get("unit") == "ms":
+            raise AssertionError("unexpected numeric datetime parse for ISO date strings")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(bronze.pd, "to_datetime", guarded_to_datetime)
+
+    series = pd.Series(["2025-12-31", "2025-09-30", None], dtype="object")
+    parsed = bronze._coerce_datetime_column(series)
+
+    assert parsed.tolist()[:2] == [pd.Timestamp("2025-12-31"), pd.Timestamp("2025-09-30")]
+    assert pd.isna(parsed.iloc[2])
+
+
+def test_coerce_datetime_column_parses_epoch_milliseconds_strings():
+    first_ms = str(int(pd.Timestamp("2025-12-31", tz="UTC").timestamp() * 1000))
+    second_ms = str(int(pd.Timestamp("2025-09-30", tz="UTC").timestamp() * 1000))
+
+    series = pd.Series([first_ms, second_ms, None], dtype="object")
+    parsed = bronze._coerce_datetime_column(series)
+
+    assert parsed.tolist()[:2] == [pd.Timestamp("2025-12-31"), pd.Timestamp("2025-09-30")]
+    assert pd.isna(parsed.iloc[2])
+
+
 def test_thread_local_alpha_vantage_client_manager_reuses_per_thread_and_closes_all():
     created: list[MagicMock] = []
 

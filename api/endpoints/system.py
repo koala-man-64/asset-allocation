@@ -4598,6 +4598,18 @@ RUNTIME_CONFIG_CATALOG: Dict[str, Dict[str, str]] = {
         "description": "Cooldown after Alpha Vantage throttle signals; outbound requests are paused for this duration (minimum 60 seconds).",
         "example": "60",
     },
+    "ALPHA_VANTAGE_GATEWAY_RETRY_ATTEMPTS": {
+        "description": "How many client-side retries Alpha Vantage jobs should attempt after gateway 504/timeouts (integer, includes the initial attempt).",
+        "example": "3",
+    },
+    "ALPHA_VANTAGE_GATEWAY_RETRY_BASE_SECONDS": {
+        "description": "Initial client-side backoff after Alpha Vantage gateway 504/timeouts before retrying (float seconds).",
+        "example": "120",
+    },
+    "ALPHA_VANTAGE_GATEWAY_RETRY_MAX_SECONDS": {
+        "description": "Maximum client-side backoff cap after Alpha Vantage gateway 504/timeouts (float seconds).",
+        "example": "300",
+    },
     "ALPHA_VANTAGE_MAX_WORKERS": {
         "description": "Alpha Vantage concurrency (max worker threads) for ingestion jobs (integer).",
         "example": "32",

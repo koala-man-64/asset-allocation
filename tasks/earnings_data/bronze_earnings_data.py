@@ -244,9 +244,16 @@ def _coerce_datetime_column(series: pd.Series) -> pd.Series:
         parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
         return parsed_default.dt.tz_localize(None)
     numeric = pd.to_numeric(series, errors="coerce")
-    parsed_numeric = pd.to_datetime(numeric, errors="coerce", unit="ms", utc=True)
-    parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
-    return parsed_default.where(numeric.isna(), parsed_numeric).dt.tz_localize(None)
+    numeric_mask = numeric.notna()
+    if numeric_mask.all():
+        return pd.to_datetime(numeric, errors="coerce", unit="ms", utc=True).dt.tz_localize(None)
+    if not numeric_mask.any():
+        parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
+        return parsed_default.dt.tz_localize(None)
+    parsed = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns, UTC]")
+    parsed.loc[~numeric_mask] = pd.to_datetime(series.loc[~numeric_mask], errors="coerce", utc=True)
+    parsed.loc[numeric_mask] = pd.to_datetime(numeric.loc[numeric_mask], errors="coerce", unit="ms", utc=True)
+    return parsed.dt.tz_localize(None)
 
 
 def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, symbol: Optional[str] = None) -> pd.DataFrame:
