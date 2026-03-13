@@ -1306,6 +1306,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from tasks.common.job_entrypoint import run_logged_job
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
@@ -1318,8 +1319,13 @@ if __name__ == "__main__":
     with mdc.JobLock(shared_lock_name, wait_timeout_seconds=shared_wait_timeout):
         with mdc.JobLock(job_name):
             ensure_api_awake_from_env(required=True)
-            exit_code = main()
-            if exit_code == 0:
-                write_system_health_marker(layer="bronze", domain="finance", job_name=job_name)
-                trigger_next_job_from_env()
-            raise SystemExit(exit_code)
+            raise SystemExit(
+                run_logged_job(
+                    job_name=job_name,
+                    run=main,
+                    on_success=(
+                        lambda: write_system_health_marker(layer="bronze", domain="finance", job_name=job_name),
+                        trigger_next_job_from_env,
+                    ),
+                )
+            )

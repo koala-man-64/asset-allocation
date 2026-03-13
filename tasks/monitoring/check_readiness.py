@@ -1,4 +1,3 @@
-import sys
 import logging
 from core import config as cfg
 from core import core as mdc
@@ -78,10 +77,21 @@ def main():
             
     if failed:
         logger.critical(f"Readiness Check FAILED. Failing checks: {', '.join(failed)}")
-        sys.exit(1)
+        return 1
     
     logger.info("All readiness checks PASSED. System is go.")
-    sys.exit(0)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    from tasks.common.job_entrypoint import run_logged_job
+
+    raise SystemExit(
+        run_logged_job(
+            job_name="monitoring-readiness-check",
+            run=main,
+            log_info=logger.info,
+            log_warning=logger.warning,
+            log_error=logger.error,
+            log_exception=logger.exception,
+        )
+    )

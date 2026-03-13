@@ -50,4 +50,15 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from tasks.common.job_entrypoint import run_logged_job
+
+    raise SystemExit(
+        run_logged_job(
+            job_name="backtesting-worker-job",
+            run=main,
+            log_info=logger.info,
+            log_warning=logger.warning,
+            log_error=logger.error,
+            log_exception=logger.exception,
+        )
+    )

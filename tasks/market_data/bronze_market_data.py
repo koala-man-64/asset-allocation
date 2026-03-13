@@ -50,6 +50,8 @@ _BUCKET_COLUMNS = [
     "ingested_at",
     "source_hash",
 ]
+_MARKET_OUTCOME_LOG_SAMPLE_LIMIT = 20
+_MARKET_OUTCOME_LOG_INTERVAL = 250
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -68,6 +70,10 @@ def _should_skip_blacklisted_market_symbol(symbol: object) -> bool:
     if _is_regime_required_market_symbol(normalized):
         return False
     return bool(list_manager.is_blacklisted(normalized))
+
+
+def _should_log_market_outcome(count: int) -> bool:
+    return count <= _MARKET_OUTCOME_LOG_SAMPLE_LIMIT or count % _MARKET_OUTCOME_LOG_INTERVAL == 0
 
 
 def _validate_environment() -> None:
@@ -1264,14 +1270,22 @@ async def main_async() -> int:
                 if debug_mode:
                     mdc.write_line(f"Downloading OHLCV+fundamentals for {symbol}...")
                 await loop.run_in_executor(executor, worker, symbol)
+                should_log = debug_mode
                 async with progress_lock:
                     progress["downloaded"] += 1
+                    downloaded = progress["downloaded"]
+                    should_log = should_log or _should_log_market_outcome(downloaded)
+                if should_log:
+                    mode = "alpha26-bucket" if alpha26_mode else "flat-csv"
+                    mdc.write_line(
+                        f"Bronze market symbol completed: symbol={symbol} mode={mode} downloaded={downloaded}"
+                    )
             except MassiveGatewayNotFoundError as exc:
                 list_manager.add_to_blacklist(symbol)
                 should_log = debug_mode
                 async with progress_lock:
                     progress["blacklisted"] += 1
-                    should_log = should_log or progress["blacklisted"] <= 20
+                    should_log = should_log or _should_log_market_outcome(progress["blacklisted"])
                 if should_log:
                     mdc.write_warning(
                         f"Invalid symbol {symbol}; automatic blacklist updates are disabled for job runs. ({exc})"
@@ -1281,7 +1295,7 @@ async def main_async() -> int:
                 async with progress_lock:
                     progress["failed"] += 1
                     retry_next_run.add(symbol)
-                    should_log = should_log or progress["failed"] <= 20
+                    should_log = should_log or _should_log_market_outcome(progress["failed"])
                 if should_log:
                     note = str(exc)
                     if len(note) > 200:
@@ -1292,7 +1306,7 @@ async def main_async() -> int:
                 async with progress_lock:
                     progress["failed"] += 1
                     retry_next_run.add(symbol)
-                    should_log = should_log or progress["failed"] <= 20
+                    should_log = should_log or _should_log_market_outcome(progress["failed"])
                 if should_log:
                     details = f"status={getattr(exc, 'status_code', 'unknown')} message={exc}"
                     payload = getattr(exc, "payload", None)
@@ -1304,7 +1318,7 @@ async def main_async() -> int:
                 async with progress_lock:
                     progress["failed"] += 1
                     retry_next_run.add(symbol)
-                    should_log = should_log or progress["failed"] <= 20
+                    should_log = should_log or _should_log_market_outcome(progress["failed"])
                 if should_log:
                     mdc.write_error(
                         f"Unexpected error processing {symbol}: {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
@@ -1371,14 +1385,20 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from tasks.common.job_entrypoint import run_logged_job
     from tasks.common.job_trigger import ensure_api_awake_from_env, trigger_next_job_from_env
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-market-job"
     with mdc.JobLock(job_name):
         ensure_api_awake_from_env(required=True)
-        exit_code = main()
-        if exit_code == 0:
-            write_system_health_marker(layer="bronze", domain="market", job_name=job_name)
-            trigger_next_job_from_env()
-        raise SystemExit(exit_code)
+        raise SystemExit(
+            run_logged_job(
+                job_name=job_name,
+                run=main,
+                on_success=(
+                    lambda: write_system_health_marker(layer="bronze", domain="market", job_name=job_name),
+                    trigger_next_job_from_env,
+                ),
+            )
+        )

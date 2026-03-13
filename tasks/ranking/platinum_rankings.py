@@ -12,6 +12,12 @@ from core.strategy_repository import StrategyRepository
 logger = logging.getLogger(__name__)
 
 
+def _configure_job_logging() -> None:
+    os.environ.setdefault("LOG_LEVEL", "INFO")
+    os.environ.setdefault("LOG_FORMAT", "JSON")
+    configure_logging()
+
+
 def _parse_date(value: str | None) -> date | None:
     raw = str(value or "").strip()
     if not raw:
@@ -36,11 +42,8 @@ def _resolve_strategies(dsn: str, explicit_name: str | None) -> list[str]:
     return names
 
 
-def main() -> None:
-    os.environ.setdefault("LOG_LEVEL", "INFO")
-    os.environ.setdefault("LOG_FORMAT", "JSON")
-    configure_logging()
-
+def main() -> int:
+    _configure_job_logging()
     dsn = str(os.environ.get("POSTGRES_DSN") or "").strip()
     if not dsn:
         raise ValueError("POSTGRES_DSN is required for ranking materialization.")
@@ -52,7 +55,7 @@ def main() -> None:
     strategy_names = _resolve_strategies(dsn, strategy_name)
     if not strategy_names:
         logger.info("No ranking-enabled strategies found to materialize.")
-        return
+        return 0
 
     for name in strategy_names:
         result = materialize_strategy_rankings(
@@ -75,7 +78,20 @@ def main() -> None:
                 }
             },
         )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    from tasks.common.job_entrypoint import run_logged_job
+
+    _configure_job_logging()
+    raise SystemExit(
+        run_logged_job(
+            job_name="platinum-rankings-job",
+            run=main,
+            log_info=logger.info,
+            log_warning=logger.warning,
+            log_error=logger.error,
+            log_exception=logger.exception,
+        )
+    )

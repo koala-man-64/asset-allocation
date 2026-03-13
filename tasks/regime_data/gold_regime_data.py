@@ -413,8 +413,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from tasks.common.job_entrypoint import run_logged_job
+
     ensure_api_awake_from_env(required=True)
-    exit_code = main()
-    if exit_code == 0:
-        write_system_health_marker(layer="gold", domain="regime", job_name=JOB_NAME)
-    raise SystemExit(exit_code)
+    raise SystemExit(
+        run_logged_job(
+            job_name=JOB_NAME,
+            run=main,
+            on_success=(lambda: write_system_health_marker(layer="gold", domain="regime", job_name=JOB_NAME),),
+        )
+    )
