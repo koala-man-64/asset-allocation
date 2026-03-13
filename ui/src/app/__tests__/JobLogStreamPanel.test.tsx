@@ -141,6 +141,9 @@ describe('JobLogStreamPanel', () => {
     });
 
     expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'timestamp' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'stream_s' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'message' })).toBeInTheDocument();
     expect(screen.getByText('stdout')).toBeInTheDocument();
     expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:beta-job']]));
 

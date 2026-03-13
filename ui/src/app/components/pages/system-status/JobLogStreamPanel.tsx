@@ -10,6 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/app/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/app/components/ui/table';
 import type { JobLogsResponse } from '@/services/apiService';
 import { DataService } from '@/services/DataService';
 import {
@@ -384,7 +392,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
               {selectedJob ? selectedJob.name : 'No job selected'}
             </span>
           </div>
-          <div className="max-h-80 overflow-auto overflow-x-hidden break-words px-3 py-2 text-xs font-mono leading-relaxed">
+          <div className="max-h-80 overflow-auto overflow-x-auto px-3 py-2 text-xs font-mono leading-relaxed">
             {logState.loading ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -398,30 +406,30 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
               <div className="text-muted-foreground">No log output available.</div>
             ) : null}
             {!logState.loading && !logState.error && logState.lines.length > 0 ? (
-              <div className="space-y-1">
-                {logState.lines.slice(-LOG_LINE_LIMIT).map((line, index) => (
-                  <div
-                    key={`${selectedJobName}-stream-log-${line.id || index}`}
-                    className={`break-words px-2 py-1 text-foreground/90 ${
-                      index % 2 === 0 ? 'bg-muted/30' : 'bg-transparent'
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                      {formatConsoleTimestamp(line.timestamp) ? (
-                        <span>{formatConsoleTimestamp(line.timestamp)}</span>
-                      ) : null}
-                      {line.stream_s ? (
-                        <span className="rounded border border-border/60 px-1 py-0.5 uppercase tracking-wide">
-                          {line.stream_s}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="mt-1 whitespace-pre-wrap break-words text-foreground/90">
-                      {line.message}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <Table className="min-w-full text-xs">
+                <TableHeader>
+                  <TableRow className="hover:[&>td]:bg-transparent">
+                    <TableHead>timestamp</TableHead>
+                    <TableHead>stream_s</TableHead>
+                    <TableHead className="min-w-[28rem]">message</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logState.lines.slice(-LOG_LINE_LIMIT).map((line, index) => (
+                    <TableRow key={`${selectedJobName}-stream-log-${line.id || index}`}>
+                      <TableCell className="align-top text-[11px] text-muted-foreground">
+                        {formatConsoleTimestamp(line.timestamp) || '-'}
+                      </TableCell>
+                      <TableCell className="align-top uppercase tracking-wide">
+                        {line.stream_s || '-'}
+                      </TableCell>
+                      <TableCell className="min-w-[28rem] whitespace-pre-wrap break-words align-top text-foreground/90">
+                        {line.message}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             ) : null}
           </div>
         </div>
