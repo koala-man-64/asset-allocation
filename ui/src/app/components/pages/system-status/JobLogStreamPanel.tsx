@@ -190,6 +190,8 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     () => sortedJobs.find((job) => job.name === selectedJobName) ?? null,
     [sortedJobs, selectedJobName]
   );
+  const selectedJobStartTime = selectedJob?.startTime ?? null;
+  const selectedJobTopic = selectedJobName ? buildJobLogTopic(selectedJobName) : null;
 
   useEffect(() => {
     if (!sortedJobs.length) {
@@ -213,7 +215,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   }, []);
 
   useEffect(() => {
-    if (!selectedJob) {
+    if (!selectedJobName) {
       setLogState({ lines: [], loading: false, error: null });
       return;
     }
@@ -223,7 +225,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     requestControllerRef.current = controller;
 
     setLogState({ lines: [], loading: true, error: null });
-    DataService.getJobLogs(selectedJob.name, { runs: 1 }, controller.signal)
+    DataService.getJobLogs(selectedJobName, { runs: 1 }, controller.signal)
       .then((response) => {
         setLogState({
           lines: extractJobLogLines(response),
@@ -245,26 +247,24 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     return () => {
       controller.abort();
     };
-  }, [selectedJob]);
+  }, [selectedJobName, selectedJobStartTime]);
 
   useEffect(() => {
-    if (!selectedJob) {
+    if (!selectedJobTopic) {
       return;
     }
 
-    const topic = buildJobLogTopic(selectedJob.name);
-    requestRealtimeSubscription([topic]);
-    return () => requestRealtimeUnsubscription([topic]);
-  }, [selectedJob]);
+    requestRealtimeSubscription([selectedJobTopic]);
+    return () => requestRealtimeUnsubscription([selectedJobTopic]);
+  }, [selectedJobTopic]);
 
   useEffect(() => {
-    if (!selectedJob) {
+    if (!selectedJobTopic) {
       return;
     }
 
-    const topic = buildJobLogTopic(selectedJob.name);
     return addConsoleLogStreamListener((detail) => {
-      if (detail.topic !== topic) {
+      if (detail.topic !== selectedJobTopic) {
         return;
       }
 
@@ -282,7 +282,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
         error: null,
       }));
     });
-  }, [selectedJob]);
+  }, [selectedJobTopic]);
 
   if (!sortedJobs.length) {
     return (

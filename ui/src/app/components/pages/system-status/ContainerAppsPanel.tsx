@@ -152,8 +152,12 @@ export function ContainerAppsPanel() {
     ]);
   };
 
-  const getLogMarker = (app: ContainerAppStatusItem): string | null => {
-    return String(app.health?.checkedAt || app.checkedAt || '').trim() || null;
+  const getLogMarker = (app: ContainerAppStatusItem): string => {
+    const revision = String(app.latestReadyRevisionName || '').trim();
+    const runningState = normalizeState(app.runningState);
+    const provisioningState = normalizeState(app.provisioningState);
+    const marker = [revision, runningState, provisioningState].filter((part) => part.length > 0).join('|');
+    return marker || String(app.name || '').trim();
   };
 
   const fetchAppLogs = (appName: string, marker: string | null) => {
@@ -231,7 +235,7 @@ export function ContainerAppsPanel() {
     if (!current || current.marker !== marker) {
       fetchAppLogs(expandedAppName, marker);
     }
-  }, [apps, expandedAppName, logStateByName]);
+  }, [apps, expandedAppName]);
 
   useEffect(() => {
     if (!expandedAppName) return;

@@ -215,4 +215,71 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByText('SUCCESS')).toBeInTheDocument();
     expect(screen.queryByText('RUNNING')).not.toBeInTheDocument();
   });
+
+  it('keeps streaming without refetching when job metadata refreshes for the same run', async () => {
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          executionName: 'beta-exec-001',
+          startTime: '2026-03-11T12:00:00Z',
+          tail: ['beta snapshot'],
+          consoleLogs: [
+            {
+              timestamp: '2026-03-11T12:00:01Z',
+              stream_s: 'stdout',
+              executionName: 'beta-exec-001',
+              message: 'beta snapshot',
+            },
+          ],
+        },
+      ],
+    });
+
+    const view = renderWithProviders(<JobLogStreamPanel jobs={[JOBS[1]]} />);
+
+    await waitFor(() => {
+      expect(DataService.getJobLogs).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+
+    await act(async () => {
+      emitConsoleLogStream({
+        topic: 'job-logs:beta-job',
+        resourceType: 'job',
+        resourceName: 'beta-job',
+        lines: [
+          {
+            id: 'line-live-1',
+            message: 'beta live line',
+            timestamp: '2026-03-11T12:00:02Z',
+            stream_s: 'stdout',
+          },
+        ],
+      });
+    });
+
+    expect(await screen.findByText('beta live line')).toBeInTheDocument();
+
+    view.rerender(
+      <JobLogStreamPanel
+        jobs={[
+          {
+            ...JOBS[1],
+            recentStatus: 'success',
+            runningState: 'Succeeded',
+            startTime: '2026-03-11T12:00:00Z',
+          },
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('beta live line')).toBeInTheDocument();
+    });
+    expect(DataService.getJobLogs).toHaveBeenCalledTimes(1);
+  });
 });
