@@ -29,7 +29,7 @@ from api.service.dependencies import (
 from api.service.realtime import manager as realtime_manager
 from monitoring.arm_client import ArmConfig, AzureArmClient
 from monitoring.lineage import get_lineage_snapshot
-from monitoring.log_analytics import AzureLogAnalyticsClient
+from monitoring.log_analytics import AzureLogAnalyticsClient, extract_first_table_rows
 from monitoring.system_health import collect_system_health_snapshot
 from monitoring.ttl_cache import TtlCache
 from core import config as cfg
@@ -5879,53 +5879,48 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _extract_log_lines(payload: Dict[str, Any]) -> List[str]:
-    tables = payload.get("tables") if isinstance(payload.get("tables"), list) else []
-    if not tables or not isinstance(tables[0], dict):
-        return []
-    table = tables[0]
-    columns = table.get("columns") if isinstance(table.get("columns"), list) else []
-    rows = table.get("rows") if isinstance(table.get("rows"), list) else []
-
-    name_to_idx: Dict[str, int] = {}
-    for idx, col in enumerate(columns):
-        if not isinstance(col, dict):
-            continue
-        name = str(col.get("name") or "").strip()
-        if name:
-            name_to_idx[name] = idx
-
-    msg_idx = name_to_idx.get("msg")
-    if msg_idx is None:
-        # Be resilient to schema differences / casing in Log Analytics responses.
-        lowered = {name.lower(): idx for name, idx in name_to_idx.items()}
-        msg_idx = lowered.get("msg")
-
-    if msg_idx is None:
-        for candidate in ("Log_s", "Log", "LogMessage_s", "Message", "message"):
-            if candidate in name_to_idx:
-                msg_idx = name_to_idx[candidate]
-                break
-
-    if msg_idx is None:
-        lowered = {name.lower(): idx for name, idx in name_to_idx.items()}
-        for candidate in ("log_s", "log", "logmessage_s", "message"):
-            if candidate in lowered:
-                msg_idx = lowered[candidate]
-                break
-
-    if msg_idx is None:
-        return []
-
-    out: List[str] = []
-    for row in rows:
-        if not isinstance(row, list) or msg_idx >= len(row):
-            continue
-        value = row[msg_idx]
+def _coalesce_log_row_string(row: Dict[str, Any], *keys: str) -> str:
+    lowered = {str(key).lower(): value for key, value in row.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
         if value is None:
             continue
-        out.append(str(value))
-    return out
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_console_log_entries(payload: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
+    entries: List[Dict[str, Optional[str]]] = []
+    for row in extract_first_table_rows(payload):
+        if not isinstance(row, dict):
+            continue
+        message = _coalesce_log_row_string(row, "msg", "Log_s", "Log", "LogMessage_s", "Message", "message")
+        if not message:
+            continue
+        entries.append(
+            {
+                "timestamp": _coalesce_log_row_string(row, "TimeGenerated", "timegenerated") or None,
+                "stream_s": _coalesce_log_row_string(row, "stream_s", "Stream_s", "stream", "Stream") or None,
+                "executionName": _coalesce_log_row_string(
+                    row,
+                    "executionName",
+                    "ExecutionName",
+                    "exec",
+                    "Exec",
+                    "execution_name",
+                    "Execution_Name",
+                )
+                or None,
+                "message": message,
+            }
+        )
+    return entries
+
+
+def _extract_log_lines(payload: Dict[str, Any]) -> List[str]:
+    return [str(item.get("message") or "") for item in _extract_console_log_entries(payload) if item.get("message")]
 
 
 @router.get("/jobs/{job_name}/logs")
@@ -6090,20 +6085,31 @@ union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
         )
     )
 )
+| extend stream_s = tostring(
+    column_ifexists('Stream_s',
+        column_ifexists('stream_s',
+            column_ifexists('Stream',
+                column_ifexists('stream', '')
+            )
+        )
+    )
+)
 | extend jobMatch = (job != '' and job contains jobName) or (resource contains jobName)
 | extend execMatch = execName != '' and ((exec != '' and exec contains execName) or (resource contains execName))
 | where jobMatch or execMatch
 | order by execMatch desc, jobMatch desc, TimeGenerated desc
 | take {tail_lines}
-| project TimeGenerated, msg
+| project TimeGenerated, executionName=exec, stream_s, msg
 | order by TimeGenerated asc
 """.strip()
 
             try:
                 payload = log_client.query(workspace_id=workspace_id, query=query, timespan=timespan)
-                lines = _extract_log_lines(payload)
+                console_logs = _extract_console_log_entries(payload)
+                lines = [str(item.get("message") or "") for item in console_logs if item.get("message")]
                 err = None
             except Exception as exc:
+                console_logs = []
                 lines = []
                 err = str(exc)
 
@@ -6115,6 +6121,7 @@ union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
                     "startTime": run.get("startTime"),
                     "endTime": run.get("endTime"),
                     "tail": lines,
+                    "consoleLogs": console_logs,
                     "error": err,
                 }
             )

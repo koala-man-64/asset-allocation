@@ -192,6 +192,26 @@ def test_process_file_actual_replaces_scheduled_row_for_same_fiscal_period():
         assert pd.to_datetime(row["fiscal_date_ending"]).date().isoformat() == "2026-03-31"
 
 
+def test_canonicalize_earnings_frame_keeps_calendar_time_of_day_as_string_dtype_when_all_null():
+    df = pd.DataFrame(
+        [
+            {
+                "date": "2026-03-31",
+                "report_date": "2026-05-09",
+                "fiscal_date_ending": "2026-03-31",
+                "reported_eps": 1.9,
+                "record_type": "actual",
+                "symbol": "YALA",
+            }
+        ]
+    )
+
+    out = silver._canonicalize_earnings_frame(df)
+
+    assert pd.api.types.is_string_dtype(out["calendar_time_of_day"])
+    assert out["calendar_time_of_day"].isna().all()
+
+
 def test_write_alpha26_earnings_buckets_skips_empty_bucket_without_existing_schema(monkeypatch):
     target_path = DataPaths.get_silver_earnings_bucket_path("A")
     captured: dict[str, object] = {"store_calls": 0, "checked_paths": []}

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button } from '@/app/components/ui/button';
 import { Label } from '@/app/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { DataService } from '@/services/DataService';
 import type { AdlsFilePreviewResponse, AdlsHierarchyEntry } from '@/services/apiService';
-import { ChevronDown, ChevronRight, Database, File, FileText, Folder } from 'lucide-react';
+import { ChevronDown, ChevronRight, Database, File, FileText, Folder, RefreshCw } from 'lucide-react';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import { formatPreviewContent } from '@/utils/formatPreviewContent';
 
@@ -183,14 +184,14 @@ export const DataExplorerPage: React.FC = () => {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [preview, setPreview] = useState<AdlsFilePreviewResponse | null>(null);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
   const [error, setError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   const loadFolder = useCallback(
-    async (folderPath: string, force: boolean = false) => {
+    async (folderPath: string) => {
       const normalizedPath = normalizeFolderPath(folderPath);
-      void force;
 
       setLoadingPaths((prev) => ({ ...prev, [normalizedPath]: true }));
       setError(null);
@@ -261,7 +262,7 @@ export const DataExplorerPage: React.FC = () => {
     setSelectedFilePath(null);
     setPreview(null);
     setPreviewError(null);
-    void loadFolder(rootPath, true);
+    void loadFolder(rootPath);
   }, [layer, rootPath, scanLimit, loadFolder]);
 
   const rootEntries = treeByPath[rootPath] || [];
@@ -276,6 +277,31 @@ export const DataExplorerPage: React.FC = () => {
       void loadFolder(normalized);
     }
   };
+
+  const refreshExplorer = useCallback(async () => {
+    if (refreshing) {
+      return;
+    }
+
+    setRefreshing(true);
+
+    const expandedPaths = Object.entries(expandedFolders)
+      .filter(([path, isExpanded]) => isExpanded && path !== rootPath && path.startsWith(rootPath))
+      .map(([path]) => normalizeFolderPath(path))
+      .sort((left, right) => left.length - right.length);
+
+    try {
+      await loadFolder(rootPath);
+      if (expandedPaths.length) {
+        await Promise.allSettled(expandedPaths.map((folderPath) => loadFolder(folderPath)));
+      }
+      if (selectedFilePath) {
+        await loadPreview(selectedFilePath, { maxDeltaFiles: Number(maxDeltaFiles) });
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [expandedFolders, loadFolder, loadPreview, maxDeltaFiles, refreshing, rootPath, selectedFilePath]);
 
   const renderEntries = useCallback(
     (entries: AdlsHierarchyEntry[], depth: number): React.ReactNode => {
@@ -393,7 +419,7 @@ export const DataExplorerPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid w-full max-w-[40rem] gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem]">
+        <div className="grid w-full max-w-[52rem] gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_auto]">
           <div className="space-y-2">
             <Label htmlFor="data-explorer-container">Container</Label>
             <Select value={layer} onValueChange={(value) => setLayer(value as LayerKey)}>
@@ -448,6 +474,19 @@ export const DataExplorerPage: React.FC = () => {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void refreshExplorer()}
+              disabled={refreshing}
+              className="w-full sm:w-auto"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh Metadata'}
+            </Button>
           </div>
         </div>
       </div>

@@ -185,11 +185,20 @@ union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
         )
     )
 )
+| extend stream_s = tostring(
+    column_ifexists('Stream_s',
+        column_ifexists('stream_s',
+            column_ifexists('Stream',
+                column_ifexists('stream', '')
+            )
+        )
+    )
+)
 | where ((job != '' and job contains jobName) or (resource contains strcat('/jobs/', jobName)) or (resource contains jobName))
 | where msg != ''
 | order by TimeGenerated desc
 | take {max(1, int(limit))}
-| project TimeGenerated, executionName, msg
+| project TimeGenerated, executionName, stream_s, msg
 | order by TimeGenerated asc
 """.strip()
 
@@ -252,12 +261,14 @@ def _extract_stream_lines(payload: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         timestamp = _coalesce_string(row, "TimeGenerated", "timegenerated") or datetime.now(timezone.utc).isoformat()
         execution_name = _coalesce_string(row, "executionName")
-        digest_source = "|".join([timestamp, execution_name, message])
+        stream_name = _coalesce_string(row, "stream_s", "Stream_s", "stream", "Stream")
+        digest_source = "|".join([timestamp, execution_name, stream_name, message])
         entry_id = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()
         entries.append(
             {
                 "id": entry_id,
                 "timestamp": timestamp,
+                "stream_s": stream_name or None,
                 "message": message,
                 "executionName": execution_name or None,
             }

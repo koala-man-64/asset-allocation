@@ -87,10 +87,16 @@ class _FakeStreamingLogAnalyticsClient:
                     "columns": [
                         {"name": "TimeGenerated", "type": "datetime"},
                         {"name": "executionName", "type": "string"},
+                        {"name": "stream_s", "type": "string"},
                         {"name": "msg", "type": "string"},
                     ],
                     "rows": [
-                        ["2026-02-10T00:00:00Z", "bronze-market-job-exec-001", "stream log line"],
+                        [
+                            "2026-02-10T00:00:00Z",
+                            "bronze-market-job-exec-001",
+                            "stderr",
+                            "stream log line",
+                        ],
                     ],
                 }
             ]
@@ -127,5 +133,7 @@ async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.Monk
     assert payload["resourceType"] == "job"
     assert payload["resourceName"] == "bronze-market-job"
     assert payload["lines"][0]["message"] == "stream log line"
+    assert payload["lines"][0]["timestamp"] == "2026-02-10T00:00:00Z"
     assert payload["lines"][0]["executionName"] == "bronze-market-job-exec-001"
+    assert payload["lines"][0]["stream_s"] == "stderr"
     assert fake_logs.queries

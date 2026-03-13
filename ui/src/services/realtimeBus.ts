@@ -6,6 +6,7 @@ export const CONSOLE_LOG_STREAM_EVENT_TYPE = 'CONSOLE_LOG_STREAM';
 export type ConsoleLogStreamLine = {
   id: string;
   timestamp?: string;
+  stream_s?: string | null;
   message: string;
   executionName?: string | null;
 };

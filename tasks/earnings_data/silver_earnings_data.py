@@ -175,6 +175,7 @@ def _canonicalize_earnings_frame(df: Optional[pd.DataFrame], *, ticker: Optional
 
     if "calendar_time_of_day" not in out.columns:
         out["calendar_time_of_day"] = pd.NA
+    out["calendar_time_of_day"] = out["calendar_time_of_day"].astype("string")
     if "calendar_currency" not in out.columns:
         out["calendar_currency"] = pd.NA
 

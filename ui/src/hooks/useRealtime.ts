@@ -217,6 +217,7 @@ export function useRealtime() {
             lines: lines.map((line) => ({
               id: typeof line.id === 'string' ? line.id : '',
               timestamp: typeof line.timestamp === 'string' ? line.timestamp : undefined,
+              stream_s: typeof line.stream_s === 'string' ? line.stream_s : null,
               message: typeof line.message === 'string' ? line.message : '',
               executionName:
                 typeof line.executionName === 'string' ? line.executionName : null

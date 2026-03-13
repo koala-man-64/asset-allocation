@@ -95,6 +95,13 @@ export interface JobControlResponse {
   runningState?: string | null;
 }
 
+export interface JobConsoleLogEntry {
+  timestamp?: string | null;
+  stream_s?: string | null;
+  executionName?: string | null;
+  message: string;
+}
+
 export interface JobLogRunResponse {
   executionName?: string | null;
   executionId?: string | null;
@@ -102,6 +109,7 @@ export interface JobLogRunResponse {
   startTime?: string | null;
   endTime?: string | null;
   tail: string[];
+  consoleLogs?: JobConsoleLogEntry[];
   error?: string | null;
 }
 

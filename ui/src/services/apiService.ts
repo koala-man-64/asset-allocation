@@ -326,10 +326,30 @@ export async function requestWithMeta<T>(
   return performRequest<T>(endpoint, config);
 }
 
+export interface JobConsoleLogEntry {
+  timestamp?: string | null;
+  stream_s?: string | null;
+  executionName?: string | null;
+  message: string;
+}
+
+export interface JobLogRunResponse {
+  executionName?: string | null;
+  executionId?: string | null;
+  status?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  tail: string[];
+  consoleLogs?: JobConsoleLogEntry[];
+  error?: string | null;
+}
+
 export interface JobLogsResponse {
-  logs: string[];
-  offset: number;
-  hasMore: boolean;
+  jobName: string;
+  runsRequested: number;
+  runsReturned: number;
+  tailLines: number;
+  runs: JobLogRunResponse[];
 }
 
 export interface StockScreenerRow {

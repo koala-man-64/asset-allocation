@@ -93,7 +93,17 @@ describe('JobLogStreamPanel', () => {
         tailLines: 10,
         runs: [
           {
+            executionName: 'beta-exec-001',
+            startTime: '2026-03-11T12:00:00Z',
             tail: ['beta snapshot'],
+            consoleLogs: [
+              {
+                timestamp: '2026-03-11T12:00:01Z',
+                stream_s: 'stdout',
+                executionName: 'beta-exec-001',
+                message: 'beta snapshot',
+              },
+            ],
           },
         ],
       })
@@ -104,7 +114,17 @@ describe('JobLogStreamPanel', () => {
         tailLines: 10,
         runs: [
           {
+            executionName: 'alpha-exec-001',
+            startTime: '2026-03-10T12:00:00Z',
             tail: ['alpha snapshot'],
+            consoleLogs: [
+              {
+                timestamp: '2026-03-10T12:00:01Z',
+                stream_s: 'stdout',
+                executionName: 'alpha-exec-001',
+                message: 'alpha snapshot',
+              },
+            ],
           },
         ],
       });
@@ -121,9 +141,14 @@ describe('JobLogStreamPanel', () => {
     });
 
     expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+    expect(screen.getByText('stdout')).toBeInTheDocument();
     expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:beta-job']]));
 
     await user.click(screen.getByRole('combobox', { name: /monitored job/i }));
+    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
+      'Silver / finance / beta-job',
+      'Bronze / market / alpha-job',
+    ]);
     await user.click(await screen.findByRole('option', { name: 'Bronze / market / alpha-job' }));
 
     await waitFor(() => {
@@ -143,13 +168,21 @@ describe('JobLogStreamPanel', () => {
         topic: 'job-logs:alpha-job',
         resourceType: 'job',
         resourceName: 'alpha-job',
-        lines: [{ id: 'line-1', message: 'alpha live line' }],
+        lines: [
+          {
+            id: 'line-1',
+            message: 'alpha live line',
+            timestamp: '2026-03-10T12:00:02Z',
+            stream_s: 'stderr',
+          },
+        ],
       });
     });
 
     await waitFor(() => {
       expect(screen.getByText('alpha live line')).toBeInTheDocument();
     });
+    expect(screen.getByText('stderr')).toBeInTheDocument();
 
     window.removeEventListener(REALTIME_SUBSCRIBE_EVENT, captureSubscribe);
     window.removeEventListener(REALTIME_UNSUBSCRIBE_EVENT, captureUnsubscribe);

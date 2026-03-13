@@ -135,6 +135,7 @@ describe('useRealtime', () => {
                 id: 'line-1',
                 message: 'streamed line',
                 timestamp: '2026-03-11T12:00:00Z',
+                stream_s: 'stderr',
                 executionName: 'bronze-market-job-exec-001'
               }
             ],
@@ -150,14 +151,15 @@ describe('useRealtime', () => {
           topic: 'job-logs:bronze-market-job',
           resourceType: 'job',
           resourceName: 'bronze-market-job',
-          lines: [
-            expect.objectContaining({
-              id: 'line-1',
-              message: 'streamed line',
-              executionName: 'bronze-market-job-exec-001'
-            })
-          ]
-        })
+            lines: [
+              expect.objectContaining({
+                id: 'line-1',
+                message: 'streamed line',
+                stream_s: 'stderr',
+                executionName: 'bronze-market-job-exec-001'
+              })
+            ]
+          })
       );
     });
 
