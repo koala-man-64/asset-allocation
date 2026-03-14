@@ -9,6 +9,7 @@ from io import BytesIO
 from typing import Dict, List, Optional
 
 from core import core as mdc
+from core import symbol_availability
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
@@ -269,7 +270,8 @@ async def process_batch_bronze(
         "saved": 0,
         "deleted": 0,
         "save_failed": 0,
-        "blacklisted": 0,
+        "invalid_candidates": 0,
+        "blacklist_promotions": 0,
         "filtered_missing": 0,
         "api_error": False,
     }
@@ -420,11 +422,7 @@ async def process_batch_bronze(
                 if bool(symbol_has_existing_blob.get(sym)) or symbol_min > PRICE_TARGET_FULL_HISTORY_START_DATE:
                     list_manager.add_to_whitelist(sym)
                     continue
-                mdc.write_line(
-                    f"No data for {sym}; automatic blacklist updates are disabled for job runs."
-                )
-                list_manager.add_to_blacklist(sym)
-                batch_summary["blacklisted"] += 1
+                mdc.write_line(f"Bronze price target coverage unavailable for {sym}; no rows returned.")
                 continue
 
             try:
@@ -466,7 +464,8 @@ async def process_batch_bronze(
 
         mdc.write_line(
             "Bronze price target batch summary: requested={requested} stale={stale} api_rows={api_rows} "
-            "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} filtered_missing={filtered_missing} "
+            "saved={saved} deleted={deleted} save_failed={save_failed} invalid_candidates={invalid_candidates} "
+            "blacklist_promotions={blacklist_promotions} filtered_missing={filtered_missing} "
             "api_error={api_error}".format(**batch_summary)
         )
         return batch_summary
@@ -479,12 +478,19 @@ async def main_async() -> int:
     backfill_start = resolve_backfill_start_date()
     if backfill_start is not None:
         mdc.write_line(f"Applying historical cutoff to bronze price-target data: {backfill_start.isoformat()}")
-    
-    df_symbols = mdc.get_symbols()
-    # Filter NaNs and ensure string
-    df_symbols = df_symbols.dropna(subset=['Symbol'])
-    # Filter out tickers containing '.' or non-string values
+
+    sync_result = symbol_availability.sync_domain_availability("price-target")
+    mdc.write_line(
+        "Bronze price-target availability sync: "
+        f"provider={sync_result.provider} listed_count={sync_result.listed_count} "
+        f"inserted_count={sync_result.inserted_count} disabled_count={sync_result.disabled_count} "
+        f"duration_ms={sync_result.duration_ms} lock_wait_ms={sync_result.lock_wait_ms}"
+    )
+    df_symbols = symbol_availability.get_domain_symbols("price-target").dropna(subset=["Symbol"])
+    provider_available_count = int(len(df_symbols))
+
     symbols = []
+    blacklist_skipped = 0
     for _, row in df_symbols.iterrows():
         sym = row['Symbol']
         if pd.isna(sym) or not isinstance(sym, str):
@@ -492,12 +498,24 @@ async def main_async() -> int:
         if '.' in sym:
             continue
         if list_manager.is_blacklisted(sym):
+            blacklist_skipped += 1
             continue
         symbols.append(sym)
 
+    debug_filtered = 0
     if cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        filtered_symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        debug_filtered = len(symbols) - len(filtered_symbols)
+        symbols = filtered_symbols
+
+    mdc.write_line(
+        "Bronze price-target symbol selection: "
+        f"provider_available_count={provider_available_count} "
+        f"blacklist_skipped={blacklist_skipped} "
+        f"debug_filtered={debug_filtered} "
+        f"final_scheduled={len(symbols)}"
+    )
 
     alpha26_mode = bronze_bucketing.is_alpha26_mode()
     chunked_symbols = [symbols[i:i + BATCH_SIZE] for i in range(0, len(symbols), BATCH_SIZE)]
@@ -524,7 +542,8 @@ async def main_async() -> int:
         "saved": 0,
         "deleted": 0,
         "save_failed": 0,
-        "blacklisted": 0,
+        "invalid_candidates": 0,
+        "blacklist_promotions": 0,
         "filtered_missing": 0,
         "api_error_batches": 0,
         "coverage_checked": 0,
@@ -550,7 +569,8 @@ async def main_async() -> int:
             aggregate["saved"] += int(result.get("saved", 0) or 0)
             aggregate["deleted"] += int(result.get("deleted", 0) or 0)
             aggregate["save_failed"] += int(result.get("save_failed", 0) or 0)
-            aggregate["blacklisted"] += int(result.get("blacklisted", 0) or 0)
+            aggregate["invalid_candidates"] += int(result.get("invalid_candidates", 0) or 0)
+            aggregate["blacklist_promotions"] += int(result.get("blacklist_promotions", 0) or 0)
             aggregate["filtered_missing"] += int(result.get("filtered_missing", 0) or 0)
             aggregate["coverage_checked"] += int(result.get("coverage_checked", 0) or 0)
             aggregate["coverage_forced_refetch"] += int(result.get("coverage_forced_refetch", 0) or 0)
@@ -587,11 +607,12 @@ async def main_async() -> int:
                 + int(aggregate.get("save_failed", 0) or 0)
                 + int(aggregate.get("api_error_batches", 0) or 0)
             ),
-            warning_count=int(aggregate.get("blacklisted", 0) or 0),
+            warning_count=int(aggregate.get("invalid_candidates", 0) or 0),
         )
         mdc.write_line(
             "Bronze price target overall summary: requested={requested} stale={stale} api_rows={api_rows} "
-            "saved={saved} deleted={deleted} save_failed={save_failed} blacklisted={blacklisted} "
+            "saved={saved} deleted={deleted} save_failed={save_failed} invalid_candidates={invalid_candidates} "
+            "blacklist_promotions={blacklist_promotions} "
             "filtered_missing={filtered_missing} "
             "coverage_checked={coverage_checked} coverage_forced_refetch={coverage_forced_refetch} "
             "coverage_marked_covered={coverage_marked_covered} coverage_marked_limited={coverage_marked_limited} "

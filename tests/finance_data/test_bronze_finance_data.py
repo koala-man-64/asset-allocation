@@ -15,6 +15,18 @@ def unique_ticker():
     return f"TEST_FIN_{uuid.uuid4().hex[:8].upper()}"
 
 
+def _sync_result() -> bronze.symbol_availability.SyncResult:
+    return bronze.symbol_availability.SyncResult(
+        provider="massive",
+        source_column="source_massive",
+        listed_count=1,
+        inserted_count=0,
+        disabled_count=0,
+        duration_ms=1,
+        lock_wait_ms=0,
+    )
+
+
 def _statement_payload(*, period_end: str, total_assets: float) -> dict:
     return {
         "results": [
@@ -89,7 +101,7 @@ def test_fetch_and_save_raw_writes_canonical_v2_balance_sheet_row(unique_ticker)
     assert stored["source_max_date"] == "2024-12-31"
 
 
-def test_fetch_and_save_raw_blacklists_empty_valuation_payload(unique_ticker):
+def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailable(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
     mock_massive.get_finance_report.return_value = {"results": []}
@@ -103,10 +115,12 @@ def test_fetch_and_save_raw_blacklists_empty_valuation_payload(unique_ticker):
     with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
 
-        with pytest.raises(bronze.MassiveGatewayNotFoundError):
+        with pytest.raises(bronze.BronzeCoverageUnavailableError) as exc_info:
             bronze.fetch_and_save_raw(symbol, report, mock_massive, alpha26_mode=True, alpha26_rows={})
 
-        mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
+        assert exc_info.value.reason_code == "empty_finance_payload"
+        assert exc_info.value.payload == {"symbol": symbol, "report": "valuation"}
+        mock_list_manager.add_to_blacklist.assert_not_called()
 
 
 def test_fetch_and_save_raw_applies_backfill_cutoff_to_canonical_rows(unique_ticker):
@@ -242,23 +256,24 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
     with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
         "tasks.finance_data.bronze_finance_data.time.sleep"
     ) as mock_sleep:
-        wrote, blacklisted, failures, coverage_summary = bronze._process_symbol_with_recovery(
+        result = bronze._process_symbol_with_recovery(
             symbol,
             manager,
             max_attempts=3,
             sleep_seconds=0.5,
         )
 
-    assert wrote == 1
-    assert blacklisted is False
-    assert failures == []
+    assert result.wrote == 1
+    assert result.invalid_candidate is False
+    assert result.valid_symbol is True
+    assert result.failures == []
     assert attempts["balance_sheet"] == 2
-    assert coverage_summary["coverage_checked"] == 0
+    assert result.coverage_summary["coverage_checked"] == 0
     manager.reset_current.assert_called_once()
     mock_sleep.assert_called_once_with(0.5)
 
 
-def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
+def test_process_symbol_with_recovery_continues_after_single_invalid_core_report(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
     manager = MagicMock()
@@ -276,23 +291,59 @@ def test_process_symbol_with_recovery_stops_after_invalid_symbol(unique_ticker):
         return True
 
     with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
-        wrote, blacklisted, failures, coverage_summary = bronze._process_symbol_with_recovery(
+        result = bronze._process_symbol_with_recovery(
             symbol,
             manager,
             max_attempts=3,
             sleep_seconds=0.0,
         )
 
-    assert wrote == 0
-    assert blacklisted is True
-    assert len(failures) == 1
-    assert failures[0][0] == "balance_sheet"
-    assert coverage_summary["coverage_checked"] == 0
+    assert result.wrote == len(bronze.REPORTS) - 1
+    assert result.invalid_candidate is False
+    assert result.valid_symbol is True
+    assert result.coverage_unavailable is True
+    assert result.failures == []
+    assert [name for name, _ in result.invalid_evidence] == ["balance_sheet"]
+    assert result.coverage_summary["coverage_checked"] == 0
     manager.reset_current.assert_not_called()
-    assert seen_reports == ["balance_sheet"]
+    assert seen_reports == [report["report"] for report in bronze.REPORTS]
 
 
-def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticker):
+def test_process_symbol_with_recovery_emits_invalid_candidate_only_after_all_core_invalid(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_massive
+    seen_reports: list[str] = []
+
+    def _fake_fetch(symbol_arg, report, massive_client, *, backfill_start=None, coverage_summary=None):
+        assert symbol_arg == symbol
+        assert massive_client is mock_massive
+        del backfill_start, coverage_summary
+        report_name = report["report"]
+        seen_reports.append(report_name)
+        if bronze._is_core_finance_report(report_name):
+            raise bronze.MassiveGatewayNotFoundError("invalid", status_code=404)
+        return False
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch):
+        result = bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=3,
+            sleep_seconds=0.0,
+        )
+
+    assert result.wrote == 0
+    assert result.invalid_candidate is True
+    assert result.valid_symbol is False
+    assert result.coverage_unavailable is False
+    assert result.failures == []
+    assert {name for name, _ in result.invalid_evidence} == set(bronze._CORE_FINANCE_REPORTS)
+    assert seen_reports == [report["report"] for report in bronze.REPORTS]
+
+
+def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique_ticker):
     symbol = unique_ticker
     client_manager = MagicMock()
     coverage_summary = bronze._empty_coverage_summary()
@@ -302,7 +353,10 @@ def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticke
         with patch("tasks.finance_data.bronze_finance_data._validate_environment"), patch(
             "tasks.finance_data.bronze_finance_data.mdc.log_environment_diagnostics"
         ), patch(
-            "tasks.finance_data.bronze_finance_data.mdc.get_symbols",
+            "tasks.finance_data.bronze_finance_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.symbol_availability.get_domain_symbols",
             return_value=pd.DataFrame({"Symbol": [symbol]}),
         ), patch(
             "tasks.finance_data.bronze_finance_data.bronze_bucketing.is_alpha26_mode",
@@ -318,7 +372,24 @@ def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticke
             return_value=client_manager,
         ), patch(
             "tasks.finance_data.bronze_finance_data._process_symbol_with_recovery",
-            return_value=(0, True, [("balance_sheet", invalid_error)], coverage_summary),
+            return_value=bronze._FinanceSymbolOutcome(
+                wrote=0,
+                valid_symbol=False,
+                invalid_candidate=True,
+                coverage_unavailable=False,
+                invalid_evidence=[
+                    ("balance_sheet", invalid_error),
+                    ("cash_flow", invalid_error),
+                    ("income_statement", invalid_error),
+                ],
+                failures=[],
+                coverage_summary=coverage_summary,
+            ),
+        ), patch(
+            "tasks.finance_data.bronze_finance_data.record_invalid_symbol_candidate",
+            return_value={"promoted": False, "observedRunCount": 1, "blacklistPath": None},
+        ) as mock_record_invalid, patch(
+            "tasks.finance_data.bronze_finance_data.clear_invalid_candidate_marker"
         ), patch(
             "tasks.finance_data.bronze_finance_data._write_alpha26_finance_buckets",
             return_value=(0, "index", len(bronze._BUCKET_COLUMNS)),
@@ -343,7 +414,8 @@ def test_main_async_returns_success_when_symbol_is_only_blacklisted(unique_ticke
             exit_code = await bronze.main_async()
 
         assert exit_code == 0
-        mock_list_manager.add_to_blacklist.assert_called_once_with(symbol)
+        mock_record_invalid.assert_called_once()
+        mock_list_manager.add_to_blacklist.assert_not_called()
         mock_list_manager.flush.assert_called_once()
         client_manager.close_all.assert_called_once()
 

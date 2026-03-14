@@ -66,19 +66,18 @@ type LogState = {
 
 function sortJobsForDisplay(jobs: JobLogStreamTarget[]): JobLogStreamTarget[] {
   return [...jobs].sort((left, right) => {
-    const leftRunning = normalizeJobStatus(left.runningState || left.recentStatus) === 'running' ? 1 : 0;
-    const rightRunning = normalizeJobStatus(right.runningState || right.recentStatus) === 'running' ? 1 : 0;
-    if (leftRunning !== rightRunning) {
-      return rightRunning - leftRunning;
+    const labelComparison = left.label.localeCompare(right.label, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
+    if (labelComparison !== 0) {
+      return labelComparison;
     }
 
-    const leftStart = left.startTime ? Date.parse(left.startTime) : Number.NEGATIVE_INFINITY;
-    const rightStart = right.startTime ? Date.parse(right.startTime) : Number.NEGATIVE_INFINITY;
-    if (leftStart !== rightStart) {
-      return rightStart - leftStart;
-    }
-
-    return left.label.localeCompare(right.label);
+    return left.name.localeCompare(right.name, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
   });
 }
 

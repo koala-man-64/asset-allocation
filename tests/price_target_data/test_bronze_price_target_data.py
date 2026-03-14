@@ -22,6 +22,18 @@ def storage_cleanup(unique_ticker):
     mdc.get_storage_client(container) 
     yield unique_ticker
 
+
+def _sync_result() -> bronze.symbol_availability.SyncResult:
+    return bronze.symbol_availability.SyncResult(
+        provider="nasdaq",
+        source_column="source_nasdaq",
+        listed_count=1,
+        inserted_count=0,
+        disabled_count=0,
+        duration_ms=1,
+        lock_wait_ms=0,
+    )
+
 # --- Integration Tests ---
 
 
@@ -99,7 +111,8 @@ def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
                 semaphore,
                 backfill_start=pd.Timestamp('2024-01-01').date(),
             )
-            assert summary["blacklisted"] == 0
+            assert summary["invalid_candidates"] == 0
+            assert summary["blacklist_promotions"] == 0
             assert summary["filtered_missing"] == 1
             assert summary["deleted"] == 1
             mock_list_manager.add_to_blacklist.assert_not_called()
@@ -135,7 +148,8 @@ def test_process_batch_bronze_deletes_stale_when_cutoff_and_empty_response(
                 semaphore,
                 backfill_start=pd.Timestamp('2024-01-01').date(),
             )
-            assert summary["blacklisted"] == 0
+            assert summary["invalid_candidates"] == 0
+            assert summary["blacklist_promotions"] == 0
             assert summary["filtered_missing"] == 2
             assert summary["deleted"] == 2
             assert summary["save_failed"] == 0
@@ -187,7 +201,8 @@ def test_process_batch_bronze_uses_watermark_and_appends_existing(
         ) as mock_store:
             summary = await bronze.process_batch_bronze([symbol], semaphore)
             assert summary["saved"] == 1
-            assert summary["blacklisted"] == 0
+            assert summary["invalid_candidates"] == 0
+            assert summary["blacklist_promotions"] == 0
 
             _, call_kwargs = mock_nasdaq.get_table.call_args
             assert call_kwargs["obs_date"]["gte"] == "2024-03-02"
@@ -235,7 +250,8 @@ def test_process_batch_bronze_missing_after_watermark_keeps_existing(
         ) as mock_store:
             summary = await bronze.process_batch_bronze([symbol], semaphore)
             assert summary["saved"] == 0
-            assert summary["blacklisted"] == 0
+            assert summary["invalid_candidates"] == 0
+            assert summary["blacklist_promotions"] == 0
             assert summary["filtered_missing"] == 1
             mock_store.assert_not_called()
             mock_client.delete_file.assert_not_called()
@@ -348,7 +364,7 @@ def test_process_batch_bronze_skips_force_when_limited_marker_present(
     asyncio.run(run_test())
 
 
-def test_main_async_returns_success_when_only_blacklisted_symbols_are_detected():
+def test_main_async_returns_success_when_only_filtered_missing_symbols_are_detected():
     symbol = "AAA"
 
     async def run_test():
@@ -360,14 +376,17 @@ def test_main_async_returns_success_when_only_blacklisted_symbols_are_detected()
             "tasks.price_target_data.bronze_price_target_data.resolve_backfill_start_date",
             return_value=None,
         ), patch(
-            "tasks.price_target_data.bronze_price_target_data.mdc.get_symbols",
+            "tasks.price_target_data.bronze_price_target_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.price_target_data.bronze_price_target_data.symbol_availability.get_domain_symbols",
             return_value=pd.DataFrame({"Symbol": [symbol]}),
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.bronze_bucketing.is_alpha26_mode",
             return_value=False,
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.process_batch_bronze",
-            new=AsyncMock(return_value={"blacklisted": 1}),
+            new=AsyncMock(return_value={"invalid_candidates": 0, "blacklist_promotions": 0, "filtered_missing": 1}),
         ), patch(
             "tasks.price_target_data.bronze_price_target_data.list_manager"
         ) as mock_list_manager, patch(

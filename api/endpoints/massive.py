@@ -131,6 +131,24 @@ def get_unified_snapshot(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/tickers")
+def get_reference_tickers(
+    request: Request,
+    market: str = Query(default="stocks", description="Massive reference market filter."),
+    locale: Optional[str] = Query(default="us", description="Optional Massive locale filter."),
+    active: bool = Query(default=True, description="Return active tickers when true."),
+    gateway: MassiveGateway = Depends(_get_gateway),
+) -> JSONResponse:
+    validate_auth(request)
+    try:
+        with _caller_context(request):
+            payload = gateway.get_tickers(market=market, locale=locale, active=bool(active))
+    except Exception as exc:
+        _handle_massive_error(exc)
+        raise
+    return JSONResponse({"results": payload}, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/fundamentals/short-interest")
 def get_short_interest(
     request: Request,

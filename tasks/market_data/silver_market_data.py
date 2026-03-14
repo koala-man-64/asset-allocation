@@ -1,6 +1,6 @@
 
 import pandas as pd
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import Optional
 
@@ -96,13 +96,17 @@ def _empty_alpha26_market_frame() -> pd.DataFrame:
     )
 
 
+def _normalize_market_datetime_series(values) -> pd.Series:
+    return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_localize(None)
+
+
 def _coerce_alpha26_market_bucket_frame(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in _ALPHA26_MARKET_MIN_COLUMNS:
         if col not in out.columns:
             out[col] = pd.NA
 
-    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["date"] = _normalize_market_datetime_series(out["date"])
     out["symbol"] = out["symbol"].astype("string").str.upper()
     for col in _ALPHA26_MARKET_NUMERIC_COLUMNS:
         out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -140,7 +144,7 @@ def _split_market_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: str)
     out = _drop_removed_market_columns(out)
     out = _ensure_numeric_market_columns(out)
     if "Date" in out.columns:
-        out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+        out["Date"] = _normalize_market_datetime_series(out["Date"])
     if "Symbol" not in out.columns:
         out["Symbol"] = pd.NA
     out["Symbol"] = out["Symbol"].astype("string").str.upper()
@@ -178,7 +182,7 @@ def _validate_bronze_to_silver_market_bucket_contract(df_bucket: pd.DataFrame, *
         )
 
     date_col = normalized_cols["date"]
-    parsed_dates = pd.to_datetime(df_bucket[date_col], errors="coerce").dropna()
+    parsed_dates = _normalize_market_datetime_series(df_bucket[date_col]).dropna()
     if parsed_dates.empty:
         raise ValueError(
             f"bronze_to_silver contract violation for {source_name}: no parseable date values."
@@ -205,7 +209,7 @@ def _validate_silver_market_bucket_output_contract(df_bucket: pd.DataFrame, *, b
     if df_bucket.empty:
         return
 
-    parsed_dates = pd.to_datetime(df_bucket["date"], errors="coerce")
+    parsed_dates = _normalize_market_datetime_series(df_bucket["date"])
     if parsed_dates.isna().any():
         raise ValueError(
             f"bronze_to_silver contract violation for bucket={bucket}: invalid date values in output frame."
@@ -352,11 +356,17 @@ def _drop_index_artifact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_file(blob_name: str) -> bool:
     """
-    Backwards-compatible wrapper (tests/local tooling) that processes a blob by name.
-
-    Production uses `process_blob()` with `last_modified` metadata for freshness checks.
+    Test/local wrapper that processes a single bronze market alpha26 bucket by name.
     """
-    return process_blob({"name": blob_name}, watermarks={}) != "failed"
+    return (
+        process_alpha26_bucket_blob(
+            {"name": blob_name},
+            watermarks={},
+            include_history=True,
+            persist=True,
+        )
+        != "failed"
+    )
 
 
 def _process_symbol_frame(
@@ -381,7 +391,7 @@ def _process_symbol_frame(
         mdc.write_error(f"Missing Date column in {source_name}; skipping {ticker}.")
         return "failed"
 
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out["Date"] = _normalize_market_datetime_series(out["Date"])
     out = out.dropna(subset=["Date"])
     if out.empty:
         return "skipped_empty"
@@ -424,7 +434,7 @@ def _process_symbol_frame(
         df_merged = out
     else:
         if "Date" in df_history.columns:
-            df_history["Date"] = pd.to_datetime(df_history["Date"], errors="coerce")
+            df_history["Date"] = _normalize_market_datetime_series(df_history["Date"])
         df_merged = pd.concat([df_history, out], ignore_index=True)
 
     df_merged = df_merged.sort_values(by=["Date", "Symbol", "Volume"], ascending=[True, True, False])
@@ -531,48 +541,6 @@ def _process_symbol_frame(
     return "ok"
 
 
-def process_blob(
-    blob: dict,
-    *,
-    watermarks: dict,
-    include_history: bool = True,
-    persist: bool = True,
-    alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
-) -> str:
-    blob_name = blob["name"]  # market-data/{ticker}.csv
-    if not blob_name.endswith(".csv"):
-        return "skipped_non_csv"
-
-    if blob_name.endswith("whitelist.csv") or blob_name.endswith("blacklist.csv"):
-        return "skipped_list"
-
-    ticker = blob_name.replace("market-data/", "").replace(".csv", "")
-    mdc.write_line(f"Processing {ticker} from {blob_name}...")
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
-    if unchanged:
-        return "skipped_unchanged"
-
-    try:
-        raw_bytes = mdc.read_raw_bytes(blob_name, client=bronze_client)
-        df_new = pd.read_csv(BytesIO(raw_bytes))
-    except Exception as exc:
-        mdc.write_error(f"Failed to read/parse {blob_name}: {exc}")
-        return "failed"
-
-    status = _process_symbol_frame(
-        ticker=ticker,
-        df_new=df_new,
-        source_name=blob_name,
-        include_history=include_history,
-        persist=persist,
-        alpha26_bucket_frames=alpha26_bucket_frames,
-    )
-    if status == "ok" and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
-        watermarks[blob_name] = signature
-    return status
-
-
 def process_alpha26_bucket_blob(
     blob: dict,
     *,
@@ -602,7 +570,7 @@ def process_alpha26_bucket_blob(
 
     if df_bucket is None or df_bucket.empty:
         if signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
+            signature["updated_at"] = datetime.now(UTC).isoformat()
             watermarks[blob_name] = signature
         bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
         mdc.write_line(
@@ -659,7 +627,7 @@ def process_alpha26_bucket_blob(
             output_symbols += 1
 
     if not has_failed and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
+        signature["updated_at"] = datetime.now(UTC).isoformat()
         watermarks[blob_name] = signature
     bucket = _parse_alpha26_bucket_from_blob_name(blob_name) or "unknown"
     status_text = "failed" if has_failed else "ok"

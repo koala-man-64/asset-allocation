@@ -91,3 +91,21 @@ def test_cleanup_migration_drops_noncanonical_gold_tables() -> None:
     assert "schemaname = 'gold'" in text
     assert "tablename NOT IN (" in text
     assert "DROP TABLE IF EXISTS gold.%I" in text
+
+
+def test_alpha_vantage_source_unification_migration_drops_legacy_alias_column() -> None:
+    repo_root = _repo_root()
+    migration = (
+        repo_root
+        / "deploy"
+        / "sql"
+        / "postgres"
+        / "migrations"
+        / "0030_unify_alpha_vantage_symbol_source.sql"
+    )
+    text = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE core.symbols ADD COLUMN IF NOT EXISTS source_alpha_vantage BOOLEAN;" in text
+    assert "column_name = 'source_alphavantage'" in text
+    assert "COALESCE(source_alpha_vantage, source_alphavantage, FALSE)" in text
+    assert "DROP COLUMN source_alphavantage" in text

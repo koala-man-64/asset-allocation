@@ -31,7 +31,10 @@ def get_lineage_snapshot() -> Dict[str, Any]:
             {
                 "layer": "bronze",
                 "domains": [
-                    {"domain": "market", "artifact": "market-data/*.csv"},
+                    {
+                        "domain": "market",
+                        "artifact": "market-data/buckets/<bucket>.parquet + system/bronze-index/market/latest.parquet",
+                    },
                     {"domain": "finance", "artifact": "finance-data/*.csv"},
                     {"domain": "earnings", "artifact": "earnings-data/*.csv"},
                     {"domain": "price-target", "artifact": "price-target-data/*.csv"},
@@ -40,7 +43,10 @@ def get_lineage_snapshot() -> Dict[str, Any]:
             {
                 "layer": "silver",
                 "domains": [
-                    {"domain": "market", "artifact": "market-data/<ticker> (delta)"},
+                    {
+                        "domain": "market",
+                        "artifact": "market-data/buckets/<bucket> (delta) + system/silver-index/market/latest.parquet",
+                    },
                     {"domain": "finance", "artifact": "finance-data/<subdomain>/<ticker>_* (delta)"},
                     {"domain": "earnings", "artifact": "earnings-data/<ticker> (delta)"},
                     {"domain": "price-target", "artifact": "price-target-data/<ticker> (delta)"},
@@ -49,7 +55,10 @@ def get_lineage_snapshot() -> Dict[str, Any]:
             {
                 "layer": "gold",
                 "domains": [
-                    {"domain": "market", "artifact": "market/<ticker> (delta)"},
+                    {
+                        "domain": "market",
+                        "artifact": "market/buckets/<bucket> (delta) + system/gold-index/market/latest.parquet",
+                    },
                     {"domain": "finance", "artifact": "finance/<ticker> (delta)"},
                     {"domain": "earnings", "artifact": "earnings/<ticker> (delta)"},
                     {"domain": "price-target", "artifact": "targets/<ticker> (delta)"},

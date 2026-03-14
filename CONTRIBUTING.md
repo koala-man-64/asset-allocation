@@ -12,6 +12,8 @@ python3 -m pip install -e .
 python3 -m pip install -r requirements-dev.txt
 ```
 
+Use Python 3.14 for local backend work so local installs match CI and container images.
+
 ### UI
 
 ```bash
@@ -37,7 +39,7 @@ pnpm exec vitest run --coverage
 pnpm build
 ```
 
-CI runs the UI checks in a Node 20 container and the backend checks on Python 3.10.
+CI runs the UI checks in a Node 20 container and the backend checks on Python 3.14.
 
 ## Dependency Governance
 

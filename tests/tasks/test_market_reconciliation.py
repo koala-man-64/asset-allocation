@@ -22,12 +22,12 @@ def test_collect_bronze_market_symbols_ignores_non_symbol_files(monkeypatch) -> 
         lambda domain: {"AAPL", "MSFT"} if domain == "market" else set(),
     )
     blob_infos = [
-        {"name": "market-data/AAPL.csv"},
-        {"name": "market-data/MSFT.csv"},
+        {"name": "market-data/buckets/A.parquet"},
+        {"name": "market-data/buckets/M.parquet"},
         {"name": "market-data/whitelist.csv"},
         {"name": "market-data/blacklist.csv"},
         {"name": "market-data/README.txt"},
-        {"name": "market-data/subdir/NVDA.csv"},
+        {"name": "system/bronze-index/market/latest.parquet"},
     ]
 
     symbols = collect_bronze_market_symbols_from_blob_infos(blob_infos)

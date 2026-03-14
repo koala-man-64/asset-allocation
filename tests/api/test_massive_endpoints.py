@@ -74,6 +74,24 @@ async def test_massive_unified_snapshot_returns_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_massive_tickers_returns_json(monkeypatch):
+    def fake_tickers(self, *, market="stocks", locale="us", active=True):
+        assert market == "stocks"
+        assert locale == "us"
+        assert active is True
+        return [{"Symbol": "AAPL"}, {"Symbol": "^VIX"}]
+
+    monkeypatch.setattr(MassiveGateway, "get_tickers", fake_tickers)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/api/providers/massive/tickers?market=stocks&locale=us&active=true")
+
+    assert resp.status_code == 200
+    assert resp.json()["results"] == [{"Symbol": "AAPL"}, {"Symbol": "^VIX"}]
+
+
+@pytest.mark.asyncio
 async def test_massive_financials_returns_json(monkeypatch):
     def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
         assert symbol == "AAPL"

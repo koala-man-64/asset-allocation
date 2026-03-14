@@ -15,6 +15,18 @@ def unique_ticker():
     return f"TEST_EARN_{uuid.uuid4().hex[:8].upper()}"
 
 
+def _sync_result() -> bronze.symbol_availability.SyncResult:
+    return bronze.symbol_availability.SyncResult(
+        provider="alpha_vantage",
+        source_column="source_alpha_vantage",
+        listed_count=1,
+        inserted_count=0,
+        disabled_count=0,
+        duration_ms=1,
+        lock_wait_ms=0,
+    )
+
+
 def _make_canonical_existing_rows(symbol: str, rows: list[dict]) -> bytes:
     df = pd.DataFrame([{**row, "symbol": symbol} for row in rows])
     return bronze._stamp_canonical_earnings_frame(df).to_json(orient="records").encode("utf-8")
@@ -197,7 +209,7 @@ def test_fetch_and_save_raw_skips_write_when_no_new_earnings_dates(unique_ticker
         mock_list_manager.add_to_whitelist.assert_called_with(symbol)
 
 
-def test_fetch_and_save_raw_invalid_payload_attaches_payload(unique_ticker):
+def test_fetch_and_save_raw_marks_missing_earnings_history_as_coverage_unavailable(unique_ticker):
     symbol = unique_ticker
     payload = {
         "symbol": symbol,
@@ -210,9 +222,10 @@ def test_fetch_and_save_raw_invalid_payload_attaches_payload(unique_ticker):
     with patch("tasks.earnings_data.bronze_earnings_data.list_manager") as mock_list_manager:
         mock_list_manager.is_blacklisted.return_value = False
 
-        with pytest.raises(bronze.AlphaVantageGatewayInvalidSymbolError) as exc_info:
+        with pytest.raises(bronze.BronzeCoverageUnavailableError) as exc_info:
             bronze.fetch_and_save_raw(symbol, mock_av)
 
+    assert exc_info.value.reason_code == "no_earnings_records"
     assert exc_info.value.payload == payload
 
 
@@ -570,7 +583,10 @@ def test_main_async_logs_invalid_payload_preview(unique_ticker):
         ), patch(
             "tasks.earnings_data.bronze_earnings_data.mdc.log_environment_diagnostics"
         ), patch(
-            "tasks.earnings_data.bronze_earnings_data.mdc.get_symbols",
+            "tasks.earnings_data.bronze_earnings_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.symbol_availability.get_domain_symbols",
             return_value=pd.DataFrame({"Symbol": [symbol]}),
         ), patch(
             "tasks.earnings_data.bronze_earnings_data.bronze_bucketing.is_alpha26_mode",
@@ -585,6 +601,11 @@ def test_main_async_logs_invalid_payload_preview(unique_ticker):
             "tasks.earnings_data.bronze_earnings_data.fetch_and_save_raw",
             side_effect=bronze.AlphaVantageGatewayInvalidSymbolError("invalid", payload=payload),
         ), patch(
+            "tasks.earnings_data.bronze_earnings_data.record_invalid_symbol_candidate",
+            return_value={"promoted": False, "observedRunCount": 1, "blacklistPath": None},
+        ) as mock_record_invalid, patch(
+            "tasks.earnings_data.bronze_earnings_data.clear_invalid_candidate_marker"
+        ), patch(
             "tasks.earnings_data.bronze_earnings_data.list_manager"
         ) as mock_list_manager, patch(
             "tasks.earnings_data.bronze_earnings_data.mdc.write_warning"
@@ -596,13 +617,14 @@ def test_main_async_logs_invalid_payload_preview(unique_ticker):
             exit_code = await bronze.main_async()
 
         assert exit_code == 0
-        mock_list_manager.add_to_blacklist.assert_called_with(symbol)
+        assert mock_record_invalid.call_count == 1
+        assert mock_record_invalid.call_args.kwargs["symbol"] == symbol
+        mock_list_manager.add_to_blacklist.assert_not_called()
         warning_messages = [call.args[0] for call in mock_write_warning.call_args_list if call.args]
         assert any(
             message
             == (
-                f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled "
-                f"for job runs. payload_preview={expected_preview}"
+                f"Bronze earnings invalid symbol candidate for {symbol}. payload_preview={expected_preview}"
             )
             for message in warning_messages
         )
@@ -626,7 +648,10 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
         ), patch(
             "tasks.earnings_data.bronze_earnings_data.mdc.log_environment_diagnostics"
         ), patch(
-            "tasks.earnings_data.bronze_earnings_data.mdc.get_symbols",
+            "tasks.earnings_data.bronze_earnings_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.symbol_availability.get_domain_symbols",
             return_value=pd.DataFrame({"Symbol": [symbol]}),
         ), patch(
             "tasks.earnings_data.bronze_earnings_data.bronze_bucketing.is_alpha26_mode",
@@ -645,6 +670,11 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
                 detail=detail,
             ),
         ), patch(
+            "tasks.earnings_data.bronze_earnings_data.record_invalid_symbol_candidate",
+            return_value={"promoted": False, "observedRunCount": 1, "blacklistPath": None},
+        ) as mock_record_invalid, patch(
+            "tasks.earnings_data.bronze_earnings_data.clear_invalid_candidate_marker"
+        ), patch(
             "tasks.earnings_data.bronze_earnings_data.list_manager"
         ) as mock_list_manager, patch(
             "tasks.earnings_data.bronze_earnings_data.mdc.write_warning"
@@ -656,13 +686,13 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
             exit_code = await bronze.main_async()
 
         assert exit_code == 0
-        mock_list_manager.add_to_blacklist.assert_called_with(symbol)
+        mock_record_invalid.assert_called_once()
+        mock_list_manager.add_to_blacklist.assert_not_called()
         warning_messages = [call.args[0] for call in mock_write_warning.call_args_list if call.args]
         assert any(
             message
             == (
-                f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled "
-                f"for job runs. payload_preview={expected_preview}"
+                f"Bronze earnings invalid symbol candidate for {symbol}. payload_preview={expected_preview}"
             )
             for message in warning_messages
         )

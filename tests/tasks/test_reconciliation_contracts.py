@@ -152,7 +152,7 @@ SILVER_CASES: list[dict[str, Any]] = [
         "patch_symbols": _patch_silver_market_symbols,
         "deleted_paths": [DataPaths.get_silver_market_bucket_path("M")],
         "cutoff_paths": layer_bucketing.all_silver_bucket_paths(domain="market"),
-        "bronze_blob_list": [{"name": "market-data/AAPL.csv"}],
+        "bronze_blob_list": [{"name": "market-data/buckets/A.parquet"}],
     },
     {
         "id": "finance",

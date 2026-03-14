@@ -18,11 +18,18 @@ from core.alpha_vantage_gateway_client import (
     AlphaVantageGatewayInvalidSymbolError,
     AlphaVantageGatewayThrottleError,
 )
+from core import symbol_availability
 from core import config as cfg
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.bronze_symbol_policy import (
+    BronzeCoverageUnavailableError,
+    build_bronze_run_id,
+    clear_invalid_candidate_marker,
+    record_invalid_symbol_candidate,
+)
 from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
@@ -50,6 +57,7 @@ list_manager = ListManager(
 EARNINGS_STALE_DAYS = 7
 _COVERAGE_DOMAIN = "earnings"
 _COVERAGE_PROVIDER = "alpha-vantage"
+_INVALID_CANDIDATE_REASON = "provider_invalid_symbol"
 _EARNINGS_CALENDAR_HORIZONS = frozenset({"3month", "6month", "12month"})
 _EARNINGS_CALENDAR_EXPECTED_COLUMNS = (
     "symbol",
@@ -135,8 +143,10 @@ def _format_payload_preview(payload: Any, *, max_chars: int = 500) -> Optional[s
     return text
 
 
-def _format_invalid_payload_warning(symbol: str, exc: BaseException) -> str:
-    message = f"Invalid earnings payload for {symbol}; automatic blacklist updates are disabled for job runs."
+def _format_invalid_candidate_warning(symbol: str, exc: BaseException, *, promoted: bool) -> str:
+    message = f"Bronze earnings invalid symbol candidate for {symbol}."
+    if promoted:
+        message += " Promoted to domain blacklist after 2 runs."
     preview_payload = getattr(exc, "payload", None)
     if preview_payload is None:
         preview_payload = {}
@@ -809,8 +819,9 @@ def fetch_and_save_raw(
 
     if merged is None or merged.empty:
         if not has_source_records and scheduled_rows.empty and carry_forward_scheduled.empty:
-            raise AlphaVantageGatewayInvalidSymbolError(
-                "No quarterly or scheduled earnings records found.",
+            raise BronzeCoverageUnavailableError(
+                "no_earnings_records",
+                detail="No quarterly or scheduled earnings records found.",
                 payload=payload or {"symbol": symbol},
             )
         if resolved_backfill_start is not None:
@@ -894,19 +905,40 @@ async def main_async() -> int:
 
     list_manager.load()
 
-    df_symbols = mdc.get_symbols().dropna(subset=["Symbol"]).copy()
+    sync_result = symbol_availability.sync_domain_availability("earnings")
+    mdc.write_line(
+        "Bronze earnings availability sync: "
+        f"provider={sync_result.provider} listed_count={sync_result.listed_count} "
+        f"inserted_count={sync_result.inserted_count} disabled_count={sync_result.disabled_count} "
+        f"duration_ms={sync_result.duration_ms} lock_wait_ms={sync_result.lock_wait_ms}"
+    )
+    df_symbols = symbol_availability.get_domain_symbols("earnings").dropna(subset=["Symbol"]).copy()
+    provider_available_count = int(len(df_symbols))
     symbols = []
+    blacklist_skipped = 0
     for sym in df_symbols["Symbol"].astype(str).tolist():
         if "." in sym:
             continue
         if list_manager.is_blacklisted(sym):
+            blacklist_skipped += 1
             continue
         symbols.append(sym)
     symbols = list(dict.fromkeys(symbols))
 
+    debug_filtered = 0
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        filtered_symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        debug_filtered = len(symbols) - len(filtered_symbols)
+        symbols = filtered_symbols
+
+    mdc.write_line(
+        "Bronze earnings symbol selection: "
+        f"provider_available_count={provider_available_count} "
+        f"blacklist_skipped={blacklist_skipped} "
+        f"debug_filtered={debug_filtered} "
+        f"final_scheduled={len(symbols)}"
+    )
 
     alpha26_mode = bronze_bucketing.is_alpha26_mode()
     mdc.write_line(f"Starting Alpha Vantage Bronze Earnings Ingestion for {len(symbols)} symbols...")
@@ -935,7 +967,16 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
     client_manager = _ThreadLocalAlphaVantageClientManager()
 
-    progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    run_id = build_bronze_run_id(_COVERAGE_DOMAIN)
+    progress = {
+        "processed": 0,
+        "written": 0,
+        "skipped": 0,
+        "failed": 0,
+        "invalid_candidates": 0,
+        "unavailable": 0,
+        "blacklist_promotions": 0,
+    }
     coverage_progress = _empty_coverage_summary()
     event_progress = _empty_event_summary()
     failure_counts: dict[str, int] = {}
@@ -988,6 +1029,10 @@ async def main_async() -> int:
         async with semaphore:
             try:
                 wrote, coverage_summary, symbol_event_summary = await loop.run_in_executor(executor, worker, symbol)
+                try:
+                    clear_invalid_candidate_marker(common_client=common_client, domain=_COVERAGE_DOMAIN, symbol=symbol)
+                except Exception as exc:
+                    mdc.write_warning(f"Failed to clear earnings invalid-candidate marker for {symbol}: {exc}")
                 async with progress_lock:
                     if wrote:
                         progress["written"] += 1
@@ -997,14 +1042,39 @@ async def main_async() -> int:
                         coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
                     for key in event_progress:
                         event_progress[key] += int(symbol_event_summary.get(key, 0) or 0)
-            except AlphaVantageGatewayInvalidSymbolError as exc:
-                list_manager.add_to_blacklist(symbol)
+            except BronzeCoverageUnavailableError as exc:
                 should_log = False
                 async with progress_lock:
-                    progress["blacklisted"] += 1
-                    should_log = progress["blacklisted"] <= 20
+                    progress["unavailable"] += 1
+                    should_log = progress["unavailable"] <= 20
                 if should_log:
-                    mdc.write_warning(_format_invalid_payload_warning(symbol, exc))
+                    mdc.write_warning(
+                        f"Bronze earnings coverage unavailable: symbol={symbol} reason={exc.reason_code} detail={exc}"
+                    )
+            except AlphaVantageGatewayInvalidSymbolError as exc:
+                promotion = record_invalid_symbol_candidate(
+                    common_client=common_client,
+                    bronze_client=bronze_client,
+                    domain=_COVERAGE_DOMAIN,
+                    symbol=symbol,
+                    provider=_COVERAGE_PROVIDER,
+                    reason_code=_INVALID_CANDIDATE_REASON,
+                    run_id=run_id,
+                )
+                should_log = False
+                async with progress_lock:
+                    progress["invalid_candidates"] += 1
+                    if promotion.get("promoted"):
+                        progress["blacklist_promotions"] += 1
+                    should_log = progress["invalid_candidates"] <= 20
+                if should_log:
+                    mdc.write_warning(
+                        _format_invalid_candidate_warning(
+                            symbol,
+                            exc,
+                            promoted=bool(promotion.get("promoted")),
+                        )
+                    )
             except AlphaVantageGatewayThrottleError as exc:
                 await record_failure(symbol, exc)
             except AlphaVantageGatewayError as exc:
@@ -1017,7 +1087,8 @@ async def main_async() -> int:
                     if progress["processed"] % 500 == 0:
                         mdc.write_line(
                             "Bronze AV earnings progress: processed={processed} written={written} skipped={skipped} "
-                            "blacklisted={blacklisted} failed={failed}".format(**progress)
+                            "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+                            "blacklist_promotions={blacklist_promotions} failed={failed}".format(**progress)
                         )
 
     try:
@@ -1059,11 +1130,12 @@ async def main_async() -> int:
 
     job_status, exit_code = resolve_job_run_status(
         failed_count=progress["failed"],
-        warning_count=progress["blacklisted"],
+        warning_count=progress["invalid_candidates"],
     )
     mdc.write_line(
         "Bronze AV earnings ingest complete: processed={processed} written={written} skipped={skipped} "
-        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+        "blacklist_promotions={blacklist_promotions} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
         "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
         "scheduled_rows_retained={scheduled_rows_retained} actual_over_scheduled_replacements={actual_over_scheduled_replacements} "

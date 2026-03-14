@@ -14,7 +14,7 @@ AssetAllocation is an Azure-oriented market data and operations platform. The re
 
 ### Prerequisites
 
-- Python 3.10 or newer
+- Python 3.14
 - Node.js and `pnpm` (the UI workspace pins `pnpm@10.28.1`)
 - Azure Storage credentials and provider API keys if you want to run ETL jobs against real services
 - `POSTGRES_DSN` if you want runtime config, debug-symbol, Postgres explorer, or strategy features
@@ -29,6 +29,8 @@ python3 -m pip install -e .
 python3 -m pip install -r requirements-dev.txt
 cp .env.template .env
 ```
+
+The backend runtime, CI, and container images are standardized on Python 3.14.
 
 ### Run the API Locally
 

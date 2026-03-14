@@ -1,6 +1,6 @@
 # Tasks-only image for Azure Container Apps Jobs.
 # NOTE: API/UI are intentionally excluded from this image to minimize size and attack surface.
-FROM python:3.10-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 WORKDIR /app
 

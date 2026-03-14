@@ -12,7 +12,7 @@ def test_signature_matches_prefers_etag_when_present():
 
 def test_should_process_blob_since_last_success_requires_change_for_known_blob():
     blob = {
-        "name": "market-data/AAPL.csv",
+        "name": "market-data/buckets/A.parquet",
         "etag": "etag-1",
         "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     }
@@ -32,12 +32,12 @@ def test_should_process_blob_since_last_success_requires_change_for_known_blob()
 
 def test_should_process_blob_since_last_success_processes_new_or_changed_blob():
     unchanged_blob = {
-        "name": "market-data/AAPL.csv",
+        "name": "market-data/buckets/A.parquet",
         "etag": "etag-1",
         "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     }
     changed_blob = {
-        "name": "market-data/AAPL.csv",
+        "name": "market-data/buckets/A.parquet",
         "etag": "etag-2",
         "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     }

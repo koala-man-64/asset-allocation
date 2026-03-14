@@ -115,6 +115,39 @@ def test_unified_snapshot_uses_batch_api_route() -> None:
     assert seen[0][1].get("type") == "stocks"
 
 
+def test_get_tickers_uses_reference_ticker_route() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/providers/massive/tickers":
+            return httpx.Response(200, json={"results": [{"Symbol": "AAPL"}]})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        payload = client.get_tickers(market="stocks", locale="us", active=True)
+    finally:
+        http_client.close()
+
+    assert payload == [{"Symbol": "AAPL"}]
+    assert seen[0][0] == "/api/providers/massive/tickers"
+    assert seen[0][1].get("market") == "stocks"
+    assert seen[0][1].get("locale") == "us"
+    assert seen[0][1].get("active") == "true"
+
+
 def test_short_interest_uses_underscore_date_filters() -> None:
     seen: list[tuple[str, dict[str, str]]] = []
 

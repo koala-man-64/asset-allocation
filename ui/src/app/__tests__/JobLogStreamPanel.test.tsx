@@ -87,27 +87,6 @@ describe('JobLogStreamPanel', () => {
 
     vi.mocked(DataService.getJobLogs)
       .mockResolvedValueOnce({
-        jobName: 'beta-job',
-        runsRequested: 1,
-        runsReturned: 1,
-        tailLines: 10,
-        runs: [
-          {
-            executionName: 'beta-exec-001',
-            startTime: '2026-03-11T12:00:00Z',
-            tail: ['beta snapshot'],
-            consoleLogs: [
-              {
-                timestamp: '2026-03-11T12:00:01Z',
-                stream_s: 'stdout',
-                executionName: 'beta-exec-001',
-                message: 'beta snapshot',
-              },
-            ],
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
         jobName: 'alpha-job',
         runsRequested: 1,
         runsReturned: 1,
@@ -127,6 +106,27 @@ describe('JobLogStreamPanel', () => {
             ],
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        jobName: 'beta-job',
+        runsRequested: 1,
+        runsReturned: 1,
+        tailLines: 10,
+        runs: [
+          {
+            executionName: 'beta-exec-001',
+            startTime: '2026-03-11T12:00:00Z',
+            tail: ['beta snapshot'],
+            consoleLogs: [
+              {
+                timestamp: '2026-03-11T12:00:01Z',
+                stream_s: 'stdout',
+                executionName: 'beta-exec-001',
+                message: 'beta snapshot',
+              },
+            ],
+          },
+        ],
       });
 
     const user = userEvent.setup();
@@ -134,48 +134,48 @@ describe('JobLogStreamPanel', () => {
 
     await waitFor(() => {
       expect(DataService.getJobLogs).toHaveBeenCalledWith(
-        'beta-job',
-        { runs: 1 },
-        expect.any(AbortSignal)
-      );
-    });
-
-    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'timestamp' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'stream_s' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'message' })).toBeInTheDocument();
-    expect(screen.getByText('stdout')).toBeInTheDocument();
-    expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:beta-job']]));
-
-    await user.click(screen.getByRole('combobox', { name: /monitored job/i }));
-    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
-      'Silver / finance / beta-job',
-      'Bronze / market / alpha-job',
-    ]);
-    await user.click(await screen.findByRole('option', { name: 'Bronze / market / alpha-job' }));
-
-    await waitFor(() => {
-      expect(DataService.getJobLogs).toHaveBeenLastCalledWith(
         'alpha-job',
         { runs: 1 },
         expect.any(AbortSignal)
       );
     });
 
-    expect(unsubscribeTopics).toEqual(expect.arrayContaining([['job-logs:beta-job']]));
-    expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:alpha-job']]));
     expect(await screen.findByText('alpha snapshot')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'timestamp' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'stream_s' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'message' })).toBeInTheDocument();
+    expect(screen.getByText('stdout')).toBeInTheDocument();
+    expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:alpha-job']]));
+
+    await user.click(screen.getByRole('combobox', { name: /monitored job/i }));
+    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
+      'Bronze / market / alpha-job',
+      'Silver / finance / beta-job',
+    ]);
+    await user.click(await screen.findByRole('option', { name: 'Silver / finance / beta-job' }));
+
+    await waitFor(() => {
+      expect(DataService.getJobLogs).toHaveBeenLastCalledWith(
+        'beta-job',
+        { runs: 1 },
+        expect.any(AbortSignal)
+      );
+    });
+
+    expect(unsubscribeTopics).toEqual(expect.arrayContaining([['job-logs:alpha-job']]));
+    expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:beta-job']]));
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
 
     await act(async () => {
       emitConsoleLogStream({
-        topic: 'job-logs:alpha-job',
+        topic: 'job-logs:beta-job',
         resourceType: 'job',
-        resourceName: 'alpha-job',
+        resourceName: 'beta-job',
         lines: [
           {
             id: 'line-1',
-            message: 'alpha live line',
-            timestamp: '2026-03-10T12:00:02Z',
+            message: 'beta live line',
+            timestamp: '2026-03-11T12:00:02Z',
             stream_s: 'stderr',
           },
         ],
@@ -183,7 +183,7 @@ describe('JobLogStreamPanel', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('alpha live line')).toBeInTheDocument();
+      expect(screen.getByText('beta live line')).toBeInTheDocument();
     });
     expect(screen.getByText('stderr')).toBeInTheDocument();
 

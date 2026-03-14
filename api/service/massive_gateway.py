@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, Literal, Optional
 
+from core.massive_provider import get_complete_ticker_list as get_complete_reference_ticker_list
 from massive_provider import MassiveClient, MassiveConfig
 from massive_provider.errors import (
     MassiveAuthError,
@@ -413,6 +414,39 @@ class MassiveGateway:
             params=params or None,
             pagination=bool(pagination),
         )
+
+    def get_tickers(
+        self,
+        *,
+        market: str = "stocks",
+        locale: Optional[str] = "us",
+        active: bool = True,
+    ) -> list[dict[str, Any]]:
+        _, cfg = self._build_snapshot()
+        df = get_complete_reference_ticker_list(
+            api_key=str(cfg.api_key),
+            base_url=str(cfg.base_url),
+            timeout_seconds=float(cfg.timeout_seconds),
+            market=str(market or "stocks").strip() or "stocks",
+            locale=_strip_or_none(locale),
+            active=bool(active),
+        )
+        if df is None or df.empty:
+            return []
+        records = df.to_dict(orient="records")
+        out: list[dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            item = dict(record)
+            ticker = _to_canonical_symbol(item.get("Symbol") or item.get("symbol") or item.get("ticker"))
+            if ticker:
+                item["Symbol"] = ticker
+            active_value = item.get("Active")
+            if active_value is not None:
+                item["Active"] = bool(active_value)
+            out.append(item)
+        return out
 
     def get_unified_snapshot(
         self,

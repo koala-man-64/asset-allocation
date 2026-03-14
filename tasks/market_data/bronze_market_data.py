@@ -8,7 +8,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
-from io import BytesIO, StringIO
+from io import StringIO
 from typing import Any, Callable, Dict, Optional
 
 import pandas as pd
@@ -19,15 +19,24 @@ from core.massive_gateway_client import (
     MassiveGatewayNotFoundError,
     MassiveGatewayRateLimitError,
 )
+from core import symbol_availability
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.bronze_symbol_policy import (
+    BronzeCoverageUnavailableError,
+    build_bronze_run_id,
+    clear_invalid_candidate_marker,
+    is_explicit_invalid_candidate,
+    record_invalid_symbol_candidate,
+)
 from tasks.common.job_status import resolve_job_run_status
 from tasks.market_data import config as cfg
 
 
 bronze_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_BRONZE)
+common_client = mdc.get_storage_client(cfg.AZURE_CONTAINER_COMMON)
 list_manager = ListManager(bronze_client, "market-data", auto_flush=False, allow_blacklist_updates=False)
 
 _SUPPLEMENTAL_MARKET_COLUMNS = ("ShortInterest", "ShortVolume")
@@ -52,6 +61,8 @@ _BUCKET_COLUMNS = [
 ]
 _MARKET_OUTCOME_LOG_SAMPLE_LIMIT = 20
 _MARKET_OUTCOME_LOG_INTERVAL = 250
+_DOMAIN = "market"
+_PROVIDER = "massive"
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -556,22 +567,6 @@ def _merge_market_fundamentals(
         out[column_name] = pd.to_numeric(out[column_name], errors="coerce")
 
     return out
-
-
-def _serialize_market_csv(df_daily: pd.DataFrame) -> bytes:
-    out = df_daily.copy()
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
-    out = out.dropna(subset=["Date"]).copy()
-    out = out.sort_values("Date").reset_index(drop=True)
-    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
-    ordered_columns = ["Date", "Open", "High", "Low", "Close", "Volume", *_SUPPLEMENTAL_MARKET_COLUMNS]
-    return out[[c for c in ordered_columns if c in out.columns]].to_csv(index=False).encode("utf-8")
-
-
-def _normalize_provider_daily_csv(csv_text: str) -> bytes:
-    return _serialize_market_csv(_normalize_provider_daily_df(csv_text))
-
-
 def _normalize_market_bucket_df(symbol: str, df_daily: pd.DataFrame) -> pd.DataFrame:
     out = df_daily.copy()
     out["symbol"] = str(symbol).upper()
@@ -683,6 +678,7 @@ def _delete_flat_symbol_blobs() -> int:
 
 def _load_alpha26_existing_market_frames(*, symbols: set[str]) -> dict[str, pd.DataFrame]:
     frames: dict[str, pd.DataFrame] = {}
+    failed_buckets: list[str] = []
     for bucket in bronze_bucketing.ALPHABET_BUCKETS:
         try:
             bucket_df = bronze_bucketing.read_bucket_parquet(
@@ -690,7 +686,9 @@ def _load_alpha26_existing_market_frames(*, symbols: set[str]) -> dict[str, pd.D
                 prefix="market-data",
                 bucket=bucket,
             )
-        except Exception:
+        except Exception as exc:
+            failed_buckets.append(bucket)
+            mdc.write_error(f"Bronze market alpha26 preload failed bucket={bucket}: {exc}")
             continue
         if bucket_df is None or bucket_df.empty:
             continue
@@ -727,6 +725,9 @@ def _load_alpha26_existing_market_frames(*, symbols: set[str]) -> dict[str, pd.D
             group = _canonical_market_df(group)
             if not group.empty:
                 frames[clean_symbol] = group
+    if failed_buckets:
+        bucket_list = ",".join(sorted(failed_buckets))
+        raise RuntimeError(f"Bronze market alpha26 preload failed for bucket(s): {bucket_list}")
     return frames
 
 
@@ -782,37 +783,6 @@ def _is_header_only_provider_daily_csv(csv_text: str) -> bool:
             return False
 
     return True
-
-
-def _load_existing_market_df(symbol: str) -> pd.DataFrame:
-    path = f"market-data/{symbol}.csv"
-    try:
-        raw_bytes = mdc.read_raw_bytes(path, client=bronze_client)
-    except Exception as exc:
-        mdc.write_warning(
-            f"Unable to read existing bronze market blob for {symbol}; continuing with provider-only payload. ({exc})"
-        )
-        return pd.DataFrame()
-
-    if not raw_bytes:
-        return pd.DataFrame()
-
-    try:
-        existing_df = pd.read_csv(BytesIO(raw_bytes))
-    except Exception as exc:
-        mdc.write_warning(f"Existing bronze market CSV for {symbol} is unreadable; rebuilding from provider data. ({exc})")
-        return pd.DataFrame()
-
-    if existing_df.empty or "Date" not in existing_df.columns:
-        return pd.DataFrame()
-
-    existing_df["Date"] = pd.to_datetime(existing_df["Date"], errors="coerce")
-    existing_df = existing_df.dropna(subset=["Date"]).copy()
-    if existing_df.empty:
-        return pd.DataFrame()
-
-    existing_df["Date"] = existing_df["Date"].dt.strftime("%Y-%m-%d")
-    return existing_df
 
 
 def _extract_latest_market_date(existing_df: pd.DataFrame) -> date | None:
@@ -942,37 +912,28 @@ def _download_and_save_raw_with_recovery(
     client_manager: _ThreadLocalMassiveClientManager,
     *,
     snapshot_row: dict[str, float | str] | None = None,
-    backfill_start: date | None = None,
-    write_symbol_file: bool = True,
-    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    collected_symbol_frames: Dict[str, pd.DataFrame],
     collected_lock: Optional[threading.Lock] = None,
     existing_symbol_df: Optional[pd.DataFrame] = None,
-    alpha26_mode: bool = False,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
 ) -> None:
     attempts = max(1, int(max_attempts))
     sleep_seconds = max(0.0, float(sleep_seconds))
-    # Backfill is intentionally disabled for Bronze market; retain arg for local tooling compatibility.
-    _ = backfill_start
 
     for attempt in range(1, attempts + 1):
         client = client_manager.get_client()
         try:
-            call_kwargs: dict[str, Any] = {"snapshot_row": snapshot_row}
-            if alpha26_mode or not write_symbol_file or collected_symbol_frames is not None or existing_symbol_df is not None:
-                call_kwargs.update(
-                    {
-                        "write_symbol_file": write_symbol_file,
-                        "collected_symbol_frames": collected_symbol_frames,
-                        "collected_lock": collected_lock,
-                        "existing_symbol_df": existing_symbol_df,
-                        "alpha26_mode": alpha26_mode,
-                    }
-                )
-            download_and_save_raw(symbol, client, **call_kwargs)
+            download_and_save_raw(
+                symbol,
+                client,
+                snapshot_row=snapshot_row,
+                collected_symbol_frames=collected_symbol_frames,
+                collected_lock=collected_lock,
+                existing_symbol_df=existing_symbol_df,
+            )
             return
-        except MassiveGatewayNotFoundError:
+        except (BronzeCoverageUnavailableError, MassiveGatewayNotFoundError):
             raise
         except Exception as exc:
             should_retry = _is_recoverable_massive_error(exc) and attempt < attempts
@@ -992,26 +953,17 @@ def download_and_save_raw(
     massive_client: MassiveGatewayClient,
     *,
     snapshot_row: dict[str, float | str] | None = None,
-    backfill_start: date | None = None,
-    write_symbol_file: bool = True,
-    collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
+    collected_symbol_frames: Dict[str, pd.DataFrame],
     collected_lock: Optional[threading.Lock] = None,
     existing_symbol_df: Optional[pd.DataFrame] = None,
-    alpha26_mode: bool = False,
 ) -> None:
-    """
-    Backwards-compatible helper (used by tests/local tooling) that fetches a single ticker
-    from the API-hosted Massive gateway and stores it in Bronze.
-    """
-    # Backfill is intentionally disabled for Bronze market; retain arg for local tooling compatibility.
-    _ = backfill_start
     if _should_skip_blacklisted_market_symbol(symbol):
         return
 
     if existing_symbol_df is not None and not existing_symbol_df.empty:
         existing_df = _canonical_market_df(existing_symbol_df)
     else:
-        existing_df = _load_existing_market_df(symbol)
+        existing_df = pd.DataFrame()
     existing_latest_date = _extract_latest_market_date(existing_df)
     from_date, to_date = _resolve_fetch_window(existing_latest_date=existing_latest_date)
     raw_text = ""
@@ -1022,7 +974,7 @@ def download_and_save_raw(
     ):
         if snapshot_date is not None and existing_latest_date is not None and snapshot_date <= existing_latest_date:
             # Snapshot confirms we are already at the latest obtainable daily bar.
-            if alpha26_mode and not existing_df.empty:
+            if not existing_df.empty:
                 _set_collected_market_frame(
                     symbol=symbol,
                     frame=existing_df,
@@ -1036,8 +988,7 @@ def download_and_save_raw(
             snapshot_dates = pd.to_datetime(df_daily["Date"], errors="coerce").dropna()
             if snapshot_dates.empty or snapshot_dates.max().date() < existing_latest_date:
                 # Snapshot can lag around weekends/market close windows.
-                # If the local bronze blob is newer, keep local data and skip work.
-                if alpha26_mode and not existing_df.empty:
+                if not existing_df.empty:
                     _set_collected_market_frame(
                         symbol=symbol,
                         frame=existing_df,
@@ -1061,7 +1012,7 @@ def download_and_save_raw(
                     f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}; "
                     "keeping existing bronze data."
                 )
-                if alpha26_mode and not existing_df.empty:
+                if not existing_df.empty:
                     _set_collected_market_frame(
                         symbol=symbol,
                         frame=existing_df,
@@ -1070,12 +1021,13 @@ def download_and_save_raw(
                     )
                 list_manager.add_to_whitelist(symbol)
                 return
-            list_manager.add_to_blacklist(symbol)
-            raise MassiveGatewayNotFoundError(
-                f"Massive returned header-only daily CSV for {symbol}; automatic blacklist updates are disabled."
+            raise BronzeCoverageUnavailableError(
+                "header_only_daily_csv",
+                detail=(
+                    f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}."
+                ),
+                payload={"symbol": symbol, "from_date": from_date, "to_date": to_date},
             )
-
-    blob_path = f"market-data/{symbol}.csv"
 
     try:
         if df_daily is None:
@@ -1091,7 +1043,7 @@ def download_and_save_raw(
             and _existing_has_complete_supplementals(existing_df, as_of_date=existing_latest_date)
         ):
             # No new market rows and supplemental metrics already populated.
-            if alpha26_mode and not existing_df.empty:
+            if not existing_df.empty:
                 _set_collected_market_frame(
                     symbol=symbol,
                     frame=existing_df,
@@ -1126,7 +1078,7 @@ def download_and_save_raw(
         )
         df_daily = _merge_existing_and_new_market_data(existing_df, df_daily)
         if not existing_df.empty and _market_frames_equal(existing_df, df_daily):
-            if alpha26_mode:
+            if not existing_df.empty:
                 _set_collected_market_frame(
                     symbol=symbol,
                     frame=existing_df,
@@ -1135,7 +1087,6 @@ def download_and_save_raw(
                 )
             list_manager.add_to_whitelist(symbol)
             return
-        raw_bytes = _serialize_market_csv(df_daily)
     except (MassiveGatewayRateLimitError, MassiveGatewayError):
         raise
     except Exception as exc:
@@ -1147,18 +1098,12 @@ def download_and_save_raw(
             payload={"snippet": snippet},
         ) from exc
 
-    if not write_symbol_file:
-        _set_collected_market_frame(
-            symbol=symbol,
-            frame=df_daily,
-            collected_symbol_frames=collected_symbol_frames,
-            collected_lock=collected_lock,
-        )
-    else:
-        try:
-            mdc.store_raw_bytes(raw_bytes, blob_path, client=bronze_client)
-        except Exception as exc:
-            raise RuntimeError(f"Failed to store bronze market-data/{symbol}.csv: {type(exc).__name__}: {exc}") from exc
+    _set_collected_market_frame(
+        symbol=symbol,
+        frame=df_daily,
+        collected_symbol_frames=collected_symbol_frames,
+        collected_lock=collected_lock,
+    )
     list_manager.add_to_whitelist(symbol)
     return
 
@@ -1176,10 +1121,6 @@ def _get_max_workers() -> int:
     )
 
 
-# Backwards-compatible alias used by some tests/local tooling.
-_normalize_alpha_vantage_daily_csv = _normalize_provider_daily_csv
-
-
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
@@ -1189,38 +1130,55 @@ async def main_async() -> int:
         f"Bronze market blacklist loaded with {len(list_manager.blacklist)} symbols (excluded from scheduling)."
     )
 
-    mdc.write_line("Fetching symbol universe...")
-    df_symbols = mdc.get_symbols()
+    sync_result = symbol_availability.sync_domain_availability("market")
+    mdc.write_line(
+        "Bronze market availability sync: "
+        f"provider={sync_result.provider} listed_count={sync_result.listed_count} "
+        f"inserted_count={sync_result.inserted_count} disabled_count={sync_result.disabled_count} "
+        f"duration_ms={sync_result.duration_ms} lock_wait_ms={sync_result.lock_wait_ms}"
+    )
+    df_symbols = symbol_availability.get_domain_symbols("market")
+    provider_available_count = int(df_symbols["Symbol"].dropna().shape[0]) if "Symbol" in df_symbols.columns else 0
 
     symbols: list[str] = []
+    blacklist_skipped = 0
     for raw in df_symbols["Symbol"].dropna().astype(str).tolist():
         if "." in raw:
             continue
         if _should_skip_blacklisted_market_symbol(raw):
+            blacklist_skipped += 1
             continue
         symbols.append(raw)
     # Preserve original ordering while de-duping.
     symbols = list(dict.fromkeys(symbols))
 
     debug_mode = bool(hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS)
+    debug_filtered = 0
     if debug_mode:
         mdc.write_line(f"DEBUG MODE: Restricting to {cfg.DEBUG_SYMBOLS}")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        filtered_symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        debug_filtered = len(symbols) - len(filtered_symbols)
+        symbols = filtered_symbols
 
-    alpha26_mode = bronze_bucketing.is_alpha26_mode()
+    mdc.write_line(
+        "Bronze market symbol selection: "
+        f"provider_available_count={provider_available_count} "
+        f"blacklist_skipped={blacklist_skipped} "
+        f"debug_filtered={debug_filtered} "
+        f"final_scheduled={len(symbols)}"
+    )
+    run_id = build_bronze_run_id(_DOMAIN)
+
+    bronze_bucketing.bronze_layout_mode()
     mdc.write_line(f"Starting Massive Bronze Market Ingestion for {len(symbols)} symbols...")
-    alpha26_existing_frames: dict[str, pd.DataFrame] = {}
-    collected_symbol_frames: Dict[str, pd.DataFrame] = {}
-    collected_lock: Optional[threading.Lock] = None
-    if alpha26_mode:
-        symbol_set = {str(s).strip().upper() for s in symbols}
-        alpha26_existing_frames = _load_alpha26_existing_market_frames(symbols=symbol_set)
-        # Seed with existing rows to preserve unchanged symbols under full 26-bucket rewrite.
-        collected_symbol_frames = {k: v.copy() for k, v in alpha26_existing_frames.items()}
-        collected_lock = threading.Lock()
-        mdc.write_line(
-            f"Loaded existing market alpha26 seed frames: symbols={len(collected_symbol_frames)}."
-        )
+    symbol_set = {str(s).strip().upper() for s in symbols}
+    alpha26_existing_frames = _load_alpha26_existing_market_frames(symbols=symbol_set)
+    # Seed with existing rows to preserve unchanged symbols under full 26-bucket rewrite.
+    collected_symbol_frames: Dict[str, pd.DataFrame] = {k: v.copy() for k, v in alpha26_existing_frames.items()}
+    collected_lock: Optional[threading.Lock] = threading.Lock()
+    mdc.write_line(
+        f"Loaded existing market alpha26 seed frames: symbols={len(collected_symbol_frames)}."
+    )
 
     snapshot_rows_by_symbol: dict[str, dict[str, float | str]] = {}
     if symbols:
@@ -1240,23 +1198,28 @@ async def main_async() -> int:
 
     client_manager = _ThreadLocalMassiveClientManager()
 
-    progress = {"processed": 0, "downloaded": 0, "failed": 0, "blacklisted": 0}
+    progress = {
+        "processed": 0,
+        "downloaded": 0,
+        "failed": 0,
+        "invalid_candidates": 0,
+        "unavailable": 0,
+        "blacklist_promotions": 0,
+    }
     retry_next_run: set[str] = set()
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
         if _should_skip_blacklisted_market_symbol(symbol):
-            raise MassiveGatewayNotFoundError("Symbol is blacklisted.")
+            return
 
         _download_and_save_raw_with_recovery(
             symbol,
             client_manager,
             snapshot_row=snapshot_rows_by_symbol.get(symbol),
-            write_symbol_file=not alpha26_mode,
-            collected_symbol_frames=collected_symbol_frames if alpha26_mode else None,
-            collected_lock=collected_lock if alpha26_mode else None,
-            existing_symbol_df=alpha26_existing_frames.get(symbol) if alpha26_mode else None,
-            alpha26_mode=alpha26_mode,
+            collected_symbol_frames=collected_symbol_frames,
+            collected_lock=collected_lock,
+            existing_symbol_df=alpha26_existing_frames.get(symbol),
         )
 
     max_workers = _get_max_workers()
@@ -1270,26 +1233,54 @@ async def main_async() -> int:
                 if debug_mode:
                     mdc.write_line(f"Downloading OHLCV+fundamentals for {symbol}...")
                 await loop.run_in_executor(executor, worker, symbol)
+                try:
+                    clear_invalid_candidate_marker(common_client=common_client, domain=_DOMAIN, symbol=symbol)
+                except Exception as exc:
+                    mdc.write_warning(f"Failed to clear market invalid-candidate marker for {symbol}: {exc}")
                 should_log = debug_mode
                 async with progress_lock:
                     progress["downloaded"] += 1
                     downloaded = progress["downloaded"]
                     should_log = should_log or _should_log_market_outcome(downloaded)
                 if should_log:
-                    mode = "alpha26-bucket" if alpha26_mode else "flat-csv"
                     mdc.write_line(
-                        f"Bronze market symbol completed: symbol={symbol} mode={mode} downloaded={downloaded}"
+                        f"Bronze market symbol completed: symbol={symbol} downloaded={downloaded}"
                     )
-            except MassiveGatewayNotFoundError as exc:
-                list_manager.add_to_blacklist(symbol)
+            except BronzeCoverageUnavailableError as exc:
                 should_log = debug_mode
                 async with progress_lock:
-                    progress["blacklisted"] += 1
-                    should_log = should_log or _should_log_market_outcome(progress["blacklisted"])
+                    progress["unavailable"] += 1
+                    should_log = should_log or _should_log_market_outcome(progress["unavailable"])
                 if should_log:
                     mdc.write_warning(
-                        f"Invalid symbol {symbol}; automatic blacklist updates are disabled for job runs. ({exc})"
+                        f"Bronze market coverage unavailable: symbol={symbol} reason={exc.reason_code} detail={exc}"
                     )
+            except MassiveGatewayNotFoundError as exc:
+                if not is_explicit_invalid_candidate(exc):
+                    raise
+                promotion = record_invalid_symbol_candidate(
+                    common_client=common_client,
+                    bronze_client=bronze_client,
+                    domain=_DOMAIN,
+                    symbol=symbol,
+                    provider=_PROVIDER,
+                    reason_code="provider_invalid_symbol",
+                    run_id=run_id,
+                )
+                should_log = debug_mode
+                async with progress_lock:
+                    progress["invalid_candidates"] += 1
+                    if promotion.get("promoted"):
+                        progress["blacklist_promotions"] += 1
+                    should_log = should_log or _should_log_market_outcome(progress["invalid_candidates"])
+                if should_log:
+                    message = (
+                        f"Bronze market invalid symbol candidate: symbol={symbol} status=404 "
+                        f"observed_runs={promotion.get('observedRunCount', 1)}"
+                    )
+                    if promotion.get("promoted"):
+                        message += " promoted_to_domain_blacklist_after_2_runs=true"
+                    mdc.write_warning(message)
             except MassiveGatewayRateLimitError as exc:
                 should_log = debug_mode
                 async with progress_lock:
@@ -1329,7 +1320,8 @@ async def main_async() -> int:
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
                             "Bronze Massive market progress: processed={processed} downloaded={downloaded} "
-                            "blacklisted={blacklisted} failed={failed}".format(**progress)
+                            "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+                            "blacklist_promotions={blacklist_promotions} failed={failed}".format(**progress)
                         )
 
     try:
@@ -1348,25 +1340,25 @@ async def main_async() -> int:
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
 
-    if alpha26_mode:
-        try:
-            written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames)
-            flat_deleted = _delete_flat_symbol_blobs()
-            mdc.write_line(
-                "Bronze market alpha26 buckets written: "
-                f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
-            )
-        except Exception as exc:
-            progress["failed"] += 1
-            mdc.write_error(f"Bronze market alpha26 bucket write failed: {exc}")
+    try:
+        written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames)
+        flat_deleted = _delete_flat_symbol_blobs()
+        mdc.write_line(
+            "Bronze market alpha26 buckets written: "
+            f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
+        )
+    except Exception as exc:
+        progress["failed"] += 1
+        mdc.write_error(f"Bronze market alpha26 bucket write failed: {exc}")
 
     job_status, exit_code = resolve_job_run_status(
         failed_count=progress["failed"],
-        warning_count=progress["blacklisted"],
+        warning_count=progress["invalid_candidates"],
     )
     mdc.write_line(
         "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} "
-        "blacklisted={blacklisted} failed={failed} job_status={job_status}".format(
+        "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+        "blacklist_promotions={blacklist_promotions} failed={failed} job_status={job_status}".format(
             **progress,
             job_status=job_status,
         )
@@ -1375,7 +1367,7 @@ async def main_async() -> int:
         preview = ", ".join(sorted(retry_next_run)[:50])
         suffix = " ..." if len(retry_next_run) > 50 else ""
         mdc.write_line(
-            f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
+            f"Retry-on-next-run candidates (not promoted): count={len(retry_next_run)} symbols={preview}{suffix}"
         )
     return exit_code
 

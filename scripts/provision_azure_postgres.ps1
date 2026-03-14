@@ -69,7 +69,7 @@ function Get-EnvLines {
   if ([string]::IsNullOrWhiteSpace($EnvPath) -or (-not (Test-Path $EnvPath))) {
     return @()
   }
-  return Get-Content $EnvPath
+  return ,@(Get-Content -Path $EnvPath)
 }
 
 function Get-EnvValue {

@@ -365,8 +365,8 @@ def test_collect_domain_metadata_uses_file_count_for_bronze_market_symbols(monke
         def list_blobs(self, *, name_starts_with: str):
             assert name_starts_with == "market-data/"
             return [
-                _Blob("market-data/AAPL.csv", 10),
-                _Blob("market-data/MSFT.csv", 11),
+                _Blob("market-data/buckets/A.parquet", 10),
+                _Blob("market-data/buckets/M.parquet", 11),
                 _Blob("market-data/whitelist.csv", 2),
                 _Blob("market-data/blacklist.csv", 2),
             ]
@@ -414,12 +414,12 @@ def test_collect_domain_metadata_reports_folder_last_modified(monkeypatch) -> No
             assert name_starts_with == "market-data/"
             return [
                 _Blob(
-                    "market-data/AAPL.csv",
+                    "market-data/buckets/A.parquet",
                     10,
                     datetime(2026, 2, 25, 12, 0, tzinfo=timezone.utc),
                 ),
                 _Blob(
-                    "market-data/MSFT.csv",
+                    "market-data/buckets/M.parquet",
                     11,
                     datetime(2026, 2, 26, 8, 16, tzinfo=timezone.utc),
                 ),

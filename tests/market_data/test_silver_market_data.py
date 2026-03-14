@@ -12,33 +12,47 @@ from core.pipeline import DataPaths
 def unique_ticker():
     return f"TEST_MKT_{uuid.uuid4().hex[:8].upper()}"
 
+
+def _market_bucket_blob_name(symbol: str) -> str:
+    return f"market-data/buckets/{symbol[0]}.parquet"
+
+
+def _market_bucket_bytes(rows: list[dict[str, object]]) -> bytes:
+    return pd.DataFrame(rows).to_parquet(index=False)
+
+
 def test_silver_processing(unique_ticker):
     """
-    Verifies Silver Processing:
-    1. Mocks reading raw from Bronze.
-    2. Calls silver.process_file.
-    3. Verifies Delta Write to Silver.
+     Verifies Silver Processing:
+     1. Mocks reading a Bronze alpha26 bucket.
+     2. Calls silver.process_file.
+     3. Verifies Delta Write to Silver.
     """
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    
-    csv_content = b"Date,Open,High,Low,Close,Adj Close,Volume\n2023-01-01,100,105,95,102,102,1000"
-    
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2023-01-01",
+                "open": 100.0,
+                "high": 105.0,
+                "low": 95.0,
+                "close": 102.0,
+                "volume": 1000.0,
+            }
+        ]
+    )
+
     with patch('core.core.read_raw_bytes') as mock_read, \
          patch('core.delta_core.store_delta') as mock_store_delta, \
          patch('core.delta_core.load_delta') as mock_load_delta:
-         
-        mock_read.return_value = csv_content
-        
-        # Mock existing history (None)
+        mock_read.return_value = parquet_content
         mock_load_delta.return_value = None
-        
-        # Call
+
         silver.process_file(blob_name)
-        
-        # Verify
-        mock_read.assert_called_with(blob_name, client=silver.bronze_client) 
-        
+
+        mock_read.assert_called_with(blob_name, client=silver.bronze_client)
         mock_store_delta.assert_called_once()
         args, kwargs = mock_store_delta.call_args
         df_saved = args[0]
@@ -51,16 +65,27 @@ def test_silver_processing(unique_ticker):
         assert df_saved.iloc[0]["close"] == 102
 
 
-def test_silver_processing_accepts_alpha_vantage_timestamp(unique_ticker):
+def test_silver_processing_accepts_parseable_date_strings(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-
-    csv_content = b"timestamp,open,high,low,close,volume\n2024-01-03,10.5,12,10,11.0,150\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2024-01-03T00:00:00Z",
+                "open": 10.5,
+                "high": 12.0,
+                "low": 10.0,
+                "close": 11.0,
+                "volume": 150.0,
+            }
+        ]
+    )
 
     with patch("core.core.read_raw_bytes") as mock_read, patch(
         "core.delta_core.store_delta"
     ) as mock_store_delta, patch("core.delta_core.load_delta") as mock_load_delta:
-        mock_read.return_value = csv_content
+        mock_read.return_value = parquet_content
         mock_load_delta.return_value = None
 
         silver.process_file(blob_name)
@@ -70,10 +95,22 @@ def test_silver_processing_accepts_alpha_vantage_timestamp(unique_ticker):
 
 def test_silver_processing_rounds_price_columns_with_half_up(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,1.005,2.115,0.995,1.115,100\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2024-01-03",
+                "open": 1.005,
+                "high": 2.115,
+                "low": 0.995,
+                "close": 1.115,
+                "volume": 100.0,
+            }
+        ]
+    )
 
-    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+    with patch("core.core.read_raw_bytes", return_value=parquet_content), patch(
         "core.delta_core.store_delta"
     ) as mock_store_delta, patch("core.delta_core.load_delta", return_value=None):
         silver.process_file(blob_name)
@@ -88,16 +125,27 @@ def test_silver_processing_rounds_price_columns_with_half_up(unique_ticker):
 
 def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    csv_content = (
-        b"Date,Open,High,Low,Close,Volume,short_interest,short_volume\n"
-        b"2024-01-03,10.5,12,10,11.0,150,1200,500\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2024-01-03",
+                "open": 10.5,
+                "high": 12.0,
+                "low": 10.0,
+                "close": 11.0,
+                "volume": 150.0,
+                "short_interest": 1200.0,
+                "short_volume": 500.0,
+            }
+        ]
     )
 
     with patch("core.core.read_raw_bytes") as mock_read, patch(
         "core.delta_core.store_delta"
     ) as mock_store_delta, patch("core.delta_core.load_delta") as mock_load_delta:
-        mock_read.return_value = csv_content
+        mock_read.return_value = parquet_content
         mock_load_delta.return_value = None
 
         silver.process_file(blob_name)
@@ -114,8 +162,20 @@ def test_silver_processing_includes_supplemental_market_metrics(unique_ticker):
 
 def test_silver_processing_merges_history_symbol_without_duplicate_symbol_columns(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,10.5,12,10,11.0,150\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2024-01-03",
+                "open": 10.5,
+                "high": 12.0,
+                "low": 10.0,
+                "close": 11.0,
+                "volume": 150.0,
+            }
+        ]
+    )
     history = pd.DataFrame(
         [
             {
@@ -132,7 +192,7 @@ def test_silver_processing_merges_history_symbol_without_duplicate_symbol_column
         ]
     )
 
-    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+    with patch("core.core.read_raw_bytes", return_value=parquet_content), patch(
         "core.delta_core.store_delta"
     ) as mock_store, patch(
         "core.delta_core.load_delta", return_value=history
@@ -147,8 +207,20 @@ def test_silver_processing_merges_history_symbol_without_duplicate_symbol_column
 
 def test_silver_processing_repairs_duplicate_symbol_suffix_columns(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,10.5,12,10,11.0,150\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2024-01-03",
+                "open": 10.5,
+                "high": 12.0,
+                "low": 10.0,
+                "close": 11.0,
+                "volume": 150.0,
+            }
+        ]
+    )
     history = pd.DataFrame(
         [
             {
@@ -163,7 +235,7 @@ def test_silver_processing_repairs_duplicate_symbol_suffix_columns(unique_ticker
         ]
     )
 
-    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+    with patch("core.core.read_raw_bytes", return_value=parquet_content), patch(
         "core.delta_core.store_delta"
     ) as mock_store, patch(
         "core.delta_core.load_delta", return_value=history
@@ -178,8 +250,20 @@ def test_silver_processing_repairs_duplicate_symbol_suffix_columns(unique_ticker
 
 def test_silver_processing_drops_index_artifact_columns(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    csv_content = b"Date,Open,High,Low,Close,Volume\n2024-01-03,10.5,12,10,11.0,150\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2024-01-03",
+                "open": 10.5,
+                "high": 12.0,
+                "low": 10.0,
+                "close": 11.0,
+                "volume": 150.0,
+            }
+        ]
+    )
     history = pd.DataFrame(
         [
             {
@@ -197,7 +281,7 @@ def test_silver_processing_drops_index_artifact_columns(unique_ticker):
         ]
     )
 
-    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+    with patch("core.core.read_raw_bytes", return_value=parquet_content), patch(
         "core.delta_core.store_delta"
     ) as mock_store, patch(
         "core.delta_core.load_delta", return_value=history
@@ -213,11 +297,28 @@ def test_silver_processing_drops_index_artifact_columns(unique_ticker):
 
 def test_silver_processing_applies_backfill_start_cutoff(unique_ticker):
     symbol = unique_ticker
-    blob_name = f"market-data/{symbol}.csv"
-    csv_content = (
-        b"Date,Open,High,Low,Close,Volume\n"
-        b"2023-12-31,100,105,95,102,1000\n"
-        b"2024-01-03,101,106,96,103,1100\n"
+    blob_name = _market_bucket_blob_name(symbol)
+    parquet_content = _market_bucket_bytes(
+        [
+            {
+                "symbol": symbol,
+                "date": "2023-12-31",
+                "open": 100.0,
+                "high": 105.0,
+                "low": 95.0,
+                "close": 102.0,
+                "volume": 1000.0,
+            },
+            {
+                "symbol": symbol,
+                "date": "2024-01-03",
+                "open": 101.0,
+                "high": 106.0,
+                "low": 96.0,
+                "close": 103.0,
+                "volume": 1100.0,
+            },
+        ]
     )
     history = pd.DataFrame(
         [
@@ -225,7 +326,7 @@ def test_silver_processing_applies_backfill_start_cutoff(unique_ticker):
         ]
     )
 
-    with patch("core.core.read_raw_bytes", return_value=csv_content), patch(
+    with patch("core.core.read_raw_bytes", return_value=parquet_content), patch(
         "core.delta_core.store_delta"
     ) as mock_store, patch(
         "core.delta_core.load_delta", return_value=history
@@ -286,7 +387,7 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
         _fake_enforce_backfill_cutoff_on_bucket_tables,
     )
 
-    silver._run_market_reconciliation(bronze_blob_list=[{"name": "market-data/AAPL.csv"}])
+    silver._run_market_reconciliation(bronze_blob_list=[{"name": "market-data/buckets/A.parquet"}])
 
     assert "__index_level_0__" not in captured["df"].columns
     assert isinstance(captured["df"].index, pd.RangeIndex)
@@ -350,7 +451,7 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
         if metadata:
             saved_last_success.update(metadata)
 
-    def _fake_process_blob(
+    def _fake_process_alpha26_bucket_blob(
         _blob,
         *,
         watermarks,
@@ -369,7 +470,7 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
     monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(silver, "save_last_success", _save_last_success)
     monkeypatch.setattr(silver, "should_process_blob_since_last_success", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_blob)
+    monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_alpha26_bucket_blob)
     monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (False, set()))
     monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")
     monkeypatch.setattr(silver.layer_bucketing, "silver_layout_mode", lambda: "alpha26")
@@ -411,7 +512,7 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
         if metadata:
             saved_last_success.update(metadata)
 
-    def _fake_process_blob(
+    def _fake_process_alpha26_bucket_blob(
         _blob,
         *,
         watermarks,
@@ -440,7 +541,7 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
     monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(silver, "save_last_success", _save_last_success)
     monkeypatch.setattr(silver, "should_process_blob_since_last_success", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_blob)
+    monkeypatch.setattr(silver, "process_alpha26_bucket_blob", _fake_process_alpha26_bucket_blob)
     monkeypatch.setattr(silver, "_write_alpha26_market_buckets", _fake_write)
     monkeypatch.setattr(silver, "_detect_missing_alpha26_market_buckets", lambda: (True, {"A"}))
     monkeypatch.setattr(silver.bronze_bucketing, "bronze_layout_mode", lambda: "alpha26")

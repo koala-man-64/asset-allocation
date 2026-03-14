@@ -488,6 +488,31 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/snapshot", params=params)
         return resp.json()
 
+    def get_tickers(
+        self,
+        *,
+        market: str = "stocks",
+        locale: Optional[str] = "us",
+        active: bool = True,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "market": str(market or "stocks").strip() or "stocks",
+            "active": "true" if active else "false",
+        }
+        normalized_locale = _strip_or_none(locale)
+        if normalized_locale is not None:
+            params["locale"] = normalized_locale
+        resp = self._request("/api/providers/massive/tickers", params=params)
+        payload = resp.json()
+        if isinstance(payload, dict):
+            results = payload.get("results")
+            if isinstance(results, list):
+                return results
+        raise MassiveGatewayError(
+            "Unexpected Massive ticker list payload.",
+            payload={"path": "/api/providers/massive/tickers", "payload_type": type(payload).__name__},
+        )
+
     def get_short_interest(
         self,
         *,

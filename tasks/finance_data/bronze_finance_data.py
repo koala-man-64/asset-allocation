@@ -7,6 +7,7 @@ import hashlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
@@ -18,6 +19,7 @@ from core.massive_gateway_client import (
     MassiveGatewayNotFoundError,
     MassiveGatewayRateLimitError,
 )
+from core import symbol_availability
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common.bronze_backfill_coverage import (
@@ -26,6 +28,13 @@ from tasks.common.bronze_backfill_coverage import (
     resolve_backfill_start_date,
     should_force_backfill,
     write_coverage_marker,
+)
+from tasks.common.bronze_symbol_policy import (
+    BronzeCoverageUnavailableError,
+    build_bronze_run_id,
+    clear_invalid_candidate_marker,
+    is_explicit_invalid_candidate,
+    record_invalid_symbol_candidate,
 )
 from tasks.common.run_manifests import create_bronze_finance_manifest
 from tasks.common import bronze_bucketing
@@ -69,10 +78,12 @@ _RECOVERY_SLEEP_SECONDS = 5.0
 _DEFAULT_SHARED_FINANCE_LOCK = "finance-pipeline-shared"
 _COVERAGE_DOMAIN = "finance"
 _COVERAGE_PROVIDER = "massive"
+_INVALID_CANDIDATE_REASON = "core_statements_provider_invalid"
 _FINANCE_SCHEMA_VERSION = 2
 _STATEMENT_TIMEFRAMES: tuple[str, ...] = ("quarterly", "annual")
 _STATEMENT_QUERY_LIMIT = 100
 _VALUATION_QUERY_LIMIT = 1
+_CORE_FINANCE_REPORTS = frozenset({"balance_sheet", "cash_flow", "income_statement"})
 _BUCKET_COLUMNS = [
     "symbol",
     "report_type",
@@ -82,6 +93,17 @@ _BUCKET_COLUMNS = [
     "ingested_at",
     "payload_hash",
 ]
+
+
+@dataclass
+class _FinanceSymbolOutcome:
+    wrote: int
+    valid_symbol: bool
+    invalid_candidate: bool
+    coverage_unavailable: bool
+    invalid_evidence: list[tuple[str, BaseException]]
+    failures: list[tuple[str, BaseException]]
+    coverage_summary: dict[str, int]
 
 
 def _empty_coverage_summary() -> dict[str, int]:
@@ -118,6 +140,10 @@ def _mark_coverage(
             coverage_summary["coverage_marked_limited"] += 1
     except Exception as exc:
         mdc.write_warning(f"Failed to write finance coverage marker for {symbol}: {exc}")
+
+
+def _is_core_finance_report(report_name: object) -> bool:
+    return str(report_name or "").strip().lower() in _CORE_FINANCE_REPORTS
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -828,10 +854,10 @@ def fetch_and_save_raw(
         massive_client=massive_client,
     )
     if _is_empty_finance_payload(payload, report_name=report_name):
-        list_manager.add_to_blacklist(symbol)
-        raise MassiveGatewayNotFoundError(
-            f"Massive returned empty finance payload for {symbol} report={report_name}; "
-            "automatic blacklist updates are disabled."
+        raise BronzeCoverageUnavailableError(
+            "empty_finance_payload",
+            detail=f"Massive returned empty finance payload for {symbol} report={report_name}.",
+            payload={"symbol": symbol, "report": report_name},
         )
     source_earliest = _extract_source_earliest_finance_date(payload)
     payload = _apply_backfill_start_to_finance_payload(payload, backfill_start=resolved_backfill_start)
@@ -1007,13 +1033,17 @@ def _process_symbol_with_recovery(
     alpha26_lock: Optional[threading.Lock] = None,
     max_attempts: int = _RECOVERY_MAX_ATTEMPTS,
     sleep_seconds: float = _RECOVERY_SLEEP_SECONDS,
-) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
+) -> _FinanceSymbolOutcome:
     attempts = max(1, int(max_attempts))
     sleep_seconds = max(0.0, float(sleep_seconds))
     pending_reports = list(REPORTS)
     wrote = 0
     final_failures: list[tuple[str, BaseException]] = []
     coverage_summary = _empty_coverage_summary()
+    invalid_evidence: list[tuple[str, BaseException]] = []
+    core_successful_reports: set[str] = set()
+    core_invalid_reports: set[str] = set()
+    coverage_unavailable = False
 
     for attempt in range(1, attempts + 1):
         next_pending: list[dict[str, str]] = []
@@ -1046,10 +1076,22 @@ def _process_symbol_with_recovery(
                             "alpha26_lock": alpha26_lock,
                         }
                     )
-                if fetch_and_save_raw(symbol, report, massive_client, **call_kwargs):
+                report_wrote = fetch_and_save_raw(symbol, report, massive_client, **call_kwargs)
+                if report_wrote:
                     wrote += 1
+                if _is_core_finance_report(report_name):
+                    core_successful_reports.add(report_name)
+            except BronzeCoverageUnavailableError:
+                coverage_unavailable = True
             except MassiveGatewayNotFoundError as exc:
-                return wrote, True, [(report_name, exc)], coverage_summary
+                if report_name == "valuation":
+                    coverage_unavailable = True
+                    continue
+                if _is_core_finance_report(report_name) and is_explicit_invalid_candidate(exc):
+                    core_invalid_reports.add(report_name)
+                    invalid_evidence.append((report_name, exc))
+                    continue
+                final_failures.append((report_name, exc))
             except BaseException as exc:
                 if _is_recoverable_massive_error(exc) and attempt < attempts:
                     next_pending.append(report)
@@ -1058,7 +1100,7 @@ def _process_symbol_with_recovery(
                     final_failures.append((report_name, exc))
 
         if not next_pending:
-            return wrote, False, final_failures, coverage_summary
+            break
 
         report_labels = ",".join(sorted({name for name, _ in transient_failures})) or "unknown"
         mdc.write_warning(
@@ -1070,7 +1112,27 @@ def _process_symbol_with_recovery(
             time.sleep(sleep_seconds)
         pending_reports = next_pending
 
-    return wrote, False, final_failures, coverage_summary
+    invalid_candidate = not core_successful_reports and core_invalid_reports == _CORE_FINANCE_REPORTS
+    if invalid_candidate:
+        return _FinanceSymbolOutcome(
+            wrote=wrote,
+            valid_symbol=False,
+            invalid_candidate=True,
+            coverage_unavailable=False,
+            invalid_evidence=invalid_evidence,
+            failures=final_failures,
+            coverage_summary=coverage_summary,
+        )
+
+    return _FinanceSymbolOutcome(
+        wrote=wrote,
+        valid_symbol=bool(core_successful_reports),
+        invalid_candidate=False,
+        coverage_unavailable=coverage_unavailable or bool(invalid_evidence),
+        invalid_evidence=invalid_evidence,
+        failures=final_failures,
+        coverage_summary=coverage_summary,
+    )
 
 
 async def main_async() -> int:
@@ -1079,21 +1141,42 @@ async def main_async() -> int:
 
     list_manager.load()
 
-    mdc.write_line("Fetching symbols...")
-    df_symbols = mdc.get_symbols().dropna(subset=["Symbol"]).copy()
+    sync_result = symbol_availability.sync_domain_availability("finance")
+    mdc.write_line(
+        "Bronze finance availability sync: "
+        f"provider={sync_result.provider} listed_count={sync_result.listed_count} "
+        f"inserted_count={sync_result.inserted_count} disabled_count={sync_result.disabled_count} "
+        f"duration_ms={sync_result.duration_ms} lock_wait_ms={sync_result.lock_wait_ms}"
+    )
+    df_symbols = symbol_availability.get_domain_symbols("finance").dropna(subset=["Symbol"]).copy()
+    provider_available_count = int(len(df_symbols))
 
     symbols: list[str] = []
+    blacklist_skipped = 0
     for sym in df_symbols["Symbol"].astype(str).tolist():
         if "." in sym:
             continue
         if list_manager.is_blacklisted(sym):
+            blacklist_skipped += 1
             continue
         symbols.append(sym)
     symbols = list(dict.fromkeys(symbols))
 
+    debug_filtered = 0
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS:
         mdc.write_line(f"DEBUG: Restricting to {len(cfg.DEBUG_SYMBOLS)} symbols")
-        symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        filtered_symbols = [s for s in symbols if s in cfg.DEBUG_SYMBOLS]
+        debug_filtered = len(symbols) - len(filtered_symbols)
+        symbols = filtered_symbols
+
+    mdc.write_line(
+        "Bronze finance symbol selection: "
+        f"provider_available_count={provider_available_count} "
+        f"blacklist_skipped={blacklist_skipped} "
+        f"debug_filtered={debug_filtered} "
+        f"final_scheduled={len(symbols)}"
+    )
+    run_id = build_bronze_run_id(_COVERAGE_DOMAIN)
 
     alpha26_mode = bronze_bucketing.is_alpha26_mode()
     if not alpha26_mode:
@@ -1127,14 +1210,22 @@ async def main_async() -> int:
     loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(max_workers)
 
-    progress = {"processed": 0, "written": 0, "skipped": 0, "failed": 0, "blacklisted": 0}
+    progress = {
+        "processed": 0,
+        "written": 0,
+        "skipped": 0,
+        "failed": 0,
+        "invalid_candidates": 0,
+        "unavailable": 0,
+        "blacklist_promotions": 0,
+    }
     coverage_progress = _empty_coverage_summary()
     retry_next_run: set[str] = set()
     failure_counts: dict[str, int] = {}
     failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
-    def worker(symbol: str) -> tuple[int, bool, list[tuple[str, BaseException]], dict[str, int]]:
+    def worker(symbol: str) -> _FinanceSymbolOutcome:
         return _process_symbol_with_recovery(
             symbol,
             client_manager,
@@ -1174,34 +1265,64 @@ async def main_async() -> int:
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
             try:
-                wrote, blacklisted, failures, coverage_summary = await loop.run_in_executor(executor, worker, symbol)
-                if blacklisted:
-                    list_manager.add_to_blacklist(symbol)
-                    should_log = False
-                    async with progress_lock:
-                        progress["blacklisted"] += 1
-                        should_log = progress["blacklisted"] <= 20
-                        for key in coverage_progress:
-                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
-                    if should_log:
-                        report_name = failures[0][0] if failures else "unknown"
-                        mdc.write_warning(
-                            "Invalid finance payload for {symbol} report={report}; automatic blacklist updates "
-                            "are disabled for job runs.".format(symbol=symbol, report=report_name)
+                result = await loop.run_in_executor(executor, worker, symbol)
+                if result.valid_symbol:
+                    try:
+                        clear_invalid_candidate_marker(
+                            common_client=common_client,
+                            domain=_COVERAGE_DOMAIN,
+                            symbol=symbol,
                         )
-                elif failures:
+                    except Exception as exc:
+                        mdc.write_warning(f"Failed to clear finance invalid-candidate marker for {symbol}: {exc}")
+
+                should_log = False
+                async with progress_lock:
+                    if result.coverage_unavailable and not result.invalid_candidate:
+                        progress["unavailable"] += 1
+                    for key in coverage_progress:
+                        coverage_progress[key] += int(result.coverage_summary.get(key, 0) or 0)
+
+                if result.invalid_candidate:
+                    promotion = record_invalid_symbol_candidate(
+                        common_client=common_client,
+                        bronze_client=bronze_client,
+                        domain=_COVERAGE_DOMAIN,
+                        symbol=symbol,
+                        provider=_COVERAGE_PROVIDER,
+                        reason_code=_INVALID_CANDIDATE_REASON,
+                        run_id=run_id,
+                    )
                     async with progress_lock:
-                        for key in coverage_progress:
-                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
-                    await record_failures(symbol, failures)
+                        progress["invalid_candidates"] += 1
+                        if promotion.get("promoted"):
+                            progress["blacklist_promotions"] += 1
+                        should_log = progress["invalid_candidates"] <= 20
+                    if should_log:
+                        reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
+                        message = (
+                            f"Bronze finance invalid symbol candidate: symbol={symbol} reports={reports} "
+                            f"observed_runs={promotion.get('observedRunCount', 1)}"
+                        )
+                        if promotion.get("promoted"):
+                            message += " promoted_to_domain_blacklist_after_2_runs=true"
+                        mdc.write_warning(message)
+                elif result.failures:
+                    await record_failures(symbol, result.failures)
                 else:
                     async with progress_lock:
-                        if wrote:
+                        if result.wrote:
                             progress["written"] += 1
                         else:
                             progress["skipped"] += 1
-                        for key in coverage_progress:
-                            coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
+                    if result.coverage_unavailable:
+                        async with progress_lock:
+                            should_log = progress["unavailable"] <= 20
+                    if should_log:
+                        reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
+                        mdc.write_warning(
+                            f"Bronze finance coverage unavailable: symbol={symbol} reports={reports}"
+                        )
             except Exception as exc:
                 await record_failures(symbol, [("unknown", exc)])
             finally:
@@ -1210,7 +1331,8 @@ async def main_async() -> int:
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
                             "Bronze finance progress: processed={processed} written={written} skipped={skipped} "
-                            "blacklisted={blacklisted} failed={failed}".format(**progress)
+                            "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+                            "blacklist_promotions={blacklist_promotions} failed={failed}".format(**progress)
                         )
 
     try:
@@ -1253,16 +1375,17 @@ async def main_async() -> int:
         preview = ", ".join(sorted(retry_next_run)[:50])
         suffix = " ..." if len(retry_next_run) > 50 else ""
         mdc.write_line(
-            f"Retry-on-next-run candidates (not blacklisted): count={len(retry_next_run)} symbols={preview}{suffix}"
+            f"Retry-on-next-run candidates (not promoted): count={len(retry_next_run)} symbols={preview}{suffix}"
         )
 
     job_status, exit_code = resolve_job_run_status(
         failed_count=progress["failed"],
-        warning_count=progress["blacklisted"],
+        warning_count=progress["invalid_candidates"],
     )
     mdc.write_line(
         "Bronze Massive finance ingest complete: processed={processed} written={written} skipped={skipped} "
-        "blacklisted={blacklisted} failed={failed} coverage_checked={coverage_checked} "
+        "invalid_candidates={invalid_candidates} unavailable={unavailable} "
+        "blacklist_promotions={blacklist_promotions} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
         "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
         "job_status={job_status}".format(
@@ -1281,7 +1404,10 @@ async def main_async() -> int:
                 "processed": int(progress["processed"]),
                 "written": int(progress["written"]),
                 "skipped": int(progress["skipped"]),
-                "blacklisted": int(progress["blacklisted"]),
+                "blacklisted": int(progress["invalid_candidates"]),
+                "invalidSymbolCandidateCount": int(progress["invalid_candidates"]),
+                "coverageUnavailableCount": int(progress["unavailable"]),
+                "blacklistPromotionCount": int(progress["blacklist_promotions"]),
                 "failed": int(progress["failed"]),
                 "column_count": alpha26_column_count,
                 "provider": _COVERAGE_PROVIDER,
