@@ -19,28 +19,6 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-    - name: Validate required test inputs
-      if: github.event_name != 'pull_request'
-      env:
-        AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-        NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
-      run: |
-        set -euo pipefail
-
-        require_value() {
-          local name="$1"
-          local value="${!name:-}"
-          value="${value#"${value%%[![:space:]]*}"}"
-          value="${value%"${value##*[![:space:]]}"}"
-          if [ -z "$value" ]; then
-            echo "::error::Missing required GitHub Actions value: $name"
-            exit 1
-          fi
-        }
-
-        require_value AZURE_STORAGE_CONNECTION_STRING
-        require_value NASDAQ_API_KEY
-
     - name: Prepare pnpm store (ui)
       run: |
         mkdir -p ui/.pnpm-store
