@@ -18,6 +18,25 @@ if [ ! -f "$template_path" ]; then
   exit 1
 fi
 
+image_name_and_registry="${JOB_IMAGE%:*}"
+image_tag="${JOB_IMAGE##*:}"
+image_repository="${image_name_and_registry#*/}"
+registry_server="${image_name_and_registry%%/*}"
+acr_name="${ACR_NAME:-${registry_server%%.*}}"
+
+if [ -z "$image_repository" ] || [ -z "$image_tag" ] || [ "$image_name_and_registry" = "$JOB_IMAGE" ]; then
+  echo "::error::JOB_IMAGE '$JOB_IMAGE' is not a valid tagged ACR image reference."
+  exit 1
+fi
+
+if ! az acr repository show \
+  --name "$acr_name" \
+  --image "${image_repository}:${image_tag}" \
+  --only-show-errors > /dev/null 2>&1; then
+  echo "::error::Job image '$JOB_IMAGE' is not present in ACR '$acr_name'. Build and push the current SHA tag before creating or updating Container Apps jobs."
+  exit 1
+fi
+
 tmp_dir="${RUNNER_TEMP:-/tmp}"
 tmp_file="$(mktemp "${tmp_dir%/}/$(basename "${template_path%.yaml}").XXXXXX.yaml")"
 trap 'rm -f "$tmp_file"' EXIT

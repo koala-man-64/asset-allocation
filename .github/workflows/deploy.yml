@@ -572,6 +572,69 @@ jobs:
           require_container gold
           require_container platinum
 
+      - name: Detect Missing Deploy Targets
+        id: deploy_target_presence
+        run: |
+          set -euo pipefail
+
+          target_exists() {
+            local kind="$1"
+            local name="$2"
+            if [ "$kind" = "app" ]; then
+              az containerapp show \
+                --name "$name" \
+                --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --only-show-errors > /dev/null 2>&1
+            else
+              az containerapp job show \
+                --name "$name" \
+                --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --only-show-errors > /dev/null 2>&1
+            fi
+          }
+
+          api_app_missing="false"
+          any_task_target_missing="false"
+
+          if ! target_exists app "${{ env.API_APP_NAME }}"; then
+            api_app_missing="true"
+            echo "Missing deploy target: app/${{ env.API_APP_NAME }}"
+          fi
+
+          task_jobs=(
+            "${{ env.BRONZE_MARKET_JOB }}"
+            "${{ env.SILVER_MARKET_JOB }}"
+            "${{ env.GOLD_MARKET_JOB }}"
+            "${{ env.BRONZE_FINANCE_JOB }}"
+            "${{ env.SILVER_FINANCE_JOB }}"
+            "${{ env.GOLD_FINANCE_JOB }}"
+            "${{ env.BRONZE_PRICE_TARGET_JOB }}"
+            "${{ env.SILVER_PRICE_TARGET_JOB }}"
+            "${{ env.GOLD_PRICE_TARGET_JOB }}"
+            "${{ env.BRONZE_EARNINGS_JOB }}"
+            "${{ env.SILVER_EARNINGS_JOB }}"
+            "${{ env.GOLD_EARNINGS_JOB }}"
+            "${{ env.GOLD_REGIME_JOB }}"
+            "${{ env.BACKTEST_JOB }}"
+          )
+
+          for job_name in "${task_jobs[@]}"; do
+            if ! target_exists job "$job_name"; then
+              any_task_target_missing="true"
+              echo "Missing deploy target: job/$job_name"
+            fi
+          done
+
+          {
+            echo "api_app_missing=$api_app_missing"
+            echo "any_task_target_missing=$any_task_target_missing"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log deploy target presence outputs
+        run: |
+          echo "api_app_missing=${{ steps.deploy_target_presence.outputs.api_app_missing }}"
+          echo "any_task_target_missing=${{ steps.deploy_target_presence.outputs.any_task_target_missing }}"
+
       - name: Log in to Azure Container Registry
         run: az acr login --name ${{ env.ACR_NAME }}
 
@@ -596,6 +659,7 @@ jobs:
           should_build_app="false"
 
           if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || \
+             [ "${{ steps.deploy_target_presence.outputs.any_task_target_missing }}" = "true" ] || \
              [ "${{ steps.market_changes.outputs.bronze_market }}" = "true" ] || [ "${{ steps.market_changes.outputs.silver_market }}" = "true" ] || [ "${{ steps.market_changes.outputs.gold_market }}" = "true" ] || \
              [ "${{ steps.finance_changes.outputs.bronze_finance }}" = "true" ] || [ "${{ steps.finance_changes.outputs.silver_finance }}" = "true" ] || [ "${{ steps.finance_changes.outputs.gold_finance }}" = "true" ] || \
              [ "${{ steps.price_target_changes.outputs.bronze_price_target }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.silver_price_target }}" = "true" ] || [ "${{ steps.price_target_changes.outputs.gold_price_target }}" = "true" ] || \
@@ -604,7 +668,7 @@ jobs:
             should_build_tasks="true"
           fi
 
-          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.app_changes.outputs.api_app }}" = "true" ] || [ "${{ steps.app_changes.outputs.ui_app }}" = "true" ]; then
+          if [ "${{ env.FORCE_REDEPLOY }}" = "true" ] || [ "${{ steps.deploy_target_presence.outputs.api_app_missing }}" = "true" ] || [ "${{ steps.app_changes.outputs.api_app }}" = "true" ] || [ "${{ steps.app_changes.outputs.ui_app }}" = "true" ]; then
             should_build_app="true"
           fi
 
