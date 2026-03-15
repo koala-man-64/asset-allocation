@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
@@ -22,6 +23,12 @@ _DEFAULT_API_READINESS_MAX_ATTEMPTS = 6
 _DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+try:
+    _GATEWAY_TRACE_ERROR_LIMIT = max(1, int(str(os.environ.get("MASSIVE_GATEWAY_TRACE_ERROR_LIMIT") or "200").strip()))
+except Exception:
+    _GATEWAY_TRACE_ERROR_LIMIT = 200
+_GATEWAY_TRACE_COUNTS: collections.Counter[str] = collections.Counter()
+_GATEWAY_TRACE_LOCK = threading.Lock()
 
 
 class MassiveGatewayError(RuntimeError):
@@ -92,6 +99,29 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except Exception:
         return int(default)
+
+
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _emit_bounded_gateway_warning(category: str, message: str) -> None:
+    with _GATEWAY_TRACE_LOCK:
+        seen = int(_GATEWAY_TRACE_COUNTS.get(category, 0))
+        if seen >= _GATEWAY_TRACE_ERROR_LIMIT:
+            return
+        current = seen + 1
+        _GATEWAY_TRACE_COUNTS[category] = current
+    logger.warning("[massive-gateway:%s#%s] %s", category, current, message)
+    if current == _GATEWAY_TRACE_ERROR_LIMIT:
+        logger.info(
+            "[massive-gateway:%s] further logs suppressed after %s entries.",
+            category,
+            _GATEWAY_TRACE_ERROR_LIMIT,
+        )
 
 
 @dataclass(frozen=True)
@@ -412,6 +442,14 @@ class MassiveGatewayClient:
 
         detail = self._extract_detail(resp)
         payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
+        caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME")) or "unknown"
+        caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME")) or "n/a"
+        _emit_bounded_gateway_warning(
+            f"{path}:{resp.status_code}",
+            f"API gateway request failed caller_job={caller_job} caller_execution={caller_execution} "
+            f"path={path} status={resp.status_code} params={_truncate_trace_text(json.dumps(params or {}, sort_keys=True))} "
+            f"detail={_truncate_trace_text(detail)}",
+        )
 
         if resp.status_code in {401, 403}:
             raise MassiveGatewayAuthError(

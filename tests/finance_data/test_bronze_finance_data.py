@@ -123,6 +123,41 @@ def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailabl
         mock_list_manager.add_to_blacklist.assert_not_called()
 
 
+def test_fetch_and_save_raw_tracks_empty_statement_payload_diagnostics(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    mock_massive.get_finance_report.side_effect = [
+        {"status": "OK", "request_id": "quarterly-empty", "results": []},
+        {"status": "OK", "request_id": "annual-empty", "results": []},
+    ]
+    coverage_summary = bronze._empty_coverage_summary()
+
+    report = {
+        "folder": "Balance Sheet",
+        "file_suffix": "quarterly_balance-sheet",
+        "report": "balance_sheet",
+    }
+
+    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager:
+        mock_list_manager.is_blacklisted.return_value = False
+
+        with pytest.raises(bronze.BronzeCoverageUnavailableError):
+            bronze.fetch_and_save_raw(
+                symbol,
+                report,
+                mock_massive,
+                coverage_summary=coverage_summary,
+                alpha26_mode=True,
+                alpha26_rows={},
+            )
+
+    assert coverage_summary["provider_statement_requests"] == 2
+    assert coverage_summary["provider_statement_empty_raw_payloads"] == 2
+    assert coverage_summary["provider_statement_nonempty_raw_payloads"] == 0
+    assert coverage_summary["provider_statement_canonical_rows"] == 0
+    assert coverage_summary["provider_statement_canonical_empty_payloads"] == 1
+
+
 def test_fetch_and_save_raw_applies_backfill_cutoff_to_canonical_rows(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import csv
+import collections
 import hashlib
 import io
 import logging
+import os
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -33,6 +35,24 @@ _PROVIDER_TO_CANONICAL_SYMBOL = {
 }
 
 FinanceReport = Literal["balance_sheet", "cash_flow", "income_statement", "valuation"]
+_FINANCE_TRACE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "").strip().lower() in {
+    "1",
+    "true",
+    "t",
+    "yes",
+    "y",
+    "on",
+}
+try:
+    _FINANCE_TRACE_SUCCESS_LIMIT = max(0, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_SUCCESS_LIMIT") or "40").strip()))
+except Exception:
+    _FINANCE_TRACE_SUCCESS_LIMIT = 40
+try:
+    _FINANCE_TRACE_ANOMALY_LIMIT = max(1, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_ANOMALY_LIMIT") or "200").strip()))
+except Exception:
+    _FINANCE_TRACE_ANOMALY_LIMIT = 200
+_FINANCE_TRACE_COUNTERS: collections.Counter[str] = collections.Counter()
+_FINANCE_TRACE_LOCK = threading.Lock()
 
 
 class MassiveNotConfiguredError(RuntimeError):
@@ -107,6 +127,77 @@ def massive_caller_context(
     finally:
         _CALLER_JOB.reset(job_token)
         _CALLER_EXECUTION.reset(execution_token)
+
+
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _emit_bounded_finance_log(category: str, message: str, *, warning: bool, limit: Optional[int] = None) -> None:
+    max_logs = _FINANCE_TRACE_ANOMALY_LIMIT if limit is None else max(0, int(limit))
+    with _FINANCE_TRACE_LOCK:
+        seen = int(_FINANCE_TRACE_COUNTERS.get(category, 0))
+        if seen >= max_logs:
+            return
+        current = seen + 1
+        _FINANCE_TRACE_COUNTERS[category] = current
+    prefix = f"[finance-api:{category}#{current}] "
+    if warning:
+        logger.warning("%s%s", prefix, message)
+    else:
+        logger.info("%s%s", prefix, message)
+    if current == max_logs:
+        logger.info("[finance-api:%s] further logs suppressed after %s entries.", category, max_logs)
+
+
+def _summarize_finance_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return f"payload_type={type(payload).__name__}"
+    parts: list[str] = []
+    status = payload.get("status")
+    if status is not None:
+        parts.append(f"provider_status={_truncate_trace_text(status, limit=32)}")
+    request_id = payload.get("request_id")
+    if request_id:
+        parts.append(f"request_id={_truncate_trace_text(request_id, limit=48)}")
+    results = payload.get("results")
+    if isinstance(results, list):
+        parts.append(f"results_len={len(results)}")
+        if results and isinstance(results[0], dict):
+            first = results[0]
+            first_date = first.get("period_end") or first.get("date") or first.get("as_of")
+            if first_date:
+                parts.append(f"first_date={_truncate_trace_text(first_date, limit=32)}")
+    else:
+        parts.append(f"results_type={type(results).__name__ if results is not None else 'None'}")
+    parts.append(f"next_url={'present' if payload.get('next_url') else 'none'}")
+    if payload.get("error"):
+        parts.append(f"error={_truncate_trace_text(payload.get('error'))}")
+    return " ".join(parts) or "payload_summary=empty"
+
+
+def _summarize_massive_exception(exc: BaseException) -> str:
+    parts = [f"type={type(exc).__name__}"]
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+    detail = getattr(exc, "detail", None)
+    if detail:
+        parts.append(f"detail={_truncate_trace_text(detail)}")
+    elif str(exc).strip():
+        parts.append(f"message={_truncate_trace_text(str(exc))}")
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = payload.get("path")
+        if path:
+            parts.append(f"path={_truncate_trace_text(path, limit=96)}")
+        payload_detail = payload.get("detail")
+        if payload_detail and payload_detail != detail:
+            parts.append(f"payload_detail={_truncate_trace_text(payload_detail)}")
+    return " ".join(parts)
 
 
 def _coerce_number(payload: dict[str, Any], *keys: str) -> Optional[float]:
@@ -393,6 +484,7 @@ class MassiveGateway:
         limit: Optional[int] = None,
         pagination: bool = True,
     ) -> Any:
+        caller_job, caller_execution = get_current_caller_context()
         by_report = {
             "balance_sheet": self.get_client().get_balance_sheet,
             "cash_flow": self.get_client().get_cash_flow_statement,
@@ -409,11 +501,58 @@ class MassiveGateway:
             params["sort"] = str(sort).strip()
         if limit is not None:
             params["limit"] = int(limit)
-        return handler(
-            ticker=_to_provider_symbol(symbol),
-            params=params or None,
-            pagination=bool(pagination),
-        )
+        try:
+            payload = handler(
+                ticker=_to_provider_symbol(symbol),
+                params=params or None,
+                pagination=bool(pagination),
+            )
+        except BaseException as exc:
+            _emit_bounded_finance_log(
+                "provider_error",
+                f"Massive finance provider error caller_job={caller_job} caller_execution={caller_execution or 'n/a'} "
+                f"symbol={symbol} report={report} timeframe={timeframe or 'n/a'} sort={sort or 'n/a'} "
+                f"limit={limit if limit is not None else 'n/a'} pagination={bool(pagination)} "
+                f"{_summarize_massive_exception(exc)}",
+                warning=True,
+            )
+            raise
+
+        if isinstance(payload, dict):
+            results = payload.get("results")
+            if isinstance(results, list) and results:
+                if _FINANCE_TRACE_ENABLED:
+                    _emit_bounded_finance_log(
+                        "provider_success",
+                        f"Massive finance provider success caller_job={caller_job} "
+                        f"caller_execution={caller_execution or 'n/a'} symbol={symbol} report={report} "
+                        f"timeframe={timeframe or 'n/a'} sort={sort or 'n/a'} "
+                        f"limit={limit if limit is not None else 'n/a'} pagination={bool(pagination)} "
+                        f"{_summarize_finance_payload(payload)}",
+                        warning=False,
+                        limit=_FINANCE_TRACE_SUCCESS_LIMIT,
+                    )
+            else:
+                _emit_bounded_finance_log(
+                    "provider_anomaly",
+                    f"Massive finance provider anomaly caller_job={caller_job} "
+                    f"caller_execution={caller_execution or 'n/a'} symbol={symbol} report={report} "
+                    f"timeframe={timeframe or 'n/a'} sort={sort or 'n/a'} "
+                    f"limit={limit if limit is not None else 'n/a'} pagination={bool(pagination)} "
+                    f"{_summarize_finance_payload(payload)}",
+                    warning=True,
+                )
+        else:
+            _emit_bounded_finance_log(
+                "provider_anomaly",
+                f"Massive finance provider anomaly caller_job={caller_job} "
+                f"caller_execution={caller_execution or 'n/a'} symbol={symbol} report={report} "
+                f"timeframe={timeframe or 'n/a'} sort={sort or 'n/a'} "
+                f"limit={limit if limit is not None else 'n/a'} pagination={bool(pagination)} "
+                f"payload_type={type(payload).__name__}",
+                warning=True,
+            )
+        return payload
 
     def get_tickers(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import os
 import hashlib
@@ -84,6 +85,24 @@ _STATEMENT_TIMEFRAMES: tuple[str, ...] = ("quarterly", "annual")
 _STATEMENT_QUERY_LIMIT = 100
 _VALUATION_QUERY_LIMIT = 1
 _CORE_FINANCE_REPORTS = frozenset({"balance_sheet", "cash_flow", "income_statement"})
+_TRACE_FINANCE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "").strip().lower() in {
+    "1",
+    "true",
+    "t",
+    "yes",
+    "y",
+    "on",
+}
+try:
+    _TRACE_FINANCE_SUCCESS_LIMIT = max(0, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_SUCCESS_LIMIT") or "40").strip()))
+except Exception:
+    _TRACE_FINANCE_SUCCESS_LIMIT = 40
+try:
+    _TRACE_FINANCE_ANOMALY_LIMIT = max(1, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_ANOMALY_LIMIT") or "200").strip()))
+except Exception:
+    _TRACE_FINANCE_ANOMALY_LIMIT = 200
+_TRACE_FINANCE_COUNTERS: collections.Counter[str] = collections.Counter()
+_TRACE_FINANCE_LOCK = threading.Lock()
 _BUCKET_COLUMNS = [
     "symbol",
     "report_type",
@@ -113,6 +132,17 @@ def _empty_coverage_summary() -> dict[str, int]:
         "coverage_marked_covered": 0,
         "coverage_marked_limited": 0,
         "coverage_skipped_limited_marker": 0,
+        "provider_statement_requests": 0,
+        "provider_statement_empty_raw_payloads": 0,
+        "provider_statement_nonempty_raw_payloads": 0,
+        "provider_statement_unexpected_raw_payloads": 0,
+        "provider_statement_canonical_rows": 0,
+        "provider_statement_canonical_empty_payloads": 0,
+        "provider_valuation_requests": 0,
+        "provider_valuation_empty_raw_payloads": 0,
+        "provider_valuation_nonempty_raw_payloads": 0,
+        "provider_valuation_errors": 0,
+        "provider_valuation_canonical_empty_payloads": 0,
     }
 
 
@@ -163,6 +193,105 @@ def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | N
     except Exception:
         return default
     return max(0.0, parsed)
+
+
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _summarize_massive_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return f"payload_type={type(payload).__name__}"
+
+    parts: list[str] = []
+    status = payload.get("status")
+    if status is not None:
+        parts.append(f"provider_status={_truncate_trace_text(status, limit=32)}")
+    request_id = payload.get("request_id")
+    if request_id:
+        parts.append(f"request_id={_truncate_trace_text(request_id, limit=48)}")
+    results = payload.get("results")
+    if isinstance(results, list):
+        parts.append(f"results_len={len(results)}")
+        if results and isinstance(results[0], dict):
+            first = results[0]
+            first_date = first.get("period_end") or first.get("date") or first.get("as_of")
+            if first_date:
+                parts.append(f"first_date={_truncate_trace_text(first_date, limit=32)}")
+    else:
+        parts.append(f"results_type={type(results).__name__ if results is not None else 'None'}")
+    parts.append(f"next_url={'present' if payload.get('next_url') else 'none'}")
+    if payload.get("error"):
+        parts.append(f"error={_truncate_trace_text(payload.get('error'))}")
+    return " ".join(parts) or "payload_summary=empty"
+
+
+def _summarize_exception(exc: BaseException) -> str:
+    parts = [f"type={type(exc).__name__}"]
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+    detail = getattr(exc, "detail", None)
+    if detail:
+        parts.append(f"detail={_truncate_trace_text(detail)}")
+    elif str(exc).strip():
+        parts.append(f"message={_truncate_trace_text(str(exc))}")
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = payload.get("path")
+        if path:
+            parts.append(f"path={_truncate_trace_text(path, limit=96)}")
+        payload_detail = payload.get("detail")
+        if payload_detail and payload_detail != detail:
+            parts.append(f"payload_detail={_truncate_trace_text(payload_detail)}")
+    return " ".join(parts)
+
+
+def _emit_bounded_trace(category: str, message: str, *, warning: bool = True, limit: Optional[int] = None) -> None:
+    max_logs = _TRACE_FINANCE_ANOMALY_LIMIT if limit is None else max(0, int(limit))
+    with _TRACE_FINANCE_LOCK:
+        seen = int(_TRACE_FINANCE_COUNTERS.get(category, 0))
+        if seen >= max_logs:
+            return
+        current = seen + 1
+        _TRACE_FINANCE_COUNTERS[category] = current
+    prefix = f"[finance-trace:{category}#{current}] "
+    if warning:
+        mdc.write_warning(prefix + message)
+    else:
+        mdc.write_line(prefix + message)
+    if current == max_logs:
+        mdc.write_line(f"[finance-trace:{category}] further logs suppressed after {max_logs} entries.")
+
+
+def _log_finance_payload_observation(
+    *,
+    symbol: str,
+    report_name: str,
+    timeframe: Optional[str],
+    payload: Any,
+    anomaly: bool,
+) -> None:
+    if anomaly:
+        _emit_bounded_trace(
+            "provider_response_anomaly",
+            f"Massive finance response symbol={symbol} report={report_name} "
+            f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload)}",
+            warning=True,
+        )
+        return
+    if not _TRACE_FINANCE_ENABLED:
+        return
+    _emit_bounded_trace(
+        "provider_response_success",
+        f"Massive finance response symbol={symbol} report={report_name} "
+        f"timeframe={timeframe or 'n/a'} {_summarize_massive_payload(payload)}",
+        warning=False,
+        limit=_TRACE_FINANCE_SUCCESS_LIMIT,
+    )
 
 
 def _validate_environment() -> None:
@@ -625,38 +754,129 @@ def _fetch_massive_finance_payload(
     symbol: str,
     report_name: str,
     massive_client: MassiveGatewayClient,
+    coverage_summary: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     if report_name == "valuation":
-        payload = massive_client.get_finance_report(
-            symbol=symbol,
-            report="valuation",
-            sort="date.desc",
-            limit=_VALUATION_QUERY_LIMIT,
-            pagination=False,
-        )
+        if coverage_summary is not None:
+            coverage_summary["provider_valuation_requests"] += 1
+        try:
+            payload = massive_client.get_finance_report(
+                symbol=symbol,
+                report="valuation",
+                sort="date.desc",
+                limit=_VALUATION_QUERY_LIMIT,
+                pagination=False,
+            )
+        except BaseException as exc:
+            if coverage_summary is not None:
+                coverage_summary["provider_valuation_errors"] += 1
+            _emit_bounded_trace(
+                "valuation_error",
+                f"Massive valuation fetch failed symbol={symbol} report={report_name} {_summarize_exception(exc)}",
+                warning=True,
+            )
+            raise
         if not isinstance(payload, dict):
             raise MassiveGatewayError(
                 "Unexpected Massive valuation response type.",
                 payload={"symbol": symbol, "report": report_name},
             )
+        results = payload.get("results")
+        if isinstance(results, list):
+            if results:
+                if coverage_summary is not None:
+                    coverage_summary["provider_valuation_nonempty_raw_payloads"] += 1
+                _log_finance_payload_observation(
+                    symbol=symbol,
+                    report_name=report_name,
+                    timeframe=None,
+                    payload=payload,
+                    anomaly=False,
+                )
+            else:
+                if coverage_summary is not None:
+                    coverage_summary["provider_valuation_empty_raw_payloads"] += 1
+                _log_finance_payload_observation(
+                    symbol=symbol,
+                    report_name=report_name,
+                    timeframe=None,
+                    payload=payload,
+                    anomaly=True,
+                )
+        else:
+            _emit_bounded_trace(
+                "valuation_unexpected_payload",
+                f"Massive valuation payload missing results list symbol={symbol} report={report_name} "
+                f"{_summarize_massive_payload(payload)}",
+                warning=True,
+            )
         return _build_valuation_payload(payload, report_name=report_name)
 
     rows: list[dict[str, Any]] = []
     for timeframe in _STATEMENT_TIMEFRAMES:
-        payload = massive_client.get_finance_report(
-            symbol=symbol,
-            report=report_name,
-            timeframe=timeframe,
-            sort="period_end.asc",
-            limit=_STATEMENT_QUERY_LIMIT,
-            pagination=True,
-        )
+        if coverage_summary is not None:
+            coverage_summary["provider_statement_requests"] += 1
+        try:
+            payload = massive_client.get_finance_report(
+                symbol=symbol,
+                report=report_name,
+                timeframe=timeframe,
+                sort="period_end.asc",
+                limit=_STATEMENT_QUERY_LIMIT,
+                pagination=True,
+            )
+        except BaseException as exc:
+            _emit_bounded_trace(
+                "statement_error",
+                f"Massive statement fetch failed symbol={symbol} report={report_name} timeframe={timeframe} "
+                f"{_summarize_exception(exc)}",
+                warning=True,
+            )
+            raise
         if not isinstance(payload, dict):
+            if coverage_summary is not None:
+                coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
+            _emit_bounded_trace(
+                "statement_unexpected_payload",
+                f"Massive statement payload was not a dict symbol={symbol} report={report_name} "
+                f"timeframe={timeframe} payload_type={type(payload).__name__}",
+                warning=True,
+            )
             raise MassiveGatewayError(
                 "Unexpected Massive statement response type.",
                 payload={"symbol": symbol, "report": report_name, "timeframe": timeframe},
             )
         results = payload.get("results")
+        if isinstance(results, list):
+            if results:
+                if coverage_summary is not None:
+                    coverage_summary["provider_statement_nonempty_raw_payloads"] += 1
+                _log_finance_payload_observation(
+                    symbol=symbol,
+                    report_name=report_name,
+                    timeframe=timeframe,
+                    payload=payload,
+                    anomaly=False,
+                )
+            else:
+                if coverage_summary is not None:
+                    coverage_summary["provider_statement_empty_raw_payloads"] += 1
+                _log_finance_payload_observation(
+                    symbol=symbol,
+                    report_name=report_name,
+                    timeframe=timeframe,
+                    payload=payload,
+                    anomaly=True,
+                )
+        else:
+            if coverage_summary is not None:
+                coverage_summary["provider_statement_unexpected_raw_payloads"] += 1
+            _emit_bounded_trace(
+                "statement_unexpected_payload",
+                f"Massive statement payload missing results list symbol={symbol} report={report_name} "
+                f"timeframe={timeframe} {_summarize_massive_payload(payload)}",
+                warning=True,
+            )
         if not isinstance(results, list):
             continue
         for item in results:
@@ -665,6 +885,8 @@ def _fetch_massive_finance_payload(
             canonical_row = _canonical_statement_row(report_name, item, timeframe=timeframe)
             if canonical_row is not None:
                 rows.append(canonical_row)
+    if coverage_summary is not None:
+        coverage_summary["provider_statement_canonical_rows"] += len(rows)
     return _build_statement_payload(report_name, rows)
 
 
@@ -852,8 +1074,21 @@ def fetch_and_save_raw(
         symbol=symbol,
         report_name=report_name,
         massive_client=massive_client,
+        coverage_summary=coverage_summary,
     )
     if _is_empty_finance_payload(payload, report_name=report_name):
+        summary_key = (
+            "provider_valuation_canonical_empty_payloads"
+            if report_name == "valuation"
+            else "provider_statement_canonical_empty_payloads"
+        )
+        coverage_summary[summary_key] += 1
+        _emit_bounded_trace(
+            "canonical_empty_payload",
+            f"Massive finance canonical payload empty symbol={symbol} report={report_name} "
+            f"payload_dates={','.join(d.isoformat() for d in _payload_report_dates(payload)) or 'none'}",
+            warning=True,
+        )
         raise BronzeCoverageUnavailableError(
             "empty_finance_payload",
             detail=f"Massive returned empty finance payload for {symbol} report={report_name}.",
@@ -1081,9 +1316,21 @@ def _process_symbol_with_recovery(
                     wrote += 1
                 if _is_core_finance_report(report_name):
                     core_successful_reports.add(report_name)
-            except BronzeCoverageUnavailableError:
+            except BronzeCoverageUnavailableError as exc:
                 coverage_unavailable = True
+                _emit_bounded_trace(
+                    "coverage_unavailable",
+                    f"Bronze finance coverage unavailable symbol={symbol} report={report_name} "
+                    f"{_summarize_exception(exc)}",
+                    warning=True,
+                )
             except MassiveGatewayNotFoundError as exc:
+                _emit_bounded_trace(
+                    "gateway_not_found",
+                    f"Bronze finance gateway not found symbol={symbol} report={report_name} "
+                    f"{_summarize_exception(exc)}",
+                    warning=True,
+                )
                 if report_name == "valuation":
                     coverage_unavailable = True
                     continue
@@ -1096,8 +1343,20 @@ def _process_symbol_with_recovery(
                 if _is_recoverable_massive_error(exc) and attempt < attempts:
                     next_pending.append(report)
                     transient_failures.append((report_name, exc))
+                    _emit_bounded_trace(
+                        "transient_failure",
+                        f"Bronze finance transient provider failure symbol={symbol} report={report_name} "
+                        f"attempt={attempt}/{attempts} {_summarize_exception(exc)}",
+                        warning=True,
+                    )
                 else:
                     final_failures.append((report_name, exc))
+                    _emit_bounded_trace(
+                        "final_failure",
+                        f"Bronze finance final provider failure symbol={symbol} report={report_name} "
+                        f"attempt={attempt}/{attempts} {_summarize_exception(exc)}",
+                        warning=True,
+                    )
 
         if not next_pending:
             break
@@ -1300,9 +1559,10 @@ async def main_async() -> int:
                         should_log = progress["invalid_candidates"] <= 20
                     if should_log:
                         reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
+                        evidence = _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
                         message = (
                             f"Bronze finance invalid symbol candidate: symbol={symbol} reports={reports} "
-                            f"observed_runs={promotion.get('observedRunCount', 1)}"
+                            f"observed_runs={promotion.get('observedRunCount', 1)} evidence={evidence}"
                         )
                         if promotion.get("promoted"):
                             message += " promoted_to_domain_blacklist_after_2_runs=true"
@@ -1320,8 +1580,9 @@ async def main_async() -> int:
                             should_log = progress["unavailable"] <= 20
                     if should_log:
                         reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
+                        evidence = _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
                         mdc.write_warning(
-                            f"Bronze finance coverage unavailable: symbol={symbol} reports={reports}"
+                            f"Bronze finance coverage unavailable: symbol={symbol} reports={reports} evidence={evidence}"
                         )
             except Exception as exc:
                 await record_failures(symbol, [("unknown", exc)])
@@ -1388,6 +1649,17 @@ async def main_async() -> int:
         "blacklist_promotions={blacklist_promotions} failed={failed} coverage_checked={coverage_checked} "
         "coverage_forced_refetch={coverage_forced_refetch} coverage_marked_covered={coverage_marked_covered} "
         "coverage_marked_limited={coverage_marked_limited} coverage_skipped_limited_marker={coverage_skipped_limited_marker} "
+        "provider_statement_requests={provider_statement_requests} "
+        "provider_statement_empty_raw_payloads={provider_statement_empty_raw_payloads} "
+        "provider_statement_nonempty_raw_payloads={provider_statement_nonempty_raw_payloads} "
+        "provider_statement_unexpected_raw_payloads={provider_statement_unexpected_raw_payloads} "
+        "provider_statement_canonical_rows={provider_statement_canonical_rows} "
+        "provider_statement_canonical_empty_payloads={provider_statement_canonical_empty_payloads} "
+        "provider_valuation_requests={provider_valuation_requests} "
+        "provider_valuation_empty_raw_payloads={provider_valuation_empty_raw_payloads} "
+        "provider_valuation_nonempty_raw_payloads={provider_valuation_nonempty_raw_payloads} "
+        "provider_valuation_errors={provider_valuation_errors} "
+        "provider_valuation_canonical_empty_payloads={provider_valuation_canonical_empty_payloads} "
         "job_status={job_status}".format(
             **progress,
             **coverage_progress,
