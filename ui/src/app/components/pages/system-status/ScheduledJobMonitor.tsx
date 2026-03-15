@@ -97,17 +97,31 @@ type LogState = {
   loading: boolean;
   error: string | null;
   runStart: string | null;
+  executionName: string | null;
 };
 
 type LogResponseLike = {
   logs?: Array<string | number>;
   consoleLogs?: Array<string | number>;
   runs?: Array<{
+    executionName?: string | null;
     tail?: Array<string | number>;
     consoleLogs?: Array<string | number>;
     error?: string | null;
   }>;
 };
+
+function extractExecutionName(payload: LogResponseLike): string | null {
+  const runs = Array.isArray(payload?.runs) ? payload.runs : [];
+  for (const run of runs) {
+    const executionName =
+      typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+    if (executionName) {
+      return executionName;
+    }
+  }
+  return null;
+}
 
 export function ScheduledJobMonitor({
   dataLayers,
@@ -276,6 +290,13 @@ export function ScheduledJobMonitor({
     );
     return expanded?.jobName ?? null;
   }, [expandedRow, scheduledJobs]);
+  const expandedExecutionName = expandedJobName
+    ? logStateByJob[expandedJobName]?.executionName ?? null
+    : null;
+  const expandedTopic =
+    expandedJobName && expandedExecutionName
+      ? buildJobLogTopic(expandedJobName, expandedExecutionName)
+      : null;
 
   const fetchLogs = (jobName: string, runStart: string | null) => {
     logControllers.current[jobName]?.abort();
@@ -288,7 +309,9 @@ export function ScheduledJobMonitor({
         lines: prev[jobName]?.lines ?? [],
         loading: true,
         error: null,
-        runStart
+        runStart,
+        executionName:
+          prev[jobName]?.runStart === runStart ? prev[jobName]?.executionName ?? null : null
       }
     }));
 
@@ -311,13 +334,15 @@ export function ScheduledJobMonitor({
         const firstError = (payload?.runs ?? []).find((run) => Boolean(run?.error))?.error ?? null;
         const formattedFirstError = formatSystemStatusText(firstError);
         const logs = combined.slice(-LIVE_LOG_LINE_LIMIT);
+        const executionName = extractExecutionName(payload);
         setLogStateByJob((prev) => ({
           ...prev,
           [jobName]: {
             lines: logs,
             loading: false,
             error: logs.length === 0 && formattedFirstError ? formattedFirstError : null,
-            runStart
+            runStart,
+            executionName
           }
         }));
       })
@@ -329,24 +354,23 @@ export function ScheduledJobMonitor({
             lines: [],
             loading: false,
             error: formatSystemStatusText(error),
-            runStart
+            runStart,
+            executionName: null
           }
         }));
       });
   };
 
   useEffect(() => {
-    if (!expandedJobName) return;
-    const topic = buildJobLogTopic(expandedJobName);
-    requestRealtimeSubscription([topic]);
-    return () => requestRealtimeUnsubscription([topic]);
-  }, [expandedJobName]);
+    if (!expandedTopic) return;
+    requestRealtimeSubscription([expandedTopic]);
+    return () => requestRealtimeUnsubscription([expandedTopic]);
+  }, [expandedTopic]);
 
   useEffect(() => {
-    if (!expandedJobName) return;
-    const topic = buildJobLogTopic(expandedJobName);
+    if (!expandedJobName || !expandedTopic) return;
     return addConsoleLogStreamListener((detail) => {
-      if (detail.topic !== topic) {
+      if (detail.topic !== expandedTopic) {
         return;
       }
 
@@ -366,12 +390,13 @@ export function ScheduledJobMonitor({
             lines: mergeLogLines(current?.lines ?? [], incoming),
             loading: false,
             error: null,
-            runStart: current?.runStart ?? null
+            runStart: current?.runStart ?? null,
+            executionName: current?.executionName ?? null
           }
         };
       });
     });
-  }, [expandedJobName]);
+  }, [expandedJobName, expandedTopic]);
 
   useEffect(() => {
     const controllers = logControllers.current;

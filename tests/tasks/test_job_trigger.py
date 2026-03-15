@@ -112,3 +112,30 @@ def test_resolve_startup_container_apps_matches_allowlist_from_domain(monkeypatc
 
     resolved = job_trigger._resolve_startup_container_apps("https://asset-allocation-api.internal.azurecontainerapps.io")
     assert resolved == ["asset-allocation-api"]
+
+
+def test_trigger_next_job_from_env_logs_multi_job_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRIGGER_NEXT_JOB_NAME", "silver-market-job, gold-market-job")
+    monkeypatch.setenv("TRIGGER_NEXT_JOB_REQUIRED", "false")
+
+    messages: list[str] = []
+    dispatched: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(job_trigger.mdc, "write_line", messages.append)
+    monkeypatch.setattr(
+        job_trigger,
+        "trigger_containerapp_job_start",
+        lambda *, job_name, required=True: dispatched.append((job_name, required)),
+    )
+
+    job_trigger.trigger_next_job_from_env()
+
+    assert dispatched == [
+        ("silver-market-job", False),
+        ("gold-market-job", False),
+    ]
+    assert any(
+        "Downstream trigger plan: jobs=silver-market-job,gold-market-job required=False count=2"
+        in message
+        for message in messages
+    )

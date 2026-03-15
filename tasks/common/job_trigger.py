@@ -85,6 +85,26 @@ def _resolve_api_health_url(base_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{health_path}"
 
 
+def _safe_url_for_log(raw: str) -> str:
+    normalized = _normalize_url(raw)
+    if not normalized:
+        return "-"
+    parsed = urlparse(normalized)
+    if not parsed.scheme or not parsed.netloc:
+        return raw or "-"
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}{path}" if path else f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _mask_subscription_id(raw: str | None) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return "-"
+    if len(value) <= 8:
+        return value
+    return f"{value[:4]}...{value[-4:]}"
+
+
 def _is_local_api_base_url(base_url: str) -> bool:
     normalized = _normalize_url(base_url)
     if not normalized:
@@ -293,6 +313,14 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
         return
 
     probe_attempts, probe_sleep_seconds, probe_timeout_seconds = _get_startup_probe_config()
+    arm_start_enabled = _parse_bool(os.environ.get("JOB_STARTUP_API_ARM_START_ENABLED"), default=True)
+    mdc.write_line(
+        "Startup API wake configuration: "
+        f"required={required} local_runtime={local_runtime} "
+        f"base_url={_safe_url_for_log(base_url)} health_url={_safe_url_for_log(health_url)} "
+        f"probe_attempts={probe_attempts} probe_sleep_seconds={probe_sleep_seconds:.1f} "
+        f"probe_timeout_seconds={probe_timeout_seconds:.1f} arm_start_enabled={arm_start_enabled}"
+    )
 
     if local_runtime:
         attempt = 0
@@ -314,7 +342,6 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
             mdc.write_line(f"Waiting for local API to become healthy at {health_url}...")
             time.sleep(probe_sleep_seconds)
 
-    arm_start_enabled = _parse_bool(os.environ.get("JOB_STARTUP_API_ARM_START_ENABLED"), default=True)
     arm_start_attempted = False
 
     for probe_attempt in range(1, probe_attempts + 1):
@@ -336,10 +363,20 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
                     "No startup container app target resolved. Set JOB_STARTUP_API_CONTAINER_APPS or API_CONTAINER_APP_NAME."
                 )
             else:
+                mdc.write_line(
+                    "Startup API ARM start targets resolved: "
+                    f"count={len(app_names)} apps={','.join(app_names)}"
+                )
                 cfg = _get_arm_cfg()
                 if cfg is None:
                     mdc.write_warning("Skipping startup container app start (ARM config not provided).")
                 else:
+                    mdc.write_line(
+                        "Startup API ARM config: "
+                        f"subscription_id={_mask_subscription_id(cfg.subscription_id)} "
+                        f"resource_group={cfg.resource_group} api_version={cfg.api_version} "
+                        f"timeout_seconds={cfg.timeout_seconds:.1f}"
+                    )
                     for app_name in app_names:
                         _start_container_app(app_name=app_name, cfg=cfg, required=required)
 
@@ -367,8 +404,12 @@ def trigger_containerapp_job_start(*, job_name: str, required: bool = True) -> N
         mdc.write_line("Skipping job trigger (ARM config not provided).")
         return
 
-    mdc.write_line(f"Triggering downstream job: {resolved}")
     attempts, base_delay = _get_retry_config()
+    mdc.write_line(
+        "Triggering downstream job: "
+        f"job={resolved} required={required} attempts={attempts} base_delay_seconds={base_delay:.1f} "
+        f"resource_group={cfg.resource_group} subscription_id={_mask_subscription_id(cfg.subscription_id)}"
+    )
     for attempt in range(1, attempts + 1):
         try:
             with AzureArmClient(cfg) as arm:
@@ -392,12 +433,17 @@ def trigger_containerapp_job_start(*, job_name: str, required: bool = True) -> N
 def trigger_next_job_from_env() -> None:
     raw_next_jobs = (os.environ.get("TRIGGER_NEXT_JOB_NAME") or "").strip()
     if not raw_next_jobs:
+        mdc.write_line("No downstream jobs configured via TRIGGER_NEXT_JOB_NAME; skipping downstream trigger.")
         return
 
     required = _parse_bool(os.environ.get("TRIGGER_NEXT_JOB_REQUIRED"), default=True)
     
     # Support multiple comma-separated jobs
     next_jobs = [j.strip() for j in raw_next_jobs.split(",") if j.strip()]
+    mdc.write_line(
+        "Downstream trigger plan: "
+        f"jobs={','.join(next_jobs)} required={required} count={len(next_jobs)}"
+    )
     
     for job_name in next_jobs:
         trigger_containerapp_job_start(job_name=job_name, required=required)

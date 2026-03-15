@@ -145,7 +145,9 @@ describe('JobLogStreamPanel', () => {
     expect(screen.getByRole('columnheader', { name: 'stream_s' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'message' })).toBeInTheDocument();
     expect(screen.getByText('stdout')).toBeInTheDocument();
-    expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:alpha-job']]));
+    expect(subscribeTopics).toEqual(
+      expect.arrayContaining([['job-logs:alpha-job/executions/alpha-exec-001']])
+    );
 
     await user.click(screen.getByRole('combobox', { name: /monitored job/i }));
     expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
@@ -162,13 +164,17 @@ describe('JobLogStreamPanel', () => {
       );
     });
 
-    expect(unsubscribeTopics).toEqual(expect.arrayContaining([['job-logs:alpha-job']]));
-    expect(subscribeTopics).toEqual(expect.arrayContaining([['job-logs:beta-job']]));
+    expect(unsubscribeTopics).toEqual(
+      expect.arrayContaining([['job-logs:alpha-job/executions/alpha-exec-001']])
+    );
+    expect(subscribeTopics).toEqual(
+      expect.arrayContaining([['job-logs:beta-job/executions/beta-exec-001']])
+    );
     expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
 
     await act(async () => {
       emitConsoleLogStream({
-        topic: 'job-logs:beta-job',
+        topic: 'job-logs:beta-job/executions/beta-exec-001',
         resourceType: 'job',
         resourceName: 'beta-job',
         lines: [
@@ -248,7 +254,7 @@ describe('JobLogStreamPanel', () => {
 
     await act(async () => {
       emitConsoleLogStream({
-        topic: 'job-logs:beta-job',
+        topic: 'job-logs:beta-job/executions/beta-exec-001',
         resourceType: 'job',
         resourceName: 'beta-job',
         lines: [
@@ -323,7 +329,7 @@ describe('JobLogStreamPanel', () => {
     simulatedScrollHeight = 240;
     await act(async () => {
       emitConsoleLogStream({
-        topic: 'job-logs:beta-job',
+        topic: 'job-logs:beta-job/executions/beta-exec-001',
         resourceType: 'job',
         resourceName: 'beta-job',
         lines: [
@@ -348,7 +354,7 @@ describe('JobLogStreamPanel', () => {
     simulatedScrollHeight = 300;
     await act(async () => {
       emitConsoleLogStream({
-        topic: 'job-logs:beta-job',
+        topic: 'job-logs:beta-job/executions/beta-exec-001',
         resourceType: 'job',
         resourceName: 'beta-job',
         lines: [
@@ -373,7 +379,7 @@ describe('JobLogStreamPanel', () => {
     simulatedScrollHeight = 360;
     await act(async () => {
       emitConsoleLogStream({
-        topic: 'job-logs:beta-job',
+        topic: 'job-logs:beta-job/executions/beta-exec-001',
         resourceType: 'job',
         resourceName: 'beta-job',
         lines: [

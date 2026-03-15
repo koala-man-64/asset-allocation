@@ -58,6 +58,10 @@ def write_system_health_marker(
     This is best-effort and should not fail the parent job.
     """
     if not _markers_enabled():
+        mdc.write_line(
+            "Skipping system-health marker write: "
+            f"markers_disabled=true layer={_slug(layer)} domain={_slug(domain)} job={job_name}"
+        )
         return False
 
     container_name = _marker_container_name()
@@ -99,7 +103,9 @@ def write_system_health_marker(
             overwrite=True,
         )
         mdc.write_line(
-            f"System-health marker updated: container={container_name} path={blob_path} job={job_name}"
+            "System-health marker updated: "
+            f"container={container_name} path={blob_path} job={job_name} "
+            f"metadata_keys={len(metadata or {})}"
         )
         return True
     except Exception as exc:

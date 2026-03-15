@@ -158,6 +158,28 @@ function extractJobLogLines(response: JobLogsResponse): ConsoleTailLine[] {
   return combined.slice(-LOG_LINE_LIMIT);
 }
 
+function extractLatestExecutionName(response: JobLogsResponse): string | null {
+  const runs = Array.isArray(response?.runs) ? response.runs : [];
+  for (const run of runs) {
+    const executionName =
+      typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+    if (executionName) {
+      return executionName;
+    }
+
+    if (Array.isArray(run?.consoleLogs)) {
+      for (const entry of run.consoleLogs) {
+        const lineExecutionName =
+          typeof entry?.executionName === 'string' ? entry.executionName.trim() : '';
+        if (lineExecutionName) {
+          return lineExecutionName;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function formatConsoleTimestamp(timestamp?: string | null): string | null {
   const raw = String(timestamp || '').trim();
   if (!raw) {
@@ -184,6 +206,7 @@ function isNearBottom(element: HTMLElement, thresholdPx = LOG_AUTO_SCROLL_BOTTOM
 
 export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const [selectedJobName, setSelectedJobName] = useState('');
+  const [selectedExecutionName, setSelectedExecutionName] = useState<string | null>(null);
   const [logState, setLogState] = useState<LogState>({
     lines: [],
     loading: false,
@@ -199,12 +222,16 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     [sortedJobs, selectedJobName]
   );
   const selectedJobStartTime = selectedJob?.startTime ?? null;
-  const selectedJobTopic = selectedJobName ? buildJobLogTopic(selectedJobName) : null;
+  const selectedJobTopic =
+    selectedJobName && selectedExecutionName
+      ? buildJobLogTopic(selectedJobName, selectedExecutionName)
+      : null;
   const logFeedback = getLogStreamFeedback(logState.error, 'job');
 
   useEffect(() => {
     if (!sortedJobs.length) {
       setSelectedJobName('');
+      setSelectedExecutionName(null);
       setLogState({ lines: [], loading: false, error: null });
       return;
     }
@@ -225,7 +252,8 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
 
   useEffect(() => {
     shouldAutoScrollRef.current = true;
-  }, [selectedJobName]);
+    setSelectedExecutionName(null);
+  }, [selectedJobName, selectedJobStartTime]);
 
   useEffect(() => {
     if (!selectedJobName) {
@@ -240,6 +268,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     setLogState({ lines: [], loading: true, error: null });
     DataService.getJobLogs(selectedJobName, { runs: 1 }, controller.signal)
       .then((response) => {
+        setSelectedExecutionName(extractLatestExecutionName(response));
         setLogState({
           lines: extractJobLogLines(response),
           loading: false,
@@ -250,6 +279,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
         if (controller.signal.aborted) {
           return;
         }
+        setSelectedExecutionName(null);
         setLogState({
           lines: [],
           loading: false,

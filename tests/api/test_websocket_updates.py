@@ -122,12 +122,21 @@ async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.Monk
         realtime_manager.subscriptions.clear()
 
         async with connect_websocket(app, "/api/ws/updates") as ws:
-            await ws.send_text(json.dumps({"action": "subscribe", "topics": ["job-logs:bronze-market-job"]}))
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "action": "subscribe",
+                        "topics": [
+                            "job-logs:bronze-market-job/executions/bronze-market-job-exec-001"
+                        ],
+                    }
+                )
+            )
 
             with anyio.fail_after(2):
                 msg = await ws.receive_json()
 
-    assert msg["topic"] == "job-logs:bronze-market-job"
+    assert msg["topic"] == "job-logs:bronze-market-job/executions/bronze-market-job-exec-001"
     assert msg["data"]["type"] == "CONSOLE_LOG_STREAM"
     payload = msg["data"]["payload"]
     assert payload["resourceType"] == "job"
@@ -137,3 +146,4 @@ async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.Monk
     assert payload["lines"][0]["executionName"] == "bronze-market-job-exec-001"
     assert payload["lines"][0]["stream_s"] == "stderr"
     assert fake_logs.queries
+    assert "let execFilter = 'bronze-market-job-exec-001';" in fake_logs.queries[0][1]
