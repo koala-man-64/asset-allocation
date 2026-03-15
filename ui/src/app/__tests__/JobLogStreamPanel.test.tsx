@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/utils';
@@ -281,5 +281,115 @@ describe('JobLogStreamPanel', () => {
       expect(screen.getByText('beta live line')).toBeInTheDocument();
     });
     expect(DataService.getJobLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it('auto-scrolls while at bottom and pauses when manually scrolled up', async () => {
+    vi.mocked(DataService.getJobLogs).mockResolvedValueOnce({
+      jobName: 'beta-job',
+      runsRequested: 1,
+      runsReturned: 1,
+      tailLines: 10,
+      runs: [
+        {
+          executionName: 'beta-exec-001',
+          startTime: '2026-03-11T12:00:00Z',
+          tail: ['beta snapshot'],
+          consoleLogs: [
+            {
+              timestamp: '2026-03-11T12:00:01Z',
+              stream_s: 'stdout',
+              executionName: 'beta-exec-001',
+              message: 'beta snapshot',
+            },
+          ],
+        },
+      ],
+    });
+
+    renderWithProviders(<JobLogStreamPanel jobs={[JOBS[1]]} />);
+    expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
+
+    const tail = screen.getByTestId('job-log-stream-tail');
+    let simulatedScrollHeight = 200;
+    Object.defineProperty(tail, 'clientHeight', { configurable: true, value: 100 });
+    Object.defineProperty(tail, 'scrollHeight', {
+      configurable: true,
+      get: () => simulatedScrollHeight,
+    });
+
+    tail.scrollTop = 100;
+    fireEvent.scroll(tail);
+
+    simulatedScrollHeight = 240;
+    await act(async () => {
+      emitConsoleLogStream({
+        topic: 'job-logs:beta-job',
+        resourceType: 'job',
+        resourceName: 'beta-job',
+        lines: [
+          {
+            id: 'follow-line-1',
+            message: 'line while following',
+            timestamp: '2026-03-11T12:00:02Z',
+            stream_s: 'stdout',
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('line while following')).toBeInTheDocument();
+      expect(tail.scrollTop).toBe(240);
+    });
+
+    tail.scrollTop = 24;
+    fireEvent.scroll(tail);
+
+    simulatedScrollHeight = 300;
+    await act(async () => {
+      emitConsoleLogStream({
+        topic: 'job-logs:beta-job',
+        resourceType: 'job',
+        resourceName: 'beta-job',
+        lines: [
+          {
+            id: 'paused-line-1',
+            message: 'line while paused',
+            timestamp: '2026-03-11T12:00:03Z',
+            stream_s: 'stderr',
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('line while paused')).toBeInTheDocument();
+      expect(tail.scrollTop).toBe(24);
+    });
+
+    tail.scrollTop = 200;
+    fireEvent.scroll(tail);
+
+    simulatedScrollHeight = 360;
+    await act(async () => {
+      emitConsoleLogStream({
+        topic: 'job-logs:beta-job',
+        resourceType: 'job',
+        resourceName: 'beta-job',
+        lines: [
+          {
+            id: 'resume-line-1',
+            message: 'line after resume',
+            timestamp: '2026-03-11T12:00:04Z',
+            stream_s: 'stdout',
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('line after resume')).toBeInTheDocument();
+      expect(tail.scrollTop).toBe(360);
+    });
   });
 });

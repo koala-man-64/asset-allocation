@@ -38,6 +38,7 @@ import {
 import { formatSystemStatusText } from './systemStatusText';
 
 const LOG_LINE_LIMIT = 200;
+const LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 16;
 
 export type JobLogStreamTarget = {
   name: string;
@@ -175,6 +176,11 @@ function formatConsoleTimestamp(timestamp?: string | null): string | null {
   }).format(new Date(parsed));
 }
 
+function isNearBottom(element: HTMLElement, thresholdPx = LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX): boolean {
+  const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+  return remaining <= thresholdPx;
+}
+
 export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const [selectedJobName, setSelectedJobName] = useState('');
   const [logState, setLogState] = useState<LogState>({
@@ -183,6 +189,8 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
     error: null,
   });
   const requestControllerRef = useRef<AbortController | null>(null);
+  const logViewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
   const sortedJobs = useMemo(() => sortJobsForDisplay(jobs), [jobs]);
 
   const selectedJob = useMemo(
@@ -212,6 +220,10 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
       requestControllerRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    shouldAutoScrollRef.current = true;
+  }, [selectedJobName]);
 
   useEffect(() => {
     if (!selectedJobName) {
@@ -282,6 +294,14 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
       }));
     });
   }, [selectedJobTopic]);
+
+  useEffect(() => {
+    const viewport = logViewportRef.current;
+    if (!viewport || !shouldAutoScrollRef.current) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [logState.lines, logState.loading, logState.error, selectedJobName]);
 
   if (!sortedJobs.length) {
     return (
@@ -391,7 +411,14 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
               {selectedJob ? selectedJob.name : 'No job selected'}
             </span>
           </div>
-          <div className="max-h-80 overflow-auto overflow-x-auto px-3 py-2 text-xs font-mono leading-relaxed">
+          <div
+            ref={logViewportRef}
+            className="max-h-80 overflow-auto overflow-x-auto px-3 py-2 text-xs font-mono leading-relaxed"
+            data-testid="job-log-stream-tail"
+            onScroll={(event) => {
+              shouldAutoScrollRef.current = isNearBottom(event.currentTarget);
+            }}
+          >
             {logState.loading ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
