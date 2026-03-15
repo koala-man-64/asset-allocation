@@ -24,6 +24,7 @@ import {
 } from '@/app/components/ui/table';
 import { cn } from '@/app/components/ui/utils';
 import { formatTimeAgo, getAzurePortalUrl } from './SystemStatusHelpers';
+import { getLogStreamFeedback } from './logStreamFeedback';
 import { formatSystemStatusText } from './systemStatusText';
 
 const QUERY_KEY = ['system', 'container-apps'] as const;
@@ -363,6 +364,7 @@ export function ContainerAppsPanel() {
                 const isExpanded = expandedAppName === name;
                 const logState = logStateByName[name];
                 const loadingLogs = Boolean(isExpanded && logState?.loading);
+                const logFeedback = getLogStreamFeedback(logState?.error, 'container-app');
 
                 return (
                   <Fragment key={name}>
@@ -462,18 +464,25 @@ export function ContainerAppsPanel() {
                                 {logState?.loading && (
                                   <div className="text-muted-foreground">Loading logs…</div>
                                 )}
-                                {!logState?.loading && logState?.error && (
+                                {!logState?.loading &&
+                                  logFeedback.tone === 'error' &&
+                                  logFeedback.message && (
                                   <div className="break-words text-destructive">
-                                    Failed to load logs: {logState.error}
+                                    Failed to load logs: {logFeedback.message}
                                   </div>
                                 )}
                                 {!logState?.loading &&
-                                  !logState?.error &&
+                                  logFeedback.tone === 'info' &&
+                                  logFeedback.message && (
+                                    <div className="text-muted-foreground">{logFeedback.message}</div>
+                                  )}
+                                {!logState?.loading &&
+                                  logFeedback.tone === 'none' &&
                                   (logState?.lines?.length ?? 0) === 0 && (
                                     <div className="text-muted-foreground">No log output available.</div>
                                   )}
                                 {!logState?.loading &&
-                                  !logState?.error &&
+                                  logFeedback.tone === 'none' &&
                                   (logState?.lines?.length ?? 0) > 0 && (
                                     <div className="space-y-1">
                                       {(logState?.lines ?? []).slice(-(LOG_TAIL_LINES * 4)).map((line, index) => (

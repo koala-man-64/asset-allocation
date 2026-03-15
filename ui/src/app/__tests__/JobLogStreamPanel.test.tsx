@@ -392,4 +392,19 @@ describe('JobLogStreamPanel', () => {
       expect(tail.scrollTop).toBe(360);
     });
   });
+
+  it('shows a neutral notice when job log streaming is not configured', async () => {
+    vi.mocked(DataService.getJobLogs).mockRejectedValueOnce(
+      new Error(
+        'API Error: 503 Service Unavailable [requestId=req-123] - {"detail":"Log Analytics is not configured for job log retrieval."}'
+      )
+    );
+
+    renderWithProviders(<JobLogStreamPanel jobs={[JOBS[0]]} />);
+
+    expect(
+      await screen.findByText('Live job logs are not configured for this environment.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Failed to load logs:/i)).not.toBeInTheDocument();
+  });
 });

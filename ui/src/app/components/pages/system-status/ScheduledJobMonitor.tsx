@@ -35,6 +35,7 @@ import {
   normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
 import { getDomainOrderIndex } from './domainOrdering';
+import { getLogStreamFeedback } from './logStreamFeedback';
 import { apiService } from '@/services/apiService';
 import {
   addConsoleLogStreamListener,
@@ -472,6 +473,7 @@ export function ScheduledJobMonitor({
                       const isExpanded = expandedRow === rowKey;
                       const runStart = job.jobRun?.startTime ?? null;
                       const logState = logStateByJob[job.jobName];
+                      const logFeedback = getLogStreamFeedback(logState?.error, 'job');
 
                       const handleToggle = () => {
                         if (!isExpanded) {
@@ -734,20 +736,29 @@ export function ScheduledJobMonitor({
                                       {logState?.loading && (
                                         <div className="text-muted-foreground">Loading logs…</div>
                                       )}
-                                      {!logState?.loading && logState?.error && (
+                                      {!logState?.loading &&
+                                        logFeedback.tone === 'error' &&
+                                        logFeedback.message && (
                                         <div className="break-words text-destructive">
-                                          Failed to load logs: {logState.error}
+                                          Failed to load logs: {logFeedback.message}
                                         </div>
                                       )}
                                       {!logState?.loading &&
-                                        !logState?.error &&
+                                        logFeedback.tone === 'info' &&
+                                        logFeedback.message && (
+                                          <div className="text-muted-foreground">
+                                            {logFeedback.message}
+                                          </div>
+                                        )}
+                                      {!logState?.loading &&
+                                        logFeedback.tone === 'none' &&
                                         (logState?.lines?.length ?? 0) === 0 && (
                                           <div className="text-muted-foreground">
                                             No log output available.
                                           </div>
                                         )}
                                       {!logState?.loading &&
-                                        !logState?.error &&
+                                        logFeedback.tone === 'none' &&
                                         (logState?.lines?.length ?? 0) > 0 && (
                                           <div className="space-y-1">
                                             {(logState?.lines ?? [])

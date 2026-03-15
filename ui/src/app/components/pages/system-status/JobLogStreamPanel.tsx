@@ -35,6 +35,7 @@ import {
   normalizeAzurePortalUrl,
   normalizeJobStatus,
 } from './SystemStatusHelpers';
+import { getLogStreamFeedback } from './logStreamFeedback';
 import { formatSystemStatusText } from './systemStatusText';
 
 const LOG_LINE_LIMIT = 200;
@@ -199,6 +200,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   );
   const selectedJobStartTime = selectedJob?.startTime ?? null;
   const selectedJobTopic = selectedJobName ? buildJobLogTopic(selectedJobName) : null;
+  const logFeedback = getLogStreamFeedback(logState.error, 'job');
 
   useEffect(() => {
     if (!sortedJobs.length) {
@@ -425,13 +427,18 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
                 Loading logs…
               </div>
             ) : null}
-            {!logState.loading && logState.error ? (
-              <div className="break-words text-destructive">Failed to load logs: {logState.error}</div>
+            {!logState.loading && logFeedback.tone === 'error' && logFeedback.message ? (
+              <div className="break-words text-destructive">
+                Failed to load logs: {logFeedback.message}
+              </div>
             ) : null}
-            {!logState.loading && !logState.error && logState.lines.length === 0 ? (
+            {!logState.loading && logFeedback.tone === 'info' && logFeedback.message ? (
+              <div className="text-muted-foreground">{logFeedback.message}</div>
+            ) : null}
+            {!logState.loading && logFeedback.tone === 'none' && logState.lines.length === 0 ? (
               <div className="text-muted-foreground">No log output available.</div>
             ) : null}
-            {!logState.loading && !logState.error && logState.lines.length > 0 ? (
+            {!logState.loading && logFeedback.tone === 'none' && logState.lines.length > 0 ? (
               <Table className="min-w-full text-xs">
                 <TableHeader>
                   <TableRow className="hover:[&>td]:bg-transparent">
