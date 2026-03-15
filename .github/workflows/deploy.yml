@@ -104,6 +104,15 @@ env:
   MASSIVE_PREFER_OFFICIAL_SDK: 'true'
   MASSIVE_MAX_WORKERS: '10'
   MASSIVE_FINANCE_FRESH_DAYS: '28'
+  SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED || 'false' }}
+  SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID || '' }}
+  SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS || '5' }}
+  SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES || '60' }}
+  SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON || ' ' }}
+  REALTIME_LOG_STREAM_ENABLED: ${{ vars.REALTIME_LOG_STREAM_ENABLED || 'true' }}
+  REALTIME_LOG_STREAM_POLL_SECONDS: ${{ vars.REALTIME_LOG_STREAM_POLL_SECONDS || '5' }}
+  REALTIME_LOG_STREAM_LOOKBACK_SECONDS: ${{ vars.REALTIME_LOG_STREAM_LOOKBACK_SECONDS || '30' }}
+  REALTIME_LOG_STREAM_BATCH_SIZE: ${{ vars.REALTIME_LOG_STREAM_BATCH_SIZE || '200' }}
 
 jobs:
   tests:
@@ -152,6 +161,15 @@ jobs:
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
           UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI }}
           API_KEY: ${{ secrets.API_KEY }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES }}
+          SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON }}
+          REALTIME_LOG_STREAM_ENABLED: ${{ env.REALTIME_LOG_STREAM_ENABLED }}
+          REALTIME_LOG_STREAM_POLL_SECONDS: ${{ env.REALTIME_LOG_STREAM_POLL_SECONDS }}
+          REALTIME_LOG_STREAM_LOOKBACK_SECONDS: ${{ env.REALTIME_LOG_STREAM_LOOKBACK_SECONDS }}
+          REALTIME_LOG_STREAM_BATCH_SIZE: ${{ env.REALTIME_LOG_STREAM_BATCH_SIZE }}
         run: |
           set -euo pipefail
 
@@ -249,6 +267,29 @@ jobs:
           if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
               print("::error::LOG_LEVEL must be one of: DEBUG|INFO|WARNING|ERROR|CRITICAL")
               sys.exit(1)
+
+          def parse_bool(name: str, default: bool = False) -> bool:
+              raw = (os.environ.get(name) or "").strip().lower()
+              if not raw:
+                  return default
+              if raw in {"1", "true", "t", "yes", "y", "on"}:
+                  return True
+              if raw in {"0", "false", "f", "no", "n", "off"}:
+                  return False
+              print(f"::error::{name} must be a boolean (true/false)")
+              sys.exit(1)
+
+          log_analytics_enabled = parse_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", default=False)
+          if log_analytics_enabled:
+              workspace_id = (os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or "").strip()
+              if not workspace_id:
+                  print(
+                      "::error::SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true requires "
+                      "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID."
+                  )
+                  sys.exit(1)
+
+          parse_bool("REALTIME_LOG_STREAM_ENABLED", default=True)
 
           if auth_mode == "api_key":
               api_key = (os.environ.get("API_KEY") or "").strip()
