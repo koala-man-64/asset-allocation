@@ -170,7 +170,9 @@ class MassiveGatewayClient:
             raise ValueError("ASSET_ALLOCATION_API_BASE_URL is required for Massive ETL via API gateway.")
         base_url = str(base_url).rstrip("/")
 
-        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(os.environ.get("API_KEY"))
+        api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(
+            os.environ.get("API_KEY")
+        )
         api_key_header = (
             _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY_HEADER"))
             or _strip_or_none(os.environ.get("API_KEY_HEADER"))
@@ -586,6 +588,24 @@ class MassiveGatewayClient:
         resp = self._request("/api/providers/massive/fundamentals/float", params=params)
         return resp.json()
 
+    def get_ratios(
+        self,
+        *,
+        symbol: str,
+        sort: Optional[str] = None,
+        limit: Optional[int] = None,
+        pagination: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol}
+        if sort:
+            params["sort"] = sort
+        if limit is not None:
+            params["limit"] = int(limit)
+        if pagination is not None:
+            params["pagination"] = "true" if pagination else "false"
+        resp = self._request("/api/providers/massive/fundamentals/ratios", params=params)
+        return resp.json()
+
     def get_finance_report(
         self,
         *,
@@ -596,6 +616,14 @@ class MassiveGatewayClient:
         limit: Optional[int] = None,
         pagination: Optional[bool] = None,
     ) -> dict[str, Any]:
+        normalized_report = str(report or "").strip().lower()
+        if normalized_report == "valuation":
+            return self.get_ratios(
+                symbol=symbol,
+                sort=sort,
+                limit=limit,
+                pagination=pagination,
+            )
         params: dict[str, Any] = {"symbol": symbol}
         if timeframe:
             params["timeframe"] = timeframe
@@ -605,5 +633,5 @@ class MassiveGatewayClient:
             params["limit"] = int(limit)
         if pagination is not None:
             params["pagination"] = "true" if pagination else "false"
-        resp = self._request(f"/api/providers/massive/financials/{report}", params=params)
+        resp = self._request(f"/api/providers/massive/financials/{normalized_report}", params=params)
         return resp.json()

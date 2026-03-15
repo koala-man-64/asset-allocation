@@ -113,6 +113,29 @@ async def test_massive_financials_returns_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_massive_ratios_returns_json(monkeypatch):
+    def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
+        assert symbol == "AAPL"
+        assert report == "valuation"
+        assert timeframe is None
+        assert sort == "date.desc"
+        assert limit == 1
+        assert pagination is False
+        return {"results": [{"ticker": symbol}]}
+
+    monkeypatch.setattr(MassiveGateway, "get_finance_report", fake_financials)
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get(
+            "/api/providers/massive/fundamentals/ratios?symbol=AAPL&sort=date.desc&limit=1&pagination=false"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["results"][0]["ticker"] == "AAPL"
+
+
+@pytest.mark.asyncio
 async def test_massive_missing_symbol_maps_to_404(monkeypatch):
     def fake_financials(self, *, symbol, report, timeframe=None, sort=None, limit=None, pagination=True):
         del symbol, report, timeframe, sort, limit, pagination

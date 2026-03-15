@@ -30,6 +30,7 @@ from tasks.common.bronze_backfill_coverage import (
     should_force_backfill,
     write_coverage_marker,
 )
+from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
 from tasks.common.bronze_symbol_policy import (
     BronzeCoverageUnavailableError,
     build_bronze_run_id,
@@ -94,11 +95,15 @@ _TRACE_FINANCE_ENABLED = (os.environ.get("MASSIVE_FINANCE_TRACE_ENABLED") or "")
     "on",
 }
 try:
-    _TRACE_FINANCE_SUCCESS_LIMIT = max(0, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_SUCCESS_LIMIT") or "40").strip()))
+    _TRACE_FINANCE_SUCCESS_LIMIT = max(
+        0, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_SUCCESS_LIMIT") or "40").strip())
+    )
 except Exception:
     _TRACE_FINANCE_SUCCESS_LIMIT = 40
 try:
-    _TRACE_FINANCE_ANOMALY_LIMIT = max(1, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_ANOMALY_LIMIT") or "200").strip()))
+    _TRACE_FINANCE_ANOMALY_LIMIT = max(
+        1, int(str(os.environ.get("MASSIVE_FINANCE_TRACE_ANOMALY_LIMIT") or "200").strip())
+    )
 except Exception:
     _TRACE_FINANCE_ANOMALY_LIMIT = 200
 _TRACE_FINANCE_COUNTERS: collections.Counter[str] = collections.Counter()
@@ -454,9 +459,11 @@ def _remove_alpha26_finance_row(
 
 
 def _write_alpha26_finance_buckets(
-    alpha26_rows: dict[tuple[str, str], dict[str, Any]]
+    alpha26_rows: dict[tuple[str, str], dict[str, Any]],
 ) -> tuple[int, Optional[str], Optional[int]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
+    bucket_artifacts_written = 0
+    domain_artifact_written = False
     if alpha26_rows:
         frame = pd.DataFrame(list(alpha26_rows.values()), columns=_BUCKET_COLUMNS)
     else:
@@ -492,6 +499,7 @@ def _write_alpha26_finance_buckets(
                 client=bronze_client,
                 job_name="bronze-finance-job",
             )
+            bucket_artifacts_written += 1
         except Exception as exc:
             mdc.write_warning(f"Bronze finance metadata bucket artifact write failed bucket={bucket}: {exc}")
 
@@ -511,8 +519,16 @@ def _write_alpha26_finance_buckets(
                 job_name="bronze-finance-job",
             )
             column_count = domain_artifacts.extract_column_count(payload)
+            domain_artifact_written = True
         except Exception as exc:
             mdc.write_warning(f"Bronze finance metadata artifact write failed: {exc}")
+    log_bronze_success(
+        domain="finance",
+        operation="metadata_artifacts_written",
+        bucket_artifacts_written=bucket_artifacts_written,
+        domain_artifact_written=domain_artifact_written,
+        symbol_index_path=index_path or "n/a",
+    )
     return len(symbol_to_bucket), index_path, column_count
 
 
@@ -764,9 +780,8 @@ def _fetch_massive_finance_payload(
         if coverage_summary is not None:
             coverage_summary["provider_valuation_requests"] += 1
         try:
-            payload = massive_client.get_finance_report(
+            payload = massive_client.get_ratios(
                 symbol=symbol,
-                report="valuation",
                 sort="date.desc",
                 limit=_VALUATION_QUERY_LIMIT,
                 pagination=False,
@@ -913,7 +928,9 @@ def _payload_report_dates(payload: dict[str, Any]) -> list[date]:
     return out
 
 
-def _apply_backfill_start_to_finance_payload(payload: dict[str, Any], *, backfill_start: Optional[date]) -> dict[str, Any]:
+def _apply_backfill_start_to_finance_payload(
+    payload: dict[str, Any], *, backfill_start: Optional[date]
+) -> dict[str, Any]:
     if backfill_start is None:
         return payload
 
@@ -1068,7 +1085,11 @@ def fetch_and_save_raw(
                         coverage_summary=coverage_summary,
                     )
             ingested_at = _parse_ingested_at(existing_row.get("ingested_at"))
-            if existing_payload_current and _is_fresh(ingested_at, fresh_days=FINANCE_REPORT_STALE_DAYS) and not force_backfill:
+            if (
+                existing_payload_current
+                and _is_fresh(ingested_at, fresh_days=FINANCE_REPORT_STALE_DAYS)
+                and not force_backfill
+            ):
                 list_manager.add_to_whitelist(symbol)
                 return False
     except Exception:
@@ -1126,9 +1147,7 @@ def fetch_and_save_raw(
 
     if resolved_backfill_start is not None and force_backfill:
         marker_status = (
-            "covered"
-            if source_earliest is not None and source_earliest <= resolved_backfill_start
-            else "limited"
+            "covered" if source_earliest is not None and source_earliest <= resolved_backfill_start else "limited"
         )
         _mark_coverage(
             symbol=symbol,
@@ -1145,11 +1164,7 @@ def fetch_and_save_raw(
         if resolved_backfill_start is None:
             incoming_latest = _extract_latest_finance_report_date(payload)
             existing_latest = _extract_latest_finance_report_date(existing_payload)
-            if (
-                incoming_latest is not None
-                and existing_latest is not None
-                and incoming_latest <= existing_latest
-            ):
+            if incoming_latest is not None and existing_latest is not None and incoming_latest <= existing_latest:
                 list_manager.add_to_whitelist(symbol)
                 return False
 
@@ -1486,9 +1501,7 @@ async def main_async() -> int:
     symbol_set = {str(s).strip().upper() for s in symbols}
     alpha26_rows: dict[tuple[str, str], dict[str, Any]] = _load_alpha26_finance_row_map(symbols=symbol_set)
     alpha26_lock: Optional[threading.Lock] = threading.Lock()
-    mdc.write_line(
-        f"Loaded existing finance alpha26 seed rows: reports={len(alpha26_rows)} symbols={len(symbol_set)}."
-    )
+    mdc.write_line(f"Loaded existing finance alpha26 seed rows: reports={len(alpha26_rows)} symbols={len(symbol_set)}.")
 
     mdc.write_line(f"Starting Massive Bronze Finance Ingestion for {len(symbols)} symbols...")
 
@@ -1601,7 +1614,9 @@ async def main_async() -> int:
                         should_log = progress["invalid_candidates"] <= 20
                     if should_log:
                         reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
-                        evidence = _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
+                        evidence = (
+                            _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
+                        )
                         message = (
                             f"Bronze finance invalid symbol candidate: symbol={symbol} reports={reports} "
                             f"observed_runs={promotion.get('observedRunCount', 1)} evidence={evidence}"
@@ -1612,17 +1627,32 @@ async def main_async() -> int:
                 elif result.failures:
                     await record_failures(symbol, result.failures)
                 else:
+                    success_count = 0
+                    disposition = "written" if result.wrote else "skipped"
                     async with progress_lock:
                         if result.wrote:
                             progress["written"] += 1
                         else:
                             progress["skipped"] += 1
+                        success_count = progress["written"] + progress["skipped"]
+                    if should_log_bronze_success(success_count):
+                        log_bronze_success(
+                            domain="finance",
+                            operation="symbol_processed",
+                            symbol=symbol,
+                            disposition=disposition,
+                            reports_written=result.wrote,
+                            success_count=success_count,
+                            coverage_unavailable=result.coverage_unavailable,
+                        )
                     if result.coverage_unavailable:
                         async with progress_lock:
                             should_log = progress["unavailable"] <= 20
                     if should_log:
                         reports = ",".join(sorted({name for name, _ in result.invalid_evidence})) or "unknown"
-                        evidence = _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
+                        evidence = (
+                            _summarize_exception(result.invalid_evidence[0][1]) if result.invalid_evidence else "none"
+                        )
                         mdc.write_warning(
                             f"Bronze finance coverage unavailable: symbol={symbol} reports={reports} evidence={evidence}"
                         )
@@ -1653,6 +1683,8 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        else:
+            log_bronze_success(domain="finance", operation="list_flush")
 
     alpha26_column_count: Optional[int] = len(_BUCKET_COLUMNS)
     try:

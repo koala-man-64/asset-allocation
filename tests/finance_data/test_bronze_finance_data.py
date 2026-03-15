@@ -104,7 +104,7 @@ def test_fetch_and_save_raw_writes_canonical_v2_balance_sheet_row(unique_ticker)
 def test_fetch_and_save_raw_marks_empty_valuation_payload_as_coverage_unavailable(unique_ticker):
     symbol = unique_ticker
     mock_massive = MagicMock()
-    mock_massive.get_finance_report.return_value = {"results": []}
+    mock_massive.get_ratios.return_value = {"results": []}
 
     report = {
         "folder": "Valuation",
@@ -245,10 +245,14 @@ def test_fetch_and_save_raw_coverage_gap_overrides_fresh_current_payload(unique_
     }
     coverage_summary = bronze._empty_coverage_summary()
 
-    with patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager, patch(
-        "tasks.finance_data.bronze_finance_data.load_coverage_marker",
-        return_value=None,
-    ), patch("tasks.finance_data.bronze_finance_data._mark_coverage") as mock_mark_coverage:
+    with (
+        patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager,
+        patch(
+            "tasks.finance_data.bronze_finance_data.load_coverage_marker",
+            return_value=None,
+        ),
+        patch("tasks.finance_data.bronze_finance_data._mark_coverage") as mock_mark_coverage,
+    ):
         mock_list_manager.is_blacklisted.return_value = False
 
         wrote = bronze.fetch_and_save_raw(
@@ -288,9 +292,10 @@ def test_process_symbol_with_recovery_retries_transient_report(unique_ticker):
             return True
         return False
 
-    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
-        "tasks.finance_data.bronze_finance_data.time.sleep"
-    ) as mock_sleep:
+    with (
+        patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch),
+        patch("tasks.finance_data.bronze_finance_data.time.sleep") as mock_sleep,
+    ):
         result = bronze._process_symbol_with_recovery(
             symbol,
             manager,
@@ -397,13 +402,14 @@ def test_process_symbol_with_recovery_downgrades_valuation_transient_failure_whe
                 "gateway unavailable",
                 status_code=503,
                 detail="upstream unavailable",
-                payload={"path": "/api/providers/massive/financials/valuation"},
+                payload={"path": "/api/providers/massive/fundamentals/ratios"},
             )
         return True
 
-    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
-        "tasks.finance_data.bronze_finance_data.time.sleep"
-    ) as mock_sleep:
+    with (
+        patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch),
+        patch("tasks.finance_data.bronze_finance_data.time.sleep") as mock_sleep,
+    ):
         result = bronze._process_symbol_with_recovery(
             symbol,
             manager,
@@ -446,9 +452,10 @@ def test_process_symbol_with_recovery_transient_warning_includes_failure_details
                 )
         return False
 
-    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
-        "tasks.finance_data.bronze_finance_data.mdc.write_warning"
-    ) as mock_write_warning:
+    with (
+        patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch),
+        patch("tasks.finance_data.bronze_finance_data.mdc.write_warning") as mock_write_warning,
+    ):
         bronze._process_symbol_with_recovery(
             symbol,
             manager,
@@ -474,63 +481,70 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
     invalid_error = bronze.MassiveGatewayNotFoundError("invalid", status_code=404)
 
     async def run_test():
-        with patch("tasks.finance_data.bronze_finance_data._validate_environment"), patch(
-            "tasks.finance_data.bronze_finance_data.mdc.log_environment_diagnostics"
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.symbol_availability.sync_domain_availability",
-            return_value=_sync_result(),
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.symbol_availability.get_domain_symbols",
-            return_value=pd.DataFrame({"Symbol": [symbol]}),
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.bronze_bucketing.is_alpha26_mode",
-            return_value=True,
-        ), patch(
-            "tasks.finance_data.bronze_finance_data._load_alpha26_finance_row_map",
-            return_value={},
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.resolve_backfill_start_date",
-            return_value=None,
-        ), patch(
-            "tasks.finance_data.bronze_finance_data._ThreadLocalMassiveClientManager",
-            return_value=client_manager,
-        ), patch(
-            "tasks.finance_data.bronze_finance_data._process_symbol_with_recovery",
-            return_value=bronze._FinanceSymbolOutcome(
-                wrote=0,
-                valid_symbol=False,
-                invalid_candidate=True,
-                coverage_unavailable=False,
-                invalid_evidence=[
-                    ("balance_sheet", invalid_error),
-                    ("cash_flow", invalid_error),
-                    ("income_statement", invalid_error),
-                ],
-                failures=[],
-                coverage_summary=coverage_summary,
+        with (
+            patch("tasks.finance_data.bronze_finance_data._validate_environment"),
+            patch("tasks.finance_data.bronze_finance_data.mdc.log_environment_diagnostics"),
+            patch(
+                "tasks.finance_data.bronze_finance_data.symbol_availability.sync_domain_availability",
+                return_value=_sync_result(),
             ),
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.record_invalid_symbol_candidate",
-            return_value={"promoted": False, "observedRunCount": 1, "blacklistPath": None},
-        ) as mock_record_invalid, patch(
-            "tasks.finance_data.bronze_finance_data.clear_invalid_candidate_marker"
-        ), patch(
-            "tasks.finance_data.bronze_finance_data._write_alpha26_finance_buckets",
-            return_value=(0, "index", len(bronze._BUCKET_COLUMNS)),
-        ), patch(
-            "tasks.finance_data.bronze_finance_data._delete_flat_finance_symbol_blobs",
-            return_value=0,
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.bronze_client"
-        ) as mock_bronze_client, patch(
-            "tasks.finance_data.bronze_finance_data.create_bronze_finance_manifest",
-            return_value=None,
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.list_manager"
-        ) as mock_list_manager, patch(
-            "tasks.finance_data.bronze_finance_data.mdc.write_line"
-        ), patch(
-            "tasks.finance_data.bronze_finance_data.mdc.write_warning"
+            patch(
+                "tasks.finance_data.bronze_finance_data.symbol_availability.get_domain_symbols",
+                return_value=pd.DataFrame({"Symbol": [symbol]}),
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data.bronze_bucketing.is_alpha26_mode",
+                return_value=True,
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._load_alpha26_finance_row_map",
+                return_value={},
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data.resolve_backfill_start_date",
+                return_value=None,
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._ThreadLocalMassiveClientManager",
+                return_value=client_manager,
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._process_symbol_with_recovery",
+                return_value=bronze._FinanceSymbolOutcome(
+                    wrote=0,
+                    valid_symbol=False,
+                    invalid_candidate=True,
+                    coverage_unavailable=False,
+                    invalid_evidence=[
+                        ("balance_sheet", invalid_error),
+                        ("cash_flow", invalid_error),
+                        ("income_statement", invalid_error),
+                    ],
+                    failures=[],
+                    coverage_summary=coverage_summary,
+                ),
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data.record_invalid_symbol_candidate",
+                return_value={"promoted": False, "observedRunCount": 1, "blacklistPath": None},
+            ) as mock_record_invalid,
+            patch("tasks.finance_data.bronze_finance_data.clear_invalid_candidate_marker"),
+            patch(
+                "tasks.finance_data.bronze_finance_data._write_alpha26_finance_buckets",
+                return_value=(0, "index", len(bronze._BUCKET_COLUMNS)),
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._delete_flat_finance_symbol_blobs",
+                return_value=0,
+            ),
+            patch("tasks.finance_data.bronze_finance_data.bronze_client") as mock_bronze_client,
+            patch(
+                "tasks.finance_data.bronze_finance_data.create_bronze_finance_manifest",
+                return_value=None,
+            ),
+            patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager,
+            patch("tasks.finance_data.bronze_finance_data.mdc.write_line"),
+            patch("tasks.finance_data.bronze_finance_data.mdc.write_warning"),
         ):
             mock_bronze_client.list_blob_infos.return_value = []
             mock_list_manager.is_blacklisted.return_value = False
@@ -542,5 +556,84 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
         mock_list_manager.add_to_blacklist.assert_not_called()
         mock_list_manager.flush.assert_called_once()
         client_manager.close_all.assert_called_once()
+
+    asyncio.run(run_test())
+
+
+def test_main_async_logs_symbol_success(unique_ticker):
+    symbol = unique_ticker
+    client_manager = MagicMock()
+    coverage_summary = bronze._empty_coverage_summary()
+
+    async def run_test():
+        with (
+            patch("tasks.finance_data.bronze_finance_data._validate_environment"),
+            patch("tasks.finance_data.bronze_finance_data.mdc.log_environment_diagnostics"),
+            patch(
+                "tasks.finance_data.bronze_finance_data.symbol_availability.sync_domain_availability",
+                return_value=_sync_result(),
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data.symbol_availability.get_domain_symbols",
+                return_value=pd.DataFrame({"Symbol": [symbol]}),
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data.bronze_bucketing.is_alpha26_mode",
+                return_value=True,
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._load_alpha26_finance_row_map",
+                return_value={},
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data.resolve_backfill_start_date",
+                return_value=None,
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._ThreadLocalMassiveClientManager",
+                return_value=client_manager,
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._process_symbol_with_recovery",
+                return_value=bronze._FinanceSymbolOutcome(
+                    wrote=2,
+                    valid_symbol=True,
+                    invalid_candidate=False,
+                    coverage_unavailable=False,
+                    invalid_evidence=[],
+                    failures=[],
+                    coverage_summary=coverage_summary,
+                ),
+            ),
+            patch("tasks.finance_data.bronze_finance_data.clear_invalid_candidate_marker"),
+            patch(
+                "tasks.finance_data.bronze_finance_data._write_alpha26_finance_buckets",
+                return_value=(1, "index", len(bronze._BUCKET_COLUMNS)),
+            ),
+            patch(
+                "tasks.finance_data.bronze_finance_data._delete_flat_finance_symbol_blobs",
+                return_value=0,
+            ),
+            patch("tasks.finance_data.bronze_finance_data.bronze_client") as mock_bronze_client,
+            patch(
+                "tasks.finance_data.bronze_finance_data.create_bronze_finance_manifest",
+                return_value=None,
+            ),
+            patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager,
+            patch("tasks.finance_data.bronze_finance_data.mdc.write_line") as mock_write_line,
+            patch("tasks.finance_data.bronze_finance_data.mdc.write_warning"),
+        ):
+            mock_bronze_client.list_blob_infos.return_value = []
+            mock_list_manager.is_blacklisted.return_value = False
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        messages = [str(call.args[0]) for call in mock_write_line.call_args_list if call.args]
+        assert any(
+            f"Bronze finance success: operation=symbol_processed symbol={symbol}" in message
+            for message in messages
+        )
+        assert any("Bronze finance success: operation=list_flush" in message for message in messages)
 
     asyncio.run(run_test())

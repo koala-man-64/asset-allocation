@@ -632,6 +632,65 @@ def test_main_async_logs_invalid_payload_preview(unique_ticker):
     asyncio.run(run_test())
 
 
+def test_main_async_logs_symbol_success(unique_ticker):
+    symbol = unique_ticker
+    mock_av = MagicMock()
+    mock_av.get_earnings_calendar_csv.return_value = (
+        "symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay\n"
+    )
+    client_manager = MagicMock()
+    client_manager.get_client.return_value = mock_av
+
+    async def run_test():
+        with patch(
+            "tasks.earnings_data.bronze_earnings_data._validate_environment"
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.symbol_availability.get_domain_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.bronze_bucketing.is_alpha26_mode",
+            return_value=False,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.resolve_backfill_start_date",
+            return_value=None,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.AlphaVantageGatewayClient.from_env",
+            return_value=mock_av,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data._ThreadLocalAlphaVantageClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.fetch_and_save_raw",
+            return_value=True,
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.clear_invalid_candidate_marker"
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.write_warning"
+        ), patch(
+            "tasks.earnings_data.bronze_earnings_data.mdc.write_line"
+        ) as mock_write_line:
+            mock_list_manager.is_blacklisted.return_value = False
+
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        messages = [str(call.args[0]) for call in mock_write_line.call_args_list if call.args]
+        assert any(
+            f"Bronze earnings success: operation=symbol_processed symbol={symbol}" in message
+            for message in messages
+        )
+        assert any("Bronze earnings success: operation=list_flush" in message for message in messages)
+
+    asyncio.run(run_test())
+
+
 def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(unique_ticker):
     symbol = unique_ticker
     detail = "X" * 700

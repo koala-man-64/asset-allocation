@@ -14,6 +14,7 @@ from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.bronze_observability import log_bronze_success
 from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
@@ -211,6 +212,8 @@ def _normalize_bucket_symbol_df(symbol: str, symbol_df: pd.DataFrame) -> pd.Data
 def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     symbol_to_bucket: dict[str, str] = {}
+    bucket_artifacts_written = 0
+    domain_artifact_written = False
 
     for symbol, frame in symbol_frames.items():
         if frame is None or frame.empty:
@@ -246,6 +249,7 @@ def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) 
                 client=bronze_client,
                 job_name="bronze-price-target-job",
             )
+            bucket_artifacts_written += 1
         except Exception as exc:
             mdc.write_warning(f"Bronze price-target metadata bucket artifact write failed bucket={bucket}: {exc}")
 
@@ -264,8 +268,16 @@ def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) 
                 symbol_index_path=index_path,
                 job_name="bronze-price-target-job",
             )
+            domain_artifact_written = True
         except Exception as exc:
             mdc.write_warning(f"Bronze price-target metadata artifact write failed: {exc}")
+    log_bronze_success(
+        domain="price-target",
+        operation="metadata_artifacts_written",
+        bucket_artifacts_written=bucket_artifacts_written,
+        domain_artifact_written=domain_artifact_written,
+        symbol_index_path=index_path or "n/a",
+    )
     return len(symbol_to_bucket), index_path
 
 
@@ -674,6 +686,8 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        else:
+            log_bronze_success(domain="price-target", operation="list_flush")
         job_status, exit_code = resolve_job_run_status(
             failed_count=(
                 batch_exception_count

@@ -24,6 +24,7 @@ from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
 from tasks.common.bronze_symbol_policy import (
     BronzeCoverageUnavailableError,
     build_bronze_run_id,
@@ -570,6 +571,8 @@ def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
 def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     symbol_to_bucket: dict[str, str] = {}
+    bucket_artifacts_written = 0
+    domain_artifact_written = False
     for symbol, frame in symbol_frames.items():
         if frame is None or frame.empty:
             continue
@@ -604,6 +607,7 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
                 client=bronze_client,
                 job_name="bronze-earnings-job",
             )
+            bucket_artifacts_written += 1
         except Exception as exc:
             mdc.write_warning(f"Bronze earnings metadata bucket artifact write failed bucket={bucket}: {exc}")
 
@@ -622,8 +626,16 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
                 symbol_index_path=index_path,
                 job_name="bronze-earnings-job",
             )
+            domain_artifact_written = True
         except Exception as exc:
             mdc.write_warning(f"Bronze earnings metadata artifact write failed: {exc}")
+    log_bronze_success(
+        domain="earnings",
+        operation="metadata_artifacts_written",
+        bucket_artifacts_written=bucket_artifacts_written,
+        domain_artifact_written=domain_artifact_written,
+        symbol_index_path=index_path or "n/a",
+    )
     return len(symbol_to_bucket), index_path
 
 
@@ -1044,6 +1056,8 @@ async def main_async() -> int:
                     clear_invalid_candidate_marker(common_client=common_client, domain=_COVERAGE_DOMAIN, symbol=symbol)
                 except Exception as exc:
                     mdc.write_warning(f"Failed to clear earnings invalid-candidate marker for {symbol}: {exc}")
+                success_count = 0
+                disposition = "written" if wrote else "skipped"
                 async with progress_lock:
                     if wrote:
                         progress["written"] += 1
@@ -1053,6 +1067,17 @@ async def main_async() -> int:
                         coverage_progress[key] += int(coverage_summary.get(key, 0) or 0)
                     for key in event_progress:
                         event_progress[key] += int(symbol_event_summary.get(key, 0) or 0)
+                    success_count = progress["written"] + progress["skipped"]
+                if should_log_bronze_success(success_count):
+                    log_bronze_success(
+                        domain="earnings",
+                        operation="symbol_processed",
+                        symbol=symbol,
+                        disposition=disposition,
+                        success_count=success_count,
+                        scheduled_rows_retained=symbol_event_summary.get("scheduled_rows_retained", 0),
+                        actual_replacements=symbol_event_summary.get("actual_over_scheduled_replacements", 0),
+                    )
             except BronzeCoverageUnavailableError as exc:
                 should_log = False
                 async with progress_lock:
@@ -1117,6 +1142,8 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        else:
+            log_bronze_success(domain="earnings", operation="list_flush")
 
     if alpha26_mode:
         try:

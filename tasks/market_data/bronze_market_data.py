@@ -24,6 +24,7 @@ from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
 from tasks.common import domain_artifacts
+from tasks.common.bronze_observability import log_bronze_success
 from tasks.common.bronze_symbol_policy import (
     BronzeCoverageUnavailableError,
     build_bronze_run_id,
@@ -641,6 +642,8 @@ def _normalize_market_bucket_df(symbol: str, df_daily: pd.DataFrame) -> pd.DataF
 def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tuple[int, str | None]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     symbol_to_bucket: dict[str, str] = {}
+    bucket_artifacts_written = 0
+    domain_artifact_written = False
     for symbol, frame in symbol_frames.items():
         if frame is None or frame.empty:
             continue
@@ -675,6 +678,7 @@ def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tup
                 client=bronze_client,
                 job_name="bronze-market-job",
             )
+            bucket_artifacts_written += 1
         except Exception as exc:
             mdc.write_warning(f"Bronze market metadata bucket artifact write failed bucket={bucket}: {exc}")
 
@@ -693,8 +697,16 @@ def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tup
                 symbol_index_path=index_path,
                 job_name="bronze-market-job",
             )
+            domain_artifact_written = True
         except Exception as exc:
             mdc.write_warning(f"Bronze market metadata artifact write failed: {exc}")
+    log_bronze_success(
+        domain="market",
+        operation="metadata_artifacts_written",
+        bucket_artifacts_written=bucket_artifacts_written,
+        domain_artifact_written=domain_artifact_written,
+        symbol_index_path=index_path or "n/a",
+    )
     return len(symbol_to_bucket), index_path
 
 
@@ -1292,8 +1304,11 @@ async def main_async() -> int:
                     downloaded = progress["downloaded"]
                     should_log = should_log or _should_log_market_outcome(downloaded)
                 if should_log:
-                    mdc.write_line(
-                        f"Bronze market symbol completed: symbol={symbol} downloaded={downloaded}"
+                    log_bronze_success(
+                        domain="market",
+                        operation="symbol_processed",
+                        symbol=symbol,
+                        success_count=downloaded,
                     )
             except BronzeCoverageUnavailableError as exc:
                 should_log = debug_mode
@@ -1396,6 +1411,8 @@ async def main_async() -> int:
             list_manager.flush()
         except Exception as exc:
             mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+        else:
+            log_bronze_success(domain="market", operation="list_flush")
 
     try:
         written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames)

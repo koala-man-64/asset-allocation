@@ -222,3 +222,42 @@ def test_short_volume_uses_underscore_date_filters() -> None:
     assert seen[0][1].get("date_lte") == "2024-01-31"
     assert "date.gte" not in seen[0][1]
     assert "date.lte" not in seen[0][1]
+
+
+def test_finance_valuation_uses_ratios_route() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path == "/api/providers/massive/fundamentals/ratios":
+            return httpx.Response(200, json={"results": []})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0), trust_env=False)
+    client = MassiveGatewayClient(
+        MassiveGatewayClientConfig(
+            base_url="http://asset-allocation-api",
+            api_key=None,
+            api_key_header="X-API-Key",
+            timeout_seconds=60.0,
+            warmup_enabled=False,
+            readiness_enabled=False,
+        ),
+        http_client=http_client,
+    )
+    try:
+        client.get_finance_report(
+            symbol="AAPL",
+            report="valuation",
+            sort="date.desc",
+            limit=1,
+            pagination=False,
+        )
+    finally:
+        http_client.close()
+
+    assert seen[0][0] == "/api/providers/massive/fundamentals/ratios"
+    assert seen[0][1].get("symbol") == "AAPL"
+    assert seen[0][1].get("sort") == "date.desc"
+    assert seen[0][1].get("limit") == "1"
+    assert seen[0][1].get("pagination") == "false"
