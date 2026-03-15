@@ -378,6 +378,95 @@ def test_process_symbol_with_recovery_emits_invalid_candidate_only_after_all_cor
     assert seen_reports == [report["report"] for report in bronze.REPORTS]
 
 
+def test_process_symbol_with_recovery_downgrades_valuation_transient_failure_when_core_reports_succeed(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_massive
+    valuation_attempts = 0
+
+    def _fake_fetch(symbol_arg, report, massive_client, *, backfill_start=None, coverage_summary=None):
+        nonlocal valuation_attempts
+        assert symbol_arg == symbol
+        assert massive_client is mock_massive
+        del backfill_start, coverage_summary
+        report_name = report["report"]
+        if report_name == "valuation":
+            valuation_attempts += 1
+            raise bronze.MassiveGatewayError(
+                "gateway unavailable",
+                status_code=503,
+                detail="upstream unavailable",
+                payload={"path": "/api/providers/massive/financials/valuation"},
+            )
+        return True
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
+        "tasks.finance_data.bronze_finance_data.time.sleep"
+    ) as mock_sleep:
+        result = bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=3,
+            sleep_seconds=0.0,
+        )
+
+    assert result.wrote == len(bronze.REPORTS) - 1
+    assert result.invalid_candidate is False
+    assert result.valid_symbol is True
+    assert result.coverage_unavailable is True
+    assert result.failures == []
+    assert [name for name, _ in result.invalid_evidence] == ["valuation"]
+    assert valuation_attempts == 3
+    assert result.coverage_summary["coverage_checked"] == 0
+    assert manager.reset_current.call_count == 2
+    mock_sleep.assert_not_called()
+
+
+def test_process_symbol_with_recovery_transient_warning_includes_failure_details(unique_ticker):
+    symbol = unique_ticker
+    mock_massive = MagicMock()
+    manager = MagicMock()
+    manager.get_client.return_value = mock_massive
+    attempts: dict[str, int] = {"balance_sheet": 0}
+
+    def _fake_fetch(symbol_arg, report, massive_client, *, backfill_start=None, coverage_summary=None):
+        assert symbol_arg == symbol
+        assert massive_client is mock_massive
+        del backfill_start, coverage_summary
+        report_name = report["report"]
+        if report_name == "balance_sheet":
+            attempts["balance_sheet"] += 1
+            if attempts["balance_sheet"] == 1:
+                raise bronze.MassiveGatewayError(
+                    "gateway unavailable",
+                    status_code=503,
+                    detail="upstream unavailable",
+                    payload={"path": "/api/providers/massive/financials/balance_sheet"},
+                )
+        return False
+
+    with patch("tasks.finance_data.bronze_finance_data.fetch_and_save_raw", side_effect=_fake_fetch), patch(
+        "tasks.finance_data.bronze_finance_data.mdc.write_warning"
+    ) as mock_write_warning:
+        bronze._process_symbol_with_recovery(
+            symbol,
+            manager,
+            max_attempts=2,
+            sleep_seconds=0.0,
+        )
+
+    transient_messages = [
+        str(call.args[0])
+        for call in mock_write_warning.call_args_list
+        if call.args and "Transient Massive error for" in str(call.args[0])
+    ]
+    assert transient_messages
+    assert "details=report=balance_sheet" in transient_messages[0]
+    assert "status=503" in transient_messages[0]
+    assert "path=/api/providers/massive/financials/balance_sheet" in transient_messages[0]
+
+
 def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique_ticker):
     symbol = unique_ticker
     client_manager = MagicMock()

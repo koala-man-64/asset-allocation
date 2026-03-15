@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 import pytest
 from sqlalchemy import Column, Float, Integer, MetaData, String, Table
 from sqlalchemy.dialects import postgresql
@@ -250,6 +251,17 @@ async def test_get_table_metadata_success(monkeypatch):
         {"name": "surprise", "type": "DOUBLE PRECISION", "nullable": True},
         {"name": "source_hash", "type": "TEXT", "nullable": False, "computed": {"sqltext": "md5('x')"}},
     ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = [
+        SimpleNamespace(column_name="symbol", description="Ticker symbol"),
+        SimpleNamespace(column_name="date", description="Trading date"),
+        SimpleNamespace(column_name="surprise", description="EPS surprise signal"),
+        SimpleNamespace(column_name="source_hash", description=None),
+    ]
+    mock_connect = MagicMock()
+    mock_connect.__enter__.return_value = mock_conn
+    mock_connect.__exit__.return_value = False
+    mock_engine.connect.return_value = mock_connect
 
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
 
@@ -267,6 +279,14 @@ async def test_get_table_metadata_success(monkeypatch):
     assert payload["can_edit"] is True
     assert any(
         col["name"] == "source_hash" and col["editable"] is False for col in payload["columns"]
+    )
+    assert any(
+        col["name"] == "symbol" and col.get("description") == "Ticker symbol"
+        for col in payload["columns"]
+    )
+    assert any(
+        col["name"] == "source_hash" and col.get("description") is None
+        for col in payload["columns"]
     )
 
 
@@ -419,3 +439,109 @@ async def test_purge_table_security_fail(monkeypatch):
 
     assert resp.status_code == 404
     assert "not found" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_list_gold_lookup_tables_success(monkeypatch):
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = [("market_data",), ("regime_latest",)]
+    mock_conn.execute.return_value = mock_result
+    mock_connect = MagicMock()
+    mock_connect.__enter__.return_value = mock_conn
+    mock_connect.__exit__.return_value = False
+    mock_engine.connect.return_value = mock_connect
+
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        app = create_app()
+        async with get_test_client(app) as client:
+            resp = await client.get("/api/system/postgres/gold-column-lookup/tables")
+
+    assert resp.status_code == 200
+    assert resp.json() == ["market_data", "regime_latest"]
+
+
+@pytest.mark.asyncio
+async def test_list_gold_column_lookup_applies_filters_and_pagination(monkeypatch):
+    mock_engine = MagicMock()
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.all.return_value = [
+        {
+            "schema_name": "gold",
+            "table_name": "market_data",
+            "column_name": "trend_50_200",
+            "data_type": "double precision",
+            "description": "Trend signal",
+            "calculation_type": "derived_python",
+            "calculation_notes": "Computed from moving averages.",
+            "calculation_expression": None,
+            "calculation_dependencies": ["sma_50d", "sma_200d"],
+            "source_job": "tasks.market_data.gold_market_data",
+            "status": "reviewed",
+            "updated_at": "2026-03-15T00:00:00+00:00",
+        },
+        {
+            "schema_name": "gold",
+            "table_name": "market_data",
+            "column_name": "trend_20_50",
+            "data_type": "double precision",
+            "description": "Secondary trend signal",
+            "calculation_type": "derived_python",
+            "calculation_notes": "Computed from moving averages.",
+            "calculation_expression": None,
+            "calculation_dependencies": ["sma_20d", "sma_50d"],
+            "source_job": "tasks.market_data.gold_market_data",
+            "status": "reviewed",
+            "updated_at": "2026-03-15T00:00:00+00:00",
+        },
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+    mock_connect = MagicMock()
+    mock_connect.__enter__.return_value = mock_conn
+    mock_connect.__exit__.return_value = False
+    mock_engine.connect.return_value = mock_connect
+
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        app = create_app()
+        async with get_test_client(app) as client:
+            resp = await client.get(
+                "/api/system/postgres/gold-column-lookup"
+                "?table=market_data&q=trend&status=reviewed&limit=1&offset=0"
+            )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["limit"] == 1
+    assert payload["offset"] == 0
+    assert payload["has_more"] is True
+    assert len(payload["rows"]) == 1
+    assert payload["rows"][0]["table"] == "market_data"
+    assert payload["rows"][0]["column"] == "trend_50_200"
+    assert payload["rows"][0]["calculation_dependencies"] == ["sma_50d", "sma_200d"]
+
+    query_params = mock_conn.execute.call_args[0][1]
+    assert query_params["table_name"] == "market_data"
+    assert query_params["status"] == "reviewed"
+    assert query_params["search"] == "%trend%"
+
+
+@pytest.mark.asyncio
+async def test_list_gold_column_lookup_rejects_unsupported_table(monkeypatch):
+    mock_engine = MagicMock()
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/db")
+
+    with patch("api.endpoints.postgres.create_engine", return_value=mock_engine):
+        app = create_app()
+        async with get_test_client(app) as client:
+            resp = await client.get(
+                "/api/system/postgres/gold-column-lookup?table=not_supported"
+            )
+
+    assert resp.status_code == 404
+    assert "not supported" in resp.json()["detail"]

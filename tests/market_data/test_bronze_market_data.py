@@ -392,6 +392,50 @@ def test_download_with_recovery_retries_three_attempts(monkeypatch):
     assert sleep_calls == [0.25, 0.25]
 
 
+def test_download_with_recovery_logs_transient_failure_details(monkeypatch):
+    symbol = "TRACE"
+    manager = _FakeClientManager()
+    call_count = {"count": 0}
+    warning_messages: list[str] = []
+
+    def _fake_download(sym, _client, *, snapshot_row=None, collected_symbol_frames, collected_lock=None, existing_symbol_df=None):
+        del snapshot_row, collected_symbol_frames, collected_lock, existing_symbol_df
+        assert sym == symbol
+        call_count["count"] += 1
+        if call_count["count"] == 1:
+            raise bronze.MassiveGatewayError(
+                "gateway unavailable",
+                status_code=503,
+                detail="upstream unavailable",
+                payload={"path": "/api/providers/massive/time-series/daily"},
+            )
+
+    monkeypatch.setattr(bronze, "download_and_save_raw", _fake_download)
+    monkeypatch.setattr(bronze.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(bronze.mdc, "write_warning", lambda message: warning_messages.append(str(message)))
+
+    bronze._download_and_save_raw_with_recovery(symbol, manager, collected_symbol_frames={}, max_attempts=2, sleep_seconds=0.0)
+
+    assert call_count["count"] == 2
+    assert any("Transient Massive error for TRACE" in message for message in warning_messages)
+    assert any("details=type=MassiveGatewayError status=503" in message for message in warning_messages)
+    assert any("path=/api/providers/massive/time-series/daily" in message for message in warning_messages)
+
+
+def test_failure_bucket_key_includes_status_and_path():
+    exc = bronze.MassiveGatewayError(
+        "gateway unavailable",
+        status_code=503,
+        detail="upstream unavailable",
+        payload={"path": "/api/providers/massive/snapshot"},
+    )
+    key = bronze._failure_bucket_key(exc)
+
+    assert "type=MassiveGatewayError" in key
+    assert "status=503" in key
+    assert "path=/api/providers/massive/snapshot" in key
+
+
 def test_download_with_recovery_does_not_retry_not_found(monkeypatch):
     symbol = "MISSING"
     manager = _FakeClientManager()
@@ -528,6 +572,129 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
         mock_list_manager.add_to_blacklist.assert_not_called()
         mock_list_manager.flush.assert_called_once()
         client_manager.close_all.assert_called_once()
+
+    asyncio.run(run_test())
+
+
+def test_main_async_records_no_history_candidate_for_header_only_coverage(unique_ticker):
+    symbol = unique_ticker
+    client_manager = MagicMock()
+
+    async def run_test():
+        with patch("tasks.market_data.bronze_market_data._validate_environment"), patch(
+            "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.get_domain_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
+            return_value="alpha26",
+        ), patch(
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.market_data.bronze_market_data._get_max_workers",
+            return_value=1,
+        ), patch(
+            "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
+            side_effect=bronze.BronzeCoverageUnavailableError(
+                "header_only_daily_csv",
+                detail=f"Massive returned header-only daily CSV for {symbol}.",
+            ),
+        ), patch(
+            "tasks.market_data.bronze_market_data.record_invalid_symbol_candidate",
+            return_value={"promoted": False, "observedRunCount": 1, "blacklistPath": None},
+        ) as mock_record_candidate, patch(
+            "tasks.market_data.bronze_market_data.clear_invalid_candidate_marker"
+        ) as mock_clear, patch(
+            "tasks.market_data.bronze_market_data.resolve_job_run_status",
+            return_value=("succeededWithWarnings", 0),
+        ) as mock_resolve_status, patch(
+            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
+            return_value=(0, "system/bronze-index/market/latest.parquet"),
+        ), patch(
+            "tasks.market_data.bronze_market_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.market_data.bronze_market_data.mdc.write_line"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.write_warning"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_record_candidate.assert_called_once()
+        assert mock_record_candidate.call_args.kwargs["reason_code"] == "provider_no_market_history"
+        mock_clear.assert_not_called()
+        mock_resolve_status.assert_called_once_with(failed_count=0, warning_count=1)
+
+    asyncio.run(run_test())
+
+
+def test_main_async_does_not_promote_non_header_coverage_unavailable(unique_ticker):
+    symbol = unique_ticker
+    client_manager = MagicMock()
+
+    async def run_test():
+        with patch("tasks.market_data.bronze_market_data._validate_environment"), patch(
+            "tasks.market_data.bronze_market_data.mdc.log_environment_diagnostics"
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.sync_domain_availability",
+            return_value=_sync_result(),
+        ), patch(
+            "tasks.market_data.bronze_market_data.symbol_availability.get_domain_symbols",
+            return_value=pd.DataFrame({"Symbol": [symbol]}),
+        ), patch(
+            "tasks.market_data.bronze_market_data.bronze_bucketing.bronze_layout_mode",
+            return_value="alpha26",
+        ), patch(
+            "tasks.market_data.bronze_market_data._load_alpha26_existing_market_frames",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._fetch_snapshot_daily_rows",
+            return_value={},
+        ), patch(
+            "tasks.market_data.bronze_market_data._ThreadLocalMassiveClientManager",
+            return_value=client_manager,
+        ), patch(
+            "tasks.market_data.bronze_market_data._get_max_workers",
+            return_value=1,
+        ), patch(
+            "tasks.market_data.bronze_market_data._download_and_save_raw_with_recovery",
+            side_effect=bronze.BronzeCoverageUnavailableError(
+                "coverage_unavailable",
+                detail=f"Massive returned no usable bars for {symbol}.",
+            ),
+        ), patch(
+            "tasks.market_data.bronze_market_data.record_invalid_symbol_candidate"
+        ) as mock_record_candidate, patch(
+            "tasks.market_data.bronze_market_data.resolve_job_run_status",
+            return_value=("succeeded", 0),
+        ) as mock_resolve_status, patch(
+            "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
+            return_value=(0, "system/bronze-index/market/latest.parquet"),
+        ), patch(
+            "tasks.market_data.bronze_market_data.list_manager"
+        ) as mock_list_manager, patch(
+            "tasks.market_data.bronze_market_data.mdc.write_line"
+        ), patch(
+            "tasks.market_data.bronze_market_data.mdc.write_warning"
+        ):
+            mock_list_manager.is_blacklisted.return_value = False
+            exit_code = await bronze.main_async()
+
+        assert exit_code == 0
+        mock_record_candidate.assert_not_called()
+        mock_resolve_status.assert_called_once_with(failed_count=0, warning_count=0)
 
     asyncio.run(run_test())
 

@@ -63,6 +63,8 @@ _MARKET_OUTCOME_LOG_SAMPLE_LIMIT = 20
 _MARKET_OUTCOME_LOG_INTERVAL = 250
 _DOMAIN = "market"
 _PROVIDER = "massive"
+_NO_MARKET_HISTORY_REASON_CODE = "provider_no_market_history"
+_HEADER_ONLY_DAILY_REASON_CODE = "header_only_daily_csv"
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -85,6 +87,44 @@ def _should_skip_blacklisted_market_symbol(symbol: object) -> bool:
 
 def _should_log_market_outcome(count: int) -> bool:
     return count <= _MARKET_OUTCOME_LOG_SAMPLE_LIMIT or count % _MARKET_OUTCOME_LOG_INTERVAL == 0
+
+
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _format_failure_reason(exc: BaseException) -> str:
+    reason_parts = [f"type={type(exc).__name__}"]
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        reason_parts.append(f"status={status_code}")
+    detail = getattr(exc, "detail", None)
+    if detail:
+        reason_parts.append(f"detail={_truncate_trace_text(detail, limit=220)}")
+    else:
+        message = str(exc).strip()
+        if message:
+            reason_parts.append(f"message={_truncate_trace_text(message, limit=220)}")
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = payload.get("path")
+        if path:
+            reason_parts.append(f"path={_truncate_trace_text(path, limit=96)}")
+    return " ".join(reason_parts)
+
+
+def _failure_bucket_key(exc: BaseException) -> str:
+    status_code = getattr(exc, "status_code", None)
+    key = f"type={type(exc).__name__} status={status_code if status_code is not None else 'n/a'}"
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = str(payload.get("path") or "").strip()
+        if path:
+            key += f" path={_truncate_trace_text(path, limit=80)}"
+    return key
 
 
 def _validate_environment() -> None:
@@ -922,9 +962,10 @@ def _download_and_save_raw_with_recovery(
             if not should_retry:
                 raise
 
+            details = _truncate_trace_text(_format_failure_reason(exc), limit=260)
             mdc.write_warning(
-                f"Transient Massive error for {symbol}; attempt {attempt}/{attempts} failed ({exc}). "
-                f"Sleeping {sleep_seconds:.1f}s, recycling thread-local client, and retrying."
+                f"Transient Massive error for {symbol}; attempt {attempt}/{attempts} failed. "
+                f"Sleeping {sleep_seconds:.1f}s, recycling thread-local client, and retrying. details={details or 'n/a'}"
             )
             time.sleep(sleep_seconds)
             client_manager.reset_current()
@@ -1004,7 +1045,7 @@ def download_and_save_raw(
                 list_manager.add_to_whitelist(symbol)
                 return
             raise BronzeCoverageUnavailableError(
-                "header_only_daily_csv",
+                _HEADER_ONLY_DAILY_REASON_CODE,
                 detail=(
                     f"Massive returned header-only daily CSV for {symbol} in range {from_date}..{to_date}."
                 ),
@@ -1185,10 +1226,14 @@ async def main_async() -> int:
         "downloaded": 0,
         "failed": 0,
         "invalid_candidates": 0,
+        "no_history_candidates": 0,
         "unavailable": 0,
         "blacklist_promotions": 0,
+        "no_history_promotions": 0,
     }
     retry_next_run: set[str] = set()
+    failure_counts: dict[str, int] = {}
+    failure_examples: dict[str, str] = {}
     progress_lock = asyncio.Lock()
 
     def worker(symbol: str) -> None:
@@ -1208,6 +1253,28 @@ async def main_async() -> int:
     semaphore = asyncio.Semaphore(max_workers)
     loop = asyncio.get_running_loop()
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="massive-market")
+
+    async def record_failure(symbol: str, exc: BaseException) -> None:
+        failure_reason = _format_failure_reason(exc)
+        failure_key = _failure_bucket_key(exc)
+        async with progress_lock:
+            progress["failed"] += 1
+            retry_next_run.add(symbol)
+            failure_counts[failure_key] = failure_counts.get(failure_key, 0) + 1
+            failure_examples.setdefault(failure_key, f"symbol={symbol} {failure_reason}")
+            failed_total = progress["failed"]
+            key_total = failure_counts[failure_key]
+
+        if key_total <= 3 or _should_log_market_outcome(failed_total):
+            mdc.write_warning(
+                "Bronze market symbol failure: symbol={symbol} {reason} total_failed={failed_total} "
+                "key_failed={key_total}".format(
+                    symbol=symbol,
+                    reason=failure_reason,
+                    failed_total=failed_total,
+                    key_total=key_total,
+                )
+            )
 
     async def run_symbol(symbol: str) -> None:
         async with semaphore:
@@ -1230,13 +1297,43 @@ async def main_async() -> int:
                     )
             except BronzeCoverageUnavailableError as exc:
                 should_log = debug_mode
+                promoted = False
+                observed_runs = 0
+                if exc.reason_code == _HEADER_ONLY_DAILY_REASON_CODE:
+                    promotion = record_invalid_symbol_candidate(
+                        common_client=common_client,
+                        bronze_client=bronze_client,
+                        domain=_DOMAIN,
+                        symbol=symbol,
+                        provider=_PROVIDER,
+                        reason_code=_NO_MARKET_HISTORY_REASON_CODE,
+                        run_id=run_id,
+                    )
+                    promoted = bool(promotion.get("promoted"))
+                    observed_runs = int(promotion.get("observedRunCount", 0) or 0)
                 async with progress_lock:
                     progress["unavailable"] += 1
+                    if exc.reason_code == _HEADER_ONLY_DAILY_REASON_CODE:
+                        progress["no_history_candidates"] += 1
+                        if promoted:
+                            progress["no_history_promotions"] += 1
                     should_log = should_log or _should_log_market_outcome(progress["unavailable"])
                 if should_log:
                     mdc.write_warning(
                         f"Bronze market coverage unavailable: symbol={symbol} reason={exc.reason_code} detail={exc}"
                     )
+                    if exc.reason_code == _HEADER_ONLY_DAILY_REASON_CODE:
+                        message = (
+                            "Bronze market no-history candidate: symbol={symbol} reason={reason} "
+                            "observed_runs={observed_runs}"
+                        ).format(
+                            symbol=symbol,
+                            reason=_NO_MARKET_HISTORY_REASON_CODE,
+                            observed_runs=observed_runs or 1,
+                        )
+                        if promoted:
+                            message += " promoted_to_domain_blacklist_after_2_runs=true"
+                        mdc.write_warning(message)
             except MassiveGatewayNotFoundError as exc:
                 if not is_explicit_invalid_candidate(exc):
                     raise
@@ -1264,35 +1361,12 @@ async def main_async() -> int:
                         message += " promoted_to_domain_blacklist_after_2_runs=true"
                     mdc.write_warning(message)
             except MassiveGatewayRateLimitError as exc:
-                should_log = debug_mode
-                async with progress_lock:
-                    progress["failed"] += 1
-                    retry_next_run.add(symbol)
-                    should_log = should_log or _should_log_market_outcome(progress["failed"])
-                if should_log:
-                    note = str(exc)
-                    if len(note) > 200:
-                        note = note[:200] + "..."
-                    mdc.write_warning(f"Massive rate-limited while processing {symbol}. ({note})")
+                await record_failure(symbol, exc)
             except MassiveGatewayError as exc:
-                should_log = debug_mode
-                async with progress_lock:
-                    progress["failed"] += 1
-                    retry_next_run.add(symbol)
-                    should_log = should_log or _should_log_market_outcome(progress["failed"])
-                if should_log:
-                    details = f"status={getattr(exc, 'status_code', 'unknown')} message={exc}"
-                    payload = getattr(exc, "payload", None)
-                    if payload:
-                        details = f"{details} payload={payload}"
-                    mdc.write_error(f"Massive gateway error while processing {symbol}. ({details})")
+                await record_failure(symbol, exc)
             except Exception as exc:
-                should_log = debug_mode
-                async with progress_lock:
-                    progress["failed"] += 1
-                    retry_next_run.add(symbol)
-                    should_log = should_log or _should_log_market_outcome(progress["failed"])
-                if should_log:
+                await record_failure(symbol, exc)
+                if debug_mode:
                     mdc.write_error(
                         f"Unexpected error processing {symbol}: {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
                     )
@@ -1302,8 +1376,9 @@ async def main_async() -> int:
                     if progress["processed"] % 250 == 0:
                         mdc.write_line(
                             "Bronze Massive market progress: processed={processed} downloaded={downloaded} "
-                            "invalid_candidates={invalid_candidates} unavailable={unavailable} "
-                            "blacklist_promotions={blacklist_promotions} failed={failed}".format(**progress)
+                            "invalid_candidates={invalid_candidates} no_history_candidates={no_history_candidates} "
+                            "unavailable={unavailable} blacklist_promotions={blacklist_promotions} "
+                            "no_history_promotions={no_history_promotions} failed={failed}".format(**progress)
                         )
 
     try:
@@ -1332,14 +1407,24 @@ async def main_async() -> int:
         progress["failed"] += 1
         mdc.write_error(f"Bronze market alpha26 bucket write failed: {exc}")
 
+    if failure_counts:
+        ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)
+        summary = ", ".join(f"{name}={count}" for name, count in ordered[:8])
+        mdc.write_warning(f"Bronze market failure summary: {summary}")
+        for name, _ in ordered[:3]:
+            example = failure_examples.get(name)
+            if example:
+                mdc.write_warning(f"Bronze market failure example ({name}): {example}")
+
     job_status, exit_code = resolve_job_run_status(
         failed_count=progress["failed"],
-        warning_count=progress["invalid_candidates"],
+        warning_count=progress["invalid_candidates"] + progress["no_history_candidates"],
     )
     mdc.write_line(
         "Bronze Massive market ingest complete: processed={processed} downloaded={downloaded} "
-        "invalid_candidates={invalid_candidates} unavailable={unavailable} "
-        "blacklist_promotions={blacklist_promotions} failed={failed} job_status={job_status}".format(
+        "invalid_candidates={invalid_candidates} no_history_candidates={no_history_candidates} "
+        "unavailable={unavailable} blacklist_promotions={blacklist_promotions} "
+        "no_history_promotions={no_history_promotions} failed={failed} job_status={job_status}".format(
             **progress,
             job_status=job_status,
         )

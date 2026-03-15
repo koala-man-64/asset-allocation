@@ -364,6 +364,54 @@ def test_process_batch_bronze_skips_force_when_limited_marker_present(
     asyncio.run(run_test())
 
 
+def test_failure_bucket_key_includes_type_and_path():
+    exc = RuntimeError("boom")
+    setattr(exc, "payload", {"path": "/api/providers/nasdaq/zacks-tp"})
+    key = bronze._failure_bucket_key(exc)
+
+    assert "type=RuntimeError" in key
+    assert "path=/api/providers/nasdaq/zacks-tp" in key
+
+
+@patch("tasks.price_target_data.bronze_price_target_data.nasdaqdatalink")
+@patch("tasks.price_target_data.bronze_price_target_data.bronze_client")
+@patch("tasks.price_target_data.bronze_price_target_data.list_manager")
+def test_process_batch_bronze_logs_structured_save_failure(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol = "AAA"
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_client.get_blob_client.return_value = mock_blob_client
+    mock_nasdaq.get_table.return_value = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2024-03-01")],
+            "tp_mean_est": [55.0],
+        }
+    )
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch("core.core.store_raw_bytes", side_effect=RuntimeError("disk full")), patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.write_warning"
+        ) as mock_warning, patch(
+            "tasks.price_target_data.bronze_price_target_data.mdc.write_error"
+        ) as mock_error:
+            summary = await bronze.process_batch_bronze([symbol], semaphore)
+            assert summary["save_failed"] == 1
+
+        warning_messages = [str(call.args[0]) for call in mock_warning.call_args_list if call.args]
+        error_messages = [str(call.args[0]) for call in mock_error.call_args_list if call.args]
+        assert any("Bronze price target batch failure summary:" in msg for msg in warning_messages)
+        assert any("scope=symbol=AAA type=RuntimeError" in msg for msg in warning_messages)
+        assert any("Failed to save AAA: type=RuntimeError message=disk full" in msg for msg in error_messages)
+
+    asyncio.run(run_test())
+
+
 def test_main_async_returns_success_when_only_filtered_missing_symbols_are_detected():
     symbol = "AAA"
 

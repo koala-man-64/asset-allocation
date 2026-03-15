@@ -700,6 +700,20 @@ def test_main_async_logs_invalid_payload_detail_preview_when_payload_missing(uni
     asyncio.run(run_test())
 
 
+def test_failure_bucket_key_includes_status_and_path():
+    exc = bronze.AlphaVantageGatewayError(
+        "gateway unavailable",
+        status_code=504,
+        detail="timeout",
+        payload={"path": "/api/providers/alpha-vantage/earnings"},
+    )
+    key = bronze._failure_bucket_key(exc)
+
+    assert "type=AlphaVantageGatewayError" in key
+    assert "status=504" in key
+    assert "path=/api/providers/alpha-vantage/earnings" in key
+
+
 def test_coerce_datetime_column_skips_numeric_parse_for_iso_dates(monkeypatch):
     original = bronze.pd.to_datetime
 

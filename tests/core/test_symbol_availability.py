@@ -134,3 +134,44 @@ def test_sync_domain_availability_uses_canonical_alpha_vantage_column(monkeypatc
     assert result.source_column == "source_alpha_vantage"
     assert applied["df"]["source_alpha_vantage"].tolist() == [True]
     assert any("INSERT INTO core.symbol_sync_state" in sql for sql, _ in cur.execute_calls)
+
+
+def test_get_domain_symbols_market_filters_to_supported_asset_types(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        symbol_availability.mdc,
+        "get_symbols_from_db",
+        lambda: pd.DataFrame(
+            [
+                {"Symbol": "AAPL", "AssetType": "Stock", "source_massive": True},
+                {"Symbol": "SPY", "AssetType": "ETF", "source_massive": True},
+                {"Symbol": "ABRPD", "AssetType": "PFD", "source_massive": True},
+                {"Symbol": "I:VIX", "AssetType": "INDEX", "source_massive": True},
+                {"Symbol": "^VIX", "AssetType": "INDEX", "source_massive": True},
+            ]
+        ),
+    )
+    logged_messages: list[str] = []
+    monkeypatch.setattr(symbol_availability.mdc, "write_line", lambda message: logged_messages.append(str(message)))
+
+    out = symbol_availability.get_domain_symbols("market")
+
+    assert out["Symbol"].tolist() == ["AAPL", "SPY", "^VIX"]
+    assert out["AssetType"].tolist() == ["Stock", "ETF", "INDEX"]
+    assert any("asset_type: PFD=1" in message for message in logged_messages)
+
+
+def test_get_domain_symbols_finance_does_not_apply_market_asset_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        symbol_availability.mdc,
+        "get_symbols_from_db",
+        lambda: pd.DataFrame(
+            [
+                {"Symbol": "AAPL", "AssetType": "Stock", "source_massive": True},
+                {"Symbol": "ABRPD", "AssetType": "PFD", "source_massive": True},
+            ]
+        ),
+    )
+
+    out = symbol_availability.get_domain_symbols("finance")
+
+    assert out["Symbol"].tolist() == ["AAPL", "ABRPD"]

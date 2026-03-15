@@ -45,6 +45,8 @@ _MASSIVE_PROVIDER_ALIASES = {
     "I:VIX": "^VIX",
     "I:VIX3M": "^VIX3M",
 }
+_MARKET_ALLOWED_ASSET_TYPES = frozenset({"STOCK", "ETF", "FUND", "CS", "ETS", "ETV", "ETN"})
+_MARKET_REQUIRED_SYMBOLS = frozenset({"SPY", "^VIX", "^VIX3M"})
 _ADVISORY_LOCK_KEYS: dict[str, tuple[int, int]] = {
     "source_massive": (11873, 42021),
     "source_alpha_vantage": (11873, 42022),
@@ -70,6 +72,10 @@ def _normalize_symbol(value: object) -> str:
 def _normalize_massive_symbol(value: object) -> str:
     normalized = _normalize_symbol(value)
     return _MASSIVE_PROVIDER_ALIASES.get(normalized, normalized)
+
+
+def _normalize_asset_type(value: object) -> str:
+    return str(value or "").strip().upper()
 
 
 def _normalize_bool_series(series: pd.Series | object, *, index: pd.Index) -> pd.Series:
@@ -119,6 +125,43 @@ def _normalize_massive_records(records: list[dict[str, object]]) -> pd.DataFrame
     out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
     out = out[out["Symbol"].ne("")]
     return out.drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
+
+
+def _market_domain_eligibility_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    index = df.index
+    asset_type_series = df.get("AssetType")
+    if isinstance(asset_type_series, pd.Series):
+        asset_type_mask = asset_type_series.apply(_normalize_asset_type).isin(_MARKET_ALLOWED_ASSET_TYPES)
+    else:
+        asset_type_mask = pd.Series(False, index=index, dtype=bool)
+    symbol_series = df.get("Symbol")
+    if isinstance(symbol_series, pd.Series):
+        required_symbol_mask = symbol_series.apply(_normalize_symbol).isin(_MARKET_REQUIRED_SYMBOLS)
+    else:
+        required_symbol_mask = pd.Series(False, index=index, dtype=bool)
+    return (asset_type_mask | required_symbol_mask).fillna(False).astype(bool)
+
+
+def _market_excluded_asset_type_breakdown(df: pd.DataFrame, *, eligible_mask: pd.Series) -> dict[str, int]:
+    if df is None or df.empty:
+        return {}
+    excluded = df[~eligible_mask].copy()
+    if excluded.empty:
+        return {}
+    symbol_series = excluded.get("Symbol")
+    if isinstance(symbol_series, pd.Series):
+        excluded = excluded[~symbol_series.apply(_normalize_symbol).isin(_MARKET_REQUIRED_SYMBOLS)].copy()
+    if excluded.empty:
+        return {}
+    asset_type_series = excluded.get("AssetType")
+    if isinstance(asset_type_series, pd.Series):
+        normalized = asset_type_series.apply(_normalize_asset_type).replace("", "UNKNOWN").fillna("UNKNOWN")
+    else:
+        normalized = pd.Series("UNKNOWN", index=excluded.index, dtype="object")
+    counts = normalized.value_counts()
+    return {str(name): int(count) for name, count in counts.items()}
 
 
 def _fetch_massive_symbols_df() -> pd.DataFrame:
@@ -241,7 +284,20 @@ def get_domain_symbols(domain: DomainName) -> pd.DataFrame:
     if df.empty:
         return df
     mask = get_symbol_availability_mask(df, provider)
-    return df[mask].copy().reset_index(drop=True)
+    domain_df = df[mask].copy().reset_index(drop=True)
+    if domain != "market" or domain_df.empty:
+        return domain_df
+
+    eligible_mask = _market_domain_eligibility_mask(domain_df)
+    excluded_count = int((~eligible_mask).sum())
+    if excluded_count:
+        breakdown = _market_excluded_asset_type_breakdown(domain_df, eligible_mask=eligible_mask)
+        breakdown_text = ", ".join(f"{asset_type}={count}" for asset_type, count in breakdown.items()) or "UNKNOWN=0"
+        mdc.write_line(
+            "Market domain eligibility filter excluded "
+            f"{excluded_count} symbols by asset_type: {breakdown_text}"
+        )
+    return domain_df[eligible_mask].copy().reset_index(drop=True)
 
 
 def sync_domain_availability(domain: DomainName) -> SyncResult:

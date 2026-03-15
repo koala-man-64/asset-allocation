@@ -26,6 +26,9 @@ const RuntimeConfigPage = lazy(() => import('@/app/components/pages/RuntimeConfi
 const StrategyConfigPage = lazy(() => import('@/app/components/pages/StrategyConfigPage').then(m => ({ default: m.StrategyConfigPage })));
 const UniverseConfigPage = lazy(() => import('@/app/components/pages/UniverseConfigPage').then(m => ({ default: m.UniverseConfigPage })));
 const RankingConfigPage = lazy(() => import('@/app/components/pages/RankingConfigPage').then(m => ({ default: m.RankingConfigPage })));
+const StrategyDataCatalogPage = lazy(() =>
+  import('@/app/components/pages/StrategyDataCatalogPage').then((m) => ({ default: m.StrategyDataCatalogPage }))
+);
 const SymbolPurgeByCriteriaPage = lazy(() =>
   import('@/app/components/pages/SymbolPurgeByCriteriaPage').then((m) => ({ default: m.SymbolPurgeByCriteriaPage }))
 );
@@ -113,6 +116,8 @@ function AppContent() {
                 <Route path="/universe-configurations" element={<UniverseConfigPage />} />
                 <Route path="/rankings" element={<RankingConfigPage />} />
                 <Route path="/ranking-configurations" element={<RankingConfigPage />} />
+                <Route path="/strategy-exploration" element={<StrategyDataCatalogPage />} />
+                <Route path="/strategy-exploration/data-catalog" element={<StrategyDataCatalogPage />} />
                 <Route path="/postgres-explorer" element={<PostgresExplorerPage />} />
                 <Route path="/stock-detail/:ticker?" element={<StockDetailPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

@@ -124,3 +124,49 @@ def test_clear_invalid_candidate_marker_deletes_only_non_promoted_marker(monkeyp
     common_client.delete_file.reset_mock()
     assert policy.clear_invalid_candidate_marker(common_client=common_client, domain="finance", symbol="AAPL") is False
     common_client.delete_file.assert_not_called()
+
+
+def test_record_invalid_symbol_candidate_resets_count_when_reason_changes(monkeypatch):
+    blobs, update_calls = _install_storage_stubs(monkeypatch)
+    common_client = object()
+    bronze_client = object()
+
+    first_reason = policy.record_invalid_symbol_candidate(
+        common_client=common_client,
+        bronze_client=bronze_client,
+        domain="market",
+        symbol="msft",
+        provider="massive",
+        reason_code="provider_invalid_symbol",
+        run_id="run-1",
+    )
+    second_reason_first_run = policy.record_invalid_symbol_candidate(
+        common_client=common_client,
+        bronze_client=bronze_client,
+        domain="market",
+        symbol="msft",
+        provider="massive",
+        reason_code="provider_no_market_history",
+        run_id="run-2",
+    )
+    second_reason_promoted = policy.record_invalid_symbol_candidate(
+        common_client=common_client,
+        bronze_client=bronze_client,
+        domain="market",
+        symbol="msft",
+        provider="massive",
+        reason_code="provider_no_market_history",
+        run_id="run-3",
+    )
+
+    assert first_reason["promoted"] is False
+    assert first_reason["observedRunCount"] == 1
+    assert second_reason_first_run["promoted"] is False
+    assert second_reason_first_run["observedRunCount"] == 1
+    assert second_reason_promoted["promoted"] is True
+    assert second_reason_promoted["observedRunCount"] == 2
+    assert update_calls == [("market-data/blacklist.csv", "MSFT", bronze_client)]
+
+    marker_path = policy.invalid_candidate_marker_path(domain="market", symbol="MSFT")
+    stored = json.loads(blobs[marker_path].decode("utf-8"))
+    assert stored["reasonCode"] == "provider_no_market_history"

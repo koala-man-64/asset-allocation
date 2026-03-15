@@ -59,6 +59,37 @@ def _is_truthy(value: str | None) -> bool:
 def _is_test_environment() -> bool:
     return "PYTEST_CURRENT_TEST" in os.environ or _is_truthy(os.environ.get("TEST_MODE"))
 
+
+def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _format_failure_reason(exc: BaseException) -> str:
+    reason_parts = [f"type={type(exc).__name__}"]
+    message = str(exc).strip()
+    if message:
+        reason_parts.append(f"message={_truncate_trace_text(message, limit=220)}")
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = payload.get("path")
+        if path:
+            reason_parts.append(f"path={_truncate_trace_text(path, limit=96)}")
+    return " ".join(reason_parts)
+
+
+def _failure_bucket_key(exc: BaseException) -> str:
+    key = f"type={type(exc).__name__}"
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = str(payload.get("path") or "").strip()
+        if path:
+            key += f" path={_truncate_trace_text(path, limit=80)}"
+    return key
+
+
 def _validate_environment() -> None:
     required = ["AZURE_CONTAINER_BRONZE", "NASDAQ_API_KEY"]
     missing = [name for name in required if not os.environ.get(name)]
@@ -276,6 +307,15 @@ async def process_batch_bronze(
         "api_error": False,
     }
     batch_summary.update(_empty_coverage_summary())
+    batch_failure_counts: Dict[str, int] = {}
+    batch_failure_examples: Dict[str, str] = {}
+
+    def _record_batch_failure(scope: str, exc: BaseException) -> None:
+        reason = _format_failure_reason(exc)
+        key = f"scope={scope} {_failure_bucket_key(exc)}"
+        batch_failure_counts[key] = batch_failure_counts.get(key, 0) + 1
+        batch_failure_examples.setdefault(key, f"scope={scope} {reason}")
+
     async with semaphore:
         # Determine stale symbols and symbol-level incremental start windows.
         stale_symbols: List[str] = []
@@ -364,7 +404,8 @@ async def process_batch_bronze(
                 )
             except Exception as e:
                 api_error_message = str(e)
-                mdc.write_error(f"API Batch Error: {e}")
+                _record_batch_failure("api_fetch", e)
+                mdc.write_error(f"API Batch Error: {_format_failure_reason(e)}")
                 return pd.DataFrame()
 
         mdc.write_line(f"Fetching {len(stale_symbols)} symbols from Nasdaq...")
@@ -459,8 +500,18 @@ async def process_batch_bronze(
                 list_manager.add_to_whitelist(sym)
                 batch_summary["saved"] += 1
             except Exception as e:
-                mdc.write_error(f"Failed to save {sym}: {e}")
+                _record_batch_failure(f"symbol={sym}", e)
+                mdc.write_error(f"Failed to save {sym}: {_format_failure_reason(e)}")
                 batch_summary["save_failed"] += 1
+
+        if batch_failure_counts:
+            ordered = sorted(batch_failure_counts.items(), key=lambda item: item[1], reverse=True)
+            summary = ", ".join(f"{name}={count}" for name, count in ordered[:8])
+            mdc.write_warning(f"Bronze price target batch failure summary: {summary}")
+            for name, _ in ordered[:3]:
+                example = batch_failure_examples.get(name)
+                if example:
+                    mdc.write_warning(f"Bronze price target batch failure example ({name}): {example}")
 
         mdc.write_line(
             "Bronze price target batch summary: requested={requested} stale={stale} api_rows={api_rows} "
@@ -468,6 +519,8 @@ async def process_batch_bronze(
             "blacklist_promotions={blacklist_promotions} filtered_missing={filtered_missing} "
             "api_error={api_error}".format(**batch_summary)
         )
+        batch_summary["failure_counts"] = dict(batch_failure_counts)
+        batch_summary["failure_examples"] = dict(batch_failure_examples)
         return batch_summary
 
 async def main_async() -> int:
@@ -535,6 +588,8 @@ async def main_async() -> int:
         for chunk in chunked_symbols
     ]
     batch_exception_count = 0
+    failure_counts: Dict[str, int] = {}
+    failure_examples: Dict[str, str] = {}
     aggregate = {
         "requested": 0,
         "stale": 0,
@@ -557,8 +612,14 @@ async def main_async() -> int:
         for idx, result in enumerate(results):
             if isinstance(result, Exception):
                 batch_exception_count += 1
+                failure_key = f"scope=batch_idx={idx} {_failure_bucket_key(result)}"
+                failure_counts[failure_key] = failure_counts.get(failure_key, 0) + 1
+                failure_examples.setdefault(
+                    failure_key,
+                    f"scope=batch_idx={idx} {_format_failure_reason(result)}",
+                )
                 mdc.write_error(
-                    f"Bronze price target batch exception idx={idx}: {type(result).__name__}: {result}"
+                    f"Bronze price target batch exception idx={idx}: {_format_failure_reason(result)}"
                 )
                 continue
             if not isinstance(result, dict):
@@ -581,6 +642,18 @@ async def main_async() -> int:
             )
             if bool(result.get("api_error", False)):
                 aggregate["api_error_batches"] += 1
+            for key, count in dict(result.get("failure_counts", {}) or {}).items():
+                try:
+                    delta = int(count or 0)
+                except Exception:
+                    delta = 0
+                if delta <= 0:
+                    continue
+                failure_counts[str(key)] = failure_counts.get(str(key), 0) + delta
+            for key, example in dict(result.get("failure_examples", {}) or {}).items():
+                if not example:
+                    continue
+                failure_examples.setdefault(str(key), str(example))
     finally:
         alpha26_written_symbols = 0
         alpha26_index_path: Optional[str] = None
@@ -624,6 +697,14 @@ async def main_async() -> int:
                 **aggregate,
             )
         )
+        if failure_counts:
+            ordered = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)
+            summary = ", ".join(f"{name}={count}" for name, count in ordered[:8])
+            mdc.write_warning(f"Bronze price target failure summary: {summary}")
+            for name, _ in ordered[:3]:
+                example = failure_examples.get(name)
+                if example:
+                    mdc.write_warning(f"Bronze price target failure example ({name}): {example}")
         mdc.write_line("Bronze Ingestion Complete.")
     return exit_code
 

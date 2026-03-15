@@ -109,3 +109,25 @@ def test_alpha_vantage_source_unification_migration_drops_legacy_alias_column() 
     assert "column_name = 'source_alphavantage'" in text
     assert "COALESCE(source_alpha_vantage, source_alphavantage, FALSE)" in text
     assert "DROP COLUMN source_alphavantage" in text
+
+
+def test_gold_column_lookup_migration_defines_constraints_and_indexes() -> None:
+    repo_root = _repo_root()
+    migration = (
+        repo_root
+        / "deploy"
+        / "sql"
+        / "postgres"
+        / "migrations"
+        / "0031_gold_column_lookup.sql"
+    )
+    text = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS gold.column_lookup" in text
+    assert "PRIMARY KEY (schema_name, table_name, column_name)" in text
+    assert "CHECK (schema_name = 'gold')" in text
+    assert "calculation_type IN ('source', 'derived_sql', 'derived_python', 'external', 'manual')" in text
+    assert "status IN ('draft', 'reviewed', 'approved')" in text
+    assert "idx_gold_column_lookup_schema_table" in text
+    assert "idx_gold_column_lookup_status" in text
+    assert "USING GIN (calculation_dependencies)" in text

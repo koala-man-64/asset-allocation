@@ -81,6 +81,12 @@ vi.mock('@/app/components/pages/RankingConfigPage', () => ({
   RankingConfigPage: () => <div data-testid="mock-ranking-config">Mock Ranking Workbench</div>
 }));
 
+vi.mock('@/app/components/pages/StrategyDataCatalogPage', () => ({
+  StrategyDataCatalogPage: () => (
+    <div data-testid="mock-strategy-data-catalog">Mock Strategy Data Catalog</div>
+  )
+}));
+
 describe('App Smoke Test', () => {
   it('renders without crashing', async () => {
     window.history.pushState({}, 'System Status', '/system-status');
@@ -161,5 +167,12 @@ describe('App Smoke Test', () => {
     renderWithProviders(<App />);
 
     expect(await screen.findByTestId('mock-ranking-config')).toBeInTheDocument();
+  });
+
+  it('renders the strategy exploration data catalog route through the application shell', async () => {
+    window.history.pushState({}, 'Strategy Exploration', '/strategy-exploration/data-catalog');
+    renderWithProviders(<App />);
+
+    expect(await screen.findByTestId('mock-strategy-data-catalog')).toBeInTheDocument();
   });
 });

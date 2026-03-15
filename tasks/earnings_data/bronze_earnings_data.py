@@ -899,6 +899,17 @@ def _format_failure_reason(exc: BaseException) -> str:
     return " ".join(reason_parts)
 
 
+def _failure_bucket_key(exc: BaseException) -> str:
+    status_code = getattr(exc, "status_code", None)
+    key = f"type={type(exc).__name__} status={status_code if status_code is not None else 'n/a'}"
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = str(payload.get("path") or "").strip()
+        if path:
+            key += f" path={path[:80]}"
+    return key
+
+
 async def main_async() -> int:
     mdc.log_environment_diagnostics()
     _validate_environment()
@@ -1004,24 +1015,24 @@ async def main_async() -> int:
         return wrote, coverage_summary, event_summary
 
     async def record_failure(symbol: str, exc: BaseException) -> None:
-        failure_type = type(exc).__name__
         failure_reason = _format_failure_reason(exc)
+        failure_key = _failure_bucket_key(exc)
         async with progress_lock:
             progress["failed"] += 1
-            failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
-            failure_examples.setdefault(failure_type, f"symbol={symbol} {failure_reason}")
+            failure_counts[failure_key] = failure_counts.get(failure_key, 0) + 1
+            failure_examples.setdefault(failure_key, f"symbol={symbol} {failure_reason}")
             failed_total = progress["failed"]
-            type_total = failure_counts[failure_type]
+            key_total = failure_counts[failure_key]
 
         # Sample detailed failures to avoid log flooding while still exposing root causes.
-        if type_total <= 3 or failed_total % 250 == 0:
+        if key_total <= 3 or failed_total % 250 == 0:
             mdc.write_warning(
                 "Bronze AV earnings failure: symbol={symbol} {reason} total_failed={failed_total} "
-                "type_failed={type_total}".format(
+                "key_failed={key_total}".format(
                     symbol=symbol,
                     reason=failure_reason,
                     failed_total=failed_total,
-                    type_total=type_total,
+                    key_total=key_total,
                 )
             )
 

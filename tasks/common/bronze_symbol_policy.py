@@ -41,6 +41,10 @@ def _normalize_domain(value: object) -> str:
     return normalized
 
 
+def _normalize_reason_code(value: object) -> str:
+    return str(value or "").strip().lower() or "provider_invalid_symbol"
+
+
 def build_bronze_run_id(domain: str) -> str:
     normalized_domain = _normalize_domain(domain).replace("-", "_")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -141,6 +145,7 @@ def record_invalid_symbol_candidate(
 ) -> dict[str, Any]:
     normalized_domain = _normalize_domain(domain)
     normalized_symbol = _normalize_symbol(symbol)
+    normalized_reason = _normalize_reason_code(reason_code)
     observed_at = datetime.now(timezone.utc).isoformat()
     threshold = max(1, int(promotion_threshold))
     marker = load_invalid_candidate_marker(common_client=common_client, domain=normalized_domain, symbol=normalized_symbol)
@@ -154,9 +159,14 @@ def record_invalid_symbol_candidate(
 
     first_observed_at = observed_at
     observed_run_count = 0
+    marker_reason = None
     if isinstance(marker, dict):
+        marker_reason = _normalize_reason_code(marker.get("reasonCode"))
         first_observed_at = str(marker.get("firstObservedAt") or observed_at)
         observed_run_count = int(marker.get("observedRunCount", 0) or 0)
+    if marker_reason and marker_reason != normalized_reason:
+        first_observed_at = observed_at
+        observed_run_count = 0
 
     if not isinstance(marker, dict) or str(marker.get("lastRunId") or "").strip() != str(run_id).strip():
         observed_run_count += 1
@@ -174,7 +184,7 @@ def record_invalid_symbol_candidate(
         "symbol": normalized_symbol,
         "provider": str(provider or "").strip().lower() or "unknown",
         "status": "promoted" if promoted else "candidate",
-        "reasonCode": str(reason_code or "").strip().lower() or "provider_invalid_symbol",
+        "reasonCode": normalized_reason,
         "observedRunCount": observed_run_count,
         "firstObservedAt": first_observed_at,
         "lastObservedAt": observed_at,

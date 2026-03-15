@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, PencilLine, Plus, Trash2 } from 'lucide-react';
+import { Database, Eye, PencilLine, Plus, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -225,9 +226,17 @@ export function StrategyConfigPage() {
             Changes persist when you save or delete the record.
           </p>
         </div>
-        <Button onClick={handleCreate} className="gap-2">
-          <Plus className="mr-2 h-4 w-4" /> New Run Configuration
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" asChild className="gap-2">
+            <Link to="/strategy-exploration/data-catalog">
+              <Database className="h-4 w-4" />
+              Strategy Exploration
+            </Link>
+          </Button>
+          <Button onClick={handleCreate} className="gap-2">
+            <Plus className="mr-2 h-4 w-4" /> New Run Configuration
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.95fr)]">

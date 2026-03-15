@@ -176,6 +176,10 @@ def _is_core_finance_report(report_name: object) -> bool:
     return str(report_name or "").strip().lower() in _CORE_FINANCE_REPORTS
 
 
+def _is_valuation_finance_report(report_name: object) -> bool:
+    return str(report_name or "").strip().lower() == "valuation"
+
+
 def _is_truthy(raw: str | None) -> bool:
     return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
@@ -1188,6 +1192,17 @@ def _format_failure_reason(exc: BaseException) -> str:
     return " ".join(reason_parts)
 
 
+def _failure_bucket_key(report_name: str, exc: BaseException) -> str:
+    status_code = getattr(exc, "status_code", None)
+    key = f"report={report_name} type={type(exc).__name__} status={status_code if status_code is not None else 'n/a'}"
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        path = str(payload.get("path") or "").strip()
+        if path:
+            key += f" path={_truncate_trace_text(path, limit=80)}"
+    return key
+
+
 def _safe_close_massive_client(client: MassiveGatewayClient | None) -> None:
     if client is None:
         return
@@ -1362,14 +1377,41 @@ def _process_symbol_with_recovery(
             break
 
         report_labels = ",".join(sorted({name for name, _ in transient_failures})) or "unknown"
+        transient_details = " | ".join(
+            f"report={name} {_truncate_trace_text(_format_failure_reason(exc), limit=260)}"
+            for name, exc in transient_failures[:3]
+        )
         mdc.write_warning(
             f"Transient Massive error for {symbol}; attempt {attempt}/{attempts} failed for report(s) "
-            f"[{report_labels}]. Sleeping {sleep_seconds:.1f}s and retrying remaining reports."
+            f"[{report_labels}]. Sleeping {sleep_seconds:.1f}s and retrying remaining reports. "
+            f"details={transient_details or 'n/a'}"
         )
         client_manager.reset_current()
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
         pending_reports = next_pending
+
+    nonfatal_valuation_failures: list[tuple[str, BaseException]] = []
+    retained_failures: list[tuple[str, BaseException]] = []
+    for report_name, exc in final_failures:
+        if core_successful_reports and _is_valuation_finance_report(report_name) and _is_recoverable_massive_error(exc):
+            nonfatal_valuation_failures.append((report_name, exc))
+            continue
+        retained_failures.append((report_name, exc))
+    final_failures = retained_failures
+    if nonfatal_valuation_failures:
+        coverage_unavailable = True
+        invalid_evidence.extend(nonfatal_valuation_failures)
+        detail_preview = " | ".join(
+            f"report={name} {_truncate_trace_text(_format_failure_reason(exc), limit=220)}"
+            for name, exc in nonfatal_valuation_failures[:3]
+        )
+        _emit_bounded_trace(
+            "valuation_nonfatal_failure",
+            f"Bronze finance valuation failures downgraded to coverage-unavailable symbol={symbol} "
+            f"core_reports={','.join(sorted(core_successful_reports)) or 'none'} details={detail_preview or 'n/a'}",
+            warning=True,
+        )
 
     invalid_candidate = not core_successful_reports and core_invalid_reports == _CORE_FINANCE_REPORTS
     if invalid_candidate:
@@ -1500,12 +1542,12 @@ async def main_async() -> int:
             progress["failed"] += 1
             retry_next_run.add(symbol)
             for report_name, exc in failures:
-                failure_type = type(exc).__name__
                 failure_reason = _format_failure_reason(exc)
                 failure_reasons.append(f"report={report_name} {failure_reason}")
-                failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
+                failure_key = _failure_bucket_key(report_name, exc)
+                failure_counts[failure_key] = failure_counts.get(failure_key, 0) + 1
                 failure_examples.setdefault(
-                    failure_type,
+                    failure_key,
                     f"symbol={symbol} report={report_name} {failure_reason}",
                 )
             failed_total = progress["failed"]
