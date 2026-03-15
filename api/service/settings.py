@@ -6,6 +6,8 @@ from typing import List, Literal, Optional
 
 AuthMode = Literal["none", "api_key", "oidc", "api_key_or_oidc"]
 UiAuthMode = Literal["none", "api_key", "oidc"]
+_FIXED_API_KEY_HEADER = "X-API-Key"
+_FIXED_UI_API_BASE_URL = "/api"
 
 
 def _parse_bool(value: str) -> bool:
@@ -74,7 +76,7 @@ class ServiceSettings:
     @staticmethod
     def from_env() -> "ServiceSettings":
         api_key = os.environ.get("API_KEY") or None
-        api_key_header = os.environ.get("API_KEY_HEADER", "X-API-Key").strip()
+        api_key_header = _FIXED_API_KEY_HEADER
         
         oidc_issuer = _get_optional_str("API_OIDC_ISSUER")
         oidc_audience = _split_csv(_get_optional_str("API_OIDC_AUDIENCE"))
@@ -120,7 +122,7 @@ class ServiceSettings:
             "clientId": _get_optional_str("UI_OIDC_CLIENT_ID"),
             "scope": _get_optional_str("UI_OIDC_SCOPES"),
             "redirectUri": _get_optional_str("UI_OIDC_REDIRECT_URI"),
-            "apiBaseUrl": _get_optional_str("UI_API_BASE_URL"),
+            "apiBaseUrl": _FIXED_UI_API_BASE_URL,
         }
 
         return ServiceSettings(

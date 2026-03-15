@@ -35,18 +35,21 @@ env:
   IMAGE_TAG: ${{ github.sha }}
   IMAGE_NAME: asset-allocation-scraper
   API_APP_NAME: asset-allocation-api
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
   # Shell vars used by envsubst in job YAML templates.
-  API_CONTAINER_APP_NAME: ${{ vars.API_CONTAINER_APP_NAME || 'asset-allocation-api' }}
-  JOB_STARTUP_API_CONTAINER_APPS: ${{ vars.JOB_STARTUP_API_CONTAINER_APPS || vars.API_CONTAINER_APP_NAME || 'asset-allocation-api' }}
+  API_CONTAINER_APP_NAME: asset-allocation-api
+  JOB_STARTUP_API_CONTAINER_APPS: asset-allocation-api
   ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
-  AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME || vars.AZURE_STORAGE_ACCOUNT_NAME || 'assetallocstorage001' }}
-  BACKFILL_START_DATE: ${{ vars.BACKFILL_START_DATE || secrets.BACKFILL_START_DATE || ' ' }}
-  SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON: ${{ vars.SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON || ' ' }}
-  SYSTEM_HEALTH_MARKERS_ENABLED: ${{ vars.SYSTEM_HEALTH_MARKERS_ENABLED || 'true' }}
-  SYSTEM_HEALTH_MARKERS_CONTAINER: ${{ vars.SYSTEM_HEALTH_MARKERS_CONTAINER || '' }}
-  SYSTEM_HEALTH_MARKERS_PREFIX: ${{ vars.SYSTEM_HEALTH_MARKERS_PREFIX || 'system/health_markers' }}
-  SYSTEM_HEALTH_MARKERS_DUAL_READ: ${{ vars.SYSTEM_HEALTH_MARKERS_DUAL_READ || 'false' }}
-  SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS: ${{ vars.SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS || '21600' }}
+  AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME || 'assetallocstorage001' }}
+  BACKFILL_START_DATE: ${{ vars.BACKFILL_START_DATE || '2016-01-01' }}
+  SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON: ' '
+  SYSTEM_HEALTH_MARKERS_ENABLED: 'true'
+  SYSTEM_HEALTH_MARKERS_CONTAINER: common
+  SYSTEM_HEALTH_MARKERS_PREFIX: system/health_markers
+  SYSTEM_HEALTH_MARKERS_DUAL_READ: 'false'
+  SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS: '21600'
   API_IMAGE_NAME: asset-allocation-api
   UI_APP_NAME: asset-allocation-ui
   UI_IMAGE_NAME: asset-allocation-ui
@@ -78,27 +81,29 @@ env:
   AZURE_FOLDER_EARNINGS: earnings-data
   AZURE_FOLDER_TARGETS: price-target-data
   AZURE_CONTAINER_COMMON: common
-  SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
-  DEBUG_SYMBOLS: ${{ vars.DEBUG_SYMBOLS || ' ' }}
-  LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
-  RESOURCE_TAG_OWNER: ${{ vars.RESOURCE_TAG_OWNER || 'rudy-prokes' }}
-  RESOURCE_TAG_COST_CENTER: ${{ vars.RESOURCE_TAG_COST_CENTER || 'aaa-ats' }}
-  RESOURCE_TAG_WORKLOAD: ${{ vars.RESOURCE_TAG_WORKLOAD || 'asset-allocation' }}
-  RESOURCE_TAG_ENVIRONMENT: ${{ vars.RESOURCE_TAG_ENVIRONMENT || 'production' }}
+  SERVICE_ACCOUNT_NAME: asset-allocation-sa
+  DEBUG_SYMBOLS: ' '
+  LOG_LEVEL: INFO
+  UI_API_BASE_URL: /api
+  ASSET_ALLOCATION_API_KEY_HEADER: X-API-Key
+  RESOURCE_TAG_OWNER: rudy-prokes
+  RESOURCE_TAG_COST_CENTER: aaa-ats
+  RESOURCE_TAG_WORKLOAD: asset-allocation
+  RESOURCE_TAG_ENVIRONMENT: production
 
   # Alpha Vantage tunables (defaults match core/config.py)
-  ALPHA_VANTAGE_RATE_LIMIT_PER_MIN: ${{ vars.ALPHA_VANTAGE_RATE_LIMIT_PER_MIN || '300' }}
-  ALPHA_VANTAGE_TIMEOUT_SECONDS: ${{ vars.ALPHA_VANTAGE_TIMEOUT_SECONDS || '15' }}
-  ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS: ${{ vars.ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS || '120' }}
-  ALPHA_VANTAGE_MAX_WORKERS: ${{ vars.ALPHA_VANTAGE_MAX_WORKERS || '32' }}
-  ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_EARNINGS_FRESH_DAYS || '7' }}
-  ALPHA_VANTAGE_FINANCE_FRESH_DAYS: ${{ vars.ALPHA_VANTAGE_FINANCE_FRESH_DAYS || '28' }}
+  ALPHA_VANTAGE_RATE_LIMIT_PER_MIN: '300'
+  ALPHA_VANTAGE_TIMEOUT_SECONDS: '15'
+  ALPHA_VANTAGE_RATE_WAIT_TIMEOUT_SECONDS: '120'
+  ALPHA_VANTAGE_MAX_WORKERS: '32'
+  ALPHA_VANTAGE_EARNINGS_FRESH_DAYS: '7'
+  ALPHA_VANTAGE_FINANCE_FRESH_DAYS: '28'
   # Massive tunables (defaults match .env.template / provider config)
-  MASSIVE_BASE_URL: ${{ vars.MASSIVE_BASE_URL || 'https://api.massive.com' }}
-  MASSIVE_TIMEOUT_SECONDS: ${{ vars.MASSIVE_TIMEOUT_SECONDS || '30' }}
-  MASSIVE_PREFER_OFFICIAL_SDK: ${{ vars.MASSIVE_PREFER_OFFICIAL_SDK || 'true' }}
-  MASSIVE_MAX_WORKERS: ${{ vars.MASSIVE_MAX_WORKERS || '10' }}
-  MASSIVE_FINANCE_FRESH_DAYS: ${{ vars.MASSIVE_FINANCE_FRESH_DAYS || '28' }}
+  MASSIVE_BASE_URL: https://api.massive.com
+  MASSIVE_TIMEOUT_SECONDS: '30'
+  MASSIVE_PREFER_OFFICIAL_SDK: 'true'
+  MASSIVE_MAX_WORKERS: '10'
+  MASSIVE_FINANCE_FRESH_DAYS: '28'
 
 jobs:
   tests:
@@ -113,8 +118,6 @@ jobs:
     environment:
       name: production
     runs-on: ubuntu-22.04
-    env:
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     steps:
       - name: Checkout repository
@@ -124,15 +127,15 @@ jobs:
 
       - name: Validate required deployment inputs
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          SERVICE_ACCOUNT_NAME: ${{ vars.SERVICE_ACCOUNT_NAME }}
-          ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+          SERVICE_ACCOUNT_NAME: ${{ env.SERVICE_ACCOUNT_NAME }}
+          ASSET_ALLOCATION_API_BASE_URL: ${{ env.ASSET_ALLOCATION_API_BASE_URL }}
           API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
           API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
           API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
@@ -142,13 +145,12 @@ jobs:
           API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
-          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
+          LOG_LEVEL: ${{ env.LOG_LEVEL }}
           UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
           UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI }}
-          UI_API_BASE_URL: /api
           API_KEY: ${{ secrets.API_KEY }}
         run: |
           set -euo pipefail
@@ -483,9 +485,9 @@ jobs:
       - name: Azure Login
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Ensure Azure Container Apps CLI (built-in only)
         run: |
@@ -508,7 +510,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          identity_id="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${{ env.ACR_PULL_IDENTITY_NAME }}"
+          identity_id="/subscriptions/${{ env.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${{ env.ACR_PULL_IDENTITY_NAME }}"
           echo "ACR_PULL_IDENTITY_RESOURCE_ID=$identity_id" >> "$GITHUB_ENV"
           echo "Using ACR pull identity: $identity_id"
 
@@ -543,7 +545,7 @@ jobs:
 
       - name: Set Deployment Variables
         run: |
-           echo "CONTAINER_APPS_ENVIRONMENT_ID=/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.App/managedEnvironments/asset-allocation-env" >> "$GITHUB_ENV"
+           echo "CONTAINER_APPS_ENVIRONMENT_ID=/subscriptions/${{ env.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}/providers/Microsoft.App/managedEnvironments/asset-allocation-env" >> "$GITHUB_ENV"
 
       - name: Validate Pre-Provisioned Deploy Targets
         run: |
@@ -689,7 +691,7 @@ jobs:
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           API_AUTH_MODE: ${{ vars.API_AUTH_MODE || 'none' }}
           API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER || ' ' }}
           API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE || ' ' }}
@@ -699,31 +701,12 @@ jobs:
           API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX || 'asset-allocation' }}
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS || ' ' }}
-          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
+          LOG_LEVEL: ${{ env.LOG_LEVEL }}
           UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE || 'none' }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID || ' ' }}
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY || ' ' }}
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES || ' ' }}
           UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI || ' ' }}
-          UI_API_BASE_URL: /api
-          SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS || '5' }}
-          SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB: ${{ vars.SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB || '3' }}
-          SYSTEM_HEALTH_VERBOSE_IDS: ${{ vars.SYSTEM_HEALTH_VERBOSE_IDS || ' ' }}
-          SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED || 'false' }}
-          SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION: ${{ vars.SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION || '2022-10-01' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_ENABLED: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_ENABLED || 'false' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION || '2018-01-01' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES || '15' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL || 'PT1M' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_AGGREGATION || 'Average' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS || ' ' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS || ' ' }}
-          SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON: ${{ vars.SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON || ' ' }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED || 'false' }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID || ' ' }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS || '5' }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES || '15' }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON || ' ' }}
         run: |
           set -euo pipefail
           : "${ACR_PULL_IDENTITY_RESOURCE_ID:?ACR_PULL_IDENTITY_RESOURCE_ID is required}"
@@ -906,7 +889,7 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -955,7 +938,7 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1013,7 +996,7 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1062,7 +1045,7 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1117,7 +1100,7 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1166,7 +1149,7 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1224,7 +1207,7 @@ jobs:
           ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
           API_KEY: ${{ secrets.API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |
@@ -1273,7 +1256,7 @@ jobs:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}
           CONTAINER_APPS_ENVIRONMENT_ID: ${{ env.CONTAINER_APPS_ENVIRONMENT_ID }}
         run: |

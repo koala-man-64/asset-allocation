@@ -468,7 +468,7 @@ def create_app() -> FastAPI:
     @app.get("/config.js")
     async def get_ui_config(request: Request):
         settings: ServiceSettings = app.state.settings
-        default_api_base = f"{api_root_prefix}/api" if api_root_prefix else "/api"
+        default_api_base = "/api"
         configured_api_base_url = settings.ui_oidc_config.get("apiBaseUrl") or default_api_base
 
         cfg = {

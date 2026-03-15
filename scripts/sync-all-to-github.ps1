@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Join-Path $PSScriptRoot ".."
 $envPath = Join-Path $repoRoot ".env.web"
 $localEnvPath = Join-Path $repoRoot ".env"
+$contractPath = Join-Path $repoRoot "docs\ops\env-contract.csv"
 
 if (-not (Test-Path $envPath)) {
     Write-Error "Error: env file not found at $envPath (create .env.web)."
@@ -59,17 +60,39 @@ function Test-LocalAddressValue {
 
 function Should-SkipParityKey {
     param(
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][hashtable]$ContractMap
+    )
+
+    if (-not $ContractMap.ContainsKey($Key)) {
+        return $true
+    }
+
+    $entry = $ContractMap[$Key]
+    $githubStorage = (($entry.github_storage | Out-String).Trim()).ToLowerInvariant()
+    return $githubStorage -notin @("secret", "var")
+}
+
+function Load-EnvContract {
+    param(
         [Parameter(Mandatory = $true)]
-        [string]$Key
+        [string]$Path
     )
 
-    # Keys in this list are local-only, deprecated, or intentionally excluded from
-    # .env -> .env.web parity enforcement.
-    $ignoredKeys = @(
-        "RUNTIME_CONFIG_REFRESH_SECONDS"
-    )
+    if (-not (Test-Path $Path)) {
+        throw "Env contract not found at $Path"
+    }
 
-    return $ignoredKeys -contains $Key
+    $rows = Import-Csv -Path $Path
+    $map = @{}
+    foreach ($row in $rows) {
+        $name = (($row.name | Out-String).Trim())
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            continue
+        }
+        $map[$name] = $row
+    }
+    return $map
 }
 
 # Check if gh CLI is installed
@@ -83,12 +106,13 @@ if ($DryRun) { Write-Host "Running in DRY RUN mode (no changes will be made)..."
 
 $envMap = Parse-EnvFile -Path $envPath
 $lines = Get-Content $envPath
+$contractMap = Load-EnvContract -Path $contractPath
 
 if (Test-Path $localEnvPath) {
     $localMap = Parse-EnvFile -Path $localEnvPath
     $missingInWeb = @()
     foreach ($key in $localMap.Keys) {
-        if (Should-SkipParityKey -Key $key) { continue }
+        if (Should-SkipParityKey -Key $key -ContractMap $contractMap) { continue }
 
         $localValue = $localMap[$key]
         if ([string]::IsNullOrWhiteSpace($localValue)) { continue }
@@ -106,7 +130,7 @@ if (Test-Path $localEnvPath) {
     Write-Warning "No local .env found; skipping key parity check against .env."
 }
 
-$webUrlKeys = @("ASSET_ALLOCATION_API_BASE_URL", "VITE_API_PROXY_TARGET")
+$webUrlKeys = @("ASSET_ALLOCATION_API_BASE_URL")
 $localEndpointViolations = @()
 foreach ($key in $webUrlKeys) {
     if (-not $envMap.ContainsKey($key)) { continue }
@@ -121,57 +145,6 @@ if ($localEndpointViolations.Count -gt 0) {
 }
 $ExpectedSecrets = @()
 $ExpectedVars = @()
-
-# These patterns identify CONFIGURATION variables (GitHub Variables).
-# Anything NOT matching these patterns is treated as a SECRET.
-$ConfigPatterns = @(
-    "^AZURE_STORAGE_ACCOUNT_NAME$",
-    "^AZURE_CONTAINER_",
-    "^AZURE_FOLDER_",
-    "^[A-Z]+_(MARKET|FINANCE|EARNINGS|PRICE_TARGET)_JOB$",
-    "^DEBUG_SYMBOLS$",
-    "^SYMBOLS_REFRESH_INTERVAL_HOURS$",
-    "^BACKFILL_START_DATE$",
-    "^FEATURE_ENGINEERING_MAX_WORKERS$",
-    "^DOMAIN_METADATA_MAX_SCANNED_BLOBS$",
-    "^ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE$",
-    "^ASSET_ALLOCATION_API_(?!KEY$)",
-    "^API_CONTAINER_APP_NAME$",
-    "^JOB_STARTUP_API_",
-    "^ALPHA_VANTAGE_(?!API_KEY$)",
-    # Massive: keep runtime tuning/location values as Variables; keep credentials as Secrets.
-    "^MASSIVE_BASE_URL$",
-    "^MASSIVE_FINANCE_FRESH_DAYS$",
-    "^MASSIVE_FLATFILES_BUCKET$",
-    "^MASSIVE_FLATFILES_ENDPOINT_URL$",
-    "^MASSIVE_MAX_WORKERS$",
-    "^MASSIVE_PREFER_OFFICIAL_SDK$",
-    "^MASSIVE_TICKERS_PAGE_LIMIT$",
-    "^MASSIVE_TIMEOUT_SECONDS$",
-    "^MASSIVE_WS_SUBSCRIPTIONS$",
-    "^SYSTEM_HEALTH_(?!LINK_TOKEN_SECRET$)",
-    "^HEADLESS_MODE$",
-    "^DISABLE_DOTENV$",
-    "^LOG_",
-    "^TEST_MODE$",
-    "^VITE_PORT$",
-    "^VITE_PROXY_CONFIG_JS$",
-    "^VITE_API_PROXY_TARGET$",
-    "^SERVICE_ACCOUNT_NAME$",
-    "^KUBERNETES_NAMESPACE$",
-    "^AKS_CLUSTER_NAME$",
-    "^API_AUTH_MODE$",
-    "^BACKTEST_ACA_JOB_NAME$",
-    "^API_KEY_HEADER$",
-    "^API_ROOT_PREFIX$",
-    "^API_INGRESS_EXTERNAL$",
-    "^API_PORT$",
-    "^API_CSP$",
-    "^API_CORS_ALLOW_ORIGINS$",
-    "^API_OIDC_",
-    "^REGIME_ACA_JOB_NAME$",
-    "^UI_"
-)
 
 # -------------------------------------------------------------------------
 # 1. PARSE .ENV
@@ -190,64 +163,67 @@ foreach ($line in $lines) {
             $value = $value.Substring(1, $value.Length - 2)
         }
 
-        # Classify as Config (Var) or Secret
-        $isConfig = $false
-        foreach ($pattern in $ConfigPatterns) {
-            if ($key -match $pattern) {
-                $isConfig = $true
-                break
-            }
+        if (-not $contractMap.ContainsKey($key)) {
+            Write-Warning "Ignoring unsupported env key in .env.web: $key"
+            continue
         }
 
-	        if ($isConfig) {
-	            # It's a Variable
-	            if ([string]::IsNullOrWhiteSpace($value)) {
-	                if ($DryRun) {
-	                    Write-Host "[DRY RUN] Would SKIP empty VARIABLE: $key" -ForegroundColor Yellow
-	                } else {
-	                    Write-Host "Skipping VARIABLE with empty value: $key" -ForegroundColor Yellow
-	                }
-	            } else {
-	                if ($DryRun) {
-	                    Write-Host "[DRY RUN] Would set VARIABLE: $key" -ForegroundColor Cyan
-	                } else {
-	                    Write-Host "Setting VARIABLE: $key" -NoNewline
-	                    try {
-	                        $value | gh variable set "$key" 
-	                        Write-Host " [OK]" -ForegroundColor Green
-	                    } catch {
-	                        Write-Host " [FAILED]" -ForegroundColor Red
-	                        Write-Error $_
-	                    }
-	                }
-	            }
-	            $ExpectedVars += $key
-	        } else {
-	            # It's a Secret
-	            if ([string]::IsNullOrWhiteSpace($value)) {
-	                if ($DryRun) {
-	                    Write-Host "[DRY RUN] Would SKIP empty SECRET:   $key" -ForegroundColor Yellow
-	                } else {
-	                    Write-Host "Skipping SECRET with empty value:   $key" -ForegroundColor Yellow
-	                }
-	            } else {
-	                if ($DryRun) {
-	                    Write-Host "[DRY RUN] Would set SECRET:   $key" -ForegroundColor Magenta
-	                } else {
-	                    Write-Host "Setting SECRET:   $key" -NoNewline
-	                    try {
-	                        $value | gh secret set "$key" 
-	                        Write-Host " [OK]" -ForegroundColor Green
-	                    } catch {
-	                        Write-Host " [FAILED]" -ForegroundColor Red
-	                        Write-Error $_
-	                    }
-	                }
-	            }
-	            $ExpectedSecrets += $key
-	        }
-	    }
-	}
+        $contract = $contractMap[$key]
+        $githubStorage = (($contract.github_storage | Out-String).Trim()).ToLowerInvariant()
+
+        switch ($githubStorage) {
+            "var" {
+                if ([string]::IsNullOrWhiteSpace($value)) {
+                    if ($DryRun) {
+                        Write-Host "[DRY RUN] Would SKIP empty VARIABLE: $key" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "Skipping VARIABLE with empty value: $key" -ForegroundColor Yellow
+                    }
+                } else {
+                    if ($DryRun) {
+                        Write-Host "[DRY RUN] Would set VARIABLE: $key" -ForegroundColor Cyan
+                    } else {
+                        Write-Host "Setting VARIABLE: $key" -NoNewline
+                        try {
+                            $value | gh variable set "$key"
+                            Write-Host " [OK]" -ForegroundColor Green
+                        } catch {
+                            Write-Host " [FAILED]" -ForegroundColor Red
+                            Write-Error $_
+                        }
+                    }
+                }
+                $ExpectedVars += $key
+            }
+            "secret" {
+                if ([string]::IsNullOrWhiteSpace($value)) {
+                    if ($DryRun) {
+                        Write-Host "[DRY RUN] Would SKIP empty SECRET:   $key" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "Skipping SECRET with empty value:   $key" -ForegroundColor Yellow
+                    }
+                } else {
+                    if ($DryRun) {
+                        Write-Host "[DRY RUN] Would set SECRET:   $key" -ForegroundColor Magenta
+                    } else {
+                        Write-Host "Setting SECRET:   $key" -NoNewline
+                        try {
+                            $value | gh secret set "$key"
+                            Write-Host " [OK]" -ForegroundColor Green
+                        } catch {
+                            Write-Host " [FAILED]" -ForegroundColor Red
+                            Write-Error $_
+                        }
+                    }
+                }
+                $ExpectedSecrets += $key
+            }
+            default {
+                Write-Host "Ignoring non-GitHub env key per contract: $key" -ForegroundColor DarkGray
+            }
+        }
+    }
+}
 
 # -------------------------------------------------------------------------
 # 2. PRUNE SECRETS

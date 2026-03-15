@@ -101,11 +101,13 @@ $Config += "LOG_FORMAT=" + (Prompt-Var "LOG_FORMAT" "JSON" "Options: JSON | TEXT
 $Config += "LOG_LEVEL=" + (Prompt-Var "LOG_LEVEL" "INFO" "Options: DEBUG | INFO | WARNING | ERROR")
 $Config += "TEST_MODE=" + (Prompt-Var "TEST_MODE" "false" "Set true to disable network calls during some code paths.")
 $Config += "ENABLE_ENV_DIAGNOSTICS=" + (Prompt-Var "ENABLE_ENV_DIAGNOSTICS" "false" "Set true to log additional (allowlisted) environment diagnostics.")
+$Config += "BACKGROUND_WORKERS_ENABLED=" + (Prompt-Var "BACKGROUND_WORKERS_ENABLED" "true" "Local/test only: enable non-essential API background workers.")
 $Config += "DEBUG_SYMBOLS=" + (Prompt-Var "DEBUG_SYMBOLS" "" "Optional: comma-separated symbols for debug runs (e.g., AAPL,MSFT).")
 $Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTERVAL_HOURS" "24" "Optional: refresh symbol universe from NASDAQ + (Alpha Vantage via API) when older than this many hours (0 disables).")
 $Config += "FEATURE_ENGINEERING_MAX_WORKERS=" + (Prompt-Var "FEATURE_ENGINEERING_MAX_WORKERS" "" "Optional: max workers for feature engineering fan-out.")
 $Config += "DOMAIN_METADATA_MAX_SCANNED_BLOBS=" + (Prompt-Var "DOMAIN_METADATA_MAX_SCANNED_BLOBS" "200000" "Optional: upper bound for domain metadata scans (monitoring).")
 $Config += "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE=" + (Prompt-Var "ASSET_ALLOCATION_REQUIRE_AZURE_STORAGE" "" "Optional: set true to require Azure storage config at startup.")
+$Config += "ALPHA_VANTAGE_BASE_URL=" + (Prompt-Var "ALPHA_VANTAGE_BASE_URL" "https://www.alphavantage.co" "Optional: local override for the upstream Alpha Vantage API base URL.")
 
 # -------------------------------------------------------------------------
 # Azure Identity (GitHub deploy + optional local auth)
@@ -114,9 +116,9 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# Azure Identity (GitHub deploy + optional local auth)"
 $Config += "# =========================================="
-$Config += "AZURE_CLIENT_ID=" + (Prompt-Var "AZURE_CLIENT_ID" "" "GitHub Actions OIDC client/app ID (required for deploy)." -Secret)
-$Config += "AZURE_TENANT_ID=" + (Prompt-Var "AZURE_TENANT_ID" "" "Azure tenant ID (required for deploy)." -Secret)
-$Config += "AZURE_SUBSCRIPTION_ID=" + (Prompt-Var "AZURE_SUBSCRIPTION_ID" "" "Azure subscription ID (required for deploy)." -Secret)
+$Config += "AZURE_CLIENT_ID=" + (Prompt-Var "AZURE_CLIENT_ID" "" "GitHub Actions OIDC client/app ID (required for deploy).")
+$Config += "AZURE_TENANT_ID=" + (Prompt-Var "AZURE_TENANT_ID" "" "Azure tenant ID (required for deploy).")
+$Config += "AZURE_SUBSCRIPTION_ID=" + (Prompt-Var "AZURE_SUBSCRIPTION_ID" "" "Azure subscription ID (required for deploy).")
 $Config += "AZURE_CLIENT_SECRET=" + (Prompt-Var "AZURE_CLIENT_SECRET" "" "Optional: Service Principal client secret (not required for GitHub OIDC)." -Secret)
 
 # -------------------------------------------------------------------------
@@ -126,7 +128,7 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# Azure Storage (required for pipelines)"
 $Config += "# =========================================="
-$Config += "AZURE_STORAGE_ACCOUNT_NAME=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_NAME" "" "Storage account name (also used by CI)." -Secret)
+$Config += "AZURE_STORAGE_ACCOUNT_NAME=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_NAME" "" "Storage account name (also used by CI).")
 $Config += "AZURE_STORAGE_CONNECTION_STRING=" + (Prompt-Var "AZURE_STORAGE_CONNECTION_STRING" "" "Storage connection string (recommended for local dev; required by CI)." -Secret)
 $Config += "AZURE_STORAGE_ACCOUNT_KEY=" + (Prompt-Var "AZURE_STORAGE_ACCOUNT_KEY" "" "Optional: storage account key (alternative to connection string)." -Secret)
 $Config += "AZURE_STORAGE_ACCESS_KEY=" + (Prompt-Var "AZURE_STORAGE_ACCESS_KEY" "" "Optional: storage access key (alias of account key)." -Secret)
@@ -175,7 +177,6 @@ $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" $DefaultAssetAllocationApiBaseUrl "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
 $Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
-$Config += "ASSET_ALLOCATION_API_KEY_HEADER=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY_HEADER" "X-API-Key" "Header name for API gateway keys.")
 $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
 $Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
 $Config += "JOB_STARTUP_API_WAKE_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_WAKE_ENABLED" "true" "Optional: attempt ARM start for API container app when startup health probe fails.")
@@ -206,7 +207,6 @@ $Config += "# API Service"
 $Config += "# =========================================="
 $Config += "API_AUTH_MODE=" + (Prompt-Var "API_AUTH_MODE" "none" "Options: none | api_key | oidc | api_key_or_oidc")
 $Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required if API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
-$Config += "API_KEY_HEADER=" + (Prompt-Var "API_KEY_HEADER" "X-API-Key" "Header name for API keys.")
 $Config += "API_ROOT_PREFIX=" + (Prompt-Var "API_ROOT_PREFIX" "" "Optional: mount API under /{API_ROOT_PREFIX}/api/* (e.g. asset-allocation).")
 $Config += "API_INGRESS_EXTERNAL=" + (Prompt-Var "API_INGRESS_EXTERNAL" "true" "Deploy only: true for external ingress, false for internal only.")
 $Config += "API_PORT=" + (Prompt-Var "API_PORT" "9000" "Local API port (used by core/config.py).")
@@ -226,7 +226,6 @@ $Config += "UI_OIDC_CLIENT_ID=" + (Prompt-Var "UI_OIDC_CLIENT_ID" "" "Optional: 
 $Config += "UI_OIDC_AUTHORITY=" + (Prompt-Var "UI_OIDC_AUTHORITY" "" "Optional: UI OIDC authority (defaults to API_OIDC_ISSUER).")
 $Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OIDC scopes.")
 $Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Optional: UI redirect URI.")
-$Config += "UI_API_BASE_URL=" + (Prompt-Var "UI_API_BASE_URL" "/api" "Base URL where the UI reaches this API (recommended: /api).")
 $Config += "UI_DIST_DIR=" + (Prompt-Var "UI_DIST_DIR" "" "Optional: local path to UI dist for serving static UI.")
 
 # -------------------------------------------------------------------------
@@ -239,7 +238,8 @@ $Config += "# =========================================="
 $Config += "SYSTEM_HEALTH_TTL_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_TTL_SECONDS" "10" "Cache TTL for /api/system/health.")
 $Config += "SYSTEM_HEALTH_MAX_AGE_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_MAX_AGE_SECONDS" "129600" "Max staleness before reporting stale.")
 $Config += "SYSTEM_HEALTH_VERBOSE_IDS=" + (Prompt-Var "SYSTEM_HEALTH_VERBOSE_IDS" "" "Optional: include Azure resource IDs in response.")
-$Config += "SYSTEM_HEALTH_LINK_TOKEN_SECRET=" + (Prompt-Var "SYSTEM_HEALTH_LINK_TOKEN_SECRET" "" "Secret used to sign system health links." -Secret)
+$Config += "SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_CONTAINERAPP_HEALTH_URLS_JSON" "" "Optional: JSON object mapping logical names to extra health probe URLs.")
+$Config += "SYSTEM_HEALTH_CONTAINERAPP_PING_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_CONTAINERAPP_PING_TIMEOUT_SECONDS" "5" "Optional: timeout in seconds for extra container-app health probes.")
 
 # Optional: Azure control-plane probes (ARM) for Container Apps + Jobs
 $Config += "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID=" + (Prompt-Var "SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID" "" "Optional: ARM subscription ID for probes / job start allowlist.")
@@ -298,14 +298,19 @@ $Config += "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS=" + (Prompt-Var "TRIGGER_NEXT_JO
 # -------------------------------------------------------------------------
 $Config += ""
 $Config += "# =========================================="
-$Config += "# UI / CI Variables (GitHub Variables)"
+$Config += "# Local UI Build Fallbacks"
 $Config += "# =========================================="
-$Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port (required by CI UI build).")
+$Config += "VITE_PORT=" + (Prompt-Var "VITE_PORT" "5174" "Vite dev server port.")
 $Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" "UI dev only: when true, proxy /config.js to the API.")
 $Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget "UI dev only: Vite proxy target for /api (do not include /api).")
-$Config += "SERVICE_ACCOUNT_NAME=" + (Prompt-Var "SERVICE_ACCOUNT_NAME" "asset-allocation-sa" "Service account name (used by deploy manifests).")
-$Config += "KUBERNETES_NAMESPACE=" + (Prompt-Var "KUBERNETES_NAMESPACE" "" "Optional: Kubernetes namespace (used by provision_azure.ps1 when AKS is enabled).")
-$Config += "AKS_CLUSTER_NAME=" + (Prompt-Var "AKS_CLUSTER_NAME" "" "Optional: AKS cluster name (used by provision_azure.ps1 when AKS is enabled).")
+$Config += "VITE_API_BASE_URL=" + (Prompt-Var "VITE_API_BASE_URL" "/api" "UI build-time fallback for the API base URL.")
+$Config += "VITE_BACKTEST_API_BASE_URL=" + (Prompt-Var "VITE_BACKTEST_API_BASE_URL" "/api" "UI build-time fallback for the backtest API base URL.")
+$Config += "VITE_AUTH_MODE=" + (Prompt-Var "VITE_AUTH_MODE" "none" "UI build-time auth fallback (none|api_key|oidc).")
+$Config += "VITE_ALLOW_BROWSER_API_KEY=" + (Prompt-Var "VITE_ALLOW_BROWSER_API_KEY" "false" "UI build-time fallback: permit browser API-key auth.")
+$Config += "VITE_BACKTEST_API_KEY=" + (Prompt-Var "VITE_BACKTEST_API_KEY" "" "UI build-time fallback backtest API key." -Secret)
+$Config += "VITE_OIDC_AUTHORITY=" + (Prompt-Var "VITE_OIDC_AUTHORITY" "" "UI build-time fallback OIDC authority.")
+$Config += "VITE_OIDC_CLIENT_ID=" + (Prompt-Var "VITE_OIDC_CLIENT_ID" "" "UI build-time fallback OIDC client ID.")
+$Config += "VITE_OIDC_SCOPES=" + (Prompt-Var "VITE_OIDC_SCOPES" "" "UI build-time fallback OIDC scopes.")
 
 if ($DryRun) {
     Write-Host "`n[DRY RUN] Would write the following to ${EnvFilePath}:" -ForegroundColor Yellow

@@ -93,6 +93,26 @@ def test_cleanup_migration_drops_noncanonical_gold_tables() -> None:
     assert "DROP TABLE IF EXISTS gold.%I" in text
 
 
+def test_drop_forward_pe_migration_rebuilds_finance_view_before_column_drop() -> None:
+    repo_root = _repo_root()
+    migration = (
+        repo_root
+        / "deploy"
+        / "sql"
+        / "postgres"
+        / "migrations"
+        / "0028_drop_forward_pe_from_gold_finance.sql"
+    )
+    text = migration.read_text(encoding="utf-8")
+
+    assert "DROP VIEW IF EXISTS gold.finance_data_by_date;" in text
+    assert "ALTER TABLE IF EXISTS gold.finance_data" in text
+    assert "DROP COLUMN IF EXISTS forward_pe;" in text
+    assert "CREATE OR REPLACE VIEW gold.finance_data_by_date AS" in text
+    assert "SELECT * FROM gold.finance_data;" in text
+    assert "GRANT SELECT ON TABLE gold.finance_data_by_date TO backtest_service;" in text
+
+
 def test_alpha_vantage_source_unification_migration_drops_legacy_alias_column() -> None:
     repo_root = _repo_root()
     migration = (
@@ -131,3 +151,50 @@ def test_gold_column_lookup_migration_defines_constraints_and_indexes() -> None:
     assert "idx_gold_column_lookup_schema_table" in text
     assert "idx_gold_column_lookup_status" in text
     assert "USING GIN (calculation_dependencies)" in text
+
+
+def test_provision_azure_postgres_uses_valid_do_block_sql_for_app_user_creation() -> None:
+    repo_root = _repo_root()
+    script = repo_root / "scripts" / "provision_azure_postgres.ps1"
+    text = script.read_text(encoding="utf-8")
+
+    assert "function ConvertTo-SqlLiteral" in text, (
+        "provision_azure_postgres must escape SQL string literals when building role SQL"
+    )
+    assert "DO \\$\\$" not in text, (
+        "provision_azure_postgres must not emit backslash-escaped DO block delimiters"
+    )
+    assert "DO $$" in text, (
+        "provision_azure_postgres must emit literal DO block delimiters for psql"
+    )
+    assert "$sqlTemplate = @'" in text, (
+        "provision_azure_postgres should build the role-creation SQL from a single-quoted here-string template"
+    )
+
+
+def test_provision_azure_postgres_uses_unqualified_index_names_in_supporting_index_sql() -> None:
+    repo_root = _repo_root()
+    script = repo_root / "scripts" / "provision_azure_postgres.ps1"
+    text = script.read_text(encoding="utf-8")
+
+    assert "CREATE INDEX IF NOT EXISTS platinum.idx_" not in text, (
+        "provision_azure_postgres must not schema-qualify index names in CREATE INDEX IF NOT EXISTS statements"
+    )
+    assert "CREATE INDEX IF NOT EXISTS public.idx_" not in text, (
+        "provision_azure_postgres must not schema-qualify public index names in CREATE INDEX IF NOT EXISTS statements"
+    )
+    assert "CREATE INDEX IF NOT EXISTS idx_platinum_strategies_type ON platinum.strategies(type);" in text
+    assert "CREATE INDEX IF NOT EXISTS idx_public_strategies_type ON public.strategies(type);" in text
+
+
+def test_provision_azure_postgres_auto_falls_back_to_dockerized_psql_when_local_psql_is_missing() -> None:
+    repo_root = _repo_root()
+    script = repo_root / "scripts" / "provision_azure_postgres.ps1"
+    text = script.read_text(encoding="utf-8")
+
+    assert "Local psql is not installed; falling back to Dockerized psql." in text, (
+        "provision_azure_postgres should automatically switch to Dockerized psql when local psql is unavailable"
+    )
+    assert "$UseDockerPsql = $true" in text, (
+        "provision_azure_postgres must enable UseDockerPsql after detecting docker fallback"
+    )

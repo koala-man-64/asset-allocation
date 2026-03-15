@@ -21,10 +21,9 @@ def _parse_window_assignment(body: str, window_key: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_config_js_emits_api_base_url_from_root_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_config_js_emits_fixed_api_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("API_ROOT_PREFIX", "asset-allocation")
-    monkeypatch.delenv("UI_API_BASE_URL", raising=False)
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -38,12 +37,12 @@ async def test_config_js_emits_api_base_url_from_root_prefix(monkeypatch: pytest
     cfg_api = _parse_window_assignment(resp.text, "__API_UI_CONFIG__")
     assert cfg_backtest == cfg_api
 
-    assert cfg_backtest["apiBaseUrl"] == "/asset-allocation/api"
-    assert cfg_backtest["backtestApiBaseUrl"] == "/asset-allocation/api"
+    assert cfg_backtest["apiBaseUrl"] == "/api"
+    assert cfg_backtest["backtestApiBaseUrl"] == "/api"
 
 
 @pytest.mark.asyncio
-async def test_config_js_honors_ui_api_base_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_config_js_ignores_ui_api_base_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("API_ROOT_PREFIX", "asset-allocation")
     monkeypatch.setenv("UI_API_BASE_URL", "/api")

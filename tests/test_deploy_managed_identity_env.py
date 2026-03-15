@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import yaml
@@ -224,17 +225,16 @@ def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     )
 
 
-def test_sync_all_to_github_treats_aca_job_names_as_variables() -> None:
+def test_env_contract_tracks_aca_job_names_as_checked_in_defaults() -> None:
     repo_root = _repo_root()
-    sync_script = repo_root / "scripts" / "sync-all-to-github.ps1"
-    text = sync_script.read_text(encoding="utf-8")
+    contract = repo_root / "docs" / "ops" / "env-contract.csv"
+    with contract.open(encoding="utf-8", newline="") as handle:
+        rows = {row["name"]: row for row in csv.DictReader(handle)}
 
-    assert "^BACKTEST_ACA_JOB_NAME$" in text, (
-        "sync-all-to-github must classify BACKTEST_ACA_JOB_NAME as a GitHub variable"
-    )
-    assert "^REGIME_ACA_JOB_NAME$" in text, (
-        "sync-all-to-github must classify REGIME_ACA_JOB_NAME as a GitHub variable"
-    )
+    assert rows["BACKTEST_ACA_JOB_NAME"]["class"] == "deploy_var"
+    assert rows["BACKTEST_ACA_JOB_NAME"]["github_storage"] == "none"
+    assert rows["REGIME_ACA_JOB_NAME"]["class"] == "deploy_var"
+    assert rows["REGIME_ACA_JOB_NAME"]["github_storage"] == "none"
 
 
 def test_env_template_includes_regime_job_defaults() -> None:

@@ -12,6 +12,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 600.0
+_FIXED_API_KEY_HEADER = "X-API-Key"
 _DEFAULT_API_WARMUP_ENABLED = True
 _DEFAULT_API_WARMUP_MAX_ATTEMPTS = 3
 _DEFAULT_API_WARMUP_BASE_DELAY_SECONDS = 1.0
@@ -149,11 +150,7 @@ class AlphaVantageGatewayClient:
         api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(
             os.environ.get("API_KEY")
         )
-        api_key_header = (
-            _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY_HEADER"))
-            or _strip_or_none(os.environ.get("API_KEY_HEADER"))
-            or "X-API-Key"
-        )
+        api_key_header = _FIXED_API_KEY_HEADER
 
         timeout_seconds = _env_float(
             "ASSET_ALLOCATION_API_TIMEOUT_SECONDS",
