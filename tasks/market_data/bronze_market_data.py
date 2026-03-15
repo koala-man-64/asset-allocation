@@ -658,24 +658,6 @@ def _write_alpha26_market_buckets(symbol_frames: dict[str, pd.DataFrame]) -> tup
     return len(symbol_to_bucket), index_path
 
 
-def _delete_flat_symbol_blobs() -> int:
-    deleted = 0
-    for blob in bronze_client.list_blob_infos(name_starts_with="market-data/"):
-        name = str(blob.get("name") or "")
-        if not name.endswith(".csv"):
-            continue
-        if name.endswith("whitelist.csv") or name.endswith("blacklist.csv"):
-            continue
-        if "/buckets/" in name:
-            continue
-        try:
-            bronze_client.delete_file(name)
-            deleted += 1
-        except Exception as exc:
-            mdc.write_warning(f"Failed deleting flat market blob {name}: {exc}")
-    return deleted
-
-
 def _load_alpha26_existing_market_frames(*, symbols: set[str]) -> dict[str, pd.DataFrame]:
     frames: dict[str, pd.DataFrame] = {}
     failed_buckets: list[str] = []
@@ -1342,10 +1324,9 @@ async def main_async() -> int:
 
     try:
         written_symbols, index_path = _write_alpha26_market_buckets(collected_symbol_frames)
-        flat_deleted = _delete_flat_symbol_blobs()
         mdc.write_line(
             "Bronze market alpha26 buckets written: "
-            f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
+            f"symbols={written_symbols} index={index_path or 'n/a'}"
         )
     except Exception as exc:
         progress["failed"] += 1

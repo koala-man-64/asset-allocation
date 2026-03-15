@@ -513,9 +513,6 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
             "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
             return_value=(0, "system/bronze-index/market/latest.parquet"),
         ), patch(
-            "tasks.market_data.bronze_market_data._delete_flat_symbol_blobs",
-            return_value=0,
-        ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
             "tasks.market_data.bronze_market_data.mdc.write_line"
@@ -568,9 +565,6 @@ def test_main_async_schedules_regime_required_symbol_even_when_blacklisted():
         ) as mock_download, patch(
             "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
             return_value=(0, "system/bronze-index/market/latest.parquet"),
-        ), patch(
-            "tasks.market_data.bronze_market_data._delete_flat_symbol_blobs",
-            return_value=0,
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
@@ -730,9 +724,6 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
         ), patch(
             "tasks.market_data.bronze_market_data._write_alpha26_market_buckets",
             side_effect=_fake_write,
-        ), patch(
-            "tasks.market_data.bronze_market_data._delete_flat_symbol_blobs",
-            return_value=0,
         ), patch(
             "tasks.market_data.bronze_market_data.list_manager"
         ) as mock_list_manager, patch(
