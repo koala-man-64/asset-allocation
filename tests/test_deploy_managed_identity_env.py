@@ -368,10 +368,10 @@ def test_deploy_validation_rejects_invalid_log_stream_batch_size() -> None:
     )
 
 
-def test_deploy_validation_rejects_public_ingress_without_oidc_capable_auth() -> None:
+def test_deploy_validation_allows_public_ingress_for_personal_auth_modes() -> None:
     result = _run_deploy_validation(INGRESS_EXTERNAL="true", API_AUTH_MODE="none")
-    assert result.returncode != 0
-    assert "INGRESS_EXTERNAL=true requires API_AUTH_MODE to be oidc or api_key_or_oidc." in (
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "INGRESS_EXTERNAL=true with API_AUTH_MODE=none exposes the app publicly without authentication." in (
         result.stdout + result.stderr
     )
 
@@ -380,8 +380,8 @@ def test_deploy_validation_rejects_public_ingress_without_oidc_capable_auth() ->
         API_AUTH_MODE="api_key",
         API_KEY="secret",
     )
-    assert api_key_result.returncode != 0
-    assert "INGRESS_EXTERNAL=true requires API_AUTH_MODE to be oidc or api_key_or_oidc." in (
+    assert api_key_result.returncode == 0, api_key_result.stdout + api_key_result.stderr
+    assert "INGRESS_EXTERNAL=true with API_AUTH_MODE=api_key exposes the app publicly and relies on a shared API key for access control." in (
         api_key_result.stdout + api_key_result.stderr
     )
 

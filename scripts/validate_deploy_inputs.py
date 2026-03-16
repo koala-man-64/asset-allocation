@@ -38,6 +38,10 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
+def warn(message: str) -> None:
+    print(f"::warning::{message}")
+
+
 def require_value(name: str) -> str:
     value = (os.environ.get(name) or "").strip()
     if not value:
@@ -192,20 +196,28 @@ def validate_external_ingress(auth_mode: str, ui_auth_mode: str) -> None:
     if not parse_bool("INGRESS_EXTERNAL", default=False):
         return
 
-    if auth_mode not in {"oidc", "api_key_or_oidc"}:
-        fail(
-            "INGRESS_EXTERNAL=true requires API_AUTH_MODE to be oidc or api_key_or_oidc."
+    if auth_mode in {"oidc", "api_key_or_oidc"}:
+        if ui_auth_mode != "oidc":
+            fail("INGRESS_EXTERNAL=true requires UI_AUTH_MODE=oidc.")
+
+        require_value("API_OIDC_ISSUER")
+        require_value("API_OIDC_AUDIENCE")
+        require_value("UI_OIDC_CLIENT_ID")
+        require_value("UI_OIDC_AUTHORITY")
+        require_value("UI_OIDC_SCOPES")
+        require_value("UI_OIDC_REDIRECT_URI")
+        return
+
+    if auth_mode == "api_key":
+        warn(
+            "INGRESS_EXTERNAL=true with API_AUTH_MODE=api_key exposes the app publicly and "
+            "relies on a shared API key for access control."
         )
-
-    if ui_auth_mode != "oidc":
-        fail("INGRESS_EXTERNAL=true requires UI_AUTH_MODE=oidc.")
-
-    require_value("API_OIDC_ISSUER")
-    require_value("API_OIDC_AUDIENCE")
-    require_value("UI_OIDC_CLIENT_ID")
-    require_value("UI_OIDC_AUTHORITY")
-    require_value("UI_OIDC_SCOPES")
-    require_value("UI_OIDC_REDIRECT_URI")
+    else:
+        warn(
+            "INGRESS_EXTERNAL=true with API_AUTH_MODE=none exposes the app publicly without "
+            "authentication."
+        )
 
 
 def main() -> int:
