@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from urllib.parse import urlparse
 
@@ -54,6 +55,45 @@ def parse_bool(name: str, *, default: bool = False) -> bool:
         return False
     fail(f"{name} must be a boolean (true/false)")
     raise AssertionError("unreachable")
+
+
+def parse_float(name: str, *, default: float, min_value: float = 0.0, max_value: float = 86400.0) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        fail(f"{name} must be a number.")
+    if not (min_value <= value <= max_value):
+        fail(f"{name} must be between {min_value} and {max_value}.")
+    return value
+
+
+def parse_int(name: str, *, default: int, min_value: int = 0, max_value: int = 86400) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        fail(f"{name} must be an integer.")
+    if not (min_value <= value <= max_value):
+        fail(f"{name} must be between {min_value} and {max_value}.")
+    return value
+
+
+def parse_json_array(name: str) -> list[object]:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        fail(f"{name} must be valid JSON.")
+    if not isinstance(payload, list):
+        fail(f"{name} must be a JSON array.")
+    return payload
 
 
 def parse_auth_mode() -> str:
@@ -121,14 +161,22 @@ def validate_log_level() -> None:
 
 
 def validate_log_analytics() -> None:
-    if parse_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", default=False):
+    enabled = parse_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", default=False)
+    if enabled:
         workspace_id = (os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or "").strip()
         if not workspace_id:
             fail(
                 "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true requires "
                 "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID."
             )
+    parse_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", default=5.0, min_value=0.1, max_value=300.0)
+    parse_int("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", default=15, min_value=1, max_value=1440)
+    parse_json_array("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON")
+
     parse_bool("REALTIME_LOG_STREAM_ENABLED", default=True)
+    parse_float("REALTIME_LOG_STREAM_POLL_SECONDS", default=5.0, min_value=1.0, max_value=300.0)
+    parse_int("REALTIME_LOG_STREAM_LOOKBACK_SECONDS", default=30, min_value=10, max_value=86400)
+    parse_int("REALTIME_LOG_STREAM_BATCH_SIZE", default=200, min_value=10, max_value=500)
 
 
 def validate_auth_modes(auth_mode: str) -> None:

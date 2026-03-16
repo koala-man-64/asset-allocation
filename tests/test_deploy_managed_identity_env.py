@@ -318,6 +318,18 @@ def test_env_contract_tracks_aca_job_names_as_checked_in_defaults() -> None:
     assert rows["REGIME_ACA_JOB_NAME"]["github_storage"] == "none"
 
 
+def test_env_contract_tracks_log_analytics_bootstrap_keys_as_deploy_vars() -> None:
+    repo_root = _repo_root()
+    contract = repo_root / "docs" / "ops" / "env-contract.csv"
+    with contract.open(encoding="utf-8", newline="") as handle:
+        rows = {row["name"]: row for row in csv.DictReader(handle)}
+
+    assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"]["class"] == "deploy_var"
+    assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"]["github_storage"] == "var"
+    assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"]["class"] == "deploy_var"
+    assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"]["github_storage"] == "var"
+
+
 def test_env_template_includes_regime_job_defaults() -> None:
     repo_root = _repo_root()
     env_template = repo_root / ".env.template"
@@ -338,6 +350,22 @@ def test_env_template_includes_regime_job_defaults() -> None:
 def test_deploy_validation_allows_internal_no_auth_defaults() -> None:
     result = _run_deploy_validation()
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_deploy_validation_requires_workspace_when_log_analytics_is_enabled() -> None:
+    result = _run_deploy_validation(SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED="true")
+    assert result.returncode != 0
+    assert "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true requires SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID." in (
+        result.stdout + result.stderr
+    )
+
+
+def test_deploy_validation_rejects_invalid_log_stream_batch_size() -> None:
+    result = _run_deploy_validation(REALTIME_LOG_STREAM_BATCH_SIZE="5")
+    assert result.returncode != 0
+    assert "REALTIME_LOG_STREAM_BATCH_SIZE must be between 10 and 500." in (
+        result.stdout + result.stderr
+    )
 
 
 def test_deploy_validation_rejects_public_ingress_without_oidc_capable_auth() -> None:

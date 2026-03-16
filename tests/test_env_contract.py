@@ -53,6 +53,14 @@ def _contract_map() -> dict[str, dict[str, str]]:
     return {row["name"]: row for row in rows}
 
 
+def _contract_names_by_class(class_name: str) -> set[str]:
+    return {
+        row["name"]
+        for row in _contract_rows()
+        if row["class"] == class_name
+    }
+
+
 def _template_keys() -> set[str]:
     path = _repo_root() / ".env.template"
     keys: set[str] = set()
@@ -144,8 +152,12 @@ def test_runtime_config_keys_are_not_consumed_from_github_vars() -> None:
     sync_script = (_repo_root() / "scripts" / "sync-all-to-github.ps1").read_text(encoding="utf-8")
 
     assert "ConfigPatterns" not in sync_script
-    for key in DEFAULT_ENV_OVERRIDE_KEYS:
+    for key in sorted(DEFAULT_ENV_OVERRIDE_KEYS):
         assert f"vars.{key}" not in deploy_workflow, f"deploy.yml must not consume runtime_config key via vars: {key}"
+
+
+def test_runtime_config_allowlist_matches_env_contract() -> None:
+    assert DEFAULT_ENV_OVERRIDE_KEYS == _contract_names_by_class("runtime_config")
 
 
 def test_contract_documents_runtime_code_env_refs() -> None:

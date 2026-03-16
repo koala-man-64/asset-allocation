@@ -32,6 +32,8 @@ async def test_runtime_config_catalog(monkeypatch):
     keys = [item.get("key") for item in payload["items"]]
     assert "DEBUG_SYMBOLS" in keys
     assert "SILVER_LATEST_ONLY" in keys
+    assert "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED" not in keys
+    assert "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID" not in keys
 
 
 @pytest.mark.asyncio
