@@ -211,12 +211,15 @@ def validate_external_ingress(auth_mode: str, ui_auth_mode: str) -> None:
     if auth_mode == "api_key":
         warn(
             "INGRESS_EXTERNAL=true with API_AUTH_MODE=api_key exposes the app publicly and "
-            "relies on a shared API key for access control."
+            "relies on a shared API key for access control. For personal web deployments, "
+            "prefer Azure Container Apps built-in auth or ingress IP restrictions over "
+            "browser-facing shared keys."
         )
     else:
         warn(
             "INGRESS_EXTERNAL=true with API_AUTH_MODE=none exposes the app publicly without "
-            "authentication."
+            "authentication. For personal web deployments, protect the public edge with "
+            "Azure Container Apps built-in auth or ingress IP restrictions."
         )
 
 

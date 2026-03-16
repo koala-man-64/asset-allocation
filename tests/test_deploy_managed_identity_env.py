@@ -374,6 +374,9 @@ def test_deploy_validation_allows_public_ingress_for_personal_auth_modes() -> No
     assert "INGRESS_EXTERNAL=true with API_AUTH_MODE=none exposes the app publicly without authentication." in (
         result.stdout + result.stderr
     )
+    assert "Azure Container Apps built-in auth or ingress IP restrictions." in (
+        result.stdout + result.stderr
+    )
 
     api_key_result = _run_deploy_validation(
         INGRESS_EXTERNAL="true",
@@ -382,6 +385,9 @@ def test_deploy_validation_allows_public_ingress_for_personal_auth_modes() -> No
     )
     assert api_key_result.returncode == 0, api_key_result.stdout + api_key_result.stderr
     assert "INGRESS_EXTERNAL=true with API_AUTH_MODE=api_key exposes the app publicly and relies on a shared API key for access control." in (
+        api_key_result.stdout + api_key_result.stderr
+    )
+    assert "Azure Container Apps built-in auth or ingress IP restrictions" in (
         api_key_result.stdout + api_key_result.stderr
     )
 

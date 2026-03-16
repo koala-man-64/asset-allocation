@@ -97,6 +97,12 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 - `deploy/app_api.yaml` is the active unified API and UI Container App manifest.
 - Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
 
+### Public Web Access
+
+- For a personal public deployment, set `API_INGRESS_EXTERNAL=true`, keep app auth simple (`API_AUTH_MODE=none` or `api_key`, `UI_AUTH_MODE=none`), and protect the public edge in Azure Container Apps with built-in auth or ingress IP restrictions.
+- Use app-managed OIDC (`API_AUTH_MODE=oidc` or `api_key_or_oidc`, `UI_AUTH_MODE=oidc`) only if you explicitly want the application itself to own browser login and token validation.
+- Shared browser-facing API keys are convenience controls, not strong public-web security boundaries.
+
 ## Evidence
 
 - `pyproject.toml`
