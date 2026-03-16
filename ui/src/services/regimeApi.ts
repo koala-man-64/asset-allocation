@@ -5,7 +5,7 @@ import type {
   RegimeModelRevision,
   RegimeModelSummary,
   RegimeSnapshot,
-  RegimeTransitionRow,
+  RegimeTransitionRow
 } from '@/types/regime';
 
 export type {
@@ -17,28 +17,39 @@ export type {
   RegimeSnapshot,
   RegimeStatus,
   RegimeTransitionRow,
-  TrendState,
+  TrendState
 } from '@/types/regime';
 
 export const regimeApi = {
-  async getCurrent(params: {
-    modelName?: string;
-    modelVersion?: number;
-  } = {}): Promise<RegimeSnapshot> {
+  async getCurrent(
+    params: {
+      modelName?: string;
+      modelVersion?: number;
+    } = {}
+  ): Promise<RegimeSnapshot> {
     return request<RegimeSnapshot>('/regimes/current', { params });
   },
 
-  async getHistory(params: {
-    modelName?: string;
-    modelVersion?: number;
-    startDate?: string;
-    endDate?: string;
-    limit?: number;
-  } = {}): Promise<{ modelName: string; modelVersion?: number | null; rows: RegimeSnapshot[]; limit: number }> {
-    return request<{ modelName: string; modelVersion?: number | null; rows: RegimeSnapshot[]; limit: number }>(
-      '/regimes/history',
-      { params }
-    );
+  async getHistory(
+    params: {
+      modelName?: string;
+      modelVersion?: number;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+    } = {}
+  ): Promise<{
+    modelName: string;
+    modelVersion?: number | null;
+    rows: RegimeSnapshot[];
+    limit: number;
+  }> {
+    return request<{
+      modelName: string;
+      modelVersion?: number | null;
+      rows: RegimeSnapshot[];
+      limit: number;
+    }>('/regimes/history', { params });
   },
 
   async listModels(): Promise<{ models: RegimeModelSummary[] }> {
@@ -54,23 +65,31 @@ export const regimeApi = {
     description?: string;
     config: Record<string, unknown>;
   }): Promise<{ model: RegimeModelSummary; activeRevision?: RegimeModelRevision | null }> {
-    return request<{ model: RegimeModelSummary; activeRevision?: RegimeModelRevision | null }>('/regimes/models', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return request<{ model: RegimeModelSummary; activeRevision?: RegimeModelRevision | null }>(
+      '/regimes/models',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }
+    );
   },
 
   async activateModel(
     modelName: string,
     payload: { version?: number }
-  ): Promise<{ model: string; activatedRevision: RegimeModelRevision; jobTrigger?: Record<string, unknown> | null }> {
-    return request<{ model: string; activatedRevision: RegimeModelRevision; jobTrigger?: Record<string, unknown> | null }>(
-      `/regimes/models/${encodeURIComponent(modelName)}/activate`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }
-    );
+  ): Promise<{
+    model: string;
+    activatedRevision: RegimeModelRevision;
+    jobTrigger?: Record<string, unknown> | null;
+  }> {
+    return request<{
+      model: string;
+      activatedRevision: RegimeModelRevision;
+      jobTrigger?: Record<string, unknown> | null;
+    }>(`/regimes/models/${encodeURIComponent(modelName)}/activate`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   },
 
   async getDatasetRows(
@@ -84,5 +103,5 @@ export const regimeApi = {
       return request<RegimeTransitionRow[]>(`/data/gold/regime/${dataset}`, { params });
     }
     return request<RegimeSnapshot[]>(`/data/gold/regime/${dataset}`, { params });
-  },
+  }
 };

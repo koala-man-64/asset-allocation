@@ -20,9 +20,10 @@ export function useJobTrigger() {
       toast.success(`Triggered ${jobName}`);
       void queryClient.invalidateQueries({ queryKey });
     } catch (err: unknown) {
-      const message = err instanceof ApiError
-        ? `${err.status}: ${formatSystemStatusText(err.message)}`
-        : formatSystemStatusText(err);
+      const message =
+        err instanceof ApiError
+          ? `${err.status}: ${formatSystemStatusText(err.message)}`
+          : formatSystemStatusText(err);
       toast.error(`Failed to trigger ${jobName}: ${message}`);
     } finally {
       setTriggeringJob(null);

@@ -33,9 +33,10 @@ export function useJobSuspend() {
       }
       void queryClient.invalidateQueries({ queryKey });
     } catch (err: unknown) {
-      const message = err instanceof ApiError
-        ? `${err.status}: ${formatSystemStatusText(err.message)}`
-        : formatSystemStatusText(err);
+      const message =
+        err instanceof ApiError
+          ? `${err.status}: ${formatSystemStatusText(err.message)}`
+          : formatSystemStatusText(err);
       toast.error(`Failed to ${action} ${jobName}: ${message}`);
     } finally {
       setJobControl(null);
@@ -50,9 +51,10 @@ export function useJobSuspend() {
       toast.success(`Stopped ${jobName}`);
       void queryClient.invalidateQueries({ queryKey });
     } catch (err: unknown) {
-      const message = err instanceof ApiError
-        ? `${err.status}: ${formatSystemStatusText(err.message)}`
-        : formatSystemStatusText(err);
+      const message =
+        err instanceof ApiError
+          ? `${err.status}: ${formatSystemStatusText(err.message)}`
+          : formatSystemStatusText(err);
       toast.error(`Failed to stop ${jobName}: ${message}`);
     } finally {
       setJobControl(null);

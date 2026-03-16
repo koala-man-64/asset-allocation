@@ -14,15 +14,7 @@ import {
 import { PostgresService, type GoldColumnLookupRow } from '@/services/PostgresService';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 import { toast } from 'sonner';
-import {
-  CirclePlus,
-  Copy,
-  Database,
-  ListChecks,
-  RefreshCw,
-  Search,
-  Trash2
-} from 'lucide-react';
+import { CirclePlus, Copy, Database, ListChecks, RefreshCw, Search, Trash2 } from 'lucide-react';
 
 const GOLD_SCHEMA = 'gold';
 
@@ -177,8 +169,11 @@ export const StrategyDataCatalogPage: React.FC = () => {
   }, [catalogRows]);
 
   const checkedSet = useMemo(() => new Set(checkedColumns), [checkedColumns]);
-  const selectedVisibleCount = visibleColumns.filter((column) => checkedSet.has(column.column)).length;
-  const allVisibleChecked = visibleColumns.length > 0 && selectedVisibleCount === visibleColumns.length;
+  const selectedVisibleCount = visibleColumns.filter((column) =>
+    checkedSet.has(column.column)
+  ).length;
+  const allVisibleChecked =
+    visibleColumns.length > 0 && selectedVisibleCount === visibleColumns.length;
 
   const toggleColumn = useCallback((columnName: string, nextChecked: boolean) => {
     setCheckedColumns((current) => {
@@ -312,9 +307,7 @@ export const StrategyDataCatalogPage: React.FC = () => {
               <div className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
                 Gold Tables
               </div>
-              <div className="font-display text-lg text-foreground">
-                {tables.length} available
-              </div>
+              <div className="font-display text-lg text-foreground">{tables.length} available</div>
             </div>
             <Button
               type="button"
@@ -466,12 +459,12 @@ export const StrategyDataCatalogPage: React.FC = () => {
                               {column.calculation_type} · {column.status}
                             </div>
                           </TableCell>
-                          <TableCell className="font-mono text-xs">
-                            {column.data_type}
-                          </TableCell>
+                          <TableCell className="font-mono text-xs">{column.data_type}</TableCell>
                           <TableCell className="whitespace-normal text-sm">
                             {(column.description || '').trim() || (
-                              <span className="text-muted-foreground">No description provided.</span>
+                              <span className="text-muted-foreground">
+                                No description provided.
+                              </span>
                             )}
                           </TableCell>
                         </TableRow>
@@ -555,7 +548,9 @@ export const StrategyDataCatalogPage: React.FC = () => {
                         </TableCell>
                         <TableCell className="font-mono text-xs">{row.table}</TableCell>
                         <TableCell className="font-mono text-xs">{row.column}</TableCell>
-                        <TableCell className="whitespace-normal text-sm">{row.description}</TableCell>
+                        <TableCell className="whitespace-normal text-sm">
+                          {row.description}
+                        </TableCell>
                         <TableCell className="text-center">
                           <Button
                             type="button"

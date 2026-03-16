@@ -397,7 +397,12 @@ def _dedupe_canonical_earnings_events(df: Optional[pd.DataFrame]) -> tuple[pd.Da
     filtered_scheduled = scheduled.loc[scheduled_mask].copy()
     replacements = int(len(scheduled) - len(filtered_scheduled))
 
-    out = pd.concat([actual, filtered_scheduled], ignore_index=True, sort=False)
+    merge_frames = [frame for frame in (actual, filtered_scheduled) if frame is not None and not frame.empty]
+    out = (
+        pd.concat(merge_frames, ignore_index=True, sort=False)
+        if merge_frames
+        else pd.DataFrame(columns=_BUCKET_COLUMNS)
+    )
     out = out.drop(columns=["_event_identity"], errors="ignore")
     out = out.sort_values(["symbol", "date", "record_type"]).reset_index(drop=True)
     return out[_BUCKET_COLUMNS], replacements
@@ -584,7 +589,10 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
         if bucket_frames[bucket].empty:
             bucket_frames[bucket] = normalized
         else:
-            bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
+            bucket_frames[bucket] = pd.concat(
+                [frame for frame in (bucket_frames[bucket], normalized) if frame is not None and not frame.empty],
+                ignore_index=True,
+            )
 
     for bucket in bronze_bucketing.ALPHABET_BUCKETS:
         frame = bucket_frames[bucket]
@@ -817,10 +825,15 @@ def fetch_and_save_raw(
     merge_parts = [
         frame
         for frame in (actual_rows, carry_forward_scheduled, scheduled_rows)
-        if frame is not None and not frame.empty
+        if frame is not None and not frame.empty and not frame.dropna(how="all").empty
     ]
     if merge_parts:
-        merged = pd.concat(merge_parts, ignore_index=True, sort=False)
+        cleaned_merge_parts = [
+            frame.dropna(axis="columns", how="all")
+            for frame in merge_parts
+            if not frame.dropna(axis="columns", how="all").empty
+        ]
+        merged = pd.concat(cleaned_merge_parts, ignore_index=True, sort=False)
     else:
         merged = _empty_canonical_earnings_frame()
     merged, actual_replacements = _dedupe_canonical_earnings_events(merged)

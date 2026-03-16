@@ -115,7 +115,12 @@ describe('RankingConfigPage', () => {
       { name: 'mom-spy-res', type: 'configured', description: 'desc', updated_at: '2026-03-08' }
     ]);
     (universeApi.listUniverseConfigs as Mock).mockResolvedValue([
-      { name: 'large-cap-quality', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
+      {
+        name: 'large-cap-quality',
+        description: 'desc',
+        version: 1,
+        updated_at: '2026-03-08T00:00:00Z'
+      }
     ]);
   });
 

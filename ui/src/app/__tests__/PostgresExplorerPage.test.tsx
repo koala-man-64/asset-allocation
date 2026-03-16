@@ -34,31 +34,33 @@ describe('PostgresExplorerPage', () => {
       }
       return ['should_not_be_used'];
     });
-    vi.mocked(PostgresService.getTableMetadata).mockImplementation(async (schema: string, table: string) => ({
-      schema_name: schema,
-      table_name: table,
-      primary_key: ['symbol'],
-      can_edit: true,
-      edit_reason: null,
-      columns: [
-        {
-          name: 'symbol',
-          data_type: 'TEXT',
-          nullable: false,
-          primary_key: true,
-          editable: true,
-          edit_reason: null
-        },
-        {
-          name: 'company_name',
-          data_type: 'TEXT',
-          nullable: true,
-          primary_key: false,
-          editable: true,
-          edit_reason: null
-        }
-      ]
-    }));
+    vi.mocked(PostgresService.getTableMetadata).mockImplementation(
+      async (schema: string, table: string) => ({
+        schema_name: schema,
+        table_name: table,
+        primary_key: ['symbol'],
+        can_edit: true,
+        edit_reason: null,
+        columns: [
+          {
+            name: 'symbol',
+            data_type: 'TEXT',
+            nullable: false,
+            primary_key: true,
+            editable: true,
+            edit_reason: null
+          },
+          {
+            name: 'company_name',
+            data_type: 'TEXT',
+            nullable: true,
+            primary_key: false,
+            editable: true,
+            edit_reason: null
+          }
+        ]
+      })
+    );
     vi.mocked(PostgresService.queryTable).mockResolvedValue([
       { symbol: 'AAPL', company_name: 'Apple' }
     ]);
@@ -153,28 +155,30 @@ describe('PostgresExplorerPage', () => {
   });
 
   it('does not load metadata for the previously selected table after a schema change', async () => {
-    vi.mocked(PostgresService.getTableMetadata).mockImplementation(async (schema: string, table: string) => {
-      if (schema === 'gold' && table === 'symbols') {
-        throw new Error('stale metadata request');
+    vi.mocked(PostgresService.getTableMetadata).mockImplementation(
+      async (schema: string, table: string) => {
+        if (schema === 'gold' && table === 'symbols') {
+          throw new Error('stale metadata request');
+        }
+        return {
+          schema_name: schema,
+          table_name: table,
+          primary_key: ['symbol'],
+          can_edit: true,
+          edit_reason: null,
+          columns: [
+            {
+              name: 'symbol',
+              data_type: 'TEXT',
+              nullable: false,
+              primary_key: true,
+              editable: true,
+              edit_reason: null
+            }
+          ]
+        };
       }
-      return {
-        schema_name: schema,
-        table_name: table,
-        primary_key: ['symbol'],
-        can_edit: true,
-        edit_reason: null,
-        columns: [
-          {
-            name: 'symbol',
-            data_type: 'TEXT',
-            nullable: false,
-            primary_key: true,
-            editable: true,
-            edit_reason: null
-          }
-        ]
-      };
-    });
+    );
 
     renderWithProviders(<PostgresExplorerPage />);
 

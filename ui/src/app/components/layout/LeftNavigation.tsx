@@ -279,7 +279,6 @@ export function LeftNavigation() {
           </div>
         </div>
       )}
-
     </div>
   );
 }

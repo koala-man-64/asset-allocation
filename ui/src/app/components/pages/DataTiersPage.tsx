@@ -7,9 +7,7 @@ export function DataTiersPage() {
       <div className="page-header">
         <p className="page-kicker">Data Platform</p>
         <h1 className="page-title">Data Tiers</h1>
-        <p className="page-subtitle">
-          Canonical medallion-layer inventory and freshness posture.
-        </p>
+        <p className="page-subtitle">Canonical medallion-layer inventory and freshness posture.</p>
       </div>
       <Card className="mcm-panel">
         <CardHeader>

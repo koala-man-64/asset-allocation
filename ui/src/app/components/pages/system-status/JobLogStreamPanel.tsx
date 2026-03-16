@@ -2,13 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ExternalLink, Loader2, ScrollText } from 'lucide-react';
 
 import { Button } from '@/app/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '@/app/components/ui/card';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/app/components/ui/select';
 import {
   Table,
@@ -16,7 +22,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow,
+  TableRow
 } from '@/app/components/ui/table';
 import type { JobLogsResponse } from '@/services/apiService';
 import { DataService } from '@/services/DataService';
@@ -25,7 +31,7 @@ import {
   buildJobLogTopic,
   requestRealtimeSubscription,
   requestRealtimeUnsubscription,
-  type ConsoleLogStreamLine,
+  type ConsoleLogStreamLine
 } from '@/services/realtimeBus';
 import {
   formatTimeAgo,
@@ -33,7 +39,7 @@ import {
   getStatusBadge,
   getStatusIcon,
   normalizeAzurePortalUrl,
-  normalizeJobStatus,
+  normalizeJobStatus
 } from './SystemStatusHelpers';
 import { getLogStreamFeedback } from './logStreamFeedback';
 import { formatSystemStatusText } from './systemStatusText';
@@ -70,7 +76,7 @@ function sortJobsForDisplay(jobs: JobLogStreamTarget[]): JobLogStreamTarget[] {
   return [...jobs].sort((left, right) => {
     const labelComparison = left.label.localeCompare(right.label, undefined, {
       numeric: true,
-      sensitivity: 'base',
+      sensitivity: 'base'
     });
     if (labelComparison !== 0) {
       return labelComparison;
@@ -78,7 +84,7 @@ function sortJobsForDisplay(jobs: JobLogStreamTarget[]): JobLogStreamTarget[] {
 
     return left.name.localeCompare(right.name, undefined, {
       numeric: true,
-      sensitivity: 'base',
+      sensitivity: 'base'
     });
   });
 }
@@ -107,7 +113,7 @@ function normalizeLogLine(
     timestamp,
     stream_s,
     message,
-    executionName,
+    executionName
   };
 }
 
@@ -149,7 +155,7 @@ function extractJobLogLines(response: JobLogsResponse): ConsoleTailLine[] {
         normalizeLogLine({
           message: String(line || ''),
           executionName: run?.executionName,
-          timestamp: run?.startTime ?? null,
+          timestamp: run?.startTime ?? null
         })
       )
       .filter((line): line is ConsoleTailLine => line !== null);
@@ -161,8 +167,7 @@ function extractJobLogLines(response: JobLogsResponse): ConsoleTailLine[] {
 function extractLatestExecutionName(response: JobLogsResponse): string | null {
   const runs = Array.isArray(response?.runs) ? response.runs : [];
   for (const run of runs) {
-    const executionName =
-      typeof run?.executionName === 'string' ? run.executionName.trim() : '';
+    const executionName = typeof run?.executionName === 'string' ? run.executionName.trim() : '';
     if (executionName) {
       return executionName;
     }
@@ -195,11 +200,14 @@ function formatConsoleTimestamp(timestamp?: string | null): string | null {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
+    hour12: false
   }).format(new Date(parsed));
 }
 
-function isNearBottom(element: HTMLElement, thresholdPx = LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX): boolean {
+function isNearBottom(
+  element: HTMLElement,
+  thresholdPx = LOG_AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+): boolean {
   const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
   return remaining <= thresholdPx;
 }
@@ -210,7 +218,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
   const [logState, setLogState] = useState<LogState>({
     lines: [],
     loading: false,
-    error: null,
+    error: null
   });
   const requestControllerRef = useRef<AbortController | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
@@ -272,7 +280,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
         setLogState({
           lines: extractJobLogLines(response),
           loading: false,
-          error: null,
+          error: null
         });
       })
       .catch((error: unknown) => {
@@ -283,7 +291,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
         setLogState({
           lines: [],
           loading: false,
-          error: formatSystemStatusText(error),
+          error: formatSystemStatusText(error)
         });
       });
 
@@ -322,7 +330,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
       setLogState((current) => ({
         lines: mergeLogLines(current.lines, incoming),
         loading: false,
-        error: null,
+        error: null
       }));
     });
   }, [selectedJobTopic]);
@@ -411,7 +419,9 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
 
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-md border bg-muted/20 p-3">
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Status
+              </div>
               <div className="mt-2 flex items-center gap-2 text-sm">
                 {getStatusIcon(status)}
                 {getStatusBadge(status)}

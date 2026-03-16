@@ -254,9 +254,15 @@ describe('SymbolPurgeByCriteriaPage', () => {
     vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
       makePreviewSucceededOperation('preview-default')
     );
-    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchSucceededOperation('op-default'));
-    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-default'));
-    vi.mocked(DataService.getPurgeBlacklistSymbols).mockResolvedValue(makeBlacklistSymbolsResponse());
+    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(
+      makeBatchSucceededOperation('op-default')
+    );
+    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(
+      makeBatchSucceededOperation('op-default')
+    );
+    vi.mocked(DataService.getPurgeBlacklistSymbols).mockResolvedValue(
+      makeBlacklistSymbolsResponse()
+    );
 
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -339,7 +345,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
     });
 
     expect(
-      screen.getByText('Bronze-wide criteria are approximated from the silver preview layer. Silver/gold is recommended.')
+      screen.getByText(
+        'Bronze-wide criteria are approximated from the silver preview layer. Silver/gold is recommended.'
+      )
     ).toBeInTheDocument();
 
     await previewCandidates();
@@ -349,7 +357,12 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
   it('supports clear/invert/copy selected controls', async () => {
     const rows: PurgeCandidateRow[] = [
-      { symbol: 'BBB', matchedValue: 0.98, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' },
+      {
+        symbol: 'BBB',
+        matchedValue: 0.98,
+        rowsContributing: 1,
+        latestAsOf: '2026-02-12T18:00:00Z'
+      },
       { symbol: 'AAA', matchedValue: 0.99, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' }
     ];
     vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
@@ -396,7 +409,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
     await previewCandidates();
 
     const runButton = screen.getByRole('button', { name: /run purge for selected symbols/i });
-    const confirmCheckbox = screen.getByRole('checkbox', { name: /i understand this is destructive/i });
+    const confirmCheckbox = screen.getByRole('checkbox', {
+      name: /i understand this is destructive/i
+    });
     const confirmInput = screen.getByPlaceholderText('PURGE');
 
     fireEvent.click(confirmCheckbox);
@@ -417,7 +432,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
       makePreviewSucceededOperation('preview-run', makeCandidateResponse({}, rows))
     );
     vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-123'));
-    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-123', rows));
+    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(
+      makeBatchSucceededOperation('op-123', rows)
+    );
 
     renderWithProviders(<SymbolPurgeByCriteriaPage />);
     await waitForColumns();
@@ -460,7 +477,12 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
   it('loads blacklist symbols and runs full symbol purge in one action', async () => {
     const rows: PurgeCandidateRow[] = [
-      { symbol: 'BBB', matchedValue: 0.98, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' },
+      {
+        symbol: 'BBB',
+        matchedValue: 0.98,
+        rowsContributing: 1,
+        latestAsOf: '2026-02-12T18:00:00Z'
+      },
       { symbol: 'AAA', matchedValue: 0.99, rowsContributing: 1, latestAsOf: '2026-02-12T18:00:00Z' }
     ];
     vi.mocked(DataService.getPurgeBlacklistSymbols).mockResolvedValue(
@@ -469,8 +491,12 @@ describe('SymbolPurgeByCriteriaPage', () => {
         symbols: ['BBB', 'AAA', 'BBB']
       })
     );
-    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-blacklist'));
-    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(makeBatchSucceededOperation('op-blacklist', rows));
+    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(
+      makeBatchRunningOperation('op-blacklist')
+    );
+    vi.mocked(DataService.getPurgeOperation).mockResolvedValue(
+      makeBatchSucceededOperation('op-blacklist', rows)
+    );
 
     renderWithProviders(<SymbolPurgeByCriteriaPage />);
     await waitForColumns();
@@ -497,7 +523,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
     vi.mocked(DataService.createPurgeCandidatesOperation).mockResolvedValue(
       makePreviewSucceededOperation('preview-live', makeCandidateResponse({}, rows))
     );
-    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(makeBatchRunningOperation('op-live'));
+    vi.mocked(DataService.purgeSymbolsBatch).mockResolvedValue(
+      makeBatchRunningOperation('op-live')
+    );
     vi.mocked(DataService.getPurgeOperation)
       .mockResolvedValueOnce(makeBatchRunningOperationWithProgress('op-live', rows))
       .mockResolvedValueOnce(makeBatchSucceededOperation('op-live', rows));
@@ -540,7 +568,9 @@ describe('SymbolPurgeByCriteriaPage', () => {
 
     renderWithProviders(<SymbolPurgeByCriteriaPage />);
 
-    expect(await screen.findByText('Columns are not cached for this layer/domain yet.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Columns are not cached for this layer/domain yet.')
+    ).toBeInTheDocument();
     const retrieveButton = screen.getByRole('button', { name: /retrieve columns/i });
     fireEvent.click(retrieveButton);
 

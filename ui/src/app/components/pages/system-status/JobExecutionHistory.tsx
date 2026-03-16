@@ -84,14 +84,18 @@ export function JobExecutionHistory({ recentJobs }: JobExecutionHistoryProps) {
                       <div className="font-medium">{job.jobName}</div>
                       {(() => {
                         const jobName = String(job.jobName || '').trim();
-                        const isRunning = String(job.status || '').trim().toLowerCase() === 'running';
+                        const isRunning =
+                          String(job.status || '')
+                            .trim()
+                            .toLowerCase() === 'running';
                         const isActioning =
                           Boolean(jobName) &&
                           (Boolean(triggeringJob) || Boolean(jobControl)) &&
                           (triggeringJob === jobName ||
                             (jobControl?.jobName === jobName &&
                               (jobControl?.action === 'suspend' || jobControl?.action === 'stop')));
-                        const isDisabled = !jobName || Boolean(triggeringJob) || Boolean(jobControl);
+                        const isDisabled =
+                          !jobName || Boolean(triggeringJob) || Boolean(jobControl);
 
                         return (
                           <Tooltip>

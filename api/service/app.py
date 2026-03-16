@@ -6,17 +6,30 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from api.endpoints import alpha_vantage, backtests, data, massive, postgres, rankings, regimes, strategies, system, universes
+from api.endpoints import (
+    alpha_vantage,
+    backtests,
+    data,
+    massive,
+    postgres,
+    rankings,
+    realtime,
+    regimes,
+    strategies,
+    system,
+    universes,
+)
 from api.service.auth import AuthManager
 from api.service.alpha_vantage_gateway import AlphaVantageGateway
 from api.service.log_streaming import LogStreamManager
 from api.service.massive_gateway import MassiveGateway
+from api.service.realtime_tickets import WebSocketTicketStore
 from api.service.settings import ServiceSettings
 from api.service.realtime import manager as realtime_manager
 from monitoring.ttl_cache import TtlCache
@@ -156,6 +169,7 @@ def create_app() -> FastAPI:
         app.state.alpha_vantage_gateway = AlphaVantageGateway()
         app.state.massive_gateway = MassiveGateway()
         app.state.log_stream_manager = log_stream_manager
+        app.state.websocket_ticket_store = WebSocketTicketStore(ttl_seconds=60)
 
         workers_enabled = _background_workers_enabled()
         logger.info(
@@ -408,6 +422,7 @@ def create_app() -> FastAPI:
         app.include_router(rankings.router, prefix=f"{api_prefix}/rankings", tags=["Rankings"])
         app.include_router(regimes.router, prefix=f"{api_prefix}/regimes", tags=["Regimes"])
         app.include_router(backtests.router, prefix=f"{api_prefix}/backtests", tags=["Backtests"])
+        app.include_router(realtime.router, prefix=api_prefix, tags=["Realtime"])
         app.include_router(
             alpha_vantage.router,
             prefix=f"{api_prefix}/providers/alpha-vantage",
@@ -418,44 +433,6 @@ def create_app() -> FastAPI:
             prefix=f"{api_prefix}/providers/massive",
             tags=["Massive"],
         )
-
-    async def websocket_endpoint(websocket: WebSocket):
-        await realtime_manager.connect(websocket)
-        try:
-            while True:
-                # Receive generic text (ping/pong) or JSON (subscribe/unsubscribe)
-                data_str = await websocket.receive_text()
-
-                # Health Check Protocol
-                if data_str == "ping":
-                    await websocket.send_text("pong")
-                    continue
-
-                # Command Protocol
-                try:
-                    msg = json.loads(data_str)
-                    action = msg.get("action")
-                    topics = msg.get("topics", [])
-
-                    if not isinstance(topics, list):
-                        continue
-
-                    if action == "subscribe":
-                        await realtime_manager.subscribe(websocket, topics)
-                        await log_stream_manager.ensure_streams(topics)
-                    elif action == "unsubscribe":
-                        await realtime_manager.unsubscribe(websocket, topics)
-                        await log_stream_manager.prune_unused_streams(topics)
-
-                except json.JSONDecodeError:
-                    pass  # Ignore non-JSON messages (unless it was ping)
-
-        except WebSocketDisconnect:
-            realtime_manager.disconnect(websocket)
-            await log_stream_manager.prune_unused_streams()
-
-    for api_prefix in api_prefixes:
-        app.add_api_websocket_route(f"{api_prefix}/ws/updates", websocket_endpoint)
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:

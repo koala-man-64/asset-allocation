@@ -55,11 +55,7 @@ interface StatusOverviewProps {
   recentJobs: JobRun[];
 }
 
-export function StatusOverview({
-  overall,
-  dataLayers,
-  recentJobs
-}: StatusOverviewProps) {
+export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOverviewProps) {
   const sysConfig = getStatusConfig(overall);
   const apiAnim =
     sysConfig.animation === 'spin'
@@ -332,7 +328,9 @@ export function StatusOverview({
                 </TableHead>
                 {dataLayers.map((layer) => {
                   const metric = medallionIndex.get(layer.name);
-                  const layerUpdatedAgo = layer.lastUpdated ? formatTimeAgo(layer.lastUpdated) : '--';
+                  const layerUpdatedAgo = layer.lastUpdated
+                    ? formatTimeAgo(layer.lastUpdated)
+                    : '--';
                   const containerConfig = metric?.containerConfig ?? getStatusConfig(layer.status);
                   const containerLabel =
                     metric?.containerLabel ?? String(layer.status || '').toUpperCase();
@@ -369,9 +367,12 @@ export function StatusOverview({
                               {jobLabel}
                             </span>
                           </div>
-                          <div className={`${StatusTypos.MONO} mt-1 text-[10px] text-mcm-walnut/60`}>
+                          <div
+                            className={`${StatusTypos.MONO} mt-1 text-[10px] text-mcm-walnut/60`}
+                          >
                             data {String(layer.status || 'unknown').toUpperCase()} • jobs{' '}
-                            {String(jobStatusKey || 'pending').toUpperCase()} • updated {layerUpdatedAgo}
+                            {String(jobStatusKey || 'pending').toUpperCase()} • updated{' '}
+                            {layerUpdatedAgo}
                           </div>
                         </div>
                         <DropdownMenu>
@@ -387,7 +388,9 @@ export function StatusOverview({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="min-w-[200px]">
-                            <DropdownMenuLabel className="text-xs">{layer.name} tier</DropdownMenuLabel>
+                            <DropdownMenuLabel className="text-xs">
+                              {layer.name} tier
+                            </DropdownMenuLabel>
                             <DropdownMenuItem
                               disabled={isLayerLoading}
                               onSelect={() => void suspendLayerJobs(layer, true)}
@@ -512,7 +515,9 @@ export function StatusOverview({
                                       >
                                         data {dataLabel}
                                       </span>
-                                      <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/60`}>
+                                      <span
+                                        className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/60`}
+                                      >
                                         {updatedAgo}
                                       </span>
                                     </div>
@@ -522,7 +527,9 @@ export function StatusOverview({
                                       >
                                         jobs {jobLabel}
                                       </span>
-                                      <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
+                                      <span
+                                        className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}
+                                      >
                                         {jobName ? 'job configured' : 'job n/a'}
                                       </span>
                                     </div>
@@ -530,7 +537,9 @@ export function StatusOverview({
                                 );
                               })()
                             ) : (
-                              <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}>
+                              <span
+                                className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}
+                              >
                                 —
                               </span>
                             )}
@@ -538,11 +547,15 @@ export function StatusOverview({
 
                           <TableCell className={`${matrixCell} text-center`}>
                             {domain ? (
-                              <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}>
+                              <span
+                                className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/55`}
+                              >
                                 Controls moved to Domain Layer Coverage
                               </span>
                             ) : (
-                              <span className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}>
+                              <span
+                                className={`${StatusTypos.MONO} text-[10px] text-mcm-walnut/30`}
+                              >
                                 —
                               </span>
                             )}

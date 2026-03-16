@@ -546,10 +546,7 @@ export function DomainLayerComparisonPanel({
           '';
         const jobKey = normalizeAzureJobName(jobName);
         const run = jobKey ? jobIndex.get(jobKey) : null;
-        const jobStatusKey =
-          !jobName || !run
-            ? 'pending'
-            : normalizeJobStatus(run.status);
+        const jobStatusKey = !jobName || !run ? 'pending' : normalizeJobStatus(run.status);
 
         const isCritical =
           ['error', 'failed', 'critical'].includes(dataStatusKey) ||
@@ -1495,11 +1492,16 @@ export function DomainLayerComparisonPanel({
                       const dataConfig = getStatusConfig(dataStatusKey);
                       const dataLabel = toDataStatusLabel(dataStatusKey);
 
-                      const jobStatusKey = !jobName || !run ? 'pending' : normalizeJobStatus(run.status);
+                      const jobStatusKey =
+                        !jobName || !run ? 'pending' : normalizeJobStatus(run.status);
                       const jobConfig = getStatusConfig(jobStatusKey);
-                      const jobLabel = !jobName ? 'N/A' : !run ? 'NO RUN' : toJobStatusLabel(jobStatusKey);
-                      const jobStatusCode = String(run?.statusCode || run?.status || '')
-                        .trim() || null;
+                      const jobLabel = !jobName
+                        ? 'N/A'
+                        : !run
+                          ? 'NO RUN'
+                          : toJobStatusLabel(jobStatusKey);
+                      const jobStatusCode =
+                        String(run?.statusCode || run?.status || '').trim() || null;
 
                       const actionJobName = String(run?.jobName || jobName).trim();
                       const runningState = jobKey ? jobStates?.[jobKey] : undefined;
@@ -1918,9 +1920,7 @@ export function DomainLayerComparisonPanel({
                                             key={`finance-detail-${row.key}-${model.layerColumn.key}-${item.key}`}
                                             className="flex items-center justify-between"
                                           >
-                                            <span className="text-mcm-walnut/80">
-                                              {item.label}
-                                            </span>
+                                            <span className="text-mcm-walnut/80">{item.label}</span>
                                             <span
                                               className={`${StatusTypos.MONO} tabular-nums text-mcm-walnut/95`}
                                             >
@@ -1936,9 +1936,7 @@ export function DomainLayerComparisonPanel({
                                         size="sm"
                                         variant="outline"
                                         className="h-7 px-2 text-[11px]"
-                                        disabled={
-                                          !model.actionJobName || model.isJobControlBlocked
-                                        }
+                                        disabled={!model.actionJobName || model.isJobControlBlocked}
                                         onClick={() => {
                                           if (!model.actionJobName) return;
                                           if (model.isRunning) {

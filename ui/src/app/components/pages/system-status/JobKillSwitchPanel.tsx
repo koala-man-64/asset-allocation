@@ -101,10 +101,7 @@ function KillSwitchControl({
   const [optimisticChecked, setOptimisticChecked] = useState<boolean | null>(null);
 
   const jobNames = useMemo(
-    () =>
-      jobs
-        .map((job) => String(job.name || '').trim())
-        .filter((name) => Boolean(name)),
+    () => jobs.map((job) => String(job.name || '').trim()).filter((name) => Boolean(name)),
     [jobs]
   );
 
@@ -124,7 +121,9 @@ function KillSwitchControl({
 
   const inferredChecked = jobNames.length > 0 && suspendedCount === jobNames.length;
   const checked = optimisticChecked ?? inferredChecked;
-  const statusText = checked ? 'Kill switch is ON (jobs disabled)' : 'Kill switch is OFF (jobs enabled)';
+  const statusText = checked
+    ? 'Kill switch is ON (jobs disabled)'
+    : 'Kill switch is OFF (jobs enabled)';
   const inlineStatusText = checked ? 'Kill switch ON' : 'Kill switch OFF';
   const helperText =
     jobNames.length > 0
@@ -190,9 +189,7 @@ function KillSwitchControl({
     return (
       <div
         className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 px-4 py-2.5 shadow-[6px_6px_0px_0px_rgba(119,63,26,0.08)] ${
-          checked
-            ? 'border-rose-700/40 bg-rose-100/30'
-            : 'border-mcm-walnut/15 bg-mcm-cream/55'
+          checked ? 'border-rose-700/40 bg-rose-100/30' : 'border-mcm-walnut/15 bg-mcm-cream/55'
         }`}
       >
         <div className="min-w-0">
@@ -255,7 +252,8 @@ function KillSwitchControl({
         {jobNames.length === 0 ? (
           <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            Configure `SYSTEM_HEALTH_ARM_JOBS` and ensure job resources are returned by system health.
+            Configure `SYSTEM_HEALTH_ARM_JOBS` and ensure job resources are returned by system
+            health.
           </div>
         ) : null}
       </CardContent>

@@ -275,7 +275,10 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
 }
 
 export const backtestApi = {
-  async submitRun(payload: SubmitBacktestPayload, signal?: AbortSignal): Promise<RunRecordResponse> {
+  async submitRun(
+    payload: SubmitBacktestPayload,
+    signal?: AbortSignal
+  ): Promise<RunRecordResponse> {
     return requestJson<RunRecordResponse>('/backtests', {
       method: 'POST',
       body: JSON.stringify(payload),

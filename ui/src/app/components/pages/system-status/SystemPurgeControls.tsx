@@ -99,7 +99,9 @@ export function PurgeActionIcon({
         throw new Error(polledOperation.error || 'Purge failed.');
       }
       if (Date.now() - startedAt > PURGE_POLL_TIMEOUT_MS) {
-        throw new Error(`Purge is still running. Check system status for progress. operationId=${operationId}`);
+        throw new Error(
+          `Purge is still running. Check system status for progress. operationId=${operationId}`
+        );
       }
 
       const delay = PURGE_POLL_INTERVAL_MS + Math.min(attempt * 250, 2000);

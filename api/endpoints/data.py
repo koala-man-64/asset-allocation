@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional, Sequence
 
 import pandas as pd
@@ -279,7 +279,10 @@ def get_storage_usage(
         )
 
     return {
-        "generatedAt": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "generatedAt": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "scanLimit": resolved_scan_limit,
         "containers": containers,
     }

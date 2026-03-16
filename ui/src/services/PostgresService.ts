@@ -105,7 +105,9 @@ export const PostgresService = {
   },
 
   async getTableMetadata(schema: string, table: string): Promise<PostgresTableMetadata> {
-    return request<PostgresTableMetadata>(`/system/postgres/schemas/${schema}/tables/${table}/metadata`);
+    return request<PostgresTableMetadata>(
+      `/system/postgres/schemas/${schema}/tables/${table}/metadata`
+    );
   },
 
   async listGoldLookupTables(): Promise<string[]> {

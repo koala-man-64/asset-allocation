@@ -7,11 +7,12 @@ API Root
 ├── /healthz [GET] (app.healthz) - K8s Liveness Probe (Returns 200 OK) :: api/service/app.py
 ├── /readyz [GET] (app.readyz) - K8s Readiness Probe (Checks DB connectivity) :: api/service/app.py
 ├── /config.js [GET] (app.serve_runtime_config) - Serves runtime env vars to UI :: api/service/app.py <== ui/src/config.ts (implicit)
-├── /api/ws/updates [WEBSOCKET] (app.websocket_endpoint) - Real-time updates for UI :: api/service/app.py
+├── /api/ws/updates [WEBSOCKET] (realtime.websocket_updates) - Real-time updates for UI :: api/endpoints/realtime.py
 └── /api
     ├── /docs [GET] (app.swagger_ui) - Browser Swagger UI docs :: api/service/app.py
     ├── /openapi.json [GET] (app.openapi_json) - OpenAPI spec payload :: api/service/app.py
-    ├── /ws/updates [WebSocket] (app.websocket_endpoint) - Real-time updates (system health/jobs/container apps/runtime config/debug symbols) :: api/service/app.py <== ui/src/hooks/useRealtime.ts
+    ├── /realtime/ticket [POST] (realtime.issue_realtime_ticket) - Issues a single-use websocket ticket for authenticated clients :: api/endpoints/realtime.py <== ui/src/hooks/useRealtime.ts
+    ├── /ws/updates [WebSocket] (realtime.websocket_updates) - Real-time updates (system health/jobs/container apps/runtime config/debug symbols) :: api/endpoints/realtime.py <== ui/src/hooks/useRealtime.ts
     
     # System & Health (Matches ui/src/hooks/useDataQueries.ts)
     ├── /system

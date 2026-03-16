@@ -294,7 +294,9 @@ export function StockDetailPage() {
       {!loading && stats.length === 0 && !error && (
         <div className="mcm-panel flex h-64 flex-col items-center justify-center border-2 border-dashed border-border/50 bg-muted/20">
           <TrendingUp className="mb-4 h-12 w-12 text-muted-foreground/60" />
-          <p className="font-medium text-muted-foreground">Enter a symbol to view live market data</p>
+          <p className="font-medium text-muted-foreground">
+            Enter a symbol to view live market data
+          </p>
         </div>
       )}
     </div>

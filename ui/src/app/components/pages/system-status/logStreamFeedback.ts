@@ -7,12 +7,12 @@ export type LogStreamFeedback = {
 
 const JOB_NOT_CONFIGURED_PATTERNS = [
   /azure job log retrieval is not configured/i,
-  /log analytics is not configured for job log retrieval/i,
+  /log analytics is not configured for job log retrieval/i
 ];
 
 const CONTAINER_APP_NOT_CONFIGURED_PATTERNS = [
   /container app log retrieval is not configured/i,
-  /log analytics is not configured for container app log retrieval/i,
+  /log analytics is not configured for container app log retrieval/i
 ];
 
 function getNotConfiguredMessage(resourceType: LogStreamResourceType): string {
@@ -36,12 +36,12 @@ export function getLogStreamFeedback(
   if (patterns.some((pattern) => pattern.test(message))) {
     return {
       tone: 'info',
-      message: getNotConfiguredMessage(resourceType),
+      message: getNotConfiguredMessage(resourceType)
     };
   }
 
   return {
     tone: 'error',
-    message,
+    message
   };
 }

@@ -50,10 +50,20 @@ describe('StrategyConfigPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (rankingApi.listRankingSchemas as Mock).mockResolvedValue([
-      { name: 'quality-momentum', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
+      {
+        name: 'quality-momentum',
+        description: 'desc',
+        version: 1,
+        updated_at: '2026-03-08T00:00:00Z'
+      }
     ]);
     (universeApi.listUniverseConfigs as Mock).mockResolvedValue([
-      { name: 'large-cap-quality', description: 'desc', version: 1, updated_at: '2026-03-08T00:00:00Z' }
+      {
+        name: 'large-cap-quality',
+        description: 'desc',
+        version: 1,
+        updated_at: '2026-03-08T00:00:00Z'
+      }
     ]);
     (backtestApi.listRuns as Mock).mockResolvedValue({ runs: [], limit: 6, offset: 0 });
     (backtestApi.submitRun as Mock).mockResolvedValue({
@@ -101,9 +111,15 @@ describe('StrategyConfigPage', () => {
       expect(screen.getByText('strat-2')).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /view run configuration strat-1/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /edit run configuration strat-1/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /delete run configuration strat-1/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /view run configuration strat-1/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /edit run configuration strat-1/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /delete run configuration strat-1/i })
+    ).toBeInTheDocument();
   });
 
   it('loads strategy detail when viewing and editing an existing strategy', async () => {
@@ -172,7 +188,9 @@ describe('StrategyConfigPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Edit Run Configuration$/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /^Edit Run Configuration$/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: /^Edit Run Configuration$/i })
+      ).toBeInTheDocument();
     });
 
     expect(screen.getByDisplayValue('stop-8')).toBeInTheDocument();
@@ -264,13 +282,17 @@ describe('StrategyConfigPage', () => {
     renderWithProviders(<StrategyConfigPage />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /delete run configuration strat-1/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /delete run configuration strat-1/i })
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: /delete run configuration strat-1/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /delete run configuration/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: /delete run configuration/i })
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: /delete from postgres/i }));

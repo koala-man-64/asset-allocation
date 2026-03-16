@@ -20,7 +20,15 @@ const SERVER_CATCH_UP_STATUSES = new Set([
   'failed',
   'error'
 ]);
-const RUNNING_STATE_TOKENS = ['running', 'processing', 'inprogress', 'starting', 'queued', 'waiting', 'scheduling'];
+const RUNNING_STATE_TOKENS = [
+  'running',
+  'processing',
+  'inprogress',
+  'starting',
+  'queued',
+  'waiting',
+  'scheduling'
+];
 
 export interface SystemHealthJobOverride {
   jobName: string;
@@ -42,7 +50,12 @@ function runStartEpoch(raw?: string | null): number {
 }
 
 function toJobKey(jobName: string): string {
-  return normalizeAzureJobName(jobName) || String(jobName || '').trim().toLowerCase();
+  return (
+    normalizeAzureJobName(jobName) ||
+    String(jobName || '')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 function hasRunningState(raw?: string | null): boolean {
@@ -90,11 +103,17 @@ function latestRecentJob(recentJobs: JobRun[], jobKey: string): JobRun | undefin
   return latest;
 }
 
-function resourceForJob(resources: ResourceHealth[] | undefined, jobKey: string): ResourceHealth | undefined {
+function resourceForJob(
+  resources: ResourceHealth[] | undefined,
+  jobKey: string
+): ResourceHealth | undefined {
   return (resources || []).find((resource) => toJobKey(String(resource?.name || '')) === jobKey);
 }
 
-function jobReflectsServerState(job: JobRun | undefined, override: SystemHealthJobOverride): boolean {
+function jobReflectsServerState(
+  job: JobRun | undefined,
+  override: SystemHealthJobOverride
+): boolean {
   if (!job) return false;
   const status = String(job.status || '')
     .trim()
@@ -112,10 +131,7 @@ function resourceReflectsServerState(
   return runStartEpoch(resource.lastModifiedAt) >= runStartEpoch(override.startTime);
 }
 
-function optimisticJobRun(
-  override: SystemHealthJobOverride,
-  recentJobs: JobRun[]
-): JobRun {
+function optimisticJobRun(override: SystemHealthJobOverride, recentJobs: JobRun[]): JobRun {
   const existing = latestRecentJob(recentJobs, override.jobKey);
   return {
     jobName: override.jobName,
@@ -145,7 +161,10 @@ export function mergeSystemHealthWithJobOverrides(
   for (const override of activeOverrides) {
     const recentJob = latestRecentJob(data.recentJobs, override.jobKey);
     const resource = resourceForJob(data.resources, override.jobKey);
-    if (jobReflectsServerState(recentJob, override) || resourceReflectsServerState(resource, override)) {
+    if (
+      jobReflectsServerState(recentJob, override) ||
+      resourceReflectsServerState(resource, override)
+    ) {
       continue;
     }
     if (!pendingOverrides.has(override.jobKey)) {

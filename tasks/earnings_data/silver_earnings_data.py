@@ -1,7 +1,8 @@
-import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional
+
+import pandas as pd
 
 from core import core as mdc
 from core import config as cfg
@@ -55,6 +56,33 @@ _ALPHA26_EARNINGS_MIN_COLUMNS = [
 ]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_now_iso() -> str:
+    return _utc_now().isoformat().replace("+00:00", "Z")
+
+
+def _concat_non_empty_frames(
+    frames: list[Optional[pd.DataFrame]],
+    *,
+    columns: list[str],
+    sort: bool = False,
+) -> pd.DataFrame:
+    cleaned_frames = [
+        frame.dropna(axis="columns", how="all")
+        for frame in frames
+        if frame is not None and not frame.empty and not frame.dropna(how="all").empty
+    ]
+    cleaned_frames = [frame for frame in cleaned_frames if not frame.empty]
+    if not cleaned_frames:
+        return pd.DataFrame(columns=columns)
+    if len(cleaned_frames) == 1:
+        return cleaned_frames[0].reindex(columns=columns).copy()
+    return pd.concat(cleaned_frames, ignore_index=True, sort=sort).reindex(columns=columns)
+
+
 def _coerce_datetime_column(series: pd.Series) -> pd.Series:
     if pd.api.types.is_datetime64_any_dtype(series):
         parsed_default = pd.to_datetime(series, errors="coerce", utc=True)
@@ -92,7 +120,7 @@ def _split_earnings_bucket_rows(df_bucket: Optional[pd.DataFrame], *, ticker: st
 
 
 def _utc_today() -> pd.Timestamp:
-    return pd.Timestamp(datetime.utcnow().date())
+    return pd.Timestamp(_utc_now().date())
 
 
 def _parse_alpha26_bucket_from_blob_name(blob_name: str, *, prefix: str) -> Optional[str]:
@@ -219,7 +247,11 @@ def _dedupe_earnings_events(df: Optional[pd.DataFrame]) -> pd.DataFrame:
         scheduled.apply(lambda row: (str(row["symbol"]), str(row["_event_identity"])) not in actual_keys, axis=1)
     ].copy()
 
-    out = pd.concat([actual, scheduled], ignore_index=True, sort=False)
+    out = _concat_non_empty_frames(
+        [actual, scheduled],
+        columns=_ALPHA26_EARNINGS_MIN_COLUMNS,
+        sort=False,
+    )
     out = out.drop(columns=["_event_identity"], errors="ignore")
     return out[_ALPHA26_EARNINGS_MIN_COLUMNS].sort_values(["date", "record_type"]).reset_index(drop=True)
 
@@ -275,7 +307,13 @@ def _process_symbol_frame(
     df_history, df_other_symbols = _split_earnings_bucket_rows(existing_bucket, ticker=ticker)
     if not include_history:
         df_history = pd.DataFrame()
-    df_merged = _dedupe_earnings_events(pd.concat([df_history, out], ignore_index=True, sort=False))
+    df_merged = _dedupe_earnings_events(
+        _concat_non_empty_frames(
+            [df_history, out],
+            columns=_ALPHA26_EARNINGS_MIN_COLUMNS,
+            sort=False,
+        )
+    )
 
     df_merged, _ = apply_backfill_start_cutoff(
         df_merged,
@@ -332,7 +370,10 @@ def _process_symbol_frame(
                 df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
             parts_to_store = [frame for frame in (df_other_symbols, df_merged) if frame is not None and not frame.empty]
             if parts_to_store:
-                df_bucket_to_store = pd.concat(parts_to_store, ignore_index=True).reset_index(drop=True)
+                df_bucket_to_store = _concat_non_empty_frames(
+                    parts_to_store,
+                    columns=_ALPHA26_EARNINGS_MIN_COLUMNS,
+                ).reset_index(drop=True)
             else:
                 df_bucket_to_store = pd.DataFrame(columns=_ALPHA26_EARNINGS_MIN_COLUMNS)
             df_bucket_to_store = align_to_existing_schema(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, cloud_path)
@@ -394,7 +435,7 @@ def process_blob(
         alpha26_bucket_frames=alpha26_bucket_frames,
     )
     if status == "ok" and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
+        signature["updated_at"] = _utc_now_iso()
         watermarks[blob_name] = signature
     return status
 
@@ -424,7 +465,7 @@ def process_alpha26_bucket_blob(
 
     if df_bucket is None or df_bucket.empty:
         if signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
+            signature["updated_at"] = _utc_now_iso()
             watermarks[blob_name] = signature
         return "ok"
 
@@ -453,7 +494,7 @@ def process_alpha26_bucket_blob(
             has_failed = True
 
     if not has_failed and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
+        signature["updated_at"] = _utc_now_iso()
         watermarks[blob_name] = signature
     return "failed" if has_failed else "ok"
 
@@ -488,7 +529,10 @@ def _write_alpha26_earnings_buckets(
         bucket_path = DataPaths.get_silver_earnings_bucket_path(bucket)
         parts = bucket_frames.get(bucket, [])
         if parts:
-            df_bucket = pd.concat(parts, ignore_index=True)
+            df_bucket = _concat_non_empty_frames(
+                parts,
+                columns=_ALPHA26_EARNINGS_MIN_COLUMNS,
+            )
             if "symbol" in df_bucket.columns and "date" in df_bucket.columns:
                 df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
                 df_bucket["date"] = pd.to_datetime(df_bucket["date"], errors="coerce")

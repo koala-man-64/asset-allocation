@@ -60,7 +60,12 @@ export function DomainListViewerSheet({ target, open, onOpenChange }: DomainList
   }, [open, target?.layerKey, target?.domainKey]);
 
   const query = useQuery({
-    queryKey: ['domainLists', target?.layerKey || '', target?.domainKey || '', DEFAULT_SYMBOL_LIMIT],
+    queryKey: [
+      'domainLists',
+      target?.layerKey || '',
+      target?.domainKey || '',
+      DEFAULT_SYMBOL_LIMIT
+    ],
     queryFn: async () => {
       if (!target) throw new Error('List viewer target is required.');
       return DataService.getDomainLists(target.layerKey, target.domainKey, {
@@ -146,8 +151,8 @@ export function DomainListViewerSheet({ target, open, onOpenChange }: DomainList
 
             {file.truncated ? (
               <p className="text-[11px] text-mcm-walnut/65">
-                Showing first {formatInt(file.symbols.length)} of {formatInt(file.symbolCount)} symbols due
-                to preview limit.
+                Showing first {formatInt(file.symbols.length)} of {formatInt(file.symbolCount)}{' '}
+                symbols due to preview limit.
               </p>
             ) : null}
 
@@ -168,7 +173,9 @@ export function DomainListViewerSheet({ target, open, onOpenChange }: DomainList
                       className="flex items-center justify-between rounded-md border border-mcm-walnut/10 bg-mcm-cream/20 px-2 py-1"
                     >
                       <span className="text-[10px] text-mcm-walnut/45">{formatInt(index + 1)}</span>
-                      <span className={`${StatusTypos.MONO} text-[12px] font-semibold text-mcm-walnut`}>
+                      <span
+                        className={`${StatusTypos.MONO} text-[12px] font-semibold text-mcm-walnut`}
+                      >
                         {symbol}
                       </span>
                     </li>

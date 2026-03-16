@@ -287,9 +287,7 @@ export const DataService = {
     return apiService.getPurgeBlacklistSymbols();
   },
 
-  getPurgeCandidates(
-    payload: PurgeCandidatesRequest
-  ): Promise<PurgeCandidatesResponse> {
+  getPurgeCandidates(payload: PurgeCandidatesRequest): Promise<PurgeCandidatesResponse> {
     return apiService.getPurgeCandidates(payload);
   },
 
@@ -297,7 +295,9 @@ export const DataService = {
     return apiService.createPurgeCandidatesOperation(payload);
   },
 
-  purgeSymbolsBatch(payload: Parameters<typeof apiService.purgeSymbolsBatch>[0]): Promise<PurgeOperationResponse> {
+  purgeSymbolsBatch(
+    payload: Parameters<typeof apiService.purgeSymbolsBatch>[0]
+  ): Promise<PurgeOperationResponse> {
     return apiService.purgeSymbolsBatch(payload);
   },
 

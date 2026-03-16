@@ -97,9 +97,12 @@ async function fetchWithOptionalTimeout(
 
   if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
     timeoutController = new AbortController();
-    timeoutHandle = setTimeout(() => {
-      timeoutController?.abort();
-    }, Math.max(1, Math.floor(timeoutMs)));
+    timeoutHandle = setTimeout(
+      () => {
+        timeoutController?.abort();
+      },
+      Math.max(1, Math.floor(timeoutMs))
+    );
 
     if (init.signal) {
       if (init.signal.aborted) {
@@ -119,7 +122,7 @@ async function fetchWithOptionalTimeout(
       signal: mergedSignal ?? undefined
     });
   } catch (error) {
-    if (timeoutController?.signal.aborted && !(init.signal?.aborted)) {
+    if (timeoutController?.signal.aborted && !init.signal?.aborted) {
       throw new Error(
         `API timeout after ${Math.floor(timeoutMs || 0)}ms [requestId=${requestId}] - ${endpointLabel}`
       );
@@ -894,10 +897,7 @@ export const apiService = {
     });
   },
 
-  startContainerApp(
-    appName: string,
-    signal?: AbortSignal
-  ): Promise<ContainerAppControlResponse> {
+  startContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
     return request<ContainerAppControlResponse>(
       `/system/container-apps/${encodeURIComponent(appName)}/start`,
       {
@@ -907,10 +907,7 @@ export const apiService = {
     );
   },
 
-  stopContainerApp(
-    appName: string,
-    signal?: AbortSignal
-  ): Promise<ContainerAppControlResponse> {
+  stopContainerApp(appName: string, signal?: AbortSignal): Promise<ContainerAppControlResponse> {
     return request<ContainerAppControlResponse>(
       `/system/container-apps/${encodeURIComponent(appName)}/stop`,
       {
@@ -967,13 +964,16 @@ export const apiService = {
     const normalizedDomain = String(domain || '').trim();
     if (layer === 'gold' && normalizedDomain.startsWith('regime/')) {
       const dataset = normalizedDomain.slice('regime/'.length);
-      return request<Record<string, unknown>[]>(`/data/gold/regime/${encodeURIComponent(dataset)}`, {
-        params: {
-          limit,
-          date_sort: options?.sortByDate
-        },
-        signal: resolvedSignal
-      });
+      return request<Record<string, unknown>[]>(
+        `/data/gold/regime/${encodeURIComponent(dataset)}`,
+        {
+          params: {
+            limit,
+            date_sort: options?.sortByDate
+          },
+          signal: resolvedSignal
+        }
+      );
     }
     const endpoint = `/data/${layer}/${normalizedDomain}`;
     return request<Record<string, unknown>[]>(endpoint, {
@@ -993,8 +993,7 @@ export const apiService = {
     signal?: AbortSignal
   ): Promise<ValidationReport> {
     const ticker = typeof tickerOrSignal === 'string' ? tickerOrSignal : undefined;
-    const resolvedSignal =
-      tickerOrSignal instanceof AbortSignal ? tickerOrSignal : signal;
+    const resolvedSignal = tickerOrSignal instanceof AbortSignal ? tickerOrSignal : signal;
     return request<ValidationReport>(`/data/quality/${layer}/${domain}/validation`, {
       params: { ticker },
       signal: resolvedSignal
@@ -1008,7 +1007,11 @@ export const apiService = {
   },
 
   getAdlsTree(
-    params: { layer: 'bronze' | 'silver' | 'gold' | 'platinum'; path?: string; maxEntries?: number },
+    params: {
+      layer: 'bronze' | 'silver' | 'gold' | 'platinum';
+      path?: string;
+      maxEntries?: number;
+    },
     signal?: AbortSignal
   ): Promise<AdlsTreeResponse> {
     return request<AdlsTreeResponse>('/data/adls/tree', {
@@ -1056,15 +1059,18 @@ export const apiService = {
     const normalizedDomain = String(domain || '').trim();
     if (layer === 'gold' && normalizedDomain.startsWith('regime/')) {
       const dataset = normalizedDomain.slice('regime/'.length);
-      return request<DataProfilingResponse>(`/data/gold/regime/${encodeURIComponent(dataset)}/profile`, {
-        params: {
-          column,
-          bins: params.bins,
-          sampleRows: params.sampleRows,
-          topValues: params.topValues
-        },
-        signal
-      });
+      return request<DataProfilingResponse>(
+        `/data/gold/regime/${encodeURIComponent(dataset)}/profile`,
+        {
+          params: {
+            column,
+            bins: params.bins,
+            sampleRows: params.sampleRows,
+            topValues: params.topValues
+          },
+          signal
+        }
+      );
     }
     return request<DataProfilingResponse>(`/data/${layer}/profile`, {
       params: {

@@ -7,8 +7,8 @@ import { PostgresService } from '@/services/PostgresService';
 vi.mock('@/services/PostgresService', () => ({
   PostgresService: {
     listGoldLookupTables: vi.fn(),
-    listGoldColumnLookup: vi.fn(),
-  },
+    listGoldColumnLookup: vi.fn()
+  }
 }));
 
 describe('StrategyDataCatalogPage', () => {
@@ -16,7 +16,7 @@ describe('StrategyDataCatalogPage', () => {
     vi.clearAllMocks();
     vi.mocked(PostgresService.listGoldLookupTables).mockResolvedValue([
       'market_data',
-      'finance_data',
+      'finance_data'
     ]);
     vi.mocked(PostgresService.listGoldColumnLookup).mockResolvedValue({
       rows: [
@@ -32,12 +32,12 @@ describe('StrategyDataCatalogPage', () => {
           calculation_dependencies: ['sma_50d', 'sma_200d'],
           source_job: 'tasks.market_data.gold_market_data',
           status: 'reviewed',
-          updated_at: '2026-03-15T00:00:00+00:00',
-        },
+          updated_at: '2026-03-15T00:00:00+00:00'
+        }
       ],
       limit: 5000,
       offset: 0,
-      has_more: false,
+      has_more: false
     });
   });
 

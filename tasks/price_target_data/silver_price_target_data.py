@@ -1,8 +1,9 @@
-import pandas as pd
-import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional
+
+import numpy as np
+import pandas as pd
 
 from core import core as mdc
 from core import delta_core
@@ -53,6 +54,33 @@ _ALPHA26_PRICE_TARGET_MIN_COLUMNS = [
     "tp_cnt_est_rev_up",
     "tp_cnt_est_rev_down",
 ]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_now_iso() -> str:
+    return _utc_now().isoformat().replace("+00:00", "Z")
+
+
+def _concat_non_empty_frames(
+    frames: list[Optional[pd.DataFrame]],
+    *,
+    columns: list[str],
+    sort: bool = False,
+) -> pd.DataFrame:
+    cleaned_frames = [
+        frame.dropna(axis="columns", how="all")
+        for frame in frames
+        if frame is not None and not frame.empty and not frame.dropna(how="all").empty
+    ]
+    cleaned_frames = [frame for frame in cleaned_frames if not frame.empty]
+    if not cleaned_frames:
+        return pd.DataFrame(columns=columns)
+    if len(cleaned_frames) == 1:
+        return cleaned_frames[0].reindex(columns=columns).copy()
+    return pd.concat(cleaned_frames, ignore_index=True, sort=sort).reindex(columns=columns)
 
 
 def _split_price_target_bucket_rows(
@@ -276,7 +304,10 @@ def _process_symbol_frame(
     else:
         if "symbol" in df_other_symbols.columns:
             df_other_symbols["symbol"] = df_other_symbols["symbol"].astype("string").str.upper()
-        df_bucket_to_store = pd.concat([df_other_symbols, df_merged], ignore_index=True).reset_index(drop=True)
+        df_bucket_to_store = _concat_non_empty_frames(
+            [df_other_symbols, df_merged],
+            columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS,
+        ).reset_index(drop=True)
         delta_core.store_delta(df_bucket_to_store, cfg.AZURE_CONTAINER_SILVER, silver_path, mode="overwrite")
         if backfill_start is not None:
             delta_core.vacuum_delta_table(
@@ -333,7 +364,7 @@ def process_blob(
             alpha26_bucket_frames=alpha26_bucket_frames,
         )
         if status == "ok" and signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
+            signature["updated_at"] = _utc_now_iso()
             watermarks[blob_name] = signature
         return status
     except Exception as exc:
@@ -366,7 +397,7 @@ def process_alpha26_bucket_blob(
 
     if df_bucket is None or df_bucket.empty:
         if signature:
-            signature["updated_at"] = datetime.utcnow().isoformat()
+            signature["updated_at"] = _utc_now_iso()
             watermarks[blob_name] = signature
         return "ok"
 
@@ -395,7 +426,7 @@ def process_alpha26_bucket_blob(
             has_failed = True
 
     if not has_failed and signature:
-        signature["updated_at"] = datetime.utcnow().isoformat()
+        signature["updated_at"] = _utc_now_iso()
         watermarks[blob_name] = signature
     return "failed" if has_failed else "ok"
 
@@ -433,7 +464,10 @@ def _write_alpha26_price_target_buckets(
         bucket_path = DataPaths.get_silver_price_target_bucket_path(bucket)
         parts = bucket_frames.get(bucket, [])
         if parts:
-            df_bucket = pd.concat(parts, ignore_index=True)
+            df_bucket = _concat_non_empty_frames(
+                parts,
+                columns=_ALPHA26_PRICE_TARGET_MIN_COLUMNS,
+            )
             if "symbol" in df_bucket.columns and "obs_date" in df_bucket.columns:
                 df_bucket["symbol"] = df_bucket["symbol"].astype(str).str.upper()
                 df_bucket["obs_date"] = pd.to_datetime(df_bucket["obs_date"], errors="coerce")

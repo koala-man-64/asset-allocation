@@ -473,7 +473,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('cell-refresh-icon-summary-market-bronze')).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('cell-refresh-icon-summary-market-bronze')
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -502,7 +504,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       />
     );
 
-    const refreshButton = await screen.findByRole('button', { name: 'Refresh domain layer coverage' });
+    const refreshButton = await screen.findByRole('button', {
+      name: 'Refresh domain layer coverage'
+    });
     await user.click(refreshButton);
 
     await waitFor(() => {
@@ -548,7 +552,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       />
     );
 
-    const layerTriggerButton = await screen.findByRole('button', { name: 'Trigger Bronze layer jobs' });
+    const layerTriggerButton = await screen.findByRole('button', {
+      name: 'Trigger Bronze layer jobs'
+    });
     await waitFor(() => {
       expect(layerTriggerButton).toBeEnabled();
     });

@@ -26,10 +26,7 @@ const JobLogStreamPanel = lazy(() =>
   import('./system-status/JobLogStreamPanel').then((m) => ({ default: m.JobLogStreamPanel }))
 );
 
-import {
-  buildLatestJobRunIndex,
-  normalizeAzureJobName,
-} from './system-status/SystemStatusHelpers';
+import { buildLatestJobRunIndex, normalizeAzureJobName } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
 const JOB_STATUS_POLL_INTERVAL_MS = 10_000;
@@ -155,7 +152,10 @@ export function SystemStatusPage() {
   );
 
   const jobLogStreamJobs = useMemo<JobLogStreamTarget[]>(() => {
-    type MutableJobTarget = Omit<JobLogStreamTarget, 'runningState' | 'recentStatus' | 'startTime'> & {
+    type MutableJobTarget = Omit<
+      JobLogStreamTarget,
+      'runningState' | 'recentStatus' | 'startTime'
+    > & {
       sortLayerName: string;
     };
     const items = new Map<string, MutableJobTarget>();
@@ -173,7 +173,7 @@ export function SystemStatusPage() {
           layerName: layer.name,
           domainName: domain.name,
           jobUrl: domain.jobUrl || null,
-          sortLayerName: layer.name,
+          sortLayerName: layer.name
         });
       }
     }
@@ -190,7 +190,7 @@ export function SystemStatusPage() {
         layerName: null,
         domainName: null,
         jobUrl: null,
-        sortLayerName: '',
+        sortLayerName: ''
       });
     }
 
@@ -205,7 +205,7 @@ export function SystemStatusPage() {
         layerName: null,
         domainName: null,
         jobUrl: null,
-        sortLayerName: '',
+        sortLayerName: ''
       });
     }
 
@@ -216,7 +216,7 @@ export function SystemStatusPage() {
           ...item,
           runningState: jobStates[key] || null,
           recentStatus: latestRun?.status || null,
-          startTime: latestRun?.startTime || null,
+          startTime: latestRun?.startTime || null
         };
       })
       .sort((left, right) => {

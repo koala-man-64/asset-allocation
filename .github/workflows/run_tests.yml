@@ -40,7 +40,7 @@ jobs:
           -v /app/node_modules \
           -w /app \
           node:20-bookworm-slim@sha256:6c51af7dc83f4708aaac35991306bca8f478351cfd2bda35750a62d7efcf05bb \
-          bash -lc 'set -euo pipefail; corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && (pnpm format:check || echo "::warning::UI format check failed (non-blocking)") && (pnpm lint || echo "::warning::UI lint failed (non-blocking)") && pnpm exec vitest run --coverage && pnpm build'
+          bash -lc 'set -euo pipefail; corepack enable && pnpm config set store-dir /tmp/pnpm-store && pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm exec vitest run --coverage && pnpm build'
 
     - name: Set up Python
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0

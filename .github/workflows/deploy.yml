@@ -53,8 +53,8 @@ env:
   API_IMAGE_NAME: asset-allocation-api
   UI_APP_NAME: asset-allocation-ui
   UI_IMAGE_NAME: asset-allocation-ui
-  # Controls deploy/app_api.yaml ingress.external (defaults to "true").
-  INGRESS_EXTERNAL: ${{ vars.API_INGRESS_EXTERNAL || 'true' }}
+  # Controls deploy/app_api.yaml ingress.external (defaults to internal-only).
+  INGRESS_EXTERNAL: ${{ vars.API_INGRESS_EXTERNAL || 'false' }}
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -155,6 +155,7 @@ jobs:
           API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
+          INGRESS_EXTERNAL: ${{ env.INGRESS_EXTERNAL }}
           LOG_LEVEL: ${{ env.LOG_LEVEL }}
           UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
@@ -173,141 +174,7 @@ jobs:
           REALTIME_LOG_STREAM_BATCH_SIZE: ${{ env.REALTIME_LOG_STREAM_BATCH_SIZE }}
         run: |
           set -euo pipefail
-
-          require_value() {
-            local name="$1"
-            local value="${!name:-}"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-            if [ -z "$value" ]; then
-              echo "::error::Missing required GitHub Actions value: $name"
-              exit 1
-            fi
-          }
-
-          require_value AZURE_CLIENT_ID
-          require_value AZURE_TENANT_ID
-          require_value AZURE_SUBSCRIPTION_ID
-          require_value AZURE_STORAGE_CONNECTION_STRING
-          require_value ALPHA_VANTAGE_API_KEY
-          require_value NASDAQ_API_KEY
-          require_value POSTGRES_DSN
-          require_value SERVICE_ACCOUNT_NAME
-          require_value ASSET_ALLOCATION_API_BASE_URL
-          API_AUTH_MODE="${API_AUTH_MODE:-none}"
-
-          python3 - <<'PY'
-          import os
-          import sys
-          from urllib.parse import urlparse
-          
-          
-          def parse_postgres_url(name: str) -> tuple[str, int, str]:
-              raw = os.environ.get(name, "")
-              value = raw.strip()
-              parsed = urlparse(value)
-              if parsed.scheme not in {"postgresql", "postgres"}:
-                  print(f"::error::{name} must be a postgresql:// URL")
-                  sys.exit(1)
-              host = (parsed.hostname or "").strip().lower()
-              if not host:
-                  print(f"::error::{name} is missing host")
-                  sys.exit(1)
-              port = parsed.port or 5432
-              db = (parsed.path or "").lstrip("/").strip()
-              if not db:
-                  print(f"::error::{name} is missing database name")
-                  sys.exit(1)
-              return host, int(port), db
-          
-          
-          ranking = parse_postgres_url("POSTGRES_DSN")
-
-          api_base_url = os.environ.get("ASSET_ALLOCATION_API_BASE_URL", "").strip()
-          parsed = urlparse(api_base_url)
-          host = (parsed.hostname or "").strip().lower()
-          if parsed.scheme not in {"http", "https"} or not host:
-              print("::error::ASSET_ALLOCATION_API_BASE_URL must be an http(s) URL (e.g., http://asset-allocation-api)")
-              sys.exit(1)
-          if host in {"localhost", "127.0.0.1", "::1"}:
-              print(
-                  "::error::ASSET_ALLOCATION_API_BASE_URL must not point to localhost in production. "
-                  "For Azure Container Apps Jobs, use http://asset-allocation-api (no port) or the API app FQDN."
-              )
-              sys.exit(1)
-          if parsed.port == 8000:
-              print(
-                  "::error::ASSET_ALLOCATION_API_BASE_URL must not include :8000 in production. "
-                  "Container Apps ingress listens on 80/443; use http://asset-allocation-api (no port) or the API app FQDN."
-              )
-              sys.exit(1)
-
-          auth_mode_raw = (os.environ.get("API_AUTH_MODE") or "").strip().lower()
-          if not auth_mode_raw:
-              auth_mode_raw = "none"
-          aliases = {
-              "none": "none",
-              "noauth": "none",
-              "disabled": "none",
-              "api_key": "api_key",
-              "apikey": "api_key",
-              "key": "api_key",
-              "oidc": "oidc",
-              "jwt": "oidc",
-              "bearer": "oidc",
-              "api_key_or_oidc": "api_key_or_oidc",
-              "apikey_or_oidc": "api_key_or_oidc",
-              "key_or_oidc": "api_key_or_oidc",
-          }
-          auth_mode = aliases.get(auth_mode_raw)
-          if auth_mode is None:
-              print("::error::API_AUTH_MODE must be one of: none|api_key|oidc|api_key_or_oidc")
-              sys.exit(1)
-
-          log_level = (os.environ.get("LOG_LEVEL") or "").strip().upper()
-          if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-              print("::error::LOG_LEVEL must be one of: DEBUG|INFO|WARNING|ERROR|CRITICAL")
-              sys.exit(1)
-
-          def parse_bool(name: str, default: bool = False) -> bool:
-              raw = (os.environ.get(name) or "").strip().lower()
-              if not raw:
-                  return default
-              if raw in {"1", "true", "t", "yes", "y", "on"}:
-                  return True
-              if raw in {"0", "false", "f", "no", "n", "off"}:
-                  return False
-              print(f"::error::{name} must be a boolean (true/false)")
-              sys.exit(1)
-
-          log_analytics_enabled = parse_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", default=False)
-          if log_analytics_enabled:
-              workspace_id = (os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or "").strip()
-              if not workspace_id:
-                  print(
-                      "::error::SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true requires "
-                      "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID."
-                  )
-                  sys.exit(1)
-
-          parse_bool("REALTIME_LOG_STREAM_ENABLED", default=True)
-
-          if auth_mode == "api_key":
-              api_key = (os.environ.get("API_KEY") or "").strip()
-              if not api_key:
-                  print("::error::API_AUTH_MODE=api_key requires API_KEY to be set.")
-                  sys.exit(1)
-
-          if auth_mode in {"oidc", "api_key_or_oidc"}:
-              issuer = (os.environ.get("API_OIDC_ISSUER") or "").strip()
-              audience = (os.environ.get("API_OIDC_AUDIENCE") or "").strip()
-              if not issuer:
-                  print(f"::error::API_AUTH_MODE={auth_mode} requires API_OIDC_ISSUER to be set.")
-                  sys.exit(1)
-              if not audience:
-                  print(f"::error::API_AUTH_MODE={auth_mode} requires API_OIDC_AUDIENCE to be set (csv).")
-                  sys.exit(1)
-          PY
+          python3 scripts/validate_deploy_inputs.py
 
       - name: Detect Market Changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3

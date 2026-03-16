@@ -86,7 +86,11 @@ const BOOLEAN_FILTER_OPERATORS: Array<{ value: QueryFilterOperator; label: strin
 ];
 
 function isVisibleSchema(schema: string): boolean {
-  return !HIDDEN_SCHEMAS.has(String(schema || '').trim().toLowerCase());
+  return !HIDDEN_SCHEMAS.has(
+    String(schema || '')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 function normalizeFieldValue(value: unknown): string {
@@ -141,21 +145,16 @@ function isBooleanType(dataType: string): boolean {
 
 function isNumericType(dataType: string): boolean {
   const normalized = String(dataType || '').toLowerCase();
-  return [
-    'int',
-    'numeric',
-    'decimal',
-    'real',
-    'double',
-    'float',
-    'serial',
-    'money'
-  ].some((token) => normalized.includes(token));
+  return ['int', 'numeric', 'decimal', 'real', 'double', 'float', 'serial', 'money'].some((token) =>
+    normalized.includes(token)
+  );
 }
 
 function isDateType(dataType: string): boolean {
   const normalized = String(dataType || '').toLowerCase();
-  return normalized.includes('date') && !normalized.includes('time') && !normalized.includes('stamp');
+  return (
+    normalized.includes('date') && !normalized.includes('time') && !normalized.includes('stamp')
+  );
 }
 
 function isDateTimeType(dataType: string): boolean {
@@ -173,11 +172,18 @@ function isTextType(dataType: string): boolean {
   return ['char', 'text', 'uuid', 'citext'].some((token) => normalized.includes(token));
 }
 
-function getFilterOperatorOptions(dataType: string): Array<{ value: QueryFilterOperator; label: string }> {
+function getFilterOperatorOptions(
+  dataType: string
+): Array<{ value: QueryFilterOperator; label: string }> {
   if (isBooleanType(dataType)) {
     return BOOLEAN_FILTER_OPERATORS;
   }
-  if (isNumericType(dataType) || isDateType(dataType) || isDateTimeType(dataType) || isTimeType(dataType)) {
+  if (
+    isNumericType(dataType) ||
+    isDateType(dataType) ||
+    isDateTimeType(dataType) ||
+    isTimeType(dataType)
+  ) {
     return COMPARISON_FILTER_OPERATORS;
   }
   if (isTextType(dataType)) {
@@ -430,7 +436,9 @@ export const PostgresExplorerPage: React.FC = () => {
             return filter;
           }
 
-          const allowedOperators = getFilterOperatorOptions(column.data_type).map((item) => item.value);
+          const allowedOperators = getFilterOperatorOptions(column.data_type).map(
+            (item) => item.value
+          );
           return {
             ...filter,
             columnName,
@@ -444,18 +452,21 @@ export const PostgresExplorerPage: React.FC = () => {
     [tableMetadata]
   );
 
-  const updateQueryFilterOperator = useCallback((filterId: string, operator: QueryFilterOperator) => {
-    setQueryFilters((current) =>
-      current.map((filter) =>
-        filter.id === filterId
-          ? {
-              ...filter,
-              operator
-            }
-          : filter
-      )
-    );
-  }, []);
+  const updateQueryFilterOperator = useCallback(
+    (filterId: string, operator: QueryFilterOperator) => {
+      setQueryFilters((current) =>
+        current.map((filter) =>
+          filter.id === filterId
+            ? {
+                ...filter,
+                operator
+              }
+            : filter
+        )
+      );
+    },
+    []
+  );
 
   const updateQueryFilterValue = useCallback((filterId: string, value: string) => {
     setQueryFilters((current) =>
@@ -886,7 +897,10 @@ export const PostgresExplorerPage: React.FC = () => {
                         id={operatorId}
                         value={filter.operator}
                         onChange={(event) =>
-                          updateQueryFilterOperator(filter.id, event.target.value as QueryFilterOperator)
+                          updateQueryFilterOperator(
+                            filter.id,
+                            event.target.value as QueryFilterOperator
+                          )
                         }
                         className={controlClass}
                       >
@@ -909,7 +923,9 @@ export const PostgresExplorerPage: React.FC = () => {
                         <Input
                           id={valueId}
                           value={filter.value}
-                          onChange={(event) => updateQueryFilterValue(filter.id, event.target.value)}
+                          onChange={(event) =>
+                            updateQueryFilterValue(filter.id, event.target.value)
+                          }
                           className="font-mono text-sm"
                           placeholder={column?.data_type ? `${column.data_type}` : 'Value'}
                         />
@@ -973,7 +989,10 @@ export const PostgresExplorerPage: React.FC = () => {
         </div>
       </div>
 
-      <Dialog open={Boolean(editState)} onOpenChange={(open) => (!open ? closeEditor() : undefined)}>
+      <Dialog
+        open={Boolean(editState)}
+        onOpenChange={(open) => (!open ? closeEditor() : undefined)}
+      >
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Edit Row</DialogTitle>
@@ -1005,7 +1024,10 @@ export const PostgresExplorerPage: React.FC = () => {
                 const fieldId = `postgres-edit-${column.name}`;
 
                 return (
-                  <div key={column.name} className="space-y-2 rounded-lg border border-border/60 p-3">
+                  <div
+                    key={column.name}
+                    className="space-y-2 rounded-lg border border-border/60 p-3"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <label htmlFor={fieldId} className="space-y-1">
                         <div className="font-mono text-xs uppercase tracking-wide text-foreground">
@@ -1064,7 +1086,9 @@ export const PostgresExplorerPage: React.FC = () => {
                       <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                         <Switch
                           checked={field.isNull}
-                          onCheckedChange={(checked) => updateFieldNull(column.name, Boolean(checked))}
+                          onCheckedChange={(checked) =>
+                            updateFieldNull(column.name, Boolean(checked))
+                          }
                           disabled={disabled || !column.nullable}
                         />
                         NULL
@@ -1080,8 +1104,16 @@ export const PostgresExplorerPage: React.FC = () => {
             <Button variant="outline" onClick={closeEditor} disabled={rowSaving}>
               Cancel
             </Button>
-            <Button onClick={() => void saveRow()} disabled={rowSaving || !editState} className="gap-2">
-              {rowSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            <Button
+              onClick={() => void saveRow()}
+              disabled={rowSaving || !editState}
+              className="gap-2"
+            >
+              {rowSaving ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
               {rowSaving ? 'Saving...' : 'Save Row'}
             </Button>
           </DialogFooter>

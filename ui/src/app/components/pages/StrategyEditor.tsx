@@ -157,7 +157,11 @@ function getNextRuleId(type: ExitRuleType, existingRules: ExitRule[]): string {
   return `${type}-${counter}`;
 }
 
-function buildExitRule(type: ExitRuleType, id: string, overrides: Partial<ExitRule> = {}): ExitRule {
+function buildExitRule(
+  type: ExitRuleType,
+  id: string,
+  overrides: Partial<ExitRule> = {}
+): ExitRule {
   const baseRule: ExitRule = {
     id,
     enabled: true,
@@ -339,7 +343,8 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
         <SheetHeader>
           <SheetTitle>{isEditing ? 'Edit Run Configuration' : 'New Run Configuration'}</SheetTitle>
           <SheetDescription>
-            Attach saved universe and ranking configs, adjust cadence, selection, and exit settings, then save the run configuration to Postgres.
+            Attach saved universe and ranking configs, adjust cadence, selection, and exit settings,
+            then save the run configuration to Postgres.
           </SheetDescription>
         </SheetHeader>
 
@@ -399,10 +404,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                   <Select
                     value={watchedUniverseConfig}
                     onValueChange={(value) =>
-                      setValue('config.universeConfigName', value === '__none__' ? undefined : value, {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
+                      setValue(
+                        'config.universeConfigName',
+                        value === '__none__' ? undefined : value,
+                        {
+                          shouldDirty: true,
+                          shouldTouch: true
+                        }
+                      )
                     }
                   >
                     <SelectTrigger id="strategy-universe-config">
@@ -446,10 +455,14 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                   <Select
                     value={watchedRankingSchema}
                     onValueChange={(value) =>
-                      setValue('config.rankingSchemaName', value === '__none__' ? undefined : value, {
-                        shouldDirty: true,
-                        shouldTouch: true
-                      })
+                      setValue(
+                        'config.rankingSchemaName',
+                        value === '__none__' ? undefined : value,
+                        {
+                          shouldDirty: true,
+                          shouldTouch: true
+                        }
+                      )
                     }
                   >
                     <SelectTrigger id="ranking-schema">
@@ -465,7 +478,8 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Attach a saved ranking schema to enable date-by-date platinum materialization for this strategy.
+                    Attach a saved ranking schema to enable date-by-date platinum materialization
+                    for this strategy.
                   </p>
                 </div>
               </div>
@@ -529,7 +543,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Long Only</p>
-                    <p className="text-xs text-muted-foreground">Milestone 1 keeps exit scope to positions only.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Milestone 1 keeps exit scope to positions only.
+                    </p>
                   </div>
                   <Switch
                     aria-label="Toggle long only strategy"
@@ -550,7 +566,8 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Regime Policy</h3>
                   <p className="text-xs text-muted-foreground">
-                    Gate entries or rebalance actions using the gold regime monitor and scale gross exposure by confirmed regime.
+                    Gate entries or rebalance actions using the gold regime monitor and scale gross
+                    exposure by confirmed regime.
                   </p>
                 </div>
                 <Switch
@@ -604,7 +621,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Block On Transition</p>
-                    <p className="text-xs text-muted-foreground">Stops new risk during the 25-28 vol hysteresis band.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Stops new risk during the 25-28 vol hysteresis band.
+                    </p>
                   </div>
                   <Switch
                     aria-label="Toggle block on transition"
@@ -621,7 +640,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Block On Unclassified</p>
-                    <p className="text-xs text-muted-foreground">Keeps the strategy conservative when regime inputs are missing or unresolved.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Keeps the strategy conservative when regime inputs are missing or unresolved.
+                    </p>
                   </div>
                   <Switch
                     aria-label="Toggle block on unclassified"
@@ -638,7 +659,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Honor Halt Flag</p>
-                    <p className="text-xs text-muted-foreground">Applies the VIX 32.0 two-day halt overlay before new risk is opened.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Applies the VIX 32.0 two-day halt overlay before new risk is opened.
+                    </p>
                   </div>
                   <Switch
                     aria-label="Toggle honor halt flag"
@@ -655,9 +678,12 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
 
               <div className="space-y-3">
                 <div>
-                  <h4 className="text-sm font-medium text-foreground">Target Gross Exposure By Regime</h4>
+                  <h4 className="text-sm font-medium text-foreground">
+                    Target Gross Exposure By Regime
+                  </h4>
                   <p className="text-xs text-muted-foreground">
-                    These multipliers only apply when the regime is confirmed and not blocked by transition, unclassified, or halt overlays.
+                    These multipliers only apply when the regime is confirmed and not blocked by
+                    transition, unclassified, or halt overlays.
                   </p>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -685,12 +711,16 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Exit Rules</h3>
                   <p className="text-xs text-muted-foreground">
-                    Milestone 1 supports position-scope full exits only. Array order is the tie-breaker when priorities match.
+                    Milestone 1 supports position-scope full exits only. Array order is the
+                    tie-breaker when priorities match.
                   </p>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Select value={newRuleType} onValueChange={(value) => setNewRuleType(value as ExitRuleType)}>
+                  <Select
+                    value={newRuleType}
+                    onValueChange={(value) => setNewRuleType(value as ExitRuleType)}
+                  >
                     <SelectTrigger className="min-w-[220px]">
                       <SelectValue placeholder="Choose rule type" />
                     </SelectTrigger>
@@ -727,7 +757,9 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                             <Label htmlFor={`exit-rule-type-${index}`}>Rule Type</Label>
                             <Select
                               value={ruleType}
-                              onValueChange={(value) => changeRuleType(index, value as ExitRuleType)}
+                              onValueChange={(value) =>
+                                changeRuleType(index, value as ExitRuleType)
+                              }
                             >
                               <SelectTrigger id={`exit-rule-type-${index}`}>
                                 <SelectValue placeholder="Select rule type" />
@@ -809,16 +841,22 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                           <div className="flex items-end justify-between gap-3 rounded-xl border px-4 py-3">
                             <div>
                               <p className="text-sm font-medium">Enabled</p>
-                              <p className="text-xs text-muted-foreground">Scope: position, action: exit_full</p>
+                              <p className="text-xs text-muted-foreground">
+                                Scope: position, action: exit_full
+                              </p>
                             </div>
                             <Switch
                               aria-label={`Toggle exit rule ${index + 1}`}
                               checked={Boolean(currentRule?.enabled)}
                               onCheckedChange={(checked) =>
-                                setValue(`config.exits.${index}.enabled` as const, Boolean(checked), {
-                                  shouldDirty: true,
-                                  shouldTouch: true
-                                })
+                                setValue(
+                                  `config.exits.${index}.enabled` as const,
+                                  Boolean(checked),
+                                  {
+                                    shouldDirty: true,
+                                    shouldTouch: true
+                                  }
+                                )
                               }
                             />
                           </div>
@@ -828,12 +866,23 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                           <div className="grid gap-2">
                             <Label htmlFor={`exit-rule-price-field-${index}`}>Price Field</Label>
                             <Select
-                              value={currentRule?.priceField || (ruleType === 'take_profit_fixed' ? 'high' : ruleType === 'time_stop' ? 'close' : 'low')}
+                              value={
+                                currentRule?.priceField ||
+                                (ruleType === 'take_profit_fixed'
+                                  ? 'high'
+                                  : ruleType === 'time_stop'
+                                    ? 'close'
+                                    : 'low')
+                              }
                               onValueChange={(value) =>
-                                setValue(`config.exits.${index}.priceField` as const, value as ExitRulePriceField, {
-                                  shouldDirty: true,
-                                  shouldTouch: true
-                                })
+                                setValue(
+                                  `config.exits.${index}.priceField` as const,
+                                  value as ExitRulePriceField,
+                                  {
+                                    shouldDirty: true,
+                                    shouldTouch: true
+                                  }
+                                )
                               }
                             >
                               <SelectTrigger id={`exit-rule-price-field-${index}`}>
@@ -875,7 +924,15 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                               <Input
                                 id={`exit-rule-reference-${index}`}
                                 readOnly
-                                value={currentRule?.reference || (ruleType === 'take_profit_fixed' || ruleType === 'stop_loss_fixed' ? 'entry_price' : ruleType === 'time_stop' ? '' : 'highest_since_entry')}
+                                value={
+                                  currentRule?.reference ||
+                                  (ruleType === 'take_profit_fixed' ||
+                                  ruleType === 'stop_loss_fixed'
+                                    ? 'entry_price'
+                                    : ruleType === 'time_stop'
+                                      ? ''
+                                      : 'highest_since_entry')
+                                }
                               />
                             </div>
                           )}

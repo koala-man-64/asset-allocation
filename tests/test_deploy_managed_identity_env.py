@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import csv
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -8,6 +11,42 @@ import yaml
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _deploy_validation_env(**overrides: str) -> dict[str, str]:
+    env = {
+        **os.environ,
+        "AZURE_CLIENT_ID": "client-id",
+        "AZURE_TENANT_ID": "tenant-id",
+        "AZURE_SUBSCRIPTION_ID": "subscription-id",
+        "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=key;EndpointSuffix=core.windows.net",
+        "ALPHA_VANTAGE_API_KEY": "alpha",
+        "NASDAQ_API_KEY": "nasdaq",
+        "POSTGRES_DSN": "postgresql://user:pass@db.example.com:5432/asset_allocation",
+        "SERVICE_ACCOUNT_NAME": "asset-allocation-sa",
+        "ASSET_ALLOCATION_API_BASE_URL": "https://asset-allocation.example.com",
+        "API_AUTH_MODE": "none",
+        "INGRESS_EXTERNAL": "false",
+        "LOG_LEVEL": "INFO",
+        "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED": "false",
+        "REALTIME_LOG_STREAM_ENABLED": "true",
+        "UI_AUTH_MODE": "none",
+    }
+    env.update(overrides)
+    return env
+
+
+def _run_deploy_validation(**overrides: str) -> subprocess.CompletedProcess[str]:
+    repo_root = _repo_root()
+    script = repo_root / "scripts" / "validate_deploy_inputs.py"
+    return subprocess.run(
+        [sys.executable, str(script)],
+        cwd=repo_root,
+        env=_deploy_validation_env(**overrides),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _assert_azure_client_id_env_present(doc: dict, *, source: str) -> None:
@@ -76,6 +115,45 @@ def test_deploy_workflow_exports_acr_pull_identity_client_id() -> None:
     assert "ACR_PULL_IDENTITY_CLIENT_ID" in text, "deploy workflow must export ACR_PULL_IDENTITY_CLIENT_ID"
     assert "BACKTEST_JOB" in text, "deploy workflow must define the backtest job name"
     assert "GOLD_REGIME_JOB" in text, "deploy workflow must define the gold regime job name"
+    assert "python3 scripts/validate_deploy_inputs.py" in text, (
+        "deploy workflow must validate deployment inputs through the shared script"
+    )
+    assert "vars.API_INGRESS_EXTERNAL || 'false'" in text, (
+        "deploy workflow must default API ingress to internal-only"
+    )
+
+
+def test_run_tests_workflow_enforces_ui_format_and_lint() -> None:
+    repo_root = _repo_root()
+    workflow = repo_root / ".github" / "workflows" / "run_tests.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "pnpm format:check && pnpm lint" in text, (
+        "run_tests workflow must block on UI format and lint"
+    )
+    assert "UI format check failed (non-blocking)" not in text, (
+        "run_tests workflow must not downgrade UI format failures to warnings"
+    )
+    assert "UI lint failed (non-blocking)" not in text, (
+        "run_tests workflow must not downgrade UI lint failures to warnings"
+    )
+
+
+def test_repo_only_keeps_codex_agent_contract() -> None:
+    repo_root = _repo_root()
+    legacy_agent_files = (
+        [path for path in (repo_root / ".agent").rglob("*") if path.is_file()]
+        if (repo_root / ".agent").exists()
+        else []
+    )
+    legacy_claude_files = (
+        [path for path in (repo_root / ".claude").rglob("*") if path.is_file()]
+        if (repo_root / ".claude").exists()
+        else []
+    )
+
+    assert legacy_agent_files == [], "legacy .agent tree must not remain in the repository"
+    assert legacy_claude_files == [], "legacy .claude tree must not remain in the repository"
 
 
 def test_deploy_workflow_deploys_jobs_from_yaml_without_pre_mutating_job_identity() -> None:
@@ -217,6 +295,9 @@ def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     assert 'Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget' in text, (
         "setup-env must use GitHub-safe UI proxy defaults for .env.web"
     )
+    assert 'Prompt-Var "API_INGRESS_EXTERNAL" "false"' in text, (
+        "setup-env must default API ingress to internal-only"
+    )
     assert 'Prompt-Var "BACKTEST_ACA_JOB_NAME" "backtests-job"' in text, (
         "setup-env must default BACKTEST_ACA_JOB_NAME for GitHub sync"
     )
@@ -249,6 +330,57 @@ def test_env_template_includes_regime_job_defaults() -> None:
     assert "REGIME_ACA_JOB_NAME=gold-regime-job" in text, (
         ".env.template must define REGIME_ACA_JOB_NAME"
     )
+    assert "API_INGRESS_EXTERNAL=false" in text, (
+        ".env.template must default API ingress to internal-only"
+    )
+
+
+def test_deploy_validation_allows_internal_no_auth_defaults() -> None:
+    result = _run_deploy_validation()
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_deploy_validation_rejects_public_ingress_without_oidc_capable_auth() -> None:
+    result = _run_deploy_validation(INGRESS_EXTERNAL="true", API_AUTH_MODE="none")
+    assert result.returncode != 0
+    assert "INGRESS_EXTERNAL=true requires API_AUTH_MODE to be oidc or api_key_or_oidc." in (
+        result.stdout + result.stderr
+    )
+
+    api_key_result = _run_deploy_validation(
+        INGRESS_EXTERNAL="true",
+        API_AUTH_MODE="api_key",
+        API_KEY="secret",
+    )
+    assert api_key_result.returncode != 0
+    assert "INGRESS_EXTERNAL=true requires API_AUTH_MODE to be oidc or api_key_or_oidc." in (
+        api_key_result.stdout + api_key_result.stderr
+    )
+
+
+def test_deploy_validation_requires_ui_and_oidc_values_for_public_ingress() -> None:
+    result = _run_deploy_validation(
+        INGRESS_EXTERNAL="true",
+        API_AUTH_MODE="oidc",
+        API_OIDC_ISSUER="https://issuer.example.com",
+        API_OIDC_AUDIENCE="asset-allocation",
+        UI_AUTH_MODE="none",
+    )
+    assert result.returncode != 0
+    assert "INGRESS_EXTERNAL=true requires UI_AUTH_MODE=oidc." in (result.stdout + result.stderr)
+
+    ui_oidc_result = _run_deploy_validation(
+        INGRESS_EXTERNAL="true",
+        API_AUTH_MODE="api_key_or_oidc",
+        API_OIDC_ISSUER="https://issuer.example.com",
+        API_OIDC_AUDIENCE="asset-allocation",
+        UI_AUTH_MODE="oidc",
+        UI_OIDC_CLIENT_ID="client-id",
+        UI_OIDC_AUTHORITY="https://issuer.example.com",
+        UI_OIDC_SCOPES="api://asset-allocation/user_impersonation",
+        UI_OIDC_REDIRECT_URI="https://asset-allocation.example.com/oauth2-callback",
+    )
+    assert ui_oidc_result.returncode == 0, ui_oidc_result.stdout + ui_oidc_result.stderr
 
 
 def test_reset_postgres_script_uses_psql_reset_and_repo_migrations() -> None:

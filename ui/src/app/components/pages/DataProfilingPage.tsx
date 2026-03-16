@@ -118,16 +118,11 @@ export function DataProfilingPage() {
     setProfileLoading(true);
     setProfileError(null);
     try {
-      const response = await DataService.getDataProfile(
-        layer,
-        domain,
-        column,
-        {
-          bins,
-          sampleRows,
-          topValues
-        }
-      );
+      const response = await DataService.getDataProfile(layer, domain, column, {
+        bins,
+        sampleRows,
+        topValues
+      });
       setProfile(response);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -157,8 +152,8 @@ export function DataProfilingPage() {
           Data Profiling
         </h1>
         <p className="page-subtitle">
-          Choose container + domain, then inspect a column distribution. Numeric and date columns render
-          as bucketed histograms; string columns show cardinality and top frequencies.
+          Choose container + domain, then inspect a column distribution. Numeric and date columns
+          render as bucketed histograms; string columns show cardinality and top frequencies.
         </p>
       </div>
 
@@ -308,21 +303,31 @@ export function DataProfilingPage() {
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <div className="rounded-xl border border-border/50 bg-background/80 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">TOTAL ROWS</div>
-                  <div className="text-xl font-black font-mono mt-1">{formatNumber(profile.totalRows)}</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    TOTAL ROWS
+                  </div>
+                  <div className="text-xl font-black font-mono mt-1">
+                    {formatNumber(profile.totalRows)}
+                  </div>
                   <div className="text-xs text-muted-foreground mt-1">from sample</div>
                 </div>
 
                 <div className="rounded-xl border border-border/50 bg-background/80 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">NON-NULL</div>
-                  <div className="text-xl font-black font-mono mt-1">{formatNumber(profile.nonNullCount)}</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    NON-NULL
+                  </div>
+                  <div className="text-xl font-black font-mono mt-1">
+                    {formatNumber(profile.nonNullCount)}
+                  </div>
                   <div className="text-xs text-muted-foreground mt-1">
                     Nulls: {formatNumber(profile.nullCount)}
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-border/50 bg-background/80 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">UNIQUE</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    UNIQUE
+                  </div>
                   <div className="text-xl font-black font-mono mt-1">
                     {formatNumber(profile.uniqueCount ?? 0)}
                   </div>
@@ -330,7 +335,9 @@ export function DataProfilingPage() {
                 </div>
 
                 <div className="rounded-xl border border-border/50 bg-background/80 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">DUPLICATES</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    DUPLICATES
+                  </div>
                   <div className="text-xl font-black font-mono mt-1">
                     {formatNumber(profile.duplicateCount ?? 0)}
                   </div>
@@ -338,7 +345,9 @@ export function DataProfilingPage() {
                 </div>
 
                 <div className="rounded-xl border border-border/50 bg-background/80 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">SAMPLE ROWS</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    SAMPLE ROWS
+                  </div>
                   <div className="text-xl font-black font-mono mt-1">
                     {formatNumber(profile.sampleRows)}
                   </div>
@@ -378,16 +387,28 @@ export function DataProfilingPage() {
                 <div className="mt-5 rounded-xl border border-border/40 bg-background/80 p-3">
                   <div className="mb-2 text-sm font-mono">Top string values</div>
                   {topBuckets.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No string values to rank in this sample.</p>
+                    <p className="text-xs text-muted-foreground">
+                      No string values to rank in this sample.
+                    </p>
                   ) : (
                     <div className="space-y-2">
                       {topBuckets.map((entry) => {
-                        const widthPercent = Math.max(12, Math.round((entry.count / maxTopCount) * 100));
+                        const widthPercent = Math.max(
+                          12,
+                          Math.round((entry.count / maxTopCount) * 100)
+                        );
                         return (
-                          <div key={`${entry.value}-${entry.count}`} className="rounded-lg border border-border/30 p-2">
+                          <div
+                            key={`${entry.value}-${entry.count}`}
+                            className="rounded-lg border border-border/30 p-2"
+                          >
                             <div className="flex items-center justify-between text-xs font-mono">
-                              <span className="truncate max-w-[65%]">{entry.value || '(blank)'}</span>
-                              <span className="text-muted-foreground">{formatNumber(entry.count)}</span>
+                              <span className="truncate max-w-[65%]">
+                                {entry.value || '(blank)'}
+                              </span>
+                              <span className="text-muted-foreground">
+                                {formatNumber(entry.count)}
+                              </span>
                             </div>
                             <div className="mt-1 h-1.5 w-full bg-muted/60 rounded-full overflow-hidden">
                               <div

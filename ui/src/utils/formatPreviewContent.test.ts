@@ -23,7 +23,9 @@ describe('formatPreviewContent', () => {
   it('leaves non-JSON plaintext unchanged', () => {
     const source = 'alpha,beta,gamma\n1,2,3';
 
-    expect(formatPreviewContent(source, { path: 'market/sample.csv', contentType: 'text/csv' })).toBe(source);
+    expect(
+      formatPreviewContent(source, { path: 'market/sample.csv', contentType: 'text/csv' })
+    ).toBe(source);
   });
 
   it('preserves non-parseable lines while formatting valid JSON lines', () => {

@@ -256,7 +256,9 @@ describe('SystemStatusPage', () => {
       'aca-job-market',
       'aca-job-zeta'
     ]);
-    expect(coveragePanelProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))).toBe(true);
+    expect(
+      coveragePanelProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))
+    ).toBe(true);
   });
 
   it('uses canonical domain ordering in domain layer coverage panel', async () => {

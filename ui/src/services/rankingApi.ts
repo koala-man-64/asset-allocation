@@ -36,7 +36,10 @@ export const rankingApi = {
     });
   },
 
-  async deleteRankingSchema(name: string, signal?: AbortSignal): Promise<{ status: string; message: string }> {
+  async deleteRankingSchema(
+    name: string,
+    signal?: AbortSignal
+  ): Promise<{ status: string; message: string }> {
     return request<{ status: string; message: string }>(`/rankings/${encodeURIComponent(name)}`, {
       method: 'DELETE',
       signal

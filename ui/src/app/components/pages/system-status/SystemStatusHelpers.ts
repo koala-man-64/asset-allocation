@@ -310,7 +310,12 @@ export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus =
     .trim()
     .toLowerCase();
 
-  if (status === 'success' || status === 'succeeded' || status === 'completed' || status === 'complete') {
+  if (
+    status === 'success' ||
+    status === 'succeeded' ||
+    status === 'completed' ||
+    status === 'complete'
+  ) {
     return 'success';
   }
   if (

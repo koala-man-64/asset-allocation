@@ -46,7 +46,11 @@ import {
   ShieldAlert
 } from 'lucide-react';
 // Lazy load DataPipelinePanel
-const DataPipelinePanel = lazy(() => import('@/app/components/pages/data-quality/DataPipelinePanel').then(m => ({ default: m.DataPipelinePanel })));
+const DataPipelinePanel = lazy(() =>
+  import('@/app/components/pages/data-quality/DataPipelinePanel').then((m) => ({
+    default: m.DataPipelinePanel
+  }))
+);
 
 import { useDataProbes, ProbeStatus } from '@/hooks/useDataProbes';
 import { PageLoader } from '@/app/components/common/PageLoader';
@@ -112,7 +116,10 @@ function ProbePill({ status }: { status: ProbeStatus }) {
   );
 }
 
-function storageStatusMeta(error?: string | null, truncated?: boolean): {
+function storageStatusMeta(
+  error?: string | null,
+  truncated?: boolean
+): {
   label: string;
   css: string;
 } {
@@ -415,7 +422,8 @@ export function DataQualityPage() {
               </div>
               {storageUsageQuery.data?.generatedAt ? (
                 <div className="dq-mono text-xs text-muted-foreground">
-                  Refreshed: {storageUsageQuery.data.generatedAt.replace('T', ' ').replace('Z', ' UTC')}
+                  Refreshed:{' '}
+                  {storageUsageQuery.data.generatedAt.replace('T', ' ').replace('Z', ' UTC')}
                 </div>
               ) : null}
             </div>
@@ -427,7 +435,10 @@ export function DataQualityPage() {
             </div>
           ) : storageUsageQuery.isError ? (
             <div className="mt-4 dq-mono text-sm text-rose-700">
-              Failed to load storage usage: {storageUsageQuery.error instanceof Error ? storageUsageQuery.error.message : String(storageUsageQuery.error)}
+              Failed to load storage usage:{' '}
+              {storageUsageQuery.error instanceof Error
+                ? storageUsageQuery.error.message
+                : String(storageUsageQuery.error)}
             </div>
           ) : (
             <div className="mt-4 dq-ledger-table">
@@ -453,7 +464,9 @@ export function DataQualityPage() {
                           <TableCell className="dq-td" />
                           <TableCell className="dq-td" />
                           <TableCell className="dq-td">
-                            <span className="dq-mono text-xs text-muted-foreground">└ {folder.path}</span>
+                            <span className="dq-mono text-xs text-muted-foreground">
+                              └ {folder.path}
+                            </span>
                           </TableCell>
                           <TableCell className="dq-td text-right">
                             {formatStorageCount(folder.fileCount)}
@@ -636,7 +649,9 @@ export function DataQualityPage() {
                               {formatDurationMs(probe.ms)}
                             </div>
                           )}
-                          {!probeId && <span className="dq-mono text-[10px] text-muted-foreground">—</span>}
+                          {!probeId && (
+                            <span className="dq-mono text-[10px] text-muted-foreground">—</span>
+                          )}
                         </div>
                       </TableCell>
 

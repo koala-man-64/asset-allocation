@@ -13,7 +13,9 @@ export const universeApi = {
   },
 
   async getUniverseConfigDetail(name: string, signal?: AbortSignal): Promise<UniverseConfigDetail> {
-    return request<UniverseConfigDetail>(`/universes/${encodeURIComponent(name)}/detail`, { signal });
+    return request<UniverseConfigDetail>(`/universes/${encodeURIComponent(name)}/detail`, {
+      signal
+    });
   },
 
   async saveUniverseConfig(
@@ -31,7 +33,10 @@ export const universeApi = {
     });
   },
 
-  async deleteUniverseConfig(name: string, signal?: AbortSignal): Promise<{ status: string; message: string }> {
+  async deleteUniverseConfig(
+    name: string,
+    signal?: AbortSignal
+  ): Promise<{ status: string; message: string }> {
     return request<{ status: string; message: string }>(`/universes/${encodeURIComponent(name)}`, {
       method: 'DELETE',
       signal
