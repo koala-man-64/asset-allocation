@@ -364,7 +364,7 @@ describe('SystemStatusPage', () => {
     );
   });
 
-  it('polls medallion-domain job status every 10 seconds without touching domain metadata queries', async () => {
+  it('refreshes medallion-domain job status immediately and then every 10 seconds', async () => {
     vi.useFakeTimers();
     domainLayerCoverageSpy.mockClear();
 
@@ -395,17 +395,19 @@ describe('SystemStatusPage', () => {
     });
 
     renderWithProviders(<SystemStatusPage />);
-    await vi.advanceTimersByTimeAsync(1);
 
     expect(domainLayerCoverageSpy).toHaveBeenCalled();
-
-    expect(getSystemHealthSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getSystemHealthSpy).toHaveBeenNthCalledWith(1, { refresh: true });
+    expect(getSystemHealthSpy).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
 
-    expect(getSystemHealthSpy).toHaveBeenCalledWith({ refresh: true });
+    expect(getSystemHealthSpy).toHaveBeenCalledTimes(2);
 
     const coverageProps = domainLayerCoverageSpy.mock.calls.at(-1)?.[0] as {
       overall: string;

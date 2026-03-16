@@ -50,9 +50,11 @@ export function SystemStatusPage() {
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [jobPollingSnapshot, setJobPollingSnapshot] = useState<JobPollingSnapshot | null>(null);
+  const hasSystemHealth = Boolean(data);
+  const hasSystemHealthError = Boolean(error);
 
   useEffect(() => {
-    if (!data || error) {
+    if (!hasSystemHealth || hasSystemHealthError) {
       setJobPollingSnapshot(null);
       return;
     }
@@ -77,6 +79,8 @@ export function SystemStatusPage() {
       }
     };
 
+    void pollJobStatus();
+
     const handle = window.setInterval(() => {
       void pollJobStatus();
     }, JOB_STATUS_POLL_INTERVAL_MS);
@@ -85,7 +89,7 @@ export function SystemStatusPage() {
       disposed = true;
       window.clearInterval(handle);
     };
-  }, [data, error]);
+  }, [hasSystemHealth, hasSystemHealthError]);
 
   const systemHealthWithPolledJobs = useMemo<SystemHealth | undefined>(() => {
     if (!data) return data;
