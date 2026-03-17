@@ -280,6 +280,26 @@ def test_gold_regime_job_runs_daily_at_4pm_est() -> None:
     )
 
 
+def test_bronze_jobs_do_not_automatically_retry_failed_executions() -> None:
+    repo_root = _repo_root()
+    bronze_job_names = (
+        "job_bronze_market_data.yaml",
+        "job_bronze_finance_data.yaml",
+        "job_bronze_earnings_data.yaml",
+        "job_bronze_price_target_data.yaml",
+    )
+
+    for job_name in bronze_job_names:
+        path = repo_root / "deploy" / job_name
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict), f"{path}: expected YAML mapping"
+
+        configuration = (doc.get("properties") or {}).get("configuration") or {}
+        assert configuration.get("replicaRetryLimit") == 0, (
+            f"{path}: bronze jobs must not automatically retry failed replicas"
+        )
+
+
 def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     repo_root = _repo_root()
     setup_env = repo_root / "scripts" / "setup-env.ps1"

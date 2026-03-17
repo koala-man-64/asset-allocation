@@ -97,22 +97,51 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_domain_metadata_refresh_bypasses_document_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_domain_metadata_refresh_collects_live_metadata_and_persists_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("API_AUTH_MODE", "none")
 
     captured: dict[str, object] = {}
 
-    def _read(layer: str, domain: str, force_refresh: bool = False) -> dict[str, object]:
+    def _collect(*, layer: str, domain: str, force_refresh: bool = False) -> dict[str, object]:
         captured["layer"] = layer
         captured["domain"] = domain
         captured["force_refresh"] = force_refresh
         return {
             **_metadata_payload(layer=layer, domain=domain),
+        }
+
+    def _write(
+        *,
+        layer: str,
+        domain: str,
+        metadata: dict[str, object],
+        snapshot_path: str,
+        ui_snapshot_path: str,
+    ) -> dict[str, object]:
+        captured["write_layer"] = layer
+        captured["write_domain"] = domain
+        captured["snapshot_path"] = snapshot_path
+        captured["ui_snapshot_path"] = ui_snapshot_path
+        captured["metadata"] = metadata
+        return {
+            **metadata,
             "cachedAt": "2026-02-20T13:00:00+00:00",
             "cacheSource": "snapshot",
         }
 
-    monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", _read)
+    invalidated: list[bool] = []
+
+    monkeypatch.setattr(system, "collect_domain_metadata", _collect)
+    monkeypatch.setattr(system, "_domain_metadata_cache_path", lambda: "metadata/domain-metadata.json")
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(
+        system.domain_metadata_snapshots,
+        "write_domain_metadata_snapshot_documents",
+        _write,
+    )
+    monkeypatch.setattr(system, "_invalidate_domain_metadata_document_cache", lambda: invalidated.append(True))
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -122,12 +151,19 @@ async def test_domain_metadata_refresh_bypasses_document_cache(monkeypatch: pyte
     payload = response.json()
     assert payload["layer"] == "gold"
     assert payload["domain"] == "finance"
-    assert payload["cacheSource"] == "snapshot"
+    assert payload["cacheSource"] == "live-refresh"
     assert payload["cachedAt"] == "2026-02-20T13:00:00+00:00"
+    assert response.headers.get("X-Domain-Metadata-Source") == "live-refresh"
 
     assert captured["layer"] == "gold"
     assert captured["domain"] == "finance"
     assert captured["force_refresh"] is True
+    assert captured["write_layer"] == "gold"
+    assert captured["write_domain"] == "finance"
+    assert captured["snapshot_path"] == "metadata/domain-metadata.json"
+    assert captured["ui_snapshot_path"] == "metadata/ui-cache/domain.json"
+    assert captured["metadata"] == _metadata_payload(layer="gold", domain="finance")
+    assert invalidated == [True]
 
 
 @pytest.mark.asyncio

@@ -808,12 +808,13 @@ def collect_delta_table_metadata(
     }
 
 
-def collect_domain_metadata(*, layer: str, domain: str) -> Dict[str, Any]:
+def collect_domain_metadata(*, layer: str, domain: str, force_refresh: bool = False) -> Dict[str, Any]:
     layer_key = _normalize_key(layer)
     domain_key = _normalize_key(domain)
-    cached = _read_cached_domain_metadata(layer_key, domain_key)
-    if cached is not None:
-        return cached
+    if not force_refresh:
+        cached = _read_cached_domain_metadata(layer_key, domain_key)
+        if cached is not None:
+            return cached
 
     container = _require_container(_layer_container_env(layer_key))
     computed_at = _utc_now_iso()

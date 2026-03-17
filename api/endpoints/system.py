@@ -28,6 +28,7 @@ from api.service.dependencies import (
 )
 from api.service.realtime import manager as realtime_manager
 from monitoring.arm_client import ArmConfig, AzureArmClient
+from monitoring.domain_metadata import collect_domain_metadata
 from monitoring.lineage import get_lineage_snapshot
 from monitoring.log_analytics import AzureLogAnalyticsClient, extract_first_table_rows
 from monitoring.system_health import collect_system_health_snapshot
@@ -734,6 +735,60 @@ def _write_cached_domain_metadata_snapshot(layer: str, domain: str, metadata: Di
     return now
 
 
+def _refresh_domain_metadata_snapshot(layer: str, domain: str) -> Dict[str, Any]:
+    normalized_layer = _normalize_layer(layer) or str(layer or "").strip().lower()
+    normalized_domain = _normalize_domain(domain) or str(domain or "").strip().lower()
+
+    try:
+        metadata = collect_domain_metadata(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            force_refresh=True,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Domain metadata live refresh failed: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to refresh domain metadata live for "
+                f"{normalized_layer}/{normalized_domain}: {exc}"
+            ),
+        ) from exc
+
+    try:
+        persisted = domain_metadata_snapshots.write_domain_metadata_snapshot_documents(
+            layer=normalized_layer,
+            domain=normalized_domain,
+            metadata=metadata,
+            snapshot_path=_domain_metadata_cache_path(),
+            ui_snapshot_path=_domain_metadata_ui_cache_path(),
+        )
+    except Exception as exc:
+        logger.exception(
+            "Domain metadata snapshot persist failed after live refresh: layer=%s domain=%s",
+            normalized_layer,
+            normalized_domain,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to persist refreshed domain metadata for "
+                f"{normalized_layer}/{normalized_domain}: {exc}"
+            ),
+        ) from exc
+
+    _invalidate_domain_metadata_document_cache()
+    response_payload = dict(persisted)
+    response_payload["cacheSource"] = "live-refresh"
+    return response_payload
+
+
 def _extract_cached_domain_metadata_snapshots(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     entries = payload.get("entries")
     if not isinstance(entries, dict):
@@ -811,12 +866,12 @@ def domain_metadata(
     domain: str = Query(..., description="Domain key (market|finance|earnings|price-target|platinum)"),
     refresh: bool = Query(
         default=False,
-        description="When true, bypass the in-process snapshot cache and reread persisted metadata.",
+        description="When true, collect live metadata, persist refreshed snapshot documents, and return the refreshed payload.",
     ),
     cache_only: bool = Query(
         default=False,
         alias="cacheOnly",
-        description="Retained for backward compatibility. Domain metadata is always served from persisted snapshots.",
+        description="Retained for backward compatibility. When refresh=false, domain metadata is served from persisted snapshots.",
     ),
 ) -> JSONResponse:
     validate_auth(request)
@@ -827,11 +882,22 @@ def domain_metadata(
     if not normalized_domain:
         raise HTTPException(status_code=400, detail="domain is required.")
 
+    if refresh:
+        payload = _refresh_domain_metadata_snapshot(normalized_layer, normalized_domain)
+        headers: Dict[str, str] = {
+            "Cache-Control": "no-store",
+            "X-Domain-Metadata-Source": "live-refresh",
+        }
+        cached_at = payload.get("cachedAt")
+        if isinstance(cached_at, str) and cached_at.strip():
+            headers["X-Domain-Metadata-Cached-At"] = cached_at
+        return JSONResponse(payload, headers=headers)
+
     try:
         payload = _read_cached_domain_metadata_snapshot(
             normalized_layer,
             normalized_domain,
-            force_refresh=bool(refresh),
+            force_refresh=False,
         )
     except Exception as exc:
         logger.warning(

@@ -355,6 +355,37 @@ def test_collect_domain_metadata_counts_symbols_for_silver_finance(monkeypatch) 
     }
 
 
+def test_collect_domain_metadata_force_refresh_skips_process_cache(monkeypatch) -> None:
+    monkeypatch.setenv("AZURE_CONTAINER_SILVER", "silver-container")
+    monkeypatch.setattr(
+        "monitoring.domain_metadata._read_cached_domain_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("process cache should be bypassed")),
+    )
+    monkeypatch.setattr(
+        "monitoring.domain_metadata._artifact_domain_metadata_payload",
+        lambda **_kwargs: {
+            "layer": "silver",
+            "domain": "market",
+            "container": "silver-container",
+            "type": "blob",
+            "computedAt": "2026-03-16T00:00:00+00:00",
+            "symbolCount": 4,
+            "columnCount": 3,
+            "columns": ["date", "symbol", "close"],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr("monitoring.domain_metadata._blob_prefix", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("monitoring.domain_metadata._cache_domain_metadata", lambda *_args, **_kwargs: None)
+
+    payload = collect_domain_metadata(layer="silver", domain="market", force_refresh=True)
+
+    assert payload["layer"] == "silver"
+    assert payload["domain"] == "market"
+    assert payload["symbolCount"] == 4
+    assert payload["columnCount"] == 3
+
+
 def test_collect_domain_metadata_uses_file_count_for_bronze_market_symbols(monkeypatch) -> None:
     class _Blob:
         def __init__(self, name: str, size: int) -> None:
