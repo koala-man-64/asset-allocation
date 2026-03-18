@@ -3420,7 +3420,6 @@ def _remove_symbol_from_delta_bucket(
 
 def _remove_symbol_from_bronze_storage(client: BlobStorageClient, symbol: str) -> List[Dict[str, Any]]:
     normalized_symbol = _normalize_purge_symbol(symbol)
-    earnings_prefix = getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data") or "earnings-data"
     bronze_bucketing.bronze_layout_mode()
     alpha26_tasks: List[Tuple[Dict[str, Any], Callable[[], int]]] = []
     alpha26_domains = (
