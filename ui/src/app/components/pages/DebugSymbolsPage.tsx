@@ -207,7 +207,11 @@ export function DebugSymbolsPage() {
                 disabled={isDeleting || !isConfigured}
                 className="gap-2"
               >
-                {isDeleting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                {isDeleting ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
                 Remove
               </Button>
             </div>

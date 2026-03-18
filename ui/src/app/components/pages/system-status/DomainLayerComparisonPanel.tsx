@@ -1269,7 +1269,9 @@ export function DomainLayerComparisonPanel({
         </div>
         <div className="text-xs text-mcm-walnut/70">
           {metadataSource === 'persisted-snapshot' ? 'Persisted snapshot' : 'Snapshot'}
-          {metadataUpdatedAt ? ` updated ${formatMetadataTimestamp(metadataUpdatedAt)}` : ' not available'}
+          {metadataUpdatedAt
+            ? ` updated ${formatMetadataTimestamp(metadataUpdatedAt)}`
+            : ' not available'}
         </div>
       </CardHeader>
 
@@ -1965,7 +1967,10 @@ export function DomainLayerComparisonPanel({
                                               statusInvalidationKeys
                                             );
                                           } else {
-                                            void triggerJob(model.actionJobName, statusInvalidationKeys);
+                                            void triggerJob(
+                                              model.actionJobName,
+                                              statusInvalidationKeys
+                                            );
                                           }
                                         }}
                                       >

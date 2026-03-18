@@ -42,7 +42,9 @@ export function useJobSuspend() {
         toast.success(`Resumed ${jobName}`);
       }
       await Promise.all(
-        normalizeInvalidationKeys(queryKey).map((key) => queryClient.invalidateQueries({ queryKey: key }))
+        normalizeInvalidationKeys(queryKey).map((key) =>
+          queryClient.invalidateQueries({ queryKey: key })
+        )
       );
     } catch (err: unknown) {
       const message =
@@ -65,7 +67,9 @@ export function useJobSuspend() {
       clearJobOverride(queryClient, jobName);
       toast.success(`Stopped ${jobName}`);
       await Promise.all(
-        normalizeInvalidationKeys(queryKey).map((key) => queryClient.invalidateQueries({ queryKey: key }))
+        normalizeInvalidationKeys(queryKey).map((key) =>
+          queryClient.invalidateQueries({ queryKey: key })
+        )
       );
     } catch (err: unknown) {
       const message =

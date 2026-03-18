@@ -3,7 +3,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/hooks/useDataQueries';
 import { useSystemStatusViewQuery } from '@/hooks/useSystemStatusView';
 import { DataService } from '@/services/DataService';
-import type { DomainMetadataSnapshotResponse, SystemStatusViewResponse } from '@/services/apiService';
+import type {
+  DomainMetadataSnapshotResponse,
+  SystemStatusViewResponse
+} from '@/services/apiService';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { PageLoader } from '@/app/components/common/PageLoader';
@@ -153,7 +156,8 @@ export function SystemStatusPage() {
         };
       })
       .sort((left, right) => {
-        const leftRunning = effectiveJobStatus(left.recentStatus, left.runningState) === 'running' ? 1 : 0;
+        const leftRunning =
+          effectiveJobStatus(left.recentStatus, left.runningState) === 'running' ? 1 : 0;
         const rightRunning =
           effectiveJobStatus(right.recentStatus, right.runningState) === 'running' ? 1 : 0;
         if (leftRunning !== rightRunning) {
@@ -204,7 +208,10 @@ export function SystemStatusPage() {
       const fresh = await DataService.getSystemStatusView({ refresh: true });
       queryClient.setQueryData(queryKeys.systemStatusView(), fresh);
       queryClient.setQueryData(queryKeys.systemHealth(), fresh.systemHealth);
-      queryClient.setQueryData(queryKeys.domainMetadataSnapshot('all', 'all'), fresh.metadataSnapshot);
+      queryClient.setQueryData(
+        queryKeys.domainMetadataSnapshot('all', 'all'),
+        fresh.metadataSnapshot
+      );
     } catch (err) {
       console.error('[SystemStatusPage] refresh failed', err);
     } finally {

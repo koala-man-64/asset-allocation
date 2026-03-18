@@ -272,9 +272,9 @@ describe('SystemStatusPage', () => {
       'aca-job-market',
       'aca-job-zeta'
     ]);
-    expect(
-      coverageProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))
-    ).toBe(true);
+    expect(coverageProps.managedContainerJobs.every((job) => Boolean(job.lastModifiedAt))).toBe(
+      true
+    );
     expect(coverageProps.metadataSource).toBe('persisted-snapshot');
   });
 

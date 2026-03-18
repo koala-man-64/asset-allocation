@@ -33,7 +33,9 @@ export function useJobTrigger() {
       });
       toast.success(`Triggered ${jobName}`);
       await Promise.all(
-        normalizeInvalidationKeys(queryKey).map((key) => queryClient.invalidateQueries({ queryKey: key }))
+        normalizeInvalidationKeys(queryKey).map((key) =>
+          queryClient.invalidateQueries({ queryKey: key })
+        )
       );
     } catch (err: unknown) {
       const message =

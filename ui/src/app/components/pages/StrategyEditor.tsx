@@ -660,7 +660,8 @@ export function StrategyEditor({ strategy, open, onOpenChange, onSaved }: Strate
                       <div>
                         <p className="text-sm font-medium">Block On Unclassified</p>
                         <p className="text-xs text-muted-foreground">
-                          Keeps the strategy conservative when regime inputs are missing or unresolved.
+                          Keeps the strategy conservative when regime inputs are missing or
+                          unresolved.
                         </p>
                       </div>
                       <Switch
