@@ -18,21 +18,29 @@ from tests.api._websocket import WebSocketHandshakeError, connect_websocket
 
 def _set_required_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_KEY_HEADER", "X-API-Key")
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("API_CSP", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 
     monkeypatch.delenv("UI_DIST_DIR", raising=False)
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
 
 
+async def _issue_realtime_ticket(client) -> str:
+    response = await client.post("/api/realtime/ticket")
+    assert response.status_code == 200
+    return str(response.json()["ticket"])
+
+
 @pytest.mark.asyncio
 async def test_websocket_updates_endpoint_accepts_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _set_required_env(tmp_path, monkeypatch)
     app = create_app()
+    async with app.router.lifespan_context(app):
+        async with get_test_client(app, manage_lifespan=False) as client:
+            ticket = await _issue_realtime_ticket(client)
 
-    async with connect_websocket(app, "/api/ws/updates") as websocket:
-        await websocket.send_text("ping")
-        assert await websocket.receive_text() == "pong"
+        async with connect_websocket(app, f"/api/ws/updates?ticket={ticket}", manage_lifespan=False) as websocket:
+            await websocket.send_text("ping")
+            assert await websocket.receive_text() == "pong"
 
 @pytest.mark.asyncio
 async def test_websocket_pubsub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,30 +55,33 @@ async def test_websocket_pubsub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     # Ensure a clean manager across tests.
     realtime_manager.active_connections.clear()
     realtime_manager.subscriptions.clear()
+    async with app.router.lifespan_context(app):
+        async with get_test_client(app, manage_lifespan=False) as client:
+            ticket = await _issue_realtime_ticket(client)
 
-    async with connect_websocket(app, "/api/ws/updates") as ws:
-        # 1. Subscribe to "test-topic"
-        await ws.send_text(json.dumps({"action": "subscribe", "topics": ["test-topic"]}))
+        async with connect_websocket(app, f"/api/ws/updates?ticket={ticket}", manage_lifespan=False) as ws:
+            # 1. Subscribe to "test-topic"
+            await ws.send_text(json.dumps({"action": "subscribe", "topics": ["test-topic"]}))
 
-        # Give the server loop a chance to process the subscribe message.
-        with anyio.fail_after(2):
-            while len(realtime_manager.subscriptions.get("test-topic", set())) < 1:
-                await anyio.sleep(0)
+            # Give the server loop a chance to process the subscribe message.
+            with anyio.fail_after(2):
+                while len(realtime_manager.subscriptions.get("test-topic", set())) < 1:
+                    await anyio.sleep(0)
 
-        # 2. Broadcast to "test-topic"
-        await realtime_manager.broadcast("test-topic", {"status": "ok"})
+            # 2. Broadcast to "test-topic"
+            await realtime_manager.broadcast("test-topic", {"status": "ok"})
 
-        # 3. Verify receipt
-        msg = await ws.receive_json()
-        assert msg["topic"] == "test-topic"
-        assert msg["data"]["status"] == "ok"
+            # 3. Verify receipt
+            msg = await ws.receive_json()
+            assert msg["topic"] == "test-topic"
+            assert msg["data"]["status"] == "ok"
 
-        # 4. Broadcast to other topic
-        await realtime_manager.broadcast("other-topic", {"status": "ignored"})
+            # 4. Broadcast to other topic
+            await realtime_manager.broadcast("other-topic", {"status": "ignored"})
 
-        # 5. Verify connection stays alive (and no unexpected queued messages)
-        await ws.send_text("ping")
-        assert await ws.receive_text() == "pong"
+            # 5. Verify connection stays alive (and no unexpected queued messages)
+            await ws.send_text("ping")
+            assert await ws.receive_text() == "pong"
 
 
 class _FakeStreamingLogAnalyticsClient:
@@ -111,7 +122,6 @@ class _FakeStreamingLogAnalyticsClient:
 @pytest.mark.asyncio
 async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _set_required_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-market-job")
     monkeypatch.setenv("REALTIME_LOG_STREAM_POLL_SECONDS", "1")
@@ -125,21 +135,28 @@ async def test_websocket_job_log_stream(tmp_path: Path, monkeypatch: pytest.Monk
         app = create_app()
         realtime_manager.active_connections.clear()
         realtime_manager.subscriptions.clear()
+        async with app.router.lifespan_context(app):
+            async with get_test_client(app, manage_lifespan=False) as client:
+                ticket = await _issue_realtime_ticket(client)
 
-        async with connect_websocket(app, "/api/ws/updates") as ws:
-            await ws.send_text(
-                json.dumps(
-                    {
-                        "action": "subscribe",
-                        "topics": [
-                            "job-logs:bronze-market-job/executions/bronze-market-job-exec-001"
-                        ],
-                    }
+            async with connect_websocket(
+                app,
+                f"/api/ws/updates?ticket={ticket}",
+                manage_lifespan=False,
+            ) as ws:
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "action": "subscribe",
+                            "topics": [
+                                "job-logs:bronze-market-job/executions/bronze-market-job-exec-001"
+                            ],
+                        }
+                    )
                 )
-            )
 
-            with anyio.fail_after(2):
-                msg = await ws.receive_json()
+                with anyio.fail_after(2):
+                    msg = await ws.receive_json()
 
     assert msg["topic"] == "job-logs:bronze-market-job/executions/bronze-market-job-exec-001"
     assert msg["data"]["type"] == "CONSOLE_LOG_STREAM"
@@ -160,7 +177,6 @@ async def test_websocket_ticket_required_and_single_use_for_api_key_mode(
 ) -> None:
     _set_required_env(tmp_path, monkeypatch)
     monkeypatch.setenv("API_KEY", "secret")
-    monkeypatch.setenv("API_AUTH_MODE", "api_key")
 
     app = create_app()
     async with app.router.lifespan_context(app):
@@ -204,7 +220,6 @@ async def test_websocket_rejects_invalid_and_expired_tickets(
 ) -> None:
     _set_required_env(tmp_path, monkeypatch)
     monkeypatch.setenv("API_KEY", "secret")
-    monkeypatch.setenv("API_AUTH_MODE", "api_key")
 
     app = create_app()
 
@@ -245,7 +260,6 @@ async def test_websocket_ticket_supports_api_key_or_oidc_mode(
 ) -> None:
     _set_required_env(tmp_path, monkeypatch)
     monkeypatch.setenv("API_KEY", "secret")
-    monkeypatch.setenv("API_AUTH_MODE", "api_key_or_oidc")
     monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
     monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation")
 
@@ -270,7 +284,6 @@ async def test_websocket_ticket_supports_oidc_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_required_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("API_AUTH_MODE", "oidc")
     monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
     monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation")
 

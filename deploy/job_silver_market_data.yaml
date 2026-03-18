@@ -53,16 +53,12 @@ properties:
         value: ${RESOURCE_GROUP}
       - name: ASSET_ALLOCATION_API_BASE_URL
         value: ${ASSET_ALLOCATION_API_BASE_URL}
-      - name: JOB_STARTUP_API_WAKE_ENABLED
-        value: "true"
       - name: JOB_STARTUP_API_CONTAINER_APPS
         value: ${JOB_STARTUP_API_CONTAINER_APPS}
       - name: AZURE_CLIENT_ID
         value: ${ACR_PULL_IDENTITY_CLIENT_ID}
       - name: TRIGGER_NEXT_JOB_NAME
         value: ${GOLD_MARKET_JOB}
-      - name: TRIGGER_NEXT_JOB_REQUIRED
-        value: "true"
       - name: AZURE_STORAGE_ACCOUNT_NAME
         value: assetallocstorage001
       - name: AZURE_STORAGE_CONNECTION_STRING

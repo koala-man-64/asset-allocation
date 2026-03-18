@@ -1,7 +1,10 @@
 import { useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
-import { normalizeAzureJobName } from '@/app/components/pages/system-status/SystemStatusHelpers';
+import {
+  hasActiveJobRunningState,
+  normalizeAzureJobName
+} from '@/app/components/pages/system-status/SystemStatusHelpers';
 import { queryKeys } from '@/hooks/useDataQueries';
 import type { JobTriggerResponse } from '@/services/backtestApi';
 import type { JobRun, ResourceHealth, SystemHealth } from '@/types/strategy';
@@ -20,15 +23,6 @@ const SERVER_CATCH_UP_STATUSES = new Set([
   'failed',
   'error'
 ]);
-const RUNNING_STATE_TOKENS = [
-  'running',
-  'processing',
-  'inprogress',
-  'starting',
-  'queued',
-  'waiting',
-  'scheduling'
-];
 
 export interface SystemHealthJobOverride {
   jobName: string;
@@ -59,10 +53,7 @@ function toJobKey(jobName: string): string {
 }
 
 function hasRunningState(raw?: string | null): boolean {
-  const state = String(raw || '')
-    .trim()
-    .toLowerCase();
-  return RUNNING_STATE_TOKENS.some((token) => state.includes(token));
+  return hasActiveJobRunningState(raw);
 }
 
 function activeOverrideMap(

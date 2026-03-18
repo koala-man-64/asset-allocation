@@ -396,11 +396,6 @@ def test_run_market_reconciliation_cutoff_store_path_sanitizes_index_artifacts(m
 
 
 def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
-    class _FakeBronzeClient:
-        def list_blob_infos(self, *, name_starts_with: str):
-            assert name_starts_with == "market-data/"
-            return []
-
     messages: list[str] = []
     saved_last_success: dict = {}
 
@@ -408,7 +403,12 @@ def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
         if metadata:
             saved_last_success.update(metadata)
 
-    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "bronze_client", object())
+    monkeypatch.setattr(
+        silver.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda _domain, _client: [],
+    )
     monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
@@ -439,11 +439,6 @@ def test_main_skips_alpha26_write_when_no_market_data(monkeypatch):
 def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeypatch):
     blob = {"name": "market-data/buckets/A.parquet"}
 
-    class _FakeBronzeClient:
-        def list_blob_infos(self, *, name_starts_with: str):
-            assert name_starts_with == "market-data/"
-            return [dict(blob)]
-
     messages: list[str] = []
     saved_last_success: dict = {}
 
@@ -464,7 +459,12 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
         assert force_reprocess is False
         return "ok"
 
-    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "bronze_client", object())
+    monkeypatch.setattr(
+        silver.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda _domain, _client: [dict(blob)],
+    )
     monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
@@ -499,11 +499,6 @@ def test_main_skips_alpha26_write_when_candidates_produce_no_staged_rows(monkeyp
 def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
     blob = {"name": "market-data/buckets/A.parquet"}
 
-    class _FakeBronzeClient:
-        def list_blob_infos(self, *, name_starts_with: str):
-            assert name_starts_with == "market-data/"
-            return [dict(blob)]
-
     messages: list[str] = []
     saved_last_success: dict = {}
     write_calls = {"count": 0}
@@ -535,7 +530,12 @@ def test_main_bootstraps_alpha26_write_when_silver_buckets_missing(monkeypatch):
         assert touched_buckets == {"A"}
         return 1, "system/silver-index/market/latest.parquet", 9
 
-    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "bronze_client", object())
+    monkeypatch.setattr(
+        silver.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda _domain, _client: [dict(blob)],
+    )
     monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)
@@ -707,12 +707,12 @@ def test_write_alpha26_market_buckets_partial_update_fails_closed_without_prior_
 
 
 def test_main_fails_closed_when_market_reconciliation_fails(monkeypatch):
-    class _FakeBronzeClient:
-        def list_blob_infos(self, *, name_starts_with: str):
-            assert name_starts_with == "market-data/"
-            return []
-
-    monkeypatch.setattr(silver, "bronze_client", _FakeBronzeClient())
+    monkeypatch.setattr(silver, "bronze_client", object())
+    monkeypatch.setattr(
+        silver.bronze_bucketing,
+        "list_active_bucket_blob_infos",
+        lambda _domain, _client: [],
+    )
     monkeypatch.setattr(silver, "load_watermarks", lambda _name: {})
     monkeypatch.setattr(silver, "load_last_success", lambda _name: None)
     monkeypatch.setattr(silver, "save_watermarks", lambda *_args, **_kwargs: None)

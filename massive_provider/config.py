@@ -24,13 +24,6 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = (_strip_or_none(os.environ.get(name)) or "").lower()
-    if not raw:
-        return bool(default)
-    return raw in {"1", "true", "t", "yes", "y", "on"}
-
-
 @dataclass(frozen=True)
 class MassiveConfig:
     """Runtime configuration for Massive integration.
@@ -49,9 +42,6 @@ class MassiveConfig:
     api_key: str
     base_url: str = "https://api.massive.com"
     timeout_seconds: float = 30.0
-
-    # Prefer the official SDK when it is installed.
-    prefer_official_sdk: bool = True
 
     # Fundamentals endpoint versioning can change over time in Massive docs.
     # Keep this configurable so runtime can adapt without code changes.
@@ -72,7 +62,6 @@ class MassiveConfig:
 
         base_url = _strip_or_none(os.environ.get("MASSIVE_BASE_URL")) or "https://api.massive.com"
         timeout_seconds = _env_float("MASSIVE_TIMEOUT_SECONDS", 30.0)
-        prefer_sdk = _env_bool("MASSIVE_PREFER_OFFICIAL_SDK", True)
         float_endpoint = _strip_or_none(os.environ.get("MASSIVE_FLOAT_ENDPOINT")) or "/stocks/vX/float"
 
         flat_endpoint = _strip_or_none(os.environ.get("MASSIVE_FLATFILES_ENDPOINT_URL")) or "https://files.massive.com"
@@ -89,7 +78,6 @@ class MassiveConfig:
             api_key=str(api_key or ""),
             base_url=str(base_url),
             timeout_seconds=float(timeout_seconds),
-            prefer_official_sdk=bool(prefer_sdk),
             float_endpoint=str(float_endpoint),
             websocket_subscriptions_default=subs,
             flatfiles_endpoint_url=str(flat_endpoint),

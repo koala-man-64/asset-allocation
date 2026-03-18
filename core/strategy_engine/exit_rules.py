@@ -47,8 +47,6 @@ class ExitRuleEvaluator:
         candidates: list[ExitDecision] = []
 
         for ordinal, rule in enumerate(strategy_config.exits):
-            if not rule.enabled:
-                continue
             if next_position.bars_held < rule.minHoldBars:
                 continue
             decision = self._evaluate_rule(rule, next_position, bar, ordinal)

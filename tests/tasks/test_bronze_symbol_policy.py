@@ -8,8 +8,9 @@ def _install_storage_stubs(monkeypatch):
     blobs: dict[str, bytes] = {}
     update_calls: list[tuple[str, str, object]] = []
 
-    def fake_read_raw_bytes(path, client=None):
+    def fake_read_raw_bytes(path, client=None, **kwargs):
         del client
+        del kwargs
         if path not in blobs:
             raise FileNotFoundError(path)
         return blobs[path]

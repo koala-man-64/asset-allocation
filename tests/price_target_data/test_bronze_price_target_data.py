@@ -83,6 +83,49 @@ def test_process_batch_bronze(mock_list_manager, mock_client, mock_nasdaq, uniqu
 @patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
 @patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
 @patch('tasks.price_target_data.bronze_price_target_data.list_manager')
+def test_process_batch_bronze_logs_symbol_processed_success(
+    mock_list_manager,
+    mock_client,
+    mock_nasdaq,
+):
+    symbol = "AAA"
+
+    mock_blob_client = MagicMock()
+    mock_blob_client.exists.return_value = False
+    mock_client.get_blob_client.return_value = mock_blob_client
+    mock_nasdaq.get_table.return_value = pd.DataFrame(
+        {
+            "ticker": [symbol],
+            "obs_date": [pd.Timestamp("2024-03-01")],
+            "tp_mean_est": [55.0],
+        }
+    )
+
+    semaphore = asyncio.Semaphore(1)
+
+    async def run_test():
+        with patch("core.core.store_raw_bytes"), patch(
+            "tasks.price_target_data.bronze_price_target_data.log_bronze_success"
+        ) as mock_log_success:
+            summary = await bronze.process_batch_bronze([symbol], semaphore)
+
+        assert summary["saved"] == 1
+        mock_log_success.assert_any_call(
+            domain="price-target",
+            operation="symbol_processed",
+            symbol=symbol,
+            disposition="written",
+            success_count=1,
+            coverage_status=None,
+            row_count=1,
+        )
+
+    asyncio.run(run_test())
+
+
+@patch('tasks.price_target_data.bronze_price_target_data.nasdaqdatalink')
+@patch('tasks.price_target_data.bronze_price_target_data.bronze_client')
+@patch('tasks.price_target_data.bronze_price_target_data.list_manager')
 def test_process_batch_bronze_skips_blacklist_for_filtered_missing(
     mock_list_manager,
     mock_client,

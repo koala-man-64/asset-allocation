@@ -280,21 +280,12 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def ensure_api_awake_from_env(*, required: bool = True) -> None:
-    enabled = _parse_bool(os.environ.get("JOB_STARTUP_API_WAKE_ENABLED"), default=True)
-    if not enabled:
-        message = "Startup API wake check is disabled (JOB_STARTUP_API_WAKE_ENABLED=false)."
-        if required:
-            mdc.write_error(message)
-            raise RuntimeError(message)
-        mdc.write_line(f"Skipping startup API wake check ({message})")
+    local_runtime = _is_local_runtime()
+    if local_runtime:
+        mdc.write_line("Skipping startup API wake/start logic in local runtime.")
         return
 
-    local_runtime = _is_local_runtime()
-
     base_url = _resolve_api_base_url()
-    if local_runtime:
-        base_url = _resolve_local_api_base_url(base_url)
-        os.environ["ASSET_ALLOCATION_API_BASE_URL"] = base_url
     if not base_url:
         message = "Startup API wake check failed: ASSET_ALLOCATION_API_BASE_URL is not configured."
         if required:
@@ -313,34 +304,13 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
         return
 
     probe_attempts, probe_sleep_seconds, probe_timeout_seconds = _get_startup_probe_config()
-    arm_start_enabled = _parse_bool(os.environ.get("JOB_STARTUP_API_ARM_START_ENABLED"), default=True)
     mdc.write_line(
         "Startup API wake configuration: "
         f"required={required} local_runtime={local_runtime} "
         f"base_url={_safe_url_for_log(base_url)} health_url={_safe_url_for_log(health_url)} "
         f"probe_attempts={probe_attempts} probe_sleep_seconds={probe_sleep_seconds:.1f} "
-        f"probe_timeout_seconds={probe_timeout_seconds:.1f} arm_start_enabled={arm_start_enabled}"
+        f"probe_timeout_seconds={probe_timeout_seconds:.1f} arm_start_enabled=true"
     )
-
-    if local_runtime:
-        attempt = 0
-        while True:
-            attempt += 1
-            healthy, detail = _probe_health(health_url=health_url, timeout_seconds=probe_timeout_seconds)
-            if healthy:
-                if attempt == 1:
-                    mdc.write_line(f"Startup API health probe succeeded ({detail}).")
-                else:
-                    mdc.write_line(f"Startup API became healthy after {attempt} attempts ({detail}).")
-                return
-            mdc.write_warning(f"Startup API health probe failed (attempt {attempt}, {detail}).")
-            if not required:
-                mdc.write_warning(
-                    f"Startup API is not healthy in local runtime (health_url={health_url}); continuing because required=false."
-                )
-                return
-            mdc.write_line(f"Waiting for local API to become healthy at {health_url}...")
-            time.sleep(probe_sleep_seconds)
 
     arm_start_attempted = False
 
@@ -355,7 +325,7 @@ def ensure_api_awake_from_env(*, required: bool = True) -> None:
 
         mdc.write_warning(f"Startup API health probe failed (attempt {probe_attempt}/{probe_attempts}, {detail}).")
 
-        if (not arm_start_attempted) and arm_start_enabled:
+        if not arm_start_attempted:
             arm_start_attempted = True
             app_names = _resolve_startup_container_apps(base_url)
             if not app_names:
@@ -436,14 +406,12 @@ def trigger_next_job_from_env() -> None:
         mdc.write_line("No downstream jobs configured via TRIGGER_NEXT_JOB_NAME; skipping downstream trigger.")
         return
 
-    required = _parse_bool(os.environ.get("TRIGGER_NEXT_JOB_REQUIRED"), default=True)
-    
     # Support multiple comma-separated jobs
     next_jobs = [j.strip() for j in raw_next_jobs.split(",") if j.strip()]
     mdc.write_line(
         "Downstream trigger plan: "
-        f"jobs={','.join(next_jobs)} required={required} count={len(next_jobs)}"
+        f"jobs={','.join(next_jobs)} required=true count={len(next_jobs)}"
     )
-    
+
     for job_name in next_jobs:
-        trigger_containerapp_job_start(job_name=job_name, required=required)
+        trigger_containerapp_job_start(job_name=job_name, required=True)

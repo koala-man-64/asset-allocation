@@ -55,8 +55,6 @@ class WebSocketTicketStore:
     def consume(
         self,
         ticket: str,
-        *,
-        expected_auth_mode: AuthMode | None = None,
     ) -> WebSocketTicket | None:
         resolved = str(ticket or "").strip()
         if not resolved:
@@ -69,8 +67,6 @@ class WebSocketTicketStore:
             if record is None:
                 return None
             if record.expires_at <= now:
-                return None
-            if expected_auth_mode is not None and record.auth_mode != expected_auth_mode:
                 return None
             return record
 

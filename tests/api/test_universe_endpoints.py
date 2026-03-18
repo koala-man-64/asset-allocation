@@ -29,7 +29,6 @@ def _sample_universe_payload() -> dict:
 
 @pytest.mark.asyncio
 async def test_list_universe_configs_returns_repo_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         UniverseRepository,
@@ -47,7 +46,6 @@ async def test_list_universe_configs_returns_repo_rows(monkeypatch: pytest.Monke
 
 @pytest.mark.asyncio
 async def test_universe_catalog_endpoint_returns_gold_tables(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         universe_endpoints,
@@ -81,7 +79,6 @@ async def test_universe_catalog_endpoint_returns_gold_tables(monkeypatch: pytest
 
 @pytest.mark.asyncio
 async def test_preview_universe_accepts_draft_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         universe_endpoints,
@@ -105,7 +102,6 @@ async def test_preview_universe_accepts_draft_config(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.asyncio
 async def test_delete_universe_rejects_referenced_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         UniverseRepository,

@@ -1,16 +1,13 @@
-import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import React, { useCallback, useMemo, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useSystemHealthQuery, queryKeys } from '@/hooks/useDataQueries';
-import {
-  mergeSystemHealthWithJobOverrides,
-  useSystemHealthJobOverrides
-} from '@/hooks/useSystemHealthJobOverrides';
+import { queryKeys } from '@/hooks/useDataQueries';
+import { useSystemStatusViewQuery } from '@/hooks/useSystemStatusView';
 import { DataService } from '@/services/DataService';
+import type { DomainMetadataSnapshotResponse, SystemStatusViewResponse } from '@/services/apiService';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { PageLoader } from '@/app/components/common/PageLoader';
 import type { ManagedContainerJob } from './system-status/JobKillSwitchPanel';
-import type { SystemHealth } from '@/types/strategy';
 import type { JobLogStreamTarget } from './system-status/JobLogStreamPanel';
 
 // Lazy load components to reduce initial bundle size of the page
@@ -27,85 +24,17 @@ const JobLogStreamPanel = lazy(() =>
 );
 
 import { buildLatestJobRunIndex, normalizeAzureJobName } from './system-status/SystemStatusHelpers';
+import { effectiveJobStatus, formatTimeAgo } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
-const JOB_STATUS_POLL_INTERVAL_MS = 10_000;
-
-type JobPollingSnapshot = Pick<SystemHealth, 'overall' | 'recentJobs' | 'resources'>;
-
-function pickJobPollingSnapshot(payload?: SystemHealth | null): JobPollingSnapshot | null {
-  if (!payload) return null;
-  return {
-    overall: payload.overall,
-    recentJobs: payload.recentJobs || [],
-    resources: payload.resources || []
-  };
-}
-
 export function SystemStatusPage() {
-  const { data, isLoading, error, isFetching } = useSystemHealthQuery({
-    autoRefresh: false
+  const { data, isLoading, error, isFetching } = useSystemStatusViewQuery({
+    autoRefresh: true
   });
-  const jobOverrides = useSystemHealthJobOverrides();
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [jobPollingSnapshot, setJobPollingSnapshot] = useState<JobPollingSnapshot | null>(null);
-  const hasSystemHealth = Boolean(data);
-  const hasSystemHealthError = Boolean(error);
-
-  useEffect(() => {
-    if (!hasSystemHealth || hasSystemHealthError) {
-      setJobPollingSnapshot(null);
-      return;
-    }
-
-    let disposed = false;
-    let pollingInFlight = false;
-
-    const pollJobStatus = async () => {
-      if (pollingInFlight || disposed) return;
-      pollingInFlight = true;
-      try {
-        const fresh = await DataService.getSystemHealth({ refresh: true });
-        if (!disposed) {
-          setJobPollingSnapshot(pickJobPollingSnapshot(fresh));
-        }
-      } catch (err) {
-        if (!disposed) {
-          console.error('[SystemStatusPage] job status poll failed', err);
-        }
-      } finally {
-        pollingInFlight = false;
-      }
-    };
-
-    void pollJobStatus();
-
-    const handle = window.setInterval(() => {
-      void pollJobStatus();
-    }, JOB_STATUS_POLL_INTERVAL_MS);
-
-    return () => {
-      disposed = true;
-      window.clearInterval(handle);
-    };
-  }, [hasSystemHealth, hasSystemHealthError]);
-
-  const systemHealthWithPolledJobs = useMemo<SystemHealth | undefined>(() => {
-    if (!data) return data;
-    if (!jobPollingSnapshot) return data;
-    return {
-      ...data,
-      overall: jobPollingSnapshot.overall,
-      recentJobs: jobPollingSnapshot.recentJobs,
-      resources: jobPollingSnapshot.resources
-    };
-  }, [data, jobPollingSnapshot]);
-
-  const systemHealth = useMemo(
-    () => mergeSystemHealthWithJobOverrides(systemHealthWithPolledJobs, jobOverrides.data),
-    [systemHealthWithPolledJobs, jobOverrides.data]
-  );
+  const systemStatusView = data;
+  const systemHealth = systemStatusView?.systemHealth;
 
   const displayDataLayers = useMemo(() => {
     return (systemHealth?.dataLayers || []).map((layer) => ({
@@ -224,18 +153,9 @@ export function SystemStatusPage() {
         };
       })
       .sort((left, right) => {
-        const leftRunning = String(left.runningState || left.recentStatus || '')
-          .trim()
-          .toLowerCase()
-          .includes('running')
-          ? 1
-          : 0;
-        const rightRunning = String(right.runningState || right.recentStatus || '')
-          .trim()
-          .toLowerCase()
-          .includes('running')
-          ? 1
-          : 0;
+        const leftRunning = effectiveJobStatus(left.recentStatus, left.runningState) === 'running' ? 1 : 0;
+        const rightRunning =
+          effectiveJobStatus(right.recentStatus, right.runningState) === 'running' ? 1 : 0;
         if (leftRunning !== rightRunning) {
           return rightRunning - leftRunning;
         }
@@ -255,12 +175,36 @@ export function SystemStatusPage() {
       .map(({ sortLayerName: _sortLayerName, ...item }) => item);
   }, [displayDataLayers, jobStates, latestJobRuns, systemHealth?.resources]);
 
+  const handleMetadataSnapshotChange = useCallback(
+    (
+      updater: (
+        previous: DomainMetadataSnapshotResponse | undefined
+      ) => DomainMetadataSnapshotResponse | undefined
+    ) => {
+      queryClient.setQueryData<SystemStatusViewResponse | undefined>(
+        queryKeys.systemStatusView(),
+        (current) => {
+          if (!current) return current;
+          const nextMetadataSnapshot = updater(current.metadataSnapshot);
+          if (!nextMetadataSnapshot) return current;
+          return {
+            ...current,
+            metadataSnapshot: nextMetadataSnapshot
+          };
+        }
+      );
+      queryClient.setQueryData(queryKeys.domainMetadataSnapshot('all', 'all'), updater);
+    },
+    [queryClient]
+  );
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const fresh = await DataService.getSystemHealth({ refresh: true });
-      queryClient.setQueryData(queryKeys.systemHealth(), fresh);
-      setJobPollingSnapshot(pickJobPollingSnapshot(fresh));
+      const fresh = await DataService.getSystemStatusView({ refresh: true });
+      queryClient.setQueryData(queryKeys.systemStatusView(), fresh);
+      queryClient.setQueryData(queryKeys.systemHealth(), fresh.systemHealth);
+      queryClient.setQueryData(queryKeys.domainMetadataSnapshot('all', 'all'), fresh.metadataSnapshot);
     } catch (err) {
       console.error('[SystemStatusPage] refresh failed', err);
     } finally {
@@ -282,6 +226,9 @@ export function SystemStatusPage() {
   }
 
   const { overall, recentJobs } = systemHealth;
+  const generatedAtLabel = systemStatusView?.generatedAt
+    ? `VIEW UPDATED ${formatTimeAgo(systemStatusView.generatedAt)} AGO`
+    : 'LINK ESTABLISHED';
 
   return (
     <div className="page-shell">
@@ -294,6 +241,10 @@ export function SystemStatusPage() {
             recentJobs={recentJobs}
             jobStates={jobStates}
             managedContainerJobs={managedContainerJobs}
+            metadataSnapshot={systemStatusView?.metadataSnapshot}
+            metadataUpdatedAt={systemStatusView?.metadataSnapshot.updatedAt || null}
+            metadataSource={systemStatusView?.sources.metadataSnapshot}
+            onMetadataSnapshotChange={handleMetadataSnapshotChange}
             onRefresh={handleRefresh}
             isRefreshing={isRefreshing}
             isFetching={isFetching}
@@ -320,7 +271,7 @@ export function SystemStatusPage() {
           <span
             className={`h-2 w-2 rounded-full ${isFetching ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-600'}`}
           />
-          {isFetching ? 'RECEIVING TELEMETRY...' : 'LINK ESTABLISHED'}
+          {isFetching ? 'RECEIVING TELEMETRY...' : generatedAtLabel}
         </div>
       </div>
     </div>

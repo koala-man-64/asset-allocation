@@ -32,14 +32,13 @@ from api.service.auth import AuthError
 
 
 def validate_auth(request: Request) -> AuthContext:
-    settings = get_settings(request)
     auth = get_auth_manager(request)
 
     try:
         ctx = auth.authenticate_headers(dict(request.headers))
-        if settings.auth_mode == "none":
+        if ctx.mode == "anonymous":
             logger.info(
-                "Auth skipped (mode=none): path=%s host=%s",
+                "Auth bypassed for local/test runtime: path=%s host=%s",
                 request.url.path,
                 request.headers.get("host", ""),
             )

@@ -14,7 +14,7 @@ The checked-in source of truth is [env-contract.csv](env-contract.csv). It class
   Examples: `POSTGRES_DSN`, `API_KEY`, `ALPHA_VANTAGE_API_KEY`.
 - `deploy_var`
   Source of truth: checked-in deploy config or a small GitHub Variables set for true environment identity/auth/public contract.
-  Examples: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ASSET_ALLOCATION_API_BASE_URL`, `API_AUTH_MODE`.
+  Examples: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ASSET_ALLOCATION_API_BASE_URL`, `SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID`.
 - `runtime_config`
   Source of truth: code defaults plus Postgres `runtime_config`.
   These keys must not be synced to GitHub Variables.
@@ -33,7 +33,7 @@ The checked-in source of truth is [env-contract.csv](env-contract.csv). It class
 - GitHub Secrets are only for actual credentials and tokens.
 - GitHub Variables are only for a narrow deploy contract.
 - Runtime tuning belongs in code defaults and Postgres `runtime_config`, not GitHub Variables.
-- Local UI and tooling env like `VITE_*`, `API_PORT`, and `BACKGROUND_WORKERS_ENABLED` stay local.
+- Local UI and tooling env like `VITE_*` and `API_PORT` stay local.
 
 ## Adding or changing an env key
 

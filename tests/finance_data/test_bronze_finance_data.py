@@ -538,10 +538,6 @@ def test_main_async_returns_success_when_symbol_is_only_invalid_candidate(unique
                 return_value=0,
             ),
             patch("tasks.finance_data.bronze_finance_data.bronze_client") as mock_bronze_client,
-            patch(
-                "tasks.finance_data.bronze_finance_data.create_bronze_finance_manifest",
-                return_value=None,
-            ),
             patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager,
             patch("tasks.finance_data.bronze_finance_data.mdc.write_line"),
             patch("tasks.finance_data.bronze_finance_data.mdc.write_warning"),
@@ -615,10 +611,6 @@ def test_main_async_logs_symbol_success(unique_ticker):
                 return_value=0,
             ),
             patch("tasks.finance_data.bronze_finance_data.bronze_client") as mock_bronze_client,
-            patch(
-                "tasks.finance_data.bronze_finance_data.create_bronze_finance_manifest",
-                return_value=None,
-            ),
             patch("tasks.finance_data.bronze_finance_data.list_manager") as mock_list_manager,
             patch("tasks.finance_data.bronze_finance_data.mdc.write_line") as mock_write_line,
             patch("tasks.finance_data.bronze_finance_data.mdc.write_warning"),

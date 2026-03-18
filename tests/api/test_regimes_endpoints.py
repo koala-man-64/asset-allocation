@@ -27,7 +27,6 @@ async def _post_json(client, url: str, payload: dict) -> dict:
 
 
 async def test_get_current_regime_returns_snapshot(monkeypatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         RegimeRepository,
@@ -52,7 +51,6 @@ async def test_get_current_regime_returns_snapshot(monkeypatch) -> None:
 
 
 async def test_create_regime_model_returns_saved_revision(monkeypatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         RegimeRepository,
@@ -88,7 +86,6 @@ async def test_create_regime_model_returns_saved_revision(monkeypatch) -> None:
 
 
 async def test_activate_regime_model_triggers_job_when_configured(monkeypatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setenv("REGIME_ACA_JOB_NAME", "gold-regime-job")
     monkeypatch.setattr(

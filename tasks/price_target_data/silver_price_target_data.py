@@ -17,6 +17,7 @@ from tasks.common.watermarks import (
     check_blob_unchanged,
     load_last_success,
     load_watermarks,
+    normalize_watermark_blob_name,
     save_last_success,
     save_watermarks,
     should_process_blob_since_last_success,
@@ -107,19 +108,7 @@ def _extract_ticker(blob_name: str) -> str:
 
 
 def _parse_alpha26_bucket_from_blob_name(blob_name: str) -> Optional[str]:
-    text = str(blob_name or "").strip("/")
-    parts = text.split("/")
-    if len(parts) < 3:
-        return None
-    if parts[0] != "price-target-data" or parts[1] != "buckets":
-        return None
-    filename = parts[2]
-    if "." in filename:
-        filename = filename.split(".", 1)[0]
-    bucket = filename.strip().upper()
-    if bucket not in set(layer_bucketing.ALPHABET_BUCKETS):
-        return None
-    return bucket
+    return bronze_bucketing.parse_bucket_from_blob_name(blob_name, expected_prefix="price-target-data")
 
 
 def _restore_blob_watermark(
@@ -128,10 +117,11 @@ def _restore_blob_watermark(
     blob_name: str,
     prior_signature: Optional[dict],
 ) -> None:
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if prior_signature is None:
-        watermarks.pop(blob_name, None)
+        watermarks.pop(watermark_key, None)
         return
-    watermarks[blob_name] = dict(prior_signature)
+    watermarks[watermark_key] = dict(prior_signature)
 
 
 def _process_symbol_frame(
@@ -340,6 +330,7 @@ def process_blob(
     alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
     blob_name = blob["name"]  # price-target-data/{symbol}.parquet
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if not blob_name.endswith(".parquet"):
         return "skipped_non_parquet"
 
@@ -347,7 +338,7 @@ def process_blob(
     if hasattr(cfg, "DEBUG_SYMBOLS") and cfg.DEBUG_SYMBOLS and ticker not in cfg.DEBUG_SYMBOLS:
         return "skipped_debug_symbols"
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(watermark_key))
     if unchanged:
         return "skipped_unchanged"
 
@@ -365,7 +356,7 @@ def process_blob(
         )
         if status == "ok" and signature:
             signature["updated_at"] = _utc_now_iso()
-            watermarks[blob_name] = signature
+            watermarks[watermark_key] = signature
         return status
     except Exception as exc:
         mdc.write_error(f"Failed to process {ticker}: {exc}")
@@ -381,10 +372,11 @@ def process_alpha26_bucket_blob(
     alpha26_bucket_frames: Optional[dict[str, list[pd.DataFrame]]] = None,
 ) -> str:
     blob_name = str(blob.get("name", ""))
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if not blob_name.endswith(".parquet"):
         return "skipped_non_parquet"
 
-    unchanged, signature = check_blob_unchanged(blob, watermarks.get(blob_name))
+    unchanged, signature = check_blob_unchanged(blob, watermarks.get(watermark_key))
     if unchanged:
         return "skipped_unchanged"
 
@@ -398,7 +390,7 @@ def process_alpha26_bucket_blob(
     if df_bucket is None or df_bucket.empty:
         if signature:
             signature["updated_at"] = _utc_now_iso()
-            watermarks[blob_name] = signature
+            watermarks[watermark_key] = signature
         return "ok"
 
     symbol_col = "symbol" if "symbol" in df_bucket.columns else ("Symbol" if "Symbol" in df_bucket.columns else None)
@@ -427,7 +419,7 @@ def process_alpha26_bucket_blob(
 
     if not has_failed and signature:
         signature["updated_at"] = _utc_now_iso()
-        watermarks[blob_name] = signature
+        watermarks[watermark_key] = signature
     return "failed" if has_failed else "ok"
 
 
@@ -621,25 +613,19 @@ def main():
     layer_bucketing.silver_layout_mode()
     force_rebuild = layer_bucketing.silver_alpha26_force_rebuild()
     mdc.write_line("Listing Bronze Price Target files...")
-    blobs = bronze_client.list_blob_infos(name_starts_with="price-target-data/")
     watermarks = load_watermarks("bronze_price_target_data")
     last_success = load_last_success("silver_price_target_data")
     watermarks_dirty = False
 
-    blob_list = [
-        b
-        for b in blobs
-        if str(b.get("name", "")).startswith("price-target-data/buckets/")
-        and str(b.get("name", "")).endswith(".parquet")
-    ]
+    blob_list = bronze_bucketing.list_active_bucket_blob_infos("price-target", bronze_client)
     checkpoint_skipped = 0
     forced_schema_migration = 0
     candidate_blobs: list[dict] = []
     for blob in blob_list:
         blob_name = str(blob.get("name", ""))
         force_reprocess = False
-        force_reprocess = False
-        prior = watermarks.get(blob_name)
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior = watermarks.get(watermark_key)
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
@@ -670,7 +656,8 @@ def main():
     alpha26_column_count: Optional[int] = len(_ALPHA26_PRICE_TARGET_MIN_COLUMNS)
     for blob in candidate_blobs:
         blob_name = str(blob.get("name", ""))
-        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior_signature = dict(watermarks[watermark_key]) if isinstance(watermarks.get(watermark_key), dict) else None
         alpha26_bucket_frames: dict[str, list[pd.DataFrame]] = {}
         status = process_alpha26_bucket_blob(
             blob,

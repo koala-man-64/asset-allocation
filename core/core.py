@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from io import StringIO, BytesIO
 from pathlib import Path
-from typing import Any, Union, Optional
+from typing import Any, Union, Optional, Literal
 from core.massive_provider import get_complete_ticker_list
 
 import pandas as pd
@@ -164,7 +164,7 @@ def log_environment_diagnostics():
             except Exception:
                 pass
         else:
-            logger.info("Debug symbols disabled or empty.")
+            logger.info("Debug symbols not configured or empty.")
     except Exception as exc:
         logger.warning("Debug symbols refresh skipped: %s", exc)
 
@@ -700,7 +700,7 @@ def get_active_tickers_massive() -> pd.DataFrame:
     """
     api_key = cfg.MASSIVE_API_KEY
     if not api_key:
-        write_warning("Massive symbol fetch disabled (MASSIVE_API_KEY missing).")
+        write_warning("Massive symbol fetch skipped (MASSIVE_API_KEY missing).")
         return pd.DataFrame(columns=["Symbol"])
 
     try:
@@ -1456,9 +1456,10 @@ class JobLock:
     """
     Context manager for distributed locking using Azure Blob Storage Leases.
 
-    By default, if the lock is already held, the job exits successfully (0) to avoid concurrent execution.
-    Optionally, callers can wait for the lock by setting wait_timeout_seconds to a positive number or None
-    (wait forever).
+    Conflict handling is controlled by ``conflict_policy``:
+      - ``skip_success``: exit 0 immediately when a held lock is encountered.
+      - ``fail``: exit 1 immediately when a held lock is encountered.
+      - ``wait_then_fail``: wait for release until ``wait_timeout_seconds`` then exit 1.
     """
 
     def __init__(
@@ -1466,11 +1467,13 @@ class JobLock:
         job_name: str,
         lease_duration: int = 60,
         *,
+        conflict_policy: Literal["skip_success", "fail", "wait_then_fail"] = "skip_success",
         wait_timeout_seconds: Optional[float] = 0,
         poll_interval_seconds: float = 5.0,
     ):
         self.job_name = job_name
         self.lease_duration = lease_duration
+        self.conflict_policy = str(conflict_policy or "skip_success").strip().lower()
         self.wait_timeout_seconds = wait_timeout_seconds
         self.poll_interval_seconds = poll_interval_seconds
         self.lock_blob_name = f"locks/{job_name}.lock"
@@ -1500,7 +1503,10 @@ class JobLock:
                 os._exit(1)
 
     def __enter__(self):
-        write_line(f"Acquiring lock for {self.job_name}...")
+        write_line(
+            f"Acquiring lock for {self.job_name}... "
+            f"(conflict_policy={self.conflict_policy} wait_timeout_seconds={self.wait_timeout_seconds})"
+        )
         
         if common_storage_client is None:
             write_warning("Common storage client not initialized. Skipping lock check (UNSAFE concurrency).")
@@ -1556,14 +1562,31 @@ class JobLock:
                         raise
 
                     # Locked
-                    if self.wait_timeout_seconds == 0:
-                        write_warning(f"Lock already held for {self.job_name}. Skipping execution.")
+                    if self.conflict_policy == "skip_success":
+                        write_warning(
+                            f"Lock already held for {self.job_name}. "
+                            "Skipping execution with success due to conflict_policy=skip_success."
+                        )
                         raise SystemExit(0)
+                    if self.conflict_policy == "fail":
+                        write_error(
+                            f"Lock already held for {self.job_name}. "
+                            "Failing execution due to conflict_policy=fail."
+                        )
+                        raise SystemExit(1)
+                    if self.conflict_policy != "wait_then_fail":
+                        write_error(
+                            f"Unsupported conflict_policy={self.conflict_policy!r} for lock {self.job_name}."
+                        )
+                        raise SystemExit(1)
 
                     now = time.monotonic()
                     if start_wait is None:
                         start_wait = now
-                        write_line(f"Lock already held for {self.job_name}. Waiting for release...")
+                        write_line(
+                            f"Lock already held for {self.job_name}. Waiting for release "
+                            f"(conflict_policy=wait_then_fail)..."
+                        )
                     else:
                         elapsed = now - start_wait
                         if self.wait_timeout_seconds is not None and elapsed >= self.wait_timeout_seconds:
@@ -1597,18 +1620,32 @@ class JobLock:
             except Exception as e:
                 write_error(f"Error releasing lock: {e}")
 
-def read_raw_bytes(file_path: Union[str, Path], client: Optional[BlobStorageClient] = None) -> bytes:
+def read_raw_bytes(
+    file_path: Union[str, Path],
+    client: Optional[BlobStorageClient] = None,
+    *,
+    missing_ok: bool = False,
+    missing_message: Optional[str] = None,
+) -> bytes:
     """
     Retrieves raw bytes from Azure Blob Storage.
     file_path: Remote path.
     client: Specific client to use.
+    missing_ok: When true, do not emit a warning if the blob is absent/empty.
+    missing_message: Optional info-level message for expected-missing reads.
     """
     if client:
         blob_name = get_remote_path(file_path)
         content_bytes = client.download_data(blob_name)
         if content_bytes:
             return content_bytes
-    
+
+    if missing_ok:
+        text = str(missing_message or "").strip()
+        if text:
+            logger.info(text)
+        return b""
+
     logger.warning(f"Failed to load bytes from {file_path} (client={client is not None}).")
     return b""
 

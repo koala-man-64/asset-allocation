@@ -51,7 +51,6 @@ def _sample_definition() -> ResolvedBacktestDefinition:
                 "rankingSchemaName": "quality",
                 "intrabarConflictPolicy": "stop_first",
                 "regimePolicy": {
-                    "enabled": True,
                     "modelName": "default-regime",
                     "targetGrossExposureByRegime": {
                         "trending_bull": 1.0,
@@ -79,7 +78,6 @@ def _sample_definition() -> ResolvedBacktestDefinition:
             "rankingSchemaName": "quality",
             "intrabarConflictPolicy": "stop_first",
             "regimePolicy": {
-                "enabled": True,
                 "modelName": "default-regime",
                 "targetGrossExposureByRegime": {
                     "trending_bull": 1.0,
@@ -133,7 +131,6 @@ def _sample_definition() -> ResolvedBacktestDefinition:
 
 @pytest.mark.asyncio
 async def test_list_backtests_returns_repo_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         BacktestRepository,
@@ -170,7 +167,6 @@ async def test_list_backtests_returns_repo_rows(monkeypatch: pytest.MonkeyPatch)
 async def test_submit_backtest_freezes_pinned_versions_and_queues_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setenv("BACKTEST_ACA_JOB_NAME", "backtests-job")
 
@@ -240,7 +236,6 @@ async def test_submit_backtest_freezes_pinned_versions_and_queues_run(
 
 @pytest.mark.asyncio
 async def test_get_summary_returns_runtime_summary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test:test@localhost:5432/asset_allocation")
     monkeypatch.setattr(
         backtest_endpoints,

@@ -201,7 +201,7 @@ describe('JobLogStreamPanel', () => {
     window.removeEventListener(REALTIME_UNSUBSCRIBE_EVENT, captureUnsubscribe);
   });
 
-  it('shows the latest run status before falling back to container running state', async () => {
+  it('prefers the live running state over the last completed run status', async () => {
     const job: JobLogStreamTarget = {
       ...JOBS[1],
       recentStatus: 'success'
@@ -222,8 +222,8 @@ describe('JobLogStreamPanel', () => {
     renderWithProviders(<JobLogStreamPanel jobs={[job]} />);
 
     expect(await screen.findByText('beta snapshot')).toBeInTheDocument();
-    expect(screen.getByText('SUCCESS')).toBeInTheDocument();
-    expect(screen.queryByText('RUNNING')).not.toBeInTheDocument();
+    expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    expect(screen.queryByText('SUCCESS')).not.toBeInTheDocument();
   });
 
   it('keeps streaming without refetching when job metadata refreshes for the same run', async () => {

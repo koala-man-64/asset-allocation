@@ -4,25 +4,15 @@ import os
 from dataclasses import dataclass
 from typing import List, Literal, Optional
 
-AuthMode = Literal["none", "api_key", "oidc", "api_key_or_oidc"]
-UiAuthMode = Literal["none", "api_key", "oidc"]
+AuthMode = Literal["anonymous", "api_key", "oidc"]
 _FIXED_API_KEY_HEADER = "X-API-Key"
 _FIXED_UI_API_BASE_URL = "/api"
-
-
-def _parse_bool(value: str) -> bool:
-    text = value.strip().lower()
-    if text in {"1", "true", "t", "yes", "y", "on"}:
-        return True
-    if text in {"0", "false", "f", "no", "n", "off"}:
-        return False
-    raise ValueError(f"Invalid boolean value: {value!r}")
-
-def _require_env(name: str) -> str:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        raise ValueError(f"{name} is required.")
-    return raw.strip()
+_LOCAL_RUNTIME_MARKER_ENV_VARS = (
+    "CONTAINER_APP_ENV_DNS_SUFFIX",
+    "CONTAINER_APP_JOB_EXECUTION_NAME",
+    "CONTAINER_APP_REPLICA_NAME",
+    "KUBERNETES_SERVICE_HOST",
+)
 
 
 def _split_csv(value: Optional[str]) -> List[str]:
@@ -35,106 +25,108 @@ def _get_optional_str(name: str) -> Optional[str]:
     return value or None
 
 
-def _parse_auth_mode(value: str) -> AuthMode:
-    raw = (value or "").strip().lower()
-    if raw in {"none", "noauth", "disabled"}:
-        return "none"
-    if raw in {"api_key", "apikey", "key"}:
-        return "api_key"
-    if raw in {"oidc", "jwt", "bearer"}:
-        return "oidc"
-    if raw in {"api_key_or_oidc", "apikey_or_oidc", "key_or_oidc"}:
-        return "api_key_or_oidc"
-    raise ValueError(f"Invalid API_AUTH_MODE={value!r} (expected none|api_key|oidc|api_key_or_oidc).")
-
-
-def _parse_ui_auth_mode(value: Optional[str]) -> UiAuthMode:
-    raw = (value or "").strip().lower()
-    if raw in {"", "none", "noauth", "disabled"}:
-        return "none"
-    if raw in {"api_key", "apikey", "key"}:
-        return "api_key"
-    if raw in {"oidc", "jwt", "bearer"}:
-        return "oidc"
-    raise ValueError(f"Invalid UI_AUTH_MODE={value!r} (expected none|api_key|oidc).")
+def _is_local_runtime() -> bool:
+    return not any((os.environ.get(key) or "").strip() for key in _LOCAL_RUNTIME_MARKER_ENV_VARS)
 
 
 @dataclass(frozen=True)
 class ServiceSettings:
     api_key: Optional[str]
     api_key_header: str
-    auth_mode: AuthMode
+    api_key_auth_enabled: bool
+    oidc_auth_enabled: bool
+    anonymous_local_auth_enabled: bool
     oidc_issuer: Optional[str]
     oidc_audience: List[str]
     oidc_jwks_url: Optional[str]
     oidc_required_scopes: List[str]
     oidc_required_roles: List[str]
     postgres_dsn: Optional[str]
-    ui_auth_mode: UiAuthMode
+    browser_oidc_enabled: bool
     ui_oidc_config: dict[str, Optional[str]]
+
+    @property
+    def auth_required(self) -> bool:
+        return not self.anonymous_local_auth_enabled
+
+    @property
+    def auth_summary(self) -> str:
+        methods: list[str] = []
+        if self.api_key_auth_enabled:
+            methods.append("api_key")
+        if self.oidc_auth_enabled:
+            methods.append("oidc")
+        if not methods:
+            return "anonymous-local"
+        return "+".join(methods)
 
     @staticmethod
     def from_env() -> "ServiceSettings":
-        api_key = os.environ.get("API_KEY") or None
+        api_key = _get_optional_str("API_KEY")
         api_key_header = _FIXED_API_KEY_HEADER
-        
+
         oidc_issuer = _get_optional_str("API_OIDC_ISSUER")
         oidc_audience = _split_csv(_get_optional_str("API_OIDC_AUDIENCE"))
         oidc_jwks_url = _get_optional_str("API_OIDC_JWKS_URL")
         oidc_required_scopes = _split_csv(_get_optional_str("API_OIDC_REQUIRED_SCOPES"))
         oidc_required_roles = _split_csv(_get_optional_str("API_OIDC_REQUIRED_ROLES"))
 
-        auth_mode_env = os.environ.get("API_AUTH_MODE")
-        if not auth_mode_env:
-            # Fallback for dev if not set
-            auth_mode = "none"
-        else:
-            auth_mode = _parse_auth_mode(auth_mode_env)
+        api_key_auth_enabled = bool(api_key)
+        oidc_inputs_present = bool(
+            oidc_issuer
+            or oidc_audience
+            or oidc_jwks_url
+            or oidc_required_scopes
+            or oidc_required_roles
+        )
+        if oidc_inputs_present and not oidc_issuer:
+            raise ValueError("API_OIDC_ISSUER is required when API OIDC auth is configured.")
+        if oidc_inputs_present and not oidc_audience:
+            raise ValueError("API_OIDC_AUDIENCE is required when API OIDC auth is configured.")
+        oidc_auth_enabled = bool(oidc_issuer and oidc_audience)
 
-        if auth_mode in {"api_key", "api_key_or_oidc"} and not (api_key and str(api_key).strip()):
-            if auth_mode == "api_key":
-                raise ValueError("API_AUTH_MODE=api_key requires API_KEY to be set.")
-            api_key = None
+        configured_ui_authority = _get_optional_str("UI_OIDC_AUTHORITY")
+        ui_authority = configured_ui_authority or oidc_issuer
+        ui_client_id = _get_optional_str("UI_OIDC_CLIENT_ID")
+        ui_scopes = _get_optional_str("UI_OIDC_SCOPES")
+        ui_redirect_uri = _get_optional_str("UI_OIDC_REDIRECT_URI")
+        browser_oidc_inputs_present = bool(
+            configured_ui_authority or ui_client_id or ui_scopes or ui_redirect_uri
+        )
+        if browser_oidc_inputs_present and not (ui_authority and ui_client_id):
+            raise ValueError("UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together.")
+        browser_oidc_enabled = bool(ui_authority and ui_client_id)
+        if browser_oidc_enabled and not oidc_auth_enabled:
+            raise ValueError("Browser OIDC requires API OIDC auth to be configured.")
 
-        if auth_mode in {"oidc", "api_key_or_oidc"}:
-            if not oidc_issuer:
-                raise ValueError(f"API_AUTH_MODE={auth_mode} requires API_OIDC_ISSUER to be set.")
-            if not oidc_audience:
-                raise ValueError(f"API_AUTH_MODE={auth_mode} requires API_OIDC_AUDIENCE to be set (csv).")
+        anonymous_local_auth_enabled = False
+        if not api_key_auth_enabled and not oidc_auth_enabled:
+            if _is_local_runtime():
+                anonymous_local_auth_enabled = True
+            else:
+                raise ValueError("Deployed runtime requires API_KEY and/or API OIDC configuration.")
 
         postgres_dsn = _get_optional_str("POSTGRES_DSN")
-        
-        ui_auth_mode_raw = _get_optional_str("UI_AUTH_MODE")
-        if ui_auth_mode_raw is None:
-            if auth_mode in {"oidc", "api_key_or_oidc"}:
-                ui_auth_mode = "oidc"
-            elif auth_mode == "api_key":
-                ui_auth_mode = "api_key"
-            else:
-                ui_auth_mode = "none"
-        else:
-            ui_auth_mode = _parse_ui_auth_mode(ui_auth_mode_raw)
-        
-        ui_authority = _get_optional_str("UI_OIDC_AUTHORITY") or _get_optional_str("API_OIDC_ISSUER")
-
         ui_oidc_config = {
             "authority": ui_authority,
-            "clientId": _get_optional_str("UI_OIDC_CLIENT_ID"),
-            "scope": _get_optional_str("UI_OIDC_SCOPES"),
-            "redirectUri": _get_optional_str("UI_OIDC_REDIRECT_URI"),
+            "clientId": ui_client_id,
+            "scope": ui_scopes,
+            "redirectUri": ui_redirect_uri,
             "apiBaseUrl": _FIXED_UI_API_BASE_URL,
         }
 
         return ServiceSettings(
-            api_key=api_key.strip() if isinstance(api_key, str) and api_key.strip() else None,
+            api_key=api_key,
             api_key_header=api_key_header,
-            auth_mode=auth_mode,
+            api_key_auth_enabled=api_key_auth_enabled,
+            oidc_auth_enabled=oidc_auth_enabled,
+            anonymous_local_auth_enabled=anonymous_local_auth_enabled,
             oidc_issuer=oidc_issuer,
             oidc_audience=oidc_audience,
             oidc_jwks_url=oidc_jwks_url,
             oidc_required_scopes=oidc_required_scopes,
             oidc_required_roles=oidc_required_roles,
             postgres_dsn=postgres_dsn,
-            ui_auth_mode=ui_auth_mode,
+            browser_oidc_enabled=browser_oidc_enabled,
             ui_oidc_config=ui_oidc_config,
         )

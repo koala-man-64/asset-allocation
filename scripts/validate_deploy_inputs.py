@@ -17,29 +17,10 @@ REQUIRED_ENV_NAMES = (
     "ASSET_ALLOCATION_API_BASE_URL",
 )
 
-AUTH_MODE_ALIASES = {
-    "none": "none",
-    "noauth": "none",
-    "disabled": "none",
-    "api_key": "api_key",
-    "apikey": "api_key",
-    "key": "api_key",
-    "oidc": "oidc",
-    "jwt": "oidc",
-    "bearer": "oidc",
-    "api_key_or_oidc": "api_key_or_oidc",
-    "apikey_or_oidc": "api_key_or_oidc",
-    "key_or_oidc": "api_key_or_oidc",
-}
-
 
 def fail(message: str) -> None:
     print(f"::error::{message}")
     raise SystemExit(1)
-
-
-def warn(message: str) -> None:
-    print(f"::warning::{message}")
 
 
 def require_value(name: str) -> str:
@@ -49,20 +30,12 @@ def require_value(name: str) -> str:
     return value
 
 
-def parse_bool(name: str, *, default: bool = False) -> bool:
-    raw = (os.environ.get(name) or "").strip().lower()
-    if not raw:
-        return default
-    if raw in {"1", "true", "t", "yes", "y", "on"}:
-        return True
-    if raw in {"0", "false", "f", "no", "n", "off"}:
-        return False
-    fail(f"{name} must be a boolean (true/false)")
-    raise AssertionError("unreachable")
+def optional_value(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
 
 
 def parse_float(name: str, *, default: float, min_value: float = 0.0, max_value: float = 86400.0) -> float:
-    raw = (os.environ.get(name) or "").strip()
+    raw = optional_value(name)
     if not raw:
         return default
     try:
@@ -75,7 +48,7 @@ def parse_float(name: str, *, default: float, min_value: float = 0.0, max_value:
 
 
 def parse_int(name: str, *, default: int, min_value: int = 0, max_value: int = 86400) -> int:
-    raw = (os.environ.get(name) or "").strip()
+    raw = optional_value(name)
     if not raw:
         return default
     try:
@@ -88,7 +61,7 @@ def parse_int(name: str, *, default: int, min_value: int = 0, max_value: int = 8
 
 
 def parse_json_array(name: str) -> list[object]:
-    raw = (os.environ.get(name) or "").strip()
+    raw = optional_value(name)
     if not raw:
         return []
     try:
@@ -98,28 +71,6 @@ def parse_json_array(name: str) -> list[object]:
     if not isinstance(payload, list):
         fail(f"{name} must be a JSON array.")
     return payload
-
-
-def parse_auth_mode() -> str:
-    raw = (os.environ.get("API_AUTH_MODE") or "").strip().lower() or "none"
-    resolved = AUTH_MODE_ALIASES.get(raw)
-    if resolved is None:
-        fail("API_AUTH_MODE must be one of: none|api_key|oidc|api_key_or_oidc")
-    return resolved
-
-
-def parse_ui_auth_mode() -> str:
-    raw = (os.environ.get("UI_AUTH_MODE") or "").strip().lower()
-    if not raw:
-        return "none"
-    if raw in {"none", "noauth", "disabled"}:
-        return "none"
-    if raw in {"api_key", "apikey", "key"}:
-        return "api_key"
-    if raw in {"oidc", "jwt", "bearer"}:
-        return "oidc"
-    fail("UI_AUTH_MODE must be one of: none|api_key|oidc")
-    raise AssertionError("unreachable")
 
 
 def parse_postgres_url(name: str) -> tuple[str, int, str]:
@@ -159,68 +110,68 @@ def validate_api_base_url() -> None:
 
 
 def validate_log_level() -> None:
-    log_level = (os.environ.get("LOG_LEVEL") or "").strip().upper()
+    log_level = optional_value("LOG_LEVEL").upper()
     if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         fail("LOG_LEVEL must be one of: DEBUG|INFO|WARNING|ERROR|CRITICAL")
 
 
 def validate_log_analytics() -> None:
-    enabled = parse_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", default=False)
-    if enabled:
-        workspace_id = (os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or "").strip()
-        if not workspace_id:
-            fail(
-                "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true requires "
-                "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID."
-            )
+    workspace_id = optional_value("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
     parse_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", default=5.0, min_value=0.1, max_value=300.0)
     parse_int("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", default=15, min_value=1, max_value=1440)
     parse_json_array("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON")
 
-    parse_bool("REALTIME_LOG_STREAM_ENABLED", default=True)
-    parse_float("REALTIME_LOG_STREAM_POLL_SECONDS", default=5.0, min_value=1.0, max_value=300.0)
-    parse_int("REALTIME_LOG_STREAM_LOOKBACK_SECONDS", default=30, min_value=10, max_value=86400)
-    parse_int("REALTIME_LOG_STREAM_BATCH_SIZE", default=200, min_value=10, max_value=500)
+    if workspace_id:
+        parse_float("REALTIME_LOG_STREAM_POLL_SECONDS", default=5.0, min_value=1.0, max_value=300.0)
+        parse_int("REALTIME_LOG_STREAM_LOOKBACK_SECONDS", default=30, min_value=10, max_value=86400)
+        parse_int("REALTIME_LOG_STREAM_BATCH_SIZE", default=200, min_value=10, max_value=500)
 
 
-def validate_auth_modes(auth_mode: str) -> None:
-    if auth_mode == "api_key":
-        require_value("API_KEY")
+def validate_auth_configuration() -> None:
+    api_key = optional_value("API_KEY")
 
-    if auth_mode in {"oidc", "api_key_or_oidc"}:
-        require_value("API_OIDC_ISSUER")
-        require_value("API_OIDC_AUDIENCE")
-
-
-def validate_external_ingress(auth_mode: str, ui_auth_mode: str) -> None:
-    if not parse_bool("INGRESS_EXTERNAL", default=False):
-        return
-
-    if auth_mode in {"oidc", "api_key_or_oidc"}:
-        if ui_auth_mode != "oidc":
-            fail("INGRESS_EXTERNAL=true requires UI_AUTH_MODE=oidc.")
-
-        require_value("API_OIDC_ISSUER")
-        require_value("API_OIDC_AUDIENCE")
-        require_value("UI_OIDC_CLIENT_ID")
-        require_value("UI_OIDC_AUTHORITY")
-        require_value("UI_OIDC_SCOPES")
-        require_value("UI_OIDC_REDIRECT_URI")
-        return
-
-    if auth_mode == "api_key":
-        warn(
-            "INGRESS_EXTERNAL=true with API_AUTH_MODE=api_key exposes the app publicly and "
-            "relies on a shared API key for access control. For personal web deployments, "
-            "prefer Azure Container Apps built-in auth or ingress IP restrictions over "
-            "browser-facing shared keys."
+    api_oidc_issuer = optional_value("API_OIDC_ISSUER")
+    api_oidc_audience = optional_value("API_OIDC_AUDIENCE")
+    api_oidc_jwks_url = optional_value("API_OIDC_JWKS_URL")
+    api_oidc_required_scopes = optional_value("API_OIDC_REQUIRED_SCOPES")
+    api_oidc_required_roles = optional_value("API_OIDC_REQUIRED_ROLES")
+    api_oidc_inputs_present = any(
+        (
+            api_oidc_issuer,
+            api_oidc_audience,
+            api_oidc_jwks_url,
+            api_oidc_required_scopes,
+            api_oidc_required_roles,
         )
-    else:
-        warn(
-            "INGRESS_EXTERNAL=true with API_AUTH_MODE=none exposes the app publicly without "
-            "authentication. For personal web deployments, protect the public edge with "
-            "Azure Container Apps built-in auth or ingress IP restrictions."
+    )
+
+    if api_oidc_inputs_present and not api_oidc_issuer:
+        fail("API_OIDC_ISSUER is required when API OIDC auth is configured.")
+    if api_oidc_inputs_present and not api_oidc_audience:
+        fail("API_OIDC_AUDIENCE is required when API OIDC auth is configured.")
+
+    api_oidc_enabled = bool(api_oidc_issuer and api_oidc_audience)
+
+    ui_oidc_authority = optional_value("UI_OIDC_AUTHORITY")
+    ui_oidc_client_id = optional_value("UI_OIDC_CLIENT_ID")
+    ui_oidc_scopes = optional_value("UI_OIDC_SCOPES")
+    ui_oidc_redirect_uri = optional_value("UI_OIDC_REDIRECT_URI")
+    ui_oidc_inputs_present = any(
+        (
+            ui_oidc_authority,
+            ui_oidc_client_id,
+            ui_oidc_scopes,
+            ui_oidc_redirect_uri,
         )
+    )
+
+    if ui_oidc_inputs_present and not (ui_oidc_authority and ui_oidc_client_id):
+        fail("UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together.")
+    if ui_oidc_inputs_present and not api_oidc_enabled:
+        fail("UI OIDC configuration requires API OIDC auth to be configured.")
+
+    if not api_key and not api_oidc_enabled:
+        fail("Deploy validation requires API_KEY and/or API OIDC configuration.")
 
 
 def main() -> int:
@@ -229,14 +180,9 @@ def main() -> int:
 
     parse_postgres_url("POSTGRES_DSN")
     validate_api_base_url()
-
-    auth_mode = parse_auth_mode()
-    ui_auth_mode = parse_ui_auth_mode()
-
     validate_log_level()
     validate_log_analytics()
-    validate_auth_modes(auth_mode)
-    validate_external_ingress(auth_mode, ui_auth_mode)
+    validate_auth_configuration()
     return 0
 
 

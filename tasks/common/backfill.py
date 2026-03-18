@@ -8,25 +8,9 @@ import pandas as pd
 from core import core as mdc
 
 _DEFAULT_BACKFILL_START = pd.Timestamp("2016-01-01")
-
-
-def _parse_bool(raw: Optional[str], *, default: bool) -> bool:
-    if raw is None:
-        return default
-    value = raw.strip().lower()
-    if value in {"1", "true", "t", "yes", "y", "on"}:
-        return True
-    if value in {"0", "false", "f", "no", "n", "off"}:
-        return False
-    return default
-
-
 def get_latest_only_flag(domain: str, *, default: bool = True) -> bool:
-    domain_key = f"SILVER_{domain.upper()}_LATEST_ONLY"
-    domain_raw = os.environ.get(domain_key)
-    if domain_raw is None:
-        domain_raw = os.environ.get("SILVER_LATEST_ONLY")
-    return _parse_bool(domain_raw, default=default)
+    _ = (domain, default)
+    return False
 
 
 def _parse_env_timestamp(name: str) -> Optional[pd.Timestamp]:

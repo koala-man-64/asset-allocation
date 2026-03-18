@@ -34,12 +34,12 @@ import {
   type ConsoleLogStreamLine
 } from '@/services/realtimeBus';
 import {
+  effectiveJobStatus,
   formatTimeAgo,
   getAzureJobExecutionsUrl,
   getStatusBadge,
   getStatusIcon,
-  normalizeAzurePortalUrl,
-  normalizeJobStatus
+  normalizeAzurePortalUrl
 } from './SystemStatusHelpers';
 import { getLogStreamFeedback } from './logStreamFeedback';
 import { formatSystemStatusText } from './systemStatusText';
@@ -359,7 +359,7 @@ export function JobLogStreamPanel({ jobs }: { jobs: JobLogStreamTarget[] }) {
 
   const executionUrl = getAzureJobExecutionsUrl(selectedJob?.jobUrl);
   const portalUrl = normalizeAzurePortalUrl(selectedJob?.jobUrl);
-  const status = normalizeJobStatus(selectedJob?.recentStatus || selectedJob?.runningState);
+  const status = effectiveJobStatus(selectedJob?.recentStatus, selectedJob?.runningState);
 
   return (
     <Card className="h-full flex flex-col">

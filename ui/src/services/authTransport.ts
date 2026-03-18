@@ -14,10 +14,6 @@ function isTruthy(value: unknown): boolean {
 }
 
 function shouldSendApiKey(): boolean {
-  const mode = String(import.meta.env.VITE_AUTH_MODE ?? '')
-    .trim()
-    .toLowerCase();
-  if (mode === 'api_key') return true;
   if (isTruthy(import.meta.env.VITE_ALLOW_BROWSER_API_KEY)) return true;
   return Boolean(import.meta.env.DEV);
 }

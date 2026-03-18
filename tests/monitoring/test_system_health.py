@@ -130,7 +130,6 @@ def test_make_job_portal_url_uses_resource_anchor() -> None:
 @pytest.mark.asyncio
 async def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("API_KEY", raising=False)
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
@@ -145,7 +144,6 @@ async def test_system_health_public_when_no_auth(tmp_path: Path, monkeypatch: py
 @pytest.mark.asyncio
 async def test_system_health_requires_api_key_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_KEY", "secret")
-    monkeypatch.setenv("API_AUTH_MODE", "api_key")
     monkeypatch.delenv("API_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("API_OIDC_AUDIENCE", raising=False)
 
@@ -162,7 +160,6 @@ async def test_system_health_requires_api_key_when_configured(tmp_path: Path, mo
 async def test_system_health_sanitizes_non_finite_signal_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     class FakeCache:
         def get(self, refresh_fn: Any, *, force_refresh: bool = False) -> CacheGetResult[Dict[str, Any]]:
@@ -544,7 +541,6 @@ def test_system_health_critical_on_job_failure_reason_alerts(monkeypatch: pytest
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
 
     monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
@@ -631,7 +627,6 @@ def test_system_health_degraded_on_bronze_symbol_jump(monkeypatch: pytest.Monkey
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "bronze-finance-job")
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace")
     monkeypatch.setenv("SYSTEM_HEALTH_BRONZE_SYMBOL_JUMP_LOOKBACK_HOURS", "168")
     monkeypatch.setenv(
@@ -725,7 +720,6 @@ def test_system_health_critical_on_resource_health_unavailable(monkeypatch: pyte
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "myapp")
-    monkeypatch.setenv("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED", "true")
 
     monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
 

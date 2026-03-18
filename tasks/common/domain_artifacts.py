@@ -389,6 +389,10 @@ def write_bucket_artifact(
     job_name: Optional[str] = None,
     job_run_id: Optional[str] = None,
     sub_domain: Optional[str] = None,
+    run_id: Optional[str] = None,
+    manifest_path: Optional[str] = None,
+    active_data_prefix: Optional[str] = None,
+    data_path: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     storage_client = client or _client_for_layer(layer)
     if storage_client is None:
@@ -417,6 +421,10 @@ def write_bucket_artifact(
         "computedAt": now,
         "producerJobName": str(job_name or "").strip() or None,
         "jobRunId": str(job_run_id or "").strip() or None,
+        "runId": str(run_id or job_run_id or "").strip() or None,
+        "manifestPath": str(manifest_path or "").strip() or None,
+        "activeDataPrefix": str(active_data_prefix or "").strip().strip("/") or None,
+        "dataPath": str(data_path or "").strip() or None,
         **summarize_frame(
             df,
             domain=normalized_domain,
@@ -479,6 +487,11 @@ def write_domain_artifact(
     job_run_id: Optional[str] = None,
     sub_domain: Optional[str] = None,
     finance_subdomains: Optional[dict[str, dict[str, Any]]] = None,
+    run_id: Optional[str] = None,
+    manifest_path: Optional[str] = None,
+    active_data_prefix: Optional[str] = None,
+    total_bytes_override: Optional[int] = None,
+    file_count_override: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
     storage_client = client or _client_for_layer(layer)
     if storage_client is None:
@@ -523,12 +536,14 @@ def write_domain_artifact(
         domain=normalized_domain,
         sub_domain=normalized_sub_domain or None,
     )
-    total_bytes = _measure_domain_storage_bytes(
-        storage_client,
-        layer=normalized_layer,
-        domain=normalized_domain,
-        sub_domain=normalized_sub_domain or None,
-    )
+    total_bytes = total_bytes_override
+    if total_bytes is None:
+        total_bytes = _measure_domain_storage_bytes(
+            storage_client,
+            layer=normalized_layer,
+            domain=normalized_domain,
+            sub_domain=normalized_sub_domain or None,
+        )
     now = _utc_now_iso()
     payload: dict[str, Any] = {
         "version": ARTIFACT_VERSION,
@@ -542,8 +557,12 @@ def write_domain_artifact(
         "computedAt": now,
         "producerJobName": str(job_name or "").strip() or None,
         "jobRunId": str(job_run_id or "").strip() or None,
+        "runId": str(run_id or job_run_id or "").strip() or None,
+        "manifestPath": str(manifest_path or "").strip() or None,
+        "activeDataPrefix": str(active_data_prefix or "").strip().strip("/") or None,
         "symbolIndexPath": str(symbol_index_path or "").strip() or None,
         "totalBytes": total_bytes,
+        "fileCount": int(file_count_override) if isinstance(file_count_override, int) else None,
         **summary,
     }
     if normalized_domain == "finance" and not normalized_sub_domain:

@@ -160,7 +160,7 @@ def _ensure_utc(value: datetime) -> datetime:
 
 def _actor_from_request(request: Request) -> str | None:
     settings = get_settings(request)
-    if settings.auth_mode == "none":
+    if settings.anonymous_local_auth_enabled:
         return None
     try:
         ctx = get_auth_manager(request).authenticate_headers(dict(request.headers))

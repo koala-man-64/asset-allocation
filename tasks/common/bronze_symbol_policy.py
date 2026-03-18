@@ -79,7 +79,7 @@ def load_invalid_candidate_marker(
         return None
     path = invalid_candidate_marker_path(domain=domain, symbol=symbol)
     try:
-        raw = mdc.read_raw_bytes(path, client=common_client)
+        raw = mdc.read_raw_bytes(path, client=common_client, missing_ok=True)
     except Exception:
         return None
     if not raw:

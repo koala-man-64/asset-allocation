@@ -133,7 +133,6 @@ def test_save_strategy(client, mock_repo):
     repo_instance.save_strategy.assert_called_once()
     saved_config = repo_instance.save_strategy.call_args.kwargs["config"]
     assert saved_config["intrabarConflictPolicy"] == "stop_first"
-    assert saved_config["exits"][0]["enabled"] is True
     assert saved_config["exits"][0]["priority"] == 0
     assert saved_config["exits"][0]["priceField"] == "low"
 

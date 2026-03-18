@@ -64,7 +64,6 @@ class _ClientSnapshot:
     api_key_hash: str
     base_url: str
     timeout_seconds: float
-    prefer_official_sdk: bool
 
 
 def _strip_or_none(value: object) -> Optional[str]:
@@ -282,7 +281,6 @@ class MassiveGateway:
             api_key_hash=_hash_secret(str(cfg.api_key)),
             base_url=str(cfg.base_url).rstrip("/"),
             timeout_seconds=float(cfg.timeout_seconds),
-            prefer_official_sdk=bool(cfg.prefer_official_sdk),
         )
         return snapshot, cfg
 

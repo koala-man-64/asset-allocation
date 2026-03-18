@@ -11,7 +11,6 @@ import {
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
-import { Switch } from '@/app/components/ui/switch';
 import { Badge } from '@/app/components/ui/badge';
 import { Textarea } from '@/app/components/ui/textarea';
 import {
@@ -36,7 +35,6 @@ import { PageLoader } from '@/app/components/common/PageLoader';
 
 type EditState = {
   key: string;
-  enabled: boolean;
   value: string;
   description?: string;
 };
@@ -50,17 +48,9 @@ function statusBadge(item: RuntimeConfigItem | undefined) {
     );
   }
 
-  if (!item.enabled) {
-    return (
-      <Badge variant="secondary" className="font-mono text-[10px] uppercase tracking-widest">
-        DB OFF
-      </Badge>
-    );
-  }
-
   return (
     <Badge variant="default" className="font-mono text-[10px] uppercase tracking-widest">
-      DB ON
+      DB
     </Badge>
   );
 }
@@ -108,7 +98,6 @@ export function RuntimeConfigPage() {
     const catalog = (catalogQuery.data?.items || []).find((item) => item.key === key);
     setEditing({
       key,
-      enabled: Boolean(current?.enabled),
       value: String(current?.value || ''),
       description: String(current?.description || catalog?.description || '')
     });
@@ -123,7 +112,6 @@ export function RuntimeConfigPage() {
       await DataService.setRuntimeConfig({
         key: editing.key,
         scope,
-        enabled: editing.enabled,
         value: editing.value,
         description: editing.description
       });
@@ -286,18 +274,9 @@ export function RuntimeConfigPage() {
 
           {editing ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
-                <div>
-                  <div className="text-xs uppercase text-muted-foreground">Apply Override</div>
-                  <div className="text-sm">{editing.key}</div>
-                </div>
-                <Switch
-                  checked={editing.enabled}
-                  onCheckedChange={(checked) =>
-                    setEditing((prev) => (prev ? { ...prev, enabled: Boolean(checked) } : prev))
-                  }
-                  aria-label="Toggle runtime config override"
-                />
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+                <div className="text-xs uppercase text-muted-foreground">Active Override</div>
+                <div className="text-sm">{editing.key}</div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">

@@ -88,9 +88,11 @@ def marker_blob_path(*, domain: str, symbol: str) -> str:
 
 
 def load_coverage_marker(*, common_client: Any, domain: str, symbol: str) -> Optional[dict[str, Any]]:
+    if common_client is None:
+        return None
     path = marker_blob_path(domain=domain, symbol=symbol)
     try:
-        raw = mdc.read_raw_bytes(path, client=common_client)
+        raw = mdc.read_raw_bytes(path, client=common_client, missing_ok=True)
     except Exception:
         return None
     if not raw:

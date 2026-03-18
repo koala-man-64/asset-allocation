@@ -13,8 +13,9 @@ from core import symbol_availability
 from tasks.price_target_data import config as cfg
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
-from tasks.common import domain_artifacts
-from tasks.common.bronze_observability import log_bronze_success
+from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
+from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
+from tasks.common.bronze_symbol_policy import build_bronze_run_id
 from tasks.common.job_status import resolve_job_run_status
 from tasks.common.bronze_backfill_coverage import (
     extract_min_date_from_dataframe,
@@ -209,11 +210,13 @@ def _normalize_bucket_symbol_df(symbol: str, symbol_df: pd.DataFrame) -> pd.Data
     return out.reset_index(drop=True)
 
 
-def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
+def _write_alpha26_price_target_buckets(
+    symbol_frames: Dict[str, pd.DataFrame],
+    *,
+    run_id: str,
+) -> tuple[int, Optional[str]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     symbol_to_bucket: dict[str, str] = {}
-    bucket_artifacts_written = 0
-    domain_artifact_written = False
 
     for symbol, frame in symbol_frames.items():
         if frame is None or frame.empty:
@@ -228,57 +231,26 @@ def _write_alpha26_price_target_buckets(symbol_frames: Dict[str, pd.DataFrame]) 
         else:
             bucket_frames[bucket] = pd.concat([bucket_frames[bucket], normalized], ignore_index=True)
 
-    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
-        frame = bucket_frames[bucket]
-        if frame.empty:
-            frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
-        bronze_bucketing.write_bucket_parquet(
-            client=bronze_client,
-            prefix="price-target-data",
-            bucket=bucket,
-            df=frame,
-            codec=bronze_bucketing.alpha26_codec(),
-        )
-        try:
-            domain_artifacts.write_bucket_artifact(
-                layer="bronze",
-                domain="price-target",
-                bucket=bucket,
-                df=frame,
-                date_column="obs_date",
-                client=bronze_client,
-                job_name="bronze-price-target-job",
-            )
-            bucket_artifacts_written += 1
-        except Exception as exc:
-            mdc.write_warning(f"Bronze price-target metadata bucket artifact write failed bucket={bucket}: {exc}")
-
-    index_path = bronze_bucketing.write_symbol_index(
+    publish_result = publish_alpha26_bronze_domain(
         domain="price-target",
+        root_prefix="price-target-data",
+        bucket_frames=bucket_frames,
+        bucket_columns=_BUCKET_COLUMNS,
+        date_column="obs_date",
         symbol_to_bucket=symbol_to_bucket,
+        storage_client=bronze_client,
+        job_name="bronze-price-target-job",
+        run_id=run_id,
     )
-    if index_path:
-        try:
-            domain_artifacts.write_domain_artifact(
-                layer="bronze",
-                domain="price-target",
-                date_column="obs_date",
-                client=bronze_client,
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="bronze-price-target-job",
-            )
-            domain_artifact_written = True
-        except Exception as exc:
-            mdc.write_warning(f"Bronze price-target metadata artifact write failed: {exc}")
     log_bronze_success(
         domain="price-target",
         operation="metadata_artifacts_written",
-        bucket_artifacts_written=bucket_artifacts_written,
-        domain_artifact_written=domain_artifact_written,
-        symbol_index_path=index_path or "n/a",
+        bucket_artifacts_written=publish_result.file_count,
+        domain_artifact_written=True,
+        symbol_index_path=publish_result.index_path or "n/a",
+        manifest_path=publish_result.manifest_path or "n/a",
     )
-    return len(symbol_to_bucket), index_path
+    return publish_result.written_symbols, publish_result.index_path
 
 
 def _delete_flat_symbol_blobs() -> int:
@@ -305,6 +277,7 @@ async def process_batch_bronze(
     write_symbol_files: bool = True,
     collected_symbol_frames: Optional[Dict[str, pd.DataFrame]] = None,
     alpha26_mode: bool = False,
+    success_progress: Optional[Dict[str, int]] = None,
 ) -> dict:
     batch_summary = {
         "requested": len(symbols),
@@ -321,12 +294,39 @@ async def process_batch_bronze(
     batch_summary.update(_empty_coverage_summary())
     batch_failure_counts: Dict[str, int] = {}
     batch_failure_examples: Dict[str, str] = {}
+    successful_symbols = 0
 
     def _record_batch_failure(scope: str, exc: BaseException) -> None:
         reason = _format_failure_reason(exc)
         key = f"scope={scope} {_failure_bucket_key(exc)}"
         batch_failure_counts[key] = batch_failure_counts.get(key, 0) + 1
         batch_failure_examples.setdefault(key, f"scope={scope} {reason}")
+
+    def _log_symbol_processed_success(
+        symbol: str,
+        *,
+        disposition: str,
+        coverage_status: Optional[str] = None,
+        row_count: Optional[int] = None,
+    ) -> None:
+        nonlocal successful_symbols
+        if success_progress is None:
+            successful_symbols += 1
+            success_count = successful_symbols
+        else:
+            success_progress["count"] = int(success_progress.get("count", 0) or 0) + 1
+            success_count = int(success_progress["count"])
+        if not should_log_bronze_success(success_count):
+            return
+        log_bronze_success(
+            domain="price-target",
+            operation="symbol_processed",
+            symbol=symbol,
+            disposition=disposition,
+            success_count=success_count,
+            coverage_status=coverage_status,
+            row_count=row_count,
+        )
 
     async with semaphore:
         # Determine stale symbols and symbol-level incremental start windows.
@@ -452,6 +452,7 @@ async def process_batch_bronze(
             symbol_min = symbol_start_dates.get(sym, default_start_date)
             force_backfill = bool(symbol_force_backfill.get(sym))
             symbol_df = grouped.get(sym, pd.DataFrame()).copy()
+            coverage_status: Optional[str] = None
             if not symbol_df.empty and "obs_date" in symbol_df.columns:
                 symbol_df = symbol_df.loc[symbol_df["obs_date"] >= pd.Timestamp(symbol_min)].copy()
 
@@ -466,14 +467,26 @@ async def process_batch_bronze(
                     )
                     batch_summary["filtered_missing"] += 1
                     list_manager.add_to_whitelist(sym)
+                    _log_symbol_processed_success(
+                        sym,
+                        disposition="limited_no_rows",
+                        coverage_status="limited",
+                    )
                     continue
                 if backfill_start is not None:
+                    failures_before_delete = int(batch_summary.get("save_failed", 0) or 0)
                     _delete_price_target_blob_for_cutoff(sym, min_date=symbol_min, summary=batch_summary)
+                    if int(batch_summary.get("save_failed", 0) or 0) == failures_before_delete:
+                        _log_symbol_processed_success(
+                            sym,
+                            disposition="deleted_cutoff",
+                        )
                     continue
                 batch_summary["filtered_missing"] += 1
                 # Incremental no-op: no rows newer than the symbol-level watermark.
                 if bool(symbol_has_existing_blob.get(sym)) or symbol_min > PRICE_TARGET_FULL_HISTORY_START_DATE:
                     list_manager.add_to_whitelist(sym)
+                    _log_symbol_processed_success(sym, disposition="skipped_no_new_rows")
                     continue
                 mdc.write_line(f"Bronze price target coverage unavailable for {sym}; no rows returned.")
                 continue
@@ -490,7 +503,7 @@ async def process_batch_bronze(
 
                 if backfill_start is not None and (force_backfill or symbol_min <= backfill_start):
                     earliest_available = _extract_min_obs_date(symbol_df)
-                    marker_status = (
+                    coverage_status = (
                         "covered"
                         if earliest_available is not None and earliest_available <= backfill_start
                         else "limited"
@@ -498,7 +511,7 @@ async def process_batch_bronze(
                     _mark_coverage(
                         symbol=sym,
                         backfill_start=backfill_start,
-                        status=marker_status,
+                        status=coverage_status,
                         earliest_available=earliest_available,
                         summary=batch_summary,
                     )
@@ -506,11 +519,16 @@ async def process_batch_bronze(
                 if write_symbol_files:
                     raw_parquet = symbol_df.to_parquet(index=False)
                     mdc.store_raw_bytes(raw_parquet, f"price-target-data/{sym}.parquet", client=bronze_client)
-                    mdc.write_line(f"Saved Bronze {sym}")
                 elif collected_symbol_frames is not None:
                     collected_symbol_frames[sym] = symbol_df.copy()
                 list_manager.add_to_whitelist(sym)
                 batch_summary["saved"] += 1
+                _log_symbol_processed_success(
+                    sym,
+                    disposition="written" if write_symbol_files else "collected",
+                    coverage_status=coverage_status,
+                    row_count=len(symbol_df.index),
+                )
             except Exception as e:
                 _record_batch_failure(f"symbol={sym}", e)
                 mdc.write_error(f"Failed to save {sym}: {_format_failure_reason(e)}")
@@ -583,8 +601,10 @@ async def main_async() -> int:
     )
 
     alpha26_mode = bronze_bucketing.is_alpha26_mode()
+    run_id = build_bronze_run_id(_COVERAGE_DOMAIN)
     chunked_symbols = [symbols[i:i + BATCH_SIZE] for i in range(0, len(symbols), BATCH_SIZE)]
     semaphore = asyncio.Semaphore(3)
+    success_progress = {"count": 0}
 
     bucket_symbol_frames: Dict[str, pd.DataFrame] = {}
     mdc.write_line(f"Starting Bronze Price Target Ingestion for {len(symbols)} symbols...")
@@ -596,6 +616,7 @@ async def main_async() -> int:
             write_symbol_files=not alpha26_mode,
             collected_symbol_frames=bucket_symbol_frames if alpha26_mode else None,
             alpha26_mode=alpha26_mode,
+            success_progress=success_progress,
         )
         for chunk in chunked_symbols
     ]
@@ -670,9 +691,14 @@ async def main_async() -> int:
         alpha26_written_symbols = 0
         alpha26_index_path: Optional[str] = None
         flat_deleted = 0
+        alpha26_publish_succeeded = not alpha26_mode
         if alpha26_mode:
             try:
-                alpha26_written_symbols, alpha26_index_path = _write_alpha26_price_target_buckets(bucket_symbol_frames)
+                alpha26_written_symbols, alpha26_index_path = _write_alpha26_price_target_buckets(
+                    bucket_symbol_frames,
+                    run_id=run_id,
+                )
+                alpha26_publish_succeeded = True
                 flat_deleted = _delete_flat_symbol_blobs()
                 mdc.write_line(
                     "Bronze price-target alpha26 buckets written: "
@@ -682,12 +708,13 @@ async def main_async() -> int:
             except Exception as exc:
                 batch_exception_count += 1
                 mdc.write_error(f"Bronze price-target alpha26 bucket write failed: {exc}")
-        try:
-            list_manager.flush()
-        except Exception as exc:
-            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-        else:
-            log_bronze_success(domain="price-target", operation="list_flush")
+        if alpha26_publish_succeeded:
+            try:
+                list_manager.flush()
+            except Exception as exc:
+                mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+            else:
+                log_bronze_success(domain="price-target", operation="list_flush")
         job_status, exit_code = resolve_job_run_status(
             failed_count=(
                 batch_exception_count
@@ -732,8 +759,8 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-price-target-job"
-    with mdc.JobLock("nasdaq", wait_timeout_seconds=None):
-        with mdc.JobLock(job_name):
+    with mdc.JobLock("nasdaq", conflict_policy="wait_then_fail", wait_timeout_seconds=None):
+        with mdc.JobLock(job_name, conflict_policy="fail"):
             ensure_api_awake_from_env(required=True)
             raise SystemExit(
                 run_logged_job(

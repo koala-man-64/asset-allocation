@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from api.service.dependencies import get_settings, get_websocket_ticket_store, validate_auth
+from api.service.dependencies import get_websocket_ticket_store, validate_auth
 from api.service.log_streaming import LogStreamManager
 from api.service.realtime import manager as realtime_manager
 from api.service.realtime_tickets import to_utc_timestamp
@@ -35,18 +35,12 @@ def issue_realtime_ticket(request: Request) -> JSONResponse:
 
 @router.websocket("/ws/updates")
 async def websocket_updates(websocket: WebSocket) -> None:
-    settings = get_settings(websocket)
-    if settings.auth_mode != "none":
-        ticket = str(websocket.query_params.get("ticket") or "").strip()
-        store = get_websocket_ticket_store(websocket)
-        if not store.consume(ticket, expected_auth_mode=settings.auth_mode):
-            logger.warning(
-                "Realtime websocket rejected: auth_mode=%s client=%s",
-                settings.auth_mode,
-                websocket.client,
-            )
-            await websocket.close(code=WEBSOCKET_UNAUTHORIZED_CLOSE_CODE, reason="Unauthorized")
-            return
+    ticket = str(websocket.query_params.get("ticket") or "").strip()
+    store = get_websocket_ticket_store(websocket)
+    if not store.consume(ticket):
+        logger.warning("Realtime websocket rejected: missing_or_invalid_ticket client=%s", websocket.client)
+        await websocket.close(code=WEBSOCKET_UNAUTHORIZED_CLOSE_CODE, reason="Unauthorized")
+        return
 
     log_stream_manager: LogStreamManager = websocket.app.state.log_stream_manager
     await realtime_manager.connect(websocket)

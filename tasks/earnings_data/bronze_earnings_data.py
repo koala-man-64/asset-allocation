@@ -23,7 +23,7 @@ from core import config as cfg
 from core import core as mdc
 from core.pipeline import ListManager
 from tasks.common import bronze_bucketing
-from tasks.common import domain_artifacts
+from tasks.common.bronze_alpha26_publish import publish_alpha26_bronze_domain
 from tasks.common.bronze_observability import log_bronze_success, should_log_bronze_success
 from tasks.common.bronze_symbol_policy import (
     BronzeCoverageUnavailableError,
@@ -203,11 +203,7 @@ def _validate_environment() -> None:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
     if not os.environ.get("ASSET_ALLOCATION_API_BASE_URL"):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
-    if not (
-        os.environ.get("ASSET_ALLOCATION_API_KEY")
-        or os.environ.get("API_KEY")
-        or _is_truthy(os.environ.get("ASSET_ALLOCATION_API_ALLOW_NO_AUTH"))
-    ):
+    if not (os.environ.get("ASSET_ALLOCATION_API_KEY") or os.environ.get("API_KEY")):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
 
 
@@ -573,11 +569,13 @@ def _normalize_bucket_df(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
     return out[_BUCKET_COLUMNS].reset_index(drop=True)
 
 
-def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> tuple[int, Optional[str]]:
+def _write_alpha26_earnings_buckets(
+    symbol_frames: Dict[str, pd.DataFrame],
+    *,
+    run_id: str,
+) -> tuple[int, Optional[str]]:
     bucket_frames = bronze_bucketing.empty_bucket_frames(_BUCKET_COLUMNS)
     symbol_to_bucket: dict[str, str] = {}
-    bucket_artifacts_written = 0
-    domain_artifact_written = False
     for symbol, frame in symbol_frames.items():
         if frame is None or frame.empty:
             continue
@@ -594,57 +592,26 @@ def _write_alpha26_earnings_buckets(symbol_frames: Dict[str, pd.DataFrame]) -> t
                 ignore_index=True,
             )
 
-    for bucket in bronze_bucketing.ALPHABET_BUCKETS:
-        frame = bucket_frames[bucket]
-        if frame.empty:
-            frame = pd.DataFrame(columns=_BUCKET_COLUMNS)
-        bronze_bucketing.write_bucket_parquet(
-            client=bronze_client,
-            prefix=str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")),
-            bucket=bucket,
-            df=frame,
-            codec=bronze_bucketing.alpha26_codec(),
-        )
-        try:
-            domain_artifacts.write_bucket_artifact(
-                layer="bronze",
-                domain="earnings",
-                bucket=bucket,
-                df=frame,
-                date_column="date",
-                client=bronze_client,
-                job_name="bronze-earnings-job",
-            )
-            bucket_artifacts_written += 1
-        except Exception as exc:
-            mdc.write_warning(f"Bronze earnings metadata bucket artifact write failed bucket={bucket}: {exc}")
-
-    index_path = bronze_bucketing.write_symbol_index(
+    publish_result = publish_alpha26_bronze_domain(
         domain="earnings",
+        root_prefix=str(getattr(cfg, "EARNINGS_DATA_PREFIX", "earnings-data")),
+        bucket_frames=bucket_frames,
+        bucket_columns=_BUCKET_COLUMNS,
+        date_column="date",
         symbol_to_bucket=symbol_to_bucket,
+        storage_client=bronze_client,
+        job_name="bronze-earnings-job",
+        run_id=run_id,
     )
-    if index_path:
-        try:
-            domain_artifacts.write_domain_artifact(
-                layer="bronze",
-                domain="earnings",
-                date_column="date",
-                client=bronze_client,
-                symbol_count_override=len(symbol_to_bucket),
-                symbol_index_path=index_path,
-                job_name="bronze-earnings-job",
-            )
-            domain_artifact_written = True
-        except Exception as exc:
-            mdc.write_warning(f"Bronze earnings metadata artifact write failed: {exc}")
     log_bronze_success(
         domain="earnings",
         operation="metadata_artifacts_written",
-        bucket_artifacts_written=bucket_artifacts_written,
-        domain_artifact_written=domain_artifact_written,
-        symbol_index_path=index_path or "n/a",
+        bucket_artifacts_written=publish_result.file_count,
+        domain_artifact_written=True,
+        symbol_index_path=publish_result.index_path or "n/a",
+        manifest_path=publish_result.manifest_path or "n/a",
     )
-    return len(symbol_to_bucket), index_path
+    return publish_result.written_symbols, publish_result.index_path
 
 
 def _safe_close_alpha_vantage_client(client: AlphaVantageGatewayClient | None) -> None:
@@ -1151,21 +1118,21 @@ async def main_async() -> int:
             client_manager.close_all()
         except Exception:
             pass
-        try:
-            list_manager.flush()
-        except Exception as exc:
-            mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
-        else:
-            log_bronze_success(domain="earnings", operation="list_flush")
 
     if alpha26_mode:
         try:
-            written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames)
+            written_symbols, index_path = _write_alpha26_earnings_buckets(collected_symbol_frames, run_id=run_id)
             flat_deleted = _delete_flat_symbol_blobs()
             mdc.write_line(
                 "Bronze earnings alpha26 buckets written: "
                 f"symbols={written_symbols} index={index_path or 'n/a'} flat_deleted={flat_deleted}"
             )
+            try:
+                list_manager.flush()
+            except Exception as exc:
+                mdc.write_warning(f"Failed to flush whitelist/blacklist updates: {exc}")
+            else:
+                log_bronze_success(domain="earnings", operation="list_flush")
         except Exception as exc:
             progress["failed"] += 1
             mdc.write_error(f"Bronze earnings alpha26 bucket write failed: {exc}")
@@ -1210,7 +1177,7 @@ if __name__ == "__main__":
     from tasks.common.system_health_markers import write_system_health_marker
 
     job_name = "bronze-earnings-job"
-    with mdc.JobLock(job_name):
+    with mdc.JobLock(job_name, conflict_policy="fail"):
         ensure_api_awake_from_env(required=True)
         raise SystemExit(
             run_logged_job(

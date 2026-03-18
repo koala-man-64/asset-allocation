@@ -139,13 +139,17 @@ def build_domain_metadata_snapshot_metadata_from_artifact(
     warnings = artifact.get("warnings")
     if not isinstance(warnings, list):
         warnings = []
+    prefix = str(artifact.get("activeDataPrefix") or artifact.get("prefix") or "").strip()
+    file_count = artifact.get("fileCount")
+    if not isinstance(file_count, int):
+        file_count = None
 
     return {
         "layer": normalized_layer,
         "domain": normalized_domain,
         "container": str(container or "").strip() or _container_name_for_layer(normalized_layer),
         "type": "blob",
-        "prefix": _blob_prefix(normalized_layer, normalized_domain),
+        "prefix": prefix or _blob_prefix(normalized_layer, normalized_domain),
         "tablePath": None,
         "computedAt": computed_at,
         "folderLastModified": computed_at,
@@ -158,7 +162,7 @@ def build_domain_metadata_snapshot_metadata_from_artifact(
         "columns": columns,
         "columnCount": column_count,
         "totalRows": None,
-        "fileCount": None,
+        "fileCount": file_count,
         "totalBytes": total_bytes,
         "deltaVersion": None,
         "metadataPath": artifact.get("artifactPath") or artifact.get("metadataPath"),

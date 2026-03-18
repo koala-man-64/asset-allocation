@@ -22,7 +22,6 @@ def _parse_window_assignment(body: str, window_key: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_config_js_emits_fixed_api_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("API_ROOT_PREFIX", "asset-allocation")
 
     app = create_app()
@@ -43,7 +42,6 @@ async def test_config_js_emits_fixed_api_base_url(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.asyncio
 async def test_config_js_ignores_ui_api_base_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("API_ROOT_PREFIX", "asset-allocation")
     monkeypatch.setenv("UI_API_BASE_URL", "/api")
 

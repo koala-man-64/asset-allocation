@@ -29,6 +29,7 @@ from tasks.common.watermarks import (
     build_blob_signature,
     load_last_success,
     load_watermarks,
+    normalize_watermark_blob_name,
     save_last_success,
     save_watermarks,
     should_process_blob_since_last_success,
@@ -173,12 +174,11 @@ def _parse_wait_timeout_seconds(raw: str | None, *, default: float) -> float | N
 
 
 def _list_alpha26_finance_bucket_candidates() -> tuple[list[dict], int]:
-    listed_blobs = bronze_client.list_blob_infos(name_starts_with="finance-data/buckets/")
+    listed_blobs = bronze_bucketing.list_active_bucket_blob_infos("finance", bronze_client)
     blobs = [
         blob
         for blob in listed_blobs
-        if str(blob.get("name", "")).startswith("finance-data/buckets/")
-        and str(blob.get("name", "")).endswith(".parquet")
+        if str(blob.get("name", "")).endswith(".parquet")
     ]
     blobs.sort(key=lambda item: str(item.get("name", "")))
     unsupported = max(0, len(listed_blobs) - len(blobs))
@@ -194,8 +194,6 @@ def _filter_alpha26_manifest_bucket_blobs(manifest: dict[str, Any]) -> list[dict
     filtered: list[dict] = []
     for blob in run_manifests.manifest_blobs(manifest):
         name = str(blob.get("name", "")).strip()
-        if not name.startswith("finance-data/buckets/"):
-            continue
         if not name.endswith(".parquet"):
             continue
         filtered.append(blob)
@@ -204,32 +202,31 @@ def _filter_alpha26_manifest_bucket_blobs(manifest: dict[str, Any]) -> list[dict
 
 
 def _select_initial_alpha26_source() -> _ManifestSelection:
-    if run_manifests.silver_manifest_consumption_enabled():
-        manifest = run_manifests.load_latest_bronze_finance_manifest()
-        if isinstance(manifest, dict):
-            run_id = str(manifest.get("runId", "")).strip()
-            manifest_path = str(manifest.get("manifestPath", "")).strip()
-            if run_id and run_manifests.silver_finance_ack_exists(run_id):
-                mdc.write_line(f"Silver finance manifest run already acknowledged; falling back to listing runId={run_id}.")
-            elif run_id and manifest_path:
-                filtered = _filter_alpha26_manifest_bucket_blobs(manifest)
-                manifest_blob_count = len(run_manifests.manifest_blobs(manifest))
-                mdc.write_line(
-                    "Silver finance selected manifest source: "
-                    f"runId={run_id} manifestPath={manifest_path} "
-                    f"manifestBlobs={manifest_blob_count} bucketBlobs={len(filtered)}"
-                )
-                return _ManifestSelection(
-                    source="bronze-manifest",
-                    blobs=filtered,
-                    deduped=0,
-                    manifest_run_id=run_id,
-                    manifest_path=manifest_path,
-                    manifest_blob_count=manifest_blob_count,
-                    manifest_filtered_bucket_blob_count=len(filtered),
-                )
-            else:
-                mdc.write_warning("Silver finance manifest pointer missing runId/path; falling back to listing.")
+    manifest = run_manifests.load_latest_bronze_finance_manifest()
+    if isinstance(manifest, dict):
+        run_id = str(manifest.get("runId", "")).strip()
+        manifest_path = str(manifest.get("manifestPath", "")).strip()
+        if run_id and run_manifests.silver_finance_ack_exists(run_id):
+            mdc.write_line(f"Silver finance manifest run already acknowledged; falling back to listing runId={run_id}.")
+        elif run_id and manifest_path:
+            filtered = _filter_alpha26_manifest_bucket_blobs(manifest)
+            manifest_blob_count = len(run_manifests.manifest_blobs(manifest))
+            mdc.write_line(
+                "Silver finance selected manifest source: "
+                f"runId={run_id} manifestPath={manifest_path} "
+                f"manifestBlobs={manifest_blob_count} bucketBlobs={len(filtered)}"
+            )
+            return _ManifestSelection(
+                source="bronze-manifest",
+                blobs=filtered,
+                deduped=0,
+                manifest_run_id=run_id,
+                manifest_path=manifest_path,
+                manifest_blob_count=manifest_blob_count,
+                manifest_filtered_bucket_blob_count=len(filtered),
+            )
+        else:
+            mdc.write_warning("Silver finance manifest pointer missing runId/path; falling back to listing.")
 
     listed, deduped = _list_alpha26_finance_bucket_candidates()
     return _ManifestSelection(source="alpha26-bucket-listing", blobs=listed, deduped=deduped)
@@ -245,7 +242,7 @@ def _build_alpha26_checkpoint_candidates(
     checkpoint_skipped = 0
     candidates: list[dict] = []
     for blob in blobs:
-        prior = watermarks.get(str(blob.get("name", "")))
+        prior = watermarks.get(normalize_watermark_blob_name(blob.get("name")))
         should_process = should_process_blob_since_last_success(
             blob,
             prior_signature=prior,
@@ -686,10 +683,11 @@ def _restore_blob_watermark(
     blob_name: str,
     prior_signature: Optional[dict],
 ) -> None:
+    watermark_key = normalize_watermark_blob_name(blob_name)
     if prior_signature is None:
-        watermarks.pop(blob_name, None)
+        watermarks.pop(watermark_key, None)
         return
-    watermarks[blob_name] = dict(prior_signature)
+    watermarks[watermark_key] = dict(prior_signature)
 
 
 def _load_existing_finance_symbol_maps() -> dict[str, dict[str, str]]:
@@ -1212,6 +1210,7 @@ def process_alpha26_bucket_blob(
     alpha26_bucket_frames: Optional[dict[tuple[str, str], list[pd.DataFrame]]] = None,
 ) -> list[BlobProcessResult]:
     blob_name = str(blob.get("name", ""))
+    watermark_key = normalize_watermark_blob_name(blob_name)
     signature = build_blob_signature(blob)
 
     try:
@@ -1231,7 +1230,7 @@ def process_alpha26_bucket_blob(
     if df_bucket is None or df_bucket.empty:
         if signature:
             signature["updated_at"] = datetime.now(timezone.utc).isoformat()
-            watermarks[blob_name] = signature
+            watermarks[watermark_key] = signature
         return [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
 
     debug_symbols = set(getattr(cfg, "DEBUG_SYMBOLS", []) or [])
@@ -1303,7 +1302,7 @@ def process_alpha26_bucket_blob(
 
     if all(result.status != "failed" for result in results) and signature:
         signature["updated_at"] = datetime.now(timezone.utc).isoformat()
-        watermarks[blob_name] = signature
+        watermarks[watermark_key] = signature
     return results or [BlobProcessResult(blob_name=blob_name, silver_path=None, ticker=None, status="skipped")]
 
 
@@ -1329,7 +1328,8 @@ def _process_alpha26_candidate_blobs(
         call_kwargs["alpha26_bucket_frames"] = alpha26_bucket_frames
     for blob in candidate_blobs:
         blob_name = str(blob.get("name", ""))
-        prior_signature = dict(watermarks[blob_name]) if isinstance(watermarks.get(blob_name), dict) else None
+        watermark_key = normalize_watermark_blob_name(blob_name)
+        prior_signature = dict(watermarks[watermark_key]) if isinstance(watermarks.get(watermark_key), dict) else None
         blob_bucket_frames = (
             {}
             if flush_state is not None and not persist
@@ -1377,7 +1377,7 @@ def _process_alpha26_candidate_blobs(
         # Watermarks are updated per-bucket internally on all-success.
         for result in blob_results:
             if result.status == "ok" and result.watermark_signature:
-                watermarks[result.blob_name] = result.watermark_signature
+                watermarks[normalize_watermark_blob_name(result.blob_name)] = result.watermark_signature
     ingest_elapsed = time.perf_counter() - ingest_started
     return results, ingest_elapsed
 
@@ -1627,7 +1627,7 @@ if __name__ == "__main__":
         os.environ.get("SILVER_FINANCE_SHARED_LOCK_WAIT_SECONDS"),
         default=_DEFAULT_SILVER_SHARED_LOCK_WAIT_SECONDS,
     )
-    with mdc.JobLock(shared_lock_name, wait_timeout_seconds=shared_wait_timeout):
+    with mdc.JobLock(shared_lock_name, conflict_policy="wait_then_fail", wait_timeout_seconds=shared_wait_timeout):
         ensure_api_awake_from_env(required=True)
         raise SystemExit(
             run_logged_job(

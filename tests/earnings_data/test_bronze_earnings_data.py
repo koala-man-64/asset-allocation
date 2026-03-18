@@ -686,7 +686,6 @@ def test_main_async_logs_symbol_success(unique_ticker):
             f"Bronze earnings success: operation=symbol_processed symbol={symbol}" in message
             for message in messages
         )
-        assert any("Bronze earnings success: operation=list_flush" in message for message in messages)
 
     asyncio.run(run_test())
 

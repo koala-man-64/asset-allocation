@@ -62,7 +62,6 @@ class PurgeRule:
     operator: str
     threshold: float
     run_interval_minutes: int
-    enabled: bool
     next_run_at: Optional[datetime]
     last_run_at: Optional[datetime]
     last_status: Optional[str]
@@ -143,17 +142,16 @@ def _row_to_rule(row: tuple[object, ...]) -> PurgeRule:
         operator=str(row[5] or ""),
         threshold=float(row[6]) if row[6] is not None else 0.0,
         run_interval_minutes=int(row[7] or 0),
-        enabled=bool(row[8]),
-        next_run_at=row[9],
-        last_run_at=row[10],
-        last_status=str(row[11]) if row[11] is not None else None,
-        last_error=str(row[12]) if row[12] is not None else None,
-        last_match_count=int(row[13]) if row[13] is not None else None,
-        last_purge_count=int(row[14]) if row[14] is not None else None,
-        created_at=row[15],
-        updated_at=row[16],
-        created_by=str(row[17]) if row[17] is not None else None,
-        updated_by=str(row[18]) if row[18] is not None else None,
+        next_run_at=row[8],
+        last_run_at=row[9],
+        last_status=str(row[10]) if row[10] is not None else None,
+        last_error=str(row[11]) if row[11] is not None else None,
+        last_match_count=int(row[12]) if row[12] is not None else None,
+        last_purge_count=int(row[13]) if row[13] is not None else None,
+        created_at=row[14],
+        updated_at=row[15],
+        created_by=str(row[16]) if row[16] is not None else None,
+        updated_by=str(row[17]) if row[17] is not None else None,
     )
 
 
@@ -180,14 +178,11 @@ def _execute(dsn: Optional[str], query: str, params: tuple = ()) -> Optional[tup
 def list_purge_rules(
     dsn: Optional[str],
     *,
-    enabled_only: bool = False,
     layer: Optional[str] = None,
     domain: Optional[str] = None,
 ) -> list[PurgeRule]:
     where: List[str] = []
     params: list[object] = []
-    if enabled_only:
-        where.append("enabled = true")
     if layer:
         where.append("layer = %s")
         params.append(layer)
@@ -198,7 +193,7 @@ def list_purge_rules(
     query = f"""
         SELECT
           id, name, layer, domain, column_name, operator, threshold,
-          run_interval_minutes, enabled, next_run_at, last_run_at, last_status,
+          run_interval_minutes, next_run_at, last_run_at, last_status,
           last_error, last_match_count, last_purge_count,
           created_at, updated_at, created_by, updated_by
         FROM core.purge_rules
@@ -215,7 +210,7 @@ def get_purge_rule(dsn: Optional[str], rule_id: int) -> Optional[PurgeRule]:
     query = """
         SELECT
           id, name, layer, domain, column_name, operator, threshold,
-          run_interval_minutes, enabled, next_run_at, last_run_at, last_status,
+          run_interval_minutes, next_run_at, last_run_at, last_status,
           last_error, last_match_count, last_purge_count,
           created_at, updated_at, created_by, updated_by
         FROM core.purge_rules
@@ -230,12 +225,11 @@ def list_due_purge_rules(dsn: Optional[str], *, now: Optional[datetime] = None) 
     query = """
         SELECT
           id, name, layer, domain, column_name, operator, threshold,
-          run_interval_minutes, enabled, next_run_at, last_run_at, last_status,
+          run_interval_minutes, next_run_at, last_run_at, last_status,
           last_error, last_match_count, last_purge_count,
           created_at, updated_at, created_by, updated_by
         FROM core.purge_rules
-        WHERE enabled = true
-          AND (next_run_at IS NULL OR next_run_at <= %s)
+        WHERE next_run_at IS NULL OR next_run_at <= %s
         ORDER BY COALESCE(next_run_at, %s), id
     """
     rows = _fetch_rows(dsn, query, (resolved_now, resolved_now))
@@ -252,7 +246,6 @@ def create_purge_rule(
     operator: str,
     threshold: object,
     run_interval_minutes: object,
-    enabled: bool = True,
     actor: Optional[str] = None,
 ) -> PurgeRule:
     validated = PurgeRule(
@@ -264,7 +257,6 @@ def create_purge_rule(
         operator=normalize_purge_rule_operator(operator),
         threshold=_coerce_threshold(threshold),
         run_interval_minutes=_coerce_interval_minutes(run_interval_minutes),
-        enabled=bool(enabled),
         next_run_at=None,
         last_run_at=None,
         last_status=None,
@@ -287,12 +279,12 @@ def create_purge_rule(
     query = """
         INSERT INTO core.purge_rules(
           name, layer, domain, column_name, operator, threshold, run_interval_minutes,
-          enabled, next_run_at, created_by, updated_by
+          next_run_at, created_by, updated_by
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING
           id, name, layer, domain, column_name, operator, threshold,
-          run_interval_minutes, enabled, next_run_at, last_run_at, last_status,
+          run_interval_minutes, next_run_at, last_run_at, last_status,
           last_error, last_match_count, last_purge_count,
           created_at, updated_at, created_by, updated_by
     """
@@ -307,7 +299,6 @@ def create_purge_rule(
             validated.operator,
             validated.threshold,
             validated.run_interval_minutes,
-            validated.enabled,
             next_run_at,
             actor,
             actor,
@@ -330,7 +321,6 @@ def update_purge_rule(
     operator: Optional[str] = None,
     threshold: Optional[object] = None,
     run_interval_minutes: Optional[object] = None,
-    enabled: Optional[bool] = None,
     actor: Optional[str] = None,
 ) -> PurgeRule:
     existing = get_purge_rule(dsn, rule_id)
@@ -361,9 +351,6 @@ def update_purge_rule(
     if run_interval_minutes is not None:
         updates.append("run_interval_minutes = %s")
         values.append(_coerce_interval_minutes(run_interval_minutes))
-    if enabled is not None:
-        updates.append("enabled = %s")
-        values.append(bool(enabled))
 
     if not updates:
         raise ValueError("No fields provided for update.")
@@ -376,7 +363,7 @@ def update_purge_rule(
         WHERE id = %s
         RETURNING
           id, name, layer, domain, column_name, operator, threshold,
-          run_interval_minutes, enabled, next_run_at, last_run_at, last_status,
+          run_interval_minutes, next_run_at, last_run_at, last_status,
           last_error, last_match_count, last_purge_count,
           created_at, updated_at, created_by, updated_by
     """
@@ -413,7 +400,6 @@ def claim_purge_rule_for_run(
                 updated_by = COALESCE(%s, updated_by),
                 updated_at = %s
             WHERE id = %s
-              AND enabled = true
               AND (next_run_at IS NULL OR next_run_at <= %s)
               AND (last_status IS DISTINCT FROM 'running')
             RETURNING id
@@ -427,7 +413,6 @@ def claim_purge_rule_for_run(
                 updated_by = COALESCE(%s, updated_by),
                 updated_at = %s
             WHERE id = %s
-              AND enabled = true
               AND (last_status IS DISTINCT FROM 'running')
             RETURNING id
         """

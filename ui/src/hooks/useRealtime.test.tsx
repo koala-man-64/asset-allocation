@@ -15,6 +15,7 @@ vi.mock('sonner', () => ({
 
 import { useRealtime } from './useRealtime';
 import { setAccessTokenProvider } from '@/services/authTransport';
+import { queryKeys } from '@/hooks/useDataQueries';
 import { REALTIME_SUBSCRIBE_EVENT, addConsoleLogStreamListener } from '@/services/realtimeBus';
 
 class MockWebSocket {
@@ -77,9 +78,15 @@ describe('useRealtime', () => {
   beforeEach(() => {
     MockWebSocket.instances = [];
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ticket: 'default-ticket', expiresAt: '2026-03-15T12:00:00Z' })
+      }) as unknown as typeof fetch
+    );
     setAccessTokenProvider(null);
     (window as Window & { __API_UI_CONFIG__?: Record<string, unknown> }).__API_UI_CONFIG__ = {
-      authMode: 'none',
       apiBaseUrl: '/api'
     };
   });
@@ -193,7 +200,7 @@ describe('useRealtime', () => {
     view.unmount();
   });
 
-  it('fetches a websocket ticket before connecting when auth is enabled', async () => {
+  it('fetches a websocket ticket before connecting', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ ticket: 'ticket-123', expiresAt: '2026-03-15T12:00:00Z' })
@@ -201,7 +208,6 @@ describe('useRealtime', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
     setAccessTokenProvider(async () => 'access-token');
     (window as Window & { __API_UI_CONFIG__?: Record<string, unknown> }).__API_UI_CONFIG__ = {
-      authMode: 'oidc',
       apiBaseUrl: '/api'
     };
 
@@ -227,6 +233,57 @@ describe('useRealtime', () => {
     );
   });
 
+  it('invalidates the unified status view and metadata snapshot on metadata change events', async () => {
+    const queryClient = createQueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Harness />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+    const ws = MockWebSocket.instances[0];
+
+    act(() => {
+      ws.open();
+    });
+
+    await waitFor(() => {
+      expect(ws.sent).toHaveLength(1);
+    });
+
+    act(() => {
+      ws.emitJson({
+        topic: 'system-health',
+        data: {
+          type: 'DOMAIN_METADATA_SNAPSHOT_CHANGED',
+          payload: {
+            reason: 'refresh',
+            targets: [{ layer: 'bronze', domain: 'market' }],
+            updatedAt: '2026-03-17T12:00:00Z'
+          }
+        }
+      });
+    });
+
+    await waitFor(() => {
+      const invalidatedKeys = invalidateSpy.mock.calls.map(([options]) =>
+        JSON.stringify(options?.queryKey)
+      );
+      expect(invalidatedKeys).toEqual(
+        expect.arrayContaining([
+          JSON.stringify(queryKeys.systemStatusView()),
+          JSON.stringify(queryKeys.systemHealth()),
+          JSON.stringify(queryKeys.domainMetadataSnapshot('all', 'all'))
+        ])
+      );
+    });
+  });
+
   it('requests a fresh ticket before reconnecting', async () => {
     vi.useFakeTimers();
     const fetchMock = vi
@@ -240,10 +297,6 @@ describe('useRealtime', () => {
         json: async () => ({ ticket: 'ticket-2', expiresAt: '2026-03-15T12:00:05Z' })
       });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-    (window as Window & { __API_UI_CONFIG__?: Record<string, unknown> }).__API_UI_CONFIG__ = {
-      authMode: 'api_key',
-      apiBaseUrl: '/api'
-    };
 
     const queryClient = createQueryClient();
     render(
@@ -282,10 +335,6 @@ describe('useRealtime', () => {
       text: async () => 'Unauthorized'
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-    (window as Window & { __API_UI_CONFIG__?: Record<string, unknown> }).__API_UI_CONFIG__ = {
-      authMode: 'oidc',
-      apiBaseUrl: '/api'
-    };
 
     const queryClient = createQueryClient();
     render(

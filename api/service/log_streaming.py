@@ -21,10 +21,6 @@ CONSOLE_LOG_STREAM_EVENT = "CONSOLE_LOG_STREAM"
 _RESOURCE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,126}[A-Za-z0-9]?")
 
 
-def _is_truthy(raw: Optional[str]) -> bool:
-    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
-
 def build_job_log_topic(job_name: str, execution_name: Optional[str] = None) -> str:
     job = str(job_name or "").strip()
     execution = str(execution_name or "").strip()
@@ -111,11 +107,6 @@ def _escape_kql_literal(value: str) -> str:
 
 
 def _load_streaming_config() -> Optional[LogStreamingConfig]:
-    if not _is_truthy(os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED")):
-        return None
-    if not _is_truthy(os.environ.get("REALTIME_LOG_STREAM_ENABLED", "true")):
-        return None
-
     workspace_id_raw = os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
     workspace_id = workspace_id_raw.strip() if workspace_id_raw else ""
     if not workspace_id:

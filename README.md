@@ -7,7 +7,6 @@ AssetAllocation is an Azure-oriented market data and operations platform. The re
 - Data pipelines in `tasks/` materialize Bronze, Silver, and Gold datasets for the market, finance, earnings, and price-target domains.
 - The FastAPI app in `api/service/app.py` serves `/api/data`, `/api/system`, `/api/strategies`, provider gateway endpoints, Swagger/OpenAPI, `/config.js`, and the realtime websocket.
 - The React UI in `ui/` is the operator control plane for system health, data exploration, data quality, runtime config, debug symbols, symbol purge, Postgres exploration, and strategy configuration.
-- Strategy definitions are persisted in Postgres; the current `Live Trading` page is a monitoring placeholder and explicitly says live trading is not enabled in this deployment.
 - Azure deployment uses one Container App with API and UI sidecars plus scheduled Container App Jobs under `deploy/job_*.yaml`.
 
 ## Quickstart
@@ -83,7 +82,7 @@ python3 scripts/dependency_governance.py check --report artifacts/dependency_gov
 - `core.runtime_config` Postgres rows let operators change allowlisted runtime overrides, including debug-symbol filters, without rebuilding the containers.
 - The API applies runtime config at startup; ETL jobs apply runtime config and debug symbols during job startup.
 - System health surfaces live under `/api/system/health`, `/healthz`, `/readyz`, and `/api/ws/updates`.
-- `/config.js` publishes the UI auth mode and API base URL that the frontend reads at runtime.
+- `/config.js` publishes concrete auth capabilities and API base URLs that the frontend reads at runtime.
 
 ## Current API Scope
 
@@ -94,13 +93,14 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 - `scripts/provision_azure_interactive.ps1` is the recommended interactive entrypoint for Azure setup. It walks preflight validation, shared resource provisioning, optional Postgres provisioning, optional cost guardrails, and post-provision validation in one session.
 - `.github/workflows/deploy.yml` builds and deploys the repo to Azure.
 - `scripts/provision_azure.ps1` and `scripts/provision_azure_postgres.ps1` remain the underlying targeted provisioners used by the interactive wrapper.
-- `deploy/app_api.yaml` is the active unified API and UI Container App manifest.
+- `deploy/app_api.yaml` is the internal-ingress unified API and UI Container App manifest used by the default deploy workflow.
+- `deploy/app_api_public.yaml` is the explicit public-ingress variant for intentional public deployments.
 - Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
 
-### Public Web Access
+### Authentication
 
-- For a personal public deployment, set `API_INGRESS_EXTERNAL=true`, keep app auth simple (`API_AUTH_MODE=none` or `api_key`, `UI_AUTH_MODE=none`), and protect the public edge in Azure Container Apps with built-in auth or ingress IP restrictions.
-- Use app-managed OIDC (`API_AUTH_MODE=oidc` or `api_key_or_oidc`, `UI_AUTH_MODE=oidc`) only if you explicitly want the application itself to own browser login and token validation.
+- Deployed runtimes must configure `API_KEY`, `API_OIDC_*`, or both. Checked-in deploy manifests no longer support unauthenticated mode strings.
+- UI-managed OIDC is enabled only when both `UI_OIDC_AUTHORITY` and `UI_OIDC_CLIENT_ID` are configured alongside API OIDC.
 - Shared browser-facing API keys are convenience controls, not strong public-web security boundaries.
 
 ## Evidence
@@ -114,8 +114,8 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 - `core/strategy_repository.py`
 - `tasks/market_data/gold_market_data.py`
 - `ui/src/app/App.tsx`
-- `ui/src/app/components/pages/LiveTradingPage.tsx`
 - `.github/workflows/deploy.yml`
 - `deploy/app_api.yaml`
+- `deploy/app_api_public.yaml`
 - `tests/api/test_swagger_docs.py`
 - `tests/api/test_config_js_contract.py`

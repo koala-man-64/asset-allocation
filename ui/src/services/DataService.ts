@@ -33,6 +33,7 @@ import type {
   RuntimeConfigItem,
   RuntimeConfigListResponse,
   PurgeCandidatesResponse,
+  SystemStatusViewResponse,
   ValidationReport,
   SymbolSyncState,
   DataProfilingResponse,
@@ -95,6 +96,10 @@ export const DataService = {
     params: { layers?: string; domains?: string; cacheOnly?: boolean; refresh?: boolean } = {}
   ): Promise<DomainMetadataSnapshotResponse> {
     return apiService.getDomainMetadataSnapshot(params);
+  },
+
+  getSystemStatusView(params: { refresh?: boolean } = {}): Promise<SystemStatusViewResponse> {
+    return apiService.getSystemStatusView(params);
   },
 
   getPersistedDomainMetadataSnapshotCache(): Promise<DomainMetadataSnapshotResponse> {
@@ -305,8 +310,12 @@ export const DataService = {
     return apiService.getDebugSymbols();
   },
 
-  setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
+  setDebugSymbols(payload: { symbols: string }): Promise<DebugSymbolsResponse> {
     return apiService.setDebugSymbols(payload);
+  },
+
+  deleteDebugSymbols(): Promise<{ deleted: boolean }> {
+    return apiService.deleteDebugSymbols();
   },
 
   getRuntimeConfigCatalog(): Promise<RuntimeConfigCatalogResponse> {
@@ -320,7 +329,6 @@ export const DataService = {
   setRuntimeConfig(payload: {
     key: string;
     scope?: string;
-    enabled: boolean;
     value: string;
     description?: string;
   }): Promise<RuntimeConfigItem> {

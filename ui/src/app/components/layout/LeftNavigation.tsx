@@ -17,7 +17,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Activity,
-  TrendingUp,
   Target,
   Layers3,
   BarChart3,
@@ -49,7 +48,7 @@ const navSections: NavSection[] = [
     title: 'MARKET INTELLIGENCE',
     items: [
       { path: '/stock-explorer', label: 'Stock Explorer', icon: Globe },
-      { path: '/stock-detail', label: 'Live Stock View', icon: TrendingUp }
+      { path: '/stock-detail', label: 'Live Stock View', icon: Target }
     ]
   },
   {
@@ -58,7 +57,6 @@ const navSections: NavSection[] = [
       { path: '/data-explorer', label: 'Data Explorer', icon: Folder },
       { path: '/data-quality', label: 'Data Quality', icon: ScanSearch },
       { path: '/data-profiling', label: 'Data Profiling', icon: BarChart3 },
-      { path: '/live-trading', label: 'Live Trading', icon: TrendingUp },
       { path: '/regimes', label: 'Regime Monitor', icon: Orbit },
       { path: '/system-status', label: 'System Status', icon: Activity },
       { path: '/debug-symbols', label: 'Debug Symbols', icon: Bug },
@@ -144,22 +142,21 @@ export function LeftNavigation() {
                 to={item.path}
                 onMouseEnter={() => {
                   if (item.path === '/data-quality' || item.path === '/system-status') {
-                    queryClient.prefetchQuery({
-                      queryKey: queryKeys.systemHealth(),
-                      queryFn: async () => {
-                        const response = await DataService.getSystemHealthWithMeta();
-                        return response.data;
-                      },
-                      staleTime: 30000
-                    });
+                    if (item.path === '/data-quality') {
+                      queryClient.prefetchQuery({
+                        queryKey: queryKeys.systemHealth(),
+                        queryFn: async () => {
+                          const response = await DataService.getSystemHealthWithMeta();
+                          return response.data;
+                        },
+                        staleTime: 30000
+                      });
+                    }
                     if (item.path === '/system-status') {
                       queryClient.prefetchQuery({
-                        queryKey: queryKeys.domainMetadataSnapshot('all', 'all'),
-                        queryFn: async () =>
-                          DataService.getDomainMetadataSnapshot({
-                            cacheOnly: true
-                          }),
-                        staleTime: 5 * 60 * 1000
+                        queryKey: queryKeys.systemStatusView(),
+                        queryFn: async () => DataService.getSystemStatusView(),
+                        staleTime: 30000
                       });
                     }
                   }

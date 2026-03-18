@@ -4,13 +4,11 @@ import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/ms
 
 import { setAccessTokenProvider } from '@/services/authTransport';
 
-type AuthMode = 'none' | 'oidc' | 'api_key';
-
 type RuntimeConfig = {
-  authMode?: string;
   oidcClientId?: string;
   oidcAuthority?: string;
   oidcScopes?: string[] | string;
+  oidcRedirectUri?: string;
 };
 
 function getRuntimeConfig(): RuntimeConfig {
@@ -29,16 +27,6 @@ function parseScopes(raw: unknown): string[] {
   return normalized ? normalized.split(/\s+/).filter(Boolean) : [];
 }
 
-function parseAuthMode(rawValue: unknown): AuthMode {
-  const raw = String(rawValue ?? '')
-    .trim()
-    .toLowerCase();
-  if (!raw) return 'none';
-  if (raw === 'oidc') return 'oidc';
-  if (raw === 'api_key') return 'api_key';
-  return 'none';
-}
-
 export interface AuthContextType {
   enabled: boolean;
   authenticated: boolean;
@@ -51,7 +39,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const runtime = getRuntimeConfig();
-  const mode = parseAuthMode(runtime.authMode ?? import.meta.env.VITE_AUTH_MODE);
   const oidcClientId = String(
     runtime.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? ''
   ).trim();
@@ -59,9 +46,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? ''
   ).trim();
   const oidcScopesRaw = runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES;
+  const oidcRedirectUri = String(runtime.oidcRedirectUri ?? window.location.origin).trim();
   const oidcScopes = useMemo(() => parseScopes(oidcScopesRaw), [oidcScopesRaw]);
 
-  const enabled = mode === 'oidc' && Boolean(oidcClientId && oidcAuthority);
+  const enabled = Boolean(oidcClientId && oidcAuthority);
 
   const msal = useMemo(() => {
     if (!enabled) return null;
@@ -69,14 +57,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       auth: {
         clientId: oidcClientId,
         authority: oidcAuthority,
-        redirectUri: window.location.origin,
-        postLogoutRedirectUri: window.location.origin
+        redirectUri: oidcRedirectUri,
+        postLogoutRedirectUri: oidcRedirectUri
       },
       cache: {
         cacheLocation: 'sessionStorage'
       }
     });
-  }, [enabled, oidcClientId, oidcAuthority]);
+  }, [enabled, oidcAuthority, oidcClientId, oidcRedirectUri]);
 
   const [account, setAccount] = useState<AccountInfo | null>(null);
 

@@ -84,7 +84,6 @@ class _FakeLogAnalyticsClient:
 
 
 def _set_container_app_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", "asset-allocation-api,asset-allocation-ui")
@@ -176,7 +175,6 @@ async def test_container_app_not_allowlisted(monkeypatch: pytest.MonkeyPatch) ->
 @pytest.mark.asyncio
 async def test_get_container_app_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_container_app_env(monkeypatch)
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
 
     fake_logs = _FakeLogAnalyticsClient()
@@ -202,7 +200,6 @@ async def test_get_container_app_logs(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_get_container_app_logs_not_allowlisted(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_container_app_env(monkeypatch)
-    monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID", "workspace-id")
 
     app = create_app()

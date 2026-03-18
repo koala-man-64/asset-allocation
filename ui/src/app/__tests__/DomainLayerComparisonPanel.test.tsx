@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 
 import { DomainLayerComparisonPanel } from '@/app/components/pages/system-status/DomainLayerComparisonPanel';
 import { DataService } from '@/services/DataService';
@@ -42,7 +43,6 @@ vi.mock('@/app/components/pages/system-status/JobKillSwitchPanel', () => ({
 
 vi.mock('@/services/DataService', () => ({
   DataService: {
-    getDomainMetadataSnapshot: vi.fn(),
     getDomainMetadata: vi.fn(),
     invalidateSystemHealth: vi.fn()
   }
@@ -50,7 +50,7 @@ vi.mock('@/services/DataService', () => ({
 
 const NOW = '2026-03-03T12:00:00Z';
 
-function primeSnapshot(entry: {
+function makeSnapshot(entry: {
   layer: 'bronze' | 'silver' | 'gold' | 'platinum';
   domain: string;
   container: string;
@@ -68,14 +68,14 @@ function primeSnapshot(entry: {
   warnings: string[];
 }) {
   const key = `${entry.layer}/${entry.domain}`;
-  const payload = {
+  return {
     version: 1,
     updatedAt: NOW,
     entries: {
       [key]: entry
-    }
+    },
+    warnings: []
   };
-  vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue(payload);
 }
 
 function makeLayers(): DataLayer[] {
@@ -178,12 +178,6 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
-
-    vi.mocked(DataService.getDomainMetadataSnapshot).mockResolvedValue({
-      version: 1,
-      updatedAt: NOW,
-      entries: {}
-    });
     vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
       layer: 'bronze',
       domain: 'market',
@@ -197,20 +191,34 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     });
   });
 
-  it('refreshes both status and metadata from the layer header action', async () => {
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-    const user = userEvent.setup();
-
+  const renderPanel = (
+    overrides: Partial<ComponentProps<typeof DomainLayerComparisonPanel>> = {}
+  ) =>
     renderWithProviders(
       <DomainLayerComparisonPanel
         overall="healthy"
         dataLayers={makeLayers()}
         recentJobs={makeJobs()}
-        onRefresh={onRefresh}
+        metadataSnapshot={{
+          version: 1,
+          updatedAt: NOW,
+          entries: {},
+          warnings: []
+        }}
+        metadataUpdatedAt={NOW}
+        metadataSource="persisted-snapshot"
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
         isRefreshing={false}
         isFetching={false}
+        {...overrides}
       />
     );
+
+  it('refreshes both status and metadata from the layer header action', async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    renderPanel({ onRefresh });
 
     const refreshLayerButton = await screen.findByRole('button', { name: 'Refresh Bronze layer' });
     await user.click(refreshLayerButton);
@@ -223,61 +231,38 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         refresh: true
       });
     });
-    expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/updated Mar 3,?\s+06:00 CST/)).length).toBeGreaterThan(0);
   });
 
   it('shows the metadata timestamp when cached entries only have computedAt', async () => {
-    primeSnapshot({
-      layer: 'bronze',
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta',
-      computedAt: NOW,
-      symbolCount: 123,
-      warnings: []
+    renderPanel({
+      metadataSnapshot: makeSnapshot({
+        layer: 'bronze',
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta',
+        computedAt: NOW,
+        symbolCount: 123,
+        warnings: []
+      })
     });
 
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
-
-    expect(await screen.findByText(/updated Mar 3,?\s+06:00 CST/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/updated Mar 3,?\s+06:00 CST/)).length).toBeGreaterThan(0);
   });
 
   it('shows WARN for medallion-domain jobs with warning status codes', async () => {
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs('warning', 'SucceededWithWarnings')}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel({
+      recentJobs: makeJobs('warning', 'SucceededWithWarnings')
+    });
 
     expect(await screen.findAllByText('WARN')).not.toHaveLength(0);
     expect(screen.getAllByTitle('SucceededWithWarnings').length).toBeGreaterThan(0);
   });
 
   it('keeps the panel header focused on the title without status badges', async () => {
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="critical"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel({
+      overall: 'critical'
+    });
 
     expect(await screen.findByText('Domain Layer Coverage')).toBeInTheDocument();
     expect(screen.queryByText('Release')).not.toBeInTheDocument();
@@ -286,54 +271,36 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('shows the column count in the medallion-domain coverage panel', async () => {
-    primeSnapshot({
-      layer: 'bronze',
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta',
-      computedAt: NOW,
-      symbolCount: 123,
-      columnCount: 9,
-      warnings: []
+    renderPanel({
+      metadataSnapshot: makeSnapshot({
+        layer: 'bronze',
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta',
+        computedAt: NOW,
+        symbolCount: 123,
+        columnCount: 9,
+        warnings: []
+      })
     });
-
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
 
     expect((await screen.findAllByText('9 cols')).length).toBeGreaterThan(0);
   });
 
   it('shows the storage size in the medallion-domain coverage panel', async () => {
-    primeSnapshot({
-      layer: 'bronze',
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta',
-      computedAt: NOW,
-      symbolCount: 123,
-      columnCount: 9,
-      totalBytes: 2048,
-      warnings: []
+    renderPanel({
+      metadataSnapshot: makeSnapshot({
+        layer: 'bronze',
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta',
+        computedAt: NOW,
+        symbolCount: 123,
+        columnCount: 9,
+        totalBytes: 2048,
+        warnings: []
+      })
     });
-
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
 
     expect((await screen.findAllByText('9 cols • 2.0 KB')).length).toBeGreaterThan(0);
   });
@@ -341,16 +308,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('uses an explicit disclosure button for inline domain details', async () => {
     const user = userEvent.setup();
 
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel();
 
     const disclosureButton = await screen.findByRole('button', { name: 'Expand market details' });
 
@@ -368,32 +326,23 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('shows the date range in medallion-domain metadata and detail subpanels', async () => {
     const user = userEvent.setup();
 
-    primeSnapshot({
-      layer: 'bronze',
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta',
-      computedAt: NOW,
-      symbolCount: 123,
-      dateRange: {
-        min: '2026-01-02T00:00:00Z',
-        max: '2026-03-03T00:00:00Z',
-        source: 'stats',
-        column: 'Date'
-      },
-      warnings: []
+    renderPanel({
+      metadataSnapshot: makeSnapshot({
+        layer: 'bronze',
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta',
+        computedAt: NOW,
+        symbolCount: 123,
+        dateRange: {
+          min: '2026-01-02T00:00:00Z',
+          max: '2026-03-03T00:00:00Z',
+          source: 'stats',
+          column: 'Date'
+        },
+        warnings: []
+      })
     });
-
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
 
     expect(await screen.findByText('range 2026-01-02 → 2026-03-03')).toBeInTheDocument();
     expect(screen.queryByText('date range:')).not.toBeInTheDocument();
@@ -403,30 +352,18 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('omits the timestamp line when metadata has no computedAt', async () => {
-    primeSnapshot({
-      layer: 'bronze' as const,
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta' as const,
-      computedAt: '',
-      symbolCount: 123,
-      warnings: []
+    renderPanel({
+      metadataSnapshot: makeSnapshot({
+        layer: 'bronze' as const,
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta' as const,
+        computedAt: '',
+        symbolCount: 123,
+        warnings: []
+      })
     });
 
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
-
-    await waitFor(() => {
-      expect(DataService.getDomainMetadataSnapshot).toHaveBeenCalledTimes(1);
-    });
     expect((await screen.findAllByText('market')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^updated /i)).not.toBeInTheDocument();
   });
@@ -440,16 +377,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     });
     vi.mocked(DataService.getDomainMetadata).mockReturnValue(metadataPromise);
 
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={onRefresh}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel({ onRefresh });
 
     const refreshLayerButton = await screen.findByRole('button', { name: 'Refresh Bronze layer' });
     await user.click(refreshLayerButton);
@@ -493,16 +421,7 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       warnings: []
     });
 
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={onRefresh}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel({ onRefresh });
 
     const refreshButton = await screen.findByRole('button', {
       name: 'Refresh domain layer coverage'
@@ -523,16 +442,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   });
 
   it('omits empty medallion layer columns', async () => {
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayersWithEmptyPlatinum()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel({
+      dataLayers: makeLayersWithEmptyPlatinum()
+    });
 
     expect(await screen.findAllByText('Bronze')).not.toHaveLength(0);
     expect(screen.queryByText('Platinum')).not.toBeInTheDocument();
@@ -541,16 +453,9 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('triggers all configured jobs for a layer from the medallion header', async () => {
     const user = userEvent.setup();
 
-    renderWithProviders(
-      <DomainLayerComparisonPanel
-        overall="healthy"
-        dataLayers={makeLayerTriggerLayers()}
-        recentJobs={makeJobs()}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-        isRefreshing={false}
-        isFetching={false}
-      />
-    );
+    renderPanel({
+      dataLayers: makeLayerTriggerLayers()
+    });
 
     const layerTriggerButton = await screen.findByRole('button', {
       name: 'Trigger Bronze layer jobs'
@@ -563,7 +468,13 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
     await waitFor(() => {
       expect(triggerJobMock).toHaveBeenCalledTimes(2);
     });
-    expect(triggerJobMock).toHaveBeenNthCalledWith(1, 'aca-job-market-bronze');
-    expect(triggerJobMock).toHaveBeenNthCalledWith(2, 'aca-job-earnings-bronze');
+    expect(triggerJobMock).toHaveBeenNthCalledWith(1, 'aca-job-market-bronze', [
+      ['systemStatusView'],
+      ['systemHealth']
+    ]);
+    expect(triggerJobMock).toHaveBeenNthCalledWith(2, 'aca-job-earnings-bronze', [
+      ['systemStatusView'],
+      ['systemHealth']
+    ]);
   });
 });

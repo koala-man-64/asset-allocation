@@ -25,12 +25,9 @@ def _deploy_validation_env(**overrides: str) -> dict[str, str]:
         "POSTGRES_DSN": "postgresql://user:pass@db.example.com:5432/asset_allocation",
         "SERVICE_ACCOUNT_NAME": "asset-allocation-sa",
         "ASSET_ALLOCATION_API_BASE_URL": "https://asset-allocation.example.com",
-        "API_AUTH_MODE": "none",
-        "INGRESS_EXTERNAL": "false",
+        "API_KEY": "secret",
         "LOG_LEVEL": "INFO",
-        "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED": "false",
-        "REALTIME_LOG_STREAM_ENABLED": "true",
-        "UI_AUTH_MODE": "none",
+        "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID": "",
     }
     env.update(overrides)
     return env
@@ -118,8 +115,11 @@ def test_deploy_workflow_exports_acr_pull_identity_client_id() -> None:
     assert "python3 scripts/validate_deploy_inputs.py" in text, (
         "deploy workflow must validate deployment inputs through the shared script"
     )
-    assert "vars.API_INGRESS_EXTERNAL || 'false'" in text, (
-        "deploy workflow must default API ingress to internal-only"
+    assert "API_INGRESS_EXTERNAL" not in text, (
+        "deploy workflow must not use ingress as an env toggle"
+    )
+    assert "API_AUTH_MODE" not in text and "UI_AUTH_MODE" not in text, (
+        "deploy workflow must not use auth mode env toggles"
     )
 
 
@@ -315,14 +315,14 @@ def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     assert 'Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget' in text, (
         "setup-env must use GitHub-safe UI proxy defaults for .env.web"
     )
-    assert 'Prompt-Var "API_INGRESS_EXTERNAL" "false"' in text, (
-        "setup-env must default API ingress to internal-only"
-    )
     assert 'Prompt-Var "BACKTEST_ACA_JOB_NAME" "backtests-job"' in text, (
         "setup-env must default BACKTEST_ACA_JOB_NAME for GitHub sync"
     )
     assert 'Prompt-Var "REGIME_ACA_JOB_NAME" "gold-regime-job"' in text, (
         "setup-env must default REGIME_ACA_JOB_NAME for GitHub sync"
+    )
+    assert "API_INGRESS_EXTERNAL" not in text, (
+        "setup-env must not expose ingress as an env toggle"
     )
 
 
@@ -338,14 +338,12 @@ def test_env_contract_tracks_aca_job_names_as_checked_in_defaults() -> None:
     assert rows["REGIME_ACA_JOB_NAME"]["github_storage"] == "none"
 
 
-def test_env_contract_tracks_log_analytics_bootstrap_keys_as_deploy_vars() -> None:
+def test_env_contract_tracks_log_analytics_workspace_bootstrap_key_as_deploy_var() -> None:
     repo_root = _repo_root()
     contract = repo_root / "docs" / "ops" / "env-contract.csv"
     with contract.open(encoding="utf-8", newline="") as handle:
         rows = {row["name"]: row for row in csv.DictReader(handle)}
 
-    assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"]["class"] == "deploy_var"
-    assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"]["github_storage"] == "var"
     assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"]["class"] == "deploy_var"
     assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"]["github_storage"] == "var"
 
@@ -362,79 +360,66 @@ def test_env_template_includes_regime_job_defaults() -> None:
     assert "REGIME_ACA_JOB_NAME=gold-regime-job" in text, (
         ".env.template must define REGIME_ACA_JOB_NAME"
     )
-    assert "API_INGRESS_EXTERNAL=false" in text, (
-        ".env.template must default API ingress to internal-only"
+    assert "API_INGRESS_EXTERNAL" not in text, (
+        ".env.template must not expose ingress as an env toggle"
     )
 
 
-def test_deploy_validation_allows_internal_no_auth_defaults() -> None:
+def test_deploy_validation_accepts_api_key_auth_defaults() -> None:
     result = _run_deploy_validation()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_deploy_validation_requires_workspace_when_log_analytics_is_enabled() -> None:
-    result = _run_deploy_validation(SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED="true")
+def test_deploy_validation_requires_auth_configuration() -> None:
+    result = _run_deploy_validation(API_KEY="")
     assert result.returncode != 0
-    assert "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=true requires SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID." in (
-        result.stdout + result.stderr
-    )
+    assert "Deploy validation requires API_KEY and/or API OIDC configuration." in (result.stdout + result.stderr)
 
 
 def test_deploy_validation_rejects_invalid_log_stream_batch_size() -> None:
-    result = _run_deploy_validation(REALTIME_LOG_STREAM_BATCH_SIZE="5")
+    result = _run_deploy_validation(
+        SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID="workspace-id",
+        REALTIME_LOG_STREAM_BATCH_SIZE="5",
+    )
     assert result.returncode != 0
     assert "REALTIME_LOG_STREAM_BATCH_SIZE must be between 10 and 500." in (
         result.stdout + result.stderr
     )
 
 
-def test_deploy_validation_allows_public_ingress_for_personal_auth_modes() -> None:
-    result = _run_deploy_validation(INGRESS_EXTERNAL="true", API_AUTH_MODE="none")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "INGRESS_EXTERNAL=true with API_AUTH_MODE=none exposes the app publicly without authentication." in (
-        result.stdout + result.stderr
-    )
-    assert "Azure Container Apps built-in auth or ingress IP restrictions." in (
-        result.stdout + result.stderr
-    )
-
-    api_key_result = _run_deploy_validation(
-        INGRESS_EXTERNAL="true",
-        API_AUTH_MODE="api_key",
-        API_KEY="secret",
-    )
-    assert api_key_result.returncode == 0, api_key_result.stdout + api_key_result.stderr
-    assert "INGRESS_EXTERNAL=true with API_AUTH_MODE=api_key exposes the app publicly and relies on a shared API key for access control." in (
-        api_key_result.stdout + api_key_result.stderr
-    )
-    assert "Azure Container Apps built-in auth or ingress IP restrictions" in (
-        api_key_result.stdout + api_key_result.stderr
-    )
-
-
-def test_deploy_validation_requires_ui_and_oidc_values_for_public_ingress() -> None:
+def test_deploy_validation_requires_complete_ui_oidc_configuration() -> None:
     result = _run_deploy_validation(
-        INGRESS_EXTERNAL="true",
-        API_AUTH_MODE="oidc",
         API_OIDC_ISSUER="https://issuer.example.com",
         API_OIDC_AUDIENCE="asset-allocation",
-        UI_AUTH_MODE="none",
+        UI_OIDC_CLIENT_ID="client-id",
     )
     assert result.returncode != 0
-    assert "INGRESS_EXTERNAL=true requires UI_AUTH_MODE=oidc." in (result.stdout + result.stderr)
+    assert "UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together." in (result.stdout + result.stderr)
 
-    ui_oidc_result = _run_deploy_validation(
-        INGRESS_EXTERNAL="true",
-        API_AUTH_MODE="api_key_or_oidc",
-        API_OIDC_ISSUER="https://issuer.example.com",
-        API_OIDC_AUDIENCE="asset-allocation",
-        UI_AUTH_MODE="oidc",
+    missing_api_oidc = _run_deploy_validation(
+        API_KEY="",
         UI_OIDC_CLIENT_ID="client-id",
         UI_OIDC_AUTHORITY="https://issuer.example.com",
         UI_OIDC_SCOPES="api://asset-allocation/user_impersonation",
         UI_OIDC_REDIRECT_URI="https://asset-allocation.example.com/oauth2-callback",
     )
-    assert ui_oidc_result.returncode == 0, ui_oidc_result.stdout + ui_oidc_result.stderr
+    assert missing_api_oidc.returncode != 0
+    assert "UI OIDC configuration requires API OIDC auth to be configured." in (
+        missing_api_oidc.stdout + missing_api_oidc.stderr
+    )
+
+
+def test_deploy_validation_accepts_full_oidc_configuration() -> None:
+    result = _run_deploy_validation(
+        API_KEY="",
+        API_OIDC_ISSUER="https://issuer.example.com",
+        API_OIDC_AUDIENCE="asset-allocation",
+        UI_OIDC_CLIENT_ID="client-id",
+        UI_OIDC_AUTHORITY="https://issuer.example.com",
+        UI_OIDC_SCOPES="api://asset-allocation/user_impersonation",
+        UI_OIDC_REDIRECT_URI="https://asset-allocation.example.com/oauth2-callback",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_reset_postgres_script_uses_psql_reset_and_repo_migrations() -> None:

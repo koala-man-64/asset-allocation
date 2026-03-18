@@ -35,6 +35,7 @@ function systemHealthRefetchInterval(query: {
 export const queryKeys = {
   // System & Data Health
   systemHealth: () => ['systemHealth'] as const,
+  systemStatusView: () => ['systemStatusView'] as const,
   systemHealthJobOverrides: () => ['systemHealth', 'jobOverrides'] as const,
   lineage: () => ['lineage'] as const,
   debugSymbols: () => ['debugSymbols'] as const,
@@ -106,7 +107,19 @@ export function useDebugSymbolsQuery() {
   return useQuery({
     queryKey: queryKeys.debugSymbols(),
     queryFn: async () => {
-      return DataService.getDebugSymbols();
+      try {
+        return await DataService.getDebugSymbols();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('API Error: 404')) {
+          return {
+            symbols: '',
+            updatedAt: null,
+            updatedBy: null
+          };
+        }
+        throw error;
+      }
     },
     staleTime: 30 * 1000,
     refetchInterval: false

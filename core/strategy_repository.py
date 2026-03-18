@@ -2,7 +2,7 @@ import os
 import json
 import hashlib
 import logging
-from typing import Optional, Dict
+from typing import Any, Optional, Dict
 
 from core.postgres import connect
 from core.ranking_engine.naming import slugify_strategy_output_table
@@ -14,6 +14,36 @@ STRATEGIES_TABLE = "core.strategies"
 def _stable_config_hash(config: Dict) -> str:
     payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+def normalize_strategy_config_document(config: Any) -> Dict:
+    if not isinstance(config, dict):
+        return {}
+
+    normalized = json.loads(json.dumps(config))
+
+    regime_policy = normalized.get("regimePolicy")
+    if isinstance(regime_policy, dict):
+        if regime_policy.get("enabled") is False:
+            normalized.pop("regimePolicy", None)
+        else:
+            regime_policy.pop("enabled", None)
+            normalized["regimePolicy"] = regime_policy
+
+    raw_exits = normalized.get("exits")
+    if isinstance(raw_exits, list):
+        cleaned_exits: list[dict[str, Any]] = []
+        for raw_rule in raw_exits:
+            if not isinstance(raw_rule, dict):
+                continue
+            if raw_rule.get("enabled") is False:
+                continue
+            cleaned_rule = dict(raw_rule)
+            cleaned_rule.pop("enabled", None)
+            cleaned_exits.append(cleaned_rule)
+        normalized["exits"] = cleaned_exits
+
+    return normalized
 
 class StrategyRepository:
     def __init__(self, dsn: Optional[str] = None):
@@ -38,7 +68,7 @@ class StrategyRepository:
                     )
                     row = cur.fetchone()
                     if row:
-                        return row[0]
+                        return normalize_strategy_config_document(row[0])
                     return None
         except Exception as e:
             logger.error(f"Failed to fetch strategy '{name}': {e}")
@@ -66,7 +96,9 @@ class StrategyRepository:
                     if not row:
                         return None
                     columns = ["name", "type", "description", "output_table_name", "updated_at", "config"]
-                    return dict(zip(columns, row))
+                    payload = dict(zip(columns, row))
+                    payload["config"] = normalize_strategy_config_document(payload.get("config"))
+                    return payload
         except Exception as e:
             logger.error(f"Failed to fetch strategy detail '{name}': {e}")
             raise
@@ -77,12 +109,13 @@ class StrategyRepository:
         """
         if not self.dsn:
             raise ValueError("Database connection not configured")
-            
+        normalized_config = normalize_strategy_config_document(config)
+
         try:
             with connect(self.dsn) as conn:
                 with conn.cursor() as cur:
                     output_table_name = slugify_strategy_output_table(name)
-                    config_hash = _stable_config_hash(config)
+                    config_hash = _stable_config_hash(normalized_config)
                     cur.execute(
                         f"""
                         INSERT INTO {STRATEGIES_TABLE} (name, config, type, description, output_table_name, updated_at)
@@ -95,10 +128,10 @@ class StrategyRepository:
                             output_table_name = EXCLUDED.output_table_name,
                             updated_at = NOW()
                         """,
-                        (name, json.dumps(config), strategy_type, description, output_table_name)
+                        (name, json.dumps(normalized_config), strategy_type, description, output_table_name)
                     )
-                    ranking_schema_name = str(config.get("rankingSchemaName") or "").strip() or None
-                    universe_name = str(config.get("universeConfigName") or "").strip() or None
+                    ranking_schema_name = str(normalized_config.get("rankingSchemaName") or "").strip() or None
+                    universe_name = str(normalized_config.get("universeConfigName") or "").strip() or None
                     ranking_schema_version: int | None = None
                     universe_version: int | None = None
 
@@ -155,7 +188,7 @@ class StrategyRepository:
                             name,
                             next_version,
                             description,
-                            json.dumps(config),
+                            json.dumps(normalized_config),
                             ranking_schema_name,
                             ranking_schema_version,
                             universe_name,
@@ -277,7 +310,9 @@ class StrategyRepository:
                         "published_at",
                         "created_at",
                     ]
-                    return dict(zip(columns, row))
+                    payload = dict(zip(columns, row))
+                    payload["config"] = normalize_strategy_config_document(payload.get("config"))
+                    return payload
         except Exception as e:
             logger.error(f"Failed to fetch strategy revision '{name}': {e}")
             raise

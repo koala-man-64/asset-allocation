@@ -13,9 +13,6 @@ import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
 const DataExplorerPage = lazy(() =>
   import('@/app/components/pages/DataExplorerPage').then((m) => ({ default: m.DataExplorerPage }))
 );
-const LiveTradingPage = lazy(() =>
-  import('@/app/components/pages/LiveTradingPage').then((m) => ({ default: m.LiveTradingPage }))
-);
 const RegimeMonitorPage = lazy(() =>
   import('@/app/components/pages/RegimeMonitorPage').then((m) => ({ default: m.RegimeMonitorPage }))
 );
@@ -138,7 +135,6 @@ function AppContent() {
               <Routes>
                 <Route path="/" element={<Navigate to="/system-status" replace />} />
                 <Route path="/data-explorer" element={<DataExplorerPage />} />
-                <Route path="/live-trading" element={<LiveTradingPage />} />
                 <Route path="/regimes" element={<RegimeMonitorPage />} />
                 <Route path="/data-quality" element={<DataQualityPage />} />
                 <Route path="/data-profiling" element={<DataProfilingPage />} />

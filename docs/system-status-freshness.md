@@ -1,0 +1,7 @@
+# System Status Freshness Contract
+
+- The system status page reads a single authoritative payload from `GET /api/system/status-view`.
+- `systemHealth` in that payload is live-refreshed for the page query cadence.
+- `metadataSnapshot` in that payload is served from the persisted snapshot document, not from a bulk live metadata scan.
+- Manual job triggers still use client-side optimistic overrides until the backend catches up and the status view reflects the run.
+- Metadata-changing actions emit `DOMAIN_METADATA_SNAPSHOT_CHANGED`, which invalidates the status view and legacy snapshot queries.

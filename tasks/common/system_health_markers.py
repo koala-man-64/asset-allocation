@@ -11,16 +11,6 @@ from core.blob_storage import BlobStorageClient
 
 
 DEFAULT_MARKER_PREFIX = "system/health_markers"
-
-
-def _is_truthy(raw: Optional[str]) -> bool:
-    return (raw or "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
-
-def _markers_enabled() -> bool:
-    return _is_truthy(os.environ.get("SYSTEM_HEALTH_MARKERS_ENABLED", "true"))
-
-
 def _marker_container_name() -> str:
     explicit = os.environ.get("SYSTEM_HEALTH_MARKERS_CONTAINER")
     if explicit and explicit.strip():
@@ -57,13 +47,6 @@ def write_system_health_marker(
 
     This is best-effort and should not fail the parent job.
     """
-    if not _markers_enabled():
-        mdc.write_line(
-            "Skipping system-health marker write: "
-            f"markers_disabled=true layer={_slug(layer)} domain={_slug(domain)} job={job_name}"
-        )
-        return False
-
     container_name = _marker_container_name()
     if not container_name:
         mdc.write_warning("Skipping system-health marker write: marker container is not configured.")

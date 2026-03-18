@@ -479,9 +479,9 @@ export function StrategyConfigPage() {
                       Regime Policy
                     </div>
                     <div className="mt-2 text-sm text-foreground">
-                      {detailQuery.data.config.regimePolicy?.enabled
-                        ? `Enabled • ${detailQuery.data.config.regimePolicy.modelName}`
-                        : 'Disabled'}
+                      {detailQuery.data.config.regimePolicy
+                        ? detailQuery.data.config.regimePolicy.modelName
+                        : 'Not configured'}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-mcm-walnut/25 bg-mcm-paper/80 p-4">
@@ -521,9 +521,7 @@ export function StrategyConfigPage() {
                                 {formatRuleType(rule.type)} • priority {rule.priority ?? 'auto'}
                               </div>
                             </div>
-                            <Badge variant={rule.enabled ? 'default' : 'outline'}>
-                              {rule.enabled ? 'Enabled' : 'Disabled'}
-                            </Badge>
+                            <Badge variant="outline">Active</Badge>
                           </div>
                           <div className="mt-3 text-sm text-foreground">
                             {summarizeRule(detailQuery.data, rule.id)}

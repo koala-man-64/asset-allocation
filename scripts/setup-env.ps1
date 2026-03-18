@@ -101,7 +101,6 @@ $Config += "LOG_FORMAT=" + (Prompt-Var "LOG_FORMAT" "JSON" "Options: JSON | TEXT
 $Config += "LOG_LEVEL=" + (Prompt-Var "LOG_LEVEL" "INFO" "Options: DEBUG | INFO | WARNING | ERROR")
 $Config += "TEST_MODE=" + (Prompt-Var "TEST_MODE" "false" "Set true to disable network calls during some code paths.")
 $Config += "ENABLE_ENV_DIAGNOSTICS=" + (Prompt-Var "ENABLE_ENV_DIAGNOSTICS" "false" "Set true to log additional (allowlisted) environment diagnostics.")
-$Config += "BACKGROUND_WORKERS_ENABLED=" + (Prompt-Var "BACKGROUND_WORKERS_ENABLED" "true" "Local/test only: enable non-essential API background workers.")
 $Config += "DEBUG_SYMBOLS=" + (Prompt-Var "DEBUG_SYMBOLS" "" "Optional: comma-separated symbols for debug runs (e.g., AAPL,MSFT).")
 $Config += "SYMBOLS_REFRESH_INTERVAL_HOURS=" + (Prompt-Var "SYMBOLS_REFRESH_INTERVAL_HOURS" "24" "Optional: refresh symbol universe from NASDAQ + (Alpha Vantage via API) when older than this many hours (0 disables).")
 $Config += "FEATURE_ENGINEERING_MAX_WORKERS=" + (Prompt-Var "FEATURE_ENGINEERING_MAX_WORKERS" "" "Optional: max workers for feature engineering fan-out.")
@@ -176,11 +175,8 @@ $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" $DefaultAssetAllocationApiBaseUrl "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
-$Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
+$Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when the deployed API uses API_KEY auth)." -Secret)
 $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
-$Config += "ASSET_ALLOCATION_API_ALLOW_NO_AUTH=" + (Prompt-Var "ASSET_ALLOCATION_API_ALLOW_NO_AUTH" "false" "Optional (local only): allow ETL calls without ASSET_ALLOCATION_API_KEY (true/false).")
-$Config += "JOB_STARTUP_API_WAKE_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_WAKE_ENABLED" "true" "Optional: attempt ARM start for API container app when startup health probe fails.")
-$Config += "JOB_STARTUP_API_ARM_START_ENABLED=" + (Prompt-Var "JOB_STARTUP_API_ARM_START_ENABLED" "true" "Optional: enable/disable ARM start calls during startup preflight.")
 $Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" $DefaultJobStartupApiContainerApps "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")
 $Config += "JOB_STARTUP_API_HEALTH_PATH=" + (Prompt-Var "JOB_STARTUP_API_HEALTH_PATH" "/healthz" "Optional: health endpoint path used by startup preflight.")
 $Config += "JOB_STARTUP_API_PROBE_ATTEMPTS=" + (Prompt-Var "JOB_STARTUP_API_PROBE_ATTEMPTS" "6" "Optional: startup health probe attempts.")
@@ -205,23 +201,20 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# API Service"
 $Config += "# =========================================="
-$Config += "API_AUTH_MODE=" + (Prompt-Var "API_AUTH_MODE" "none" "Options: none | api_key | oidc | api_key_or_oidc. For a personal public deploy, prefer none or api_key and protect the edge in ACA.")
-$Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required if API_AUTH_MODE=api_key or api_key_or_oidc)." -Secret)
+$Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required for deployed runtime unless API OIDC is configured)." -Secret)
 $Config += "API_ROOT_PREFIX=" + (Prompt-Var "API_ROOT_PREFIX" "" "Optional: mount API under /{API_ROOT_PREFIX}/api/* (e.g. asset-allocation).")
-$Config += "API_INGRESS_EXTERNAL=" + (Prompt-Var "API_INGRESS_EXTERNAL" "false" "Deploy only: true for a public URL, false for internal only. Personal deployments should prefer ACA built-in auth or IP restrictions at the edge.")
 $Config += "API_PORT=" + (Prompt-Var "API_PORT" "9000" "Local API port (used by core/config.py).")
 $Config += "API_CSP=" + (Prompt-Var "API_CSP" "" "Optional: Content-Security-Policy header value.")
 $Config += "API_CORS_ALLOW_ORIGINS=" + (Prompt-Var "API_CORS_ALLOW_ORIGINS" "" "Optional: comma-separated or JSON list of allowed origins.")
 
 # OIDC (optional)
-$Config += "API_OIDC_ISSUER=" + (Prompt-Var "API_OIDC_ISSUER" "" "Optional: OIDC issuer URL (required for API_AUTH_MODE=oidc).")
-$Config += "API_OIDC_AUDIENCE=" + (Prompt-Var "API_OIDC_AUDIENCE" "" "Optional: comma-separated audiences (required for API_AUTH_MODE=oidc).")
+$Config += "API_OIDC_ISSUER=" + (Prompt-Var "API_OIDC_ISSUER" "" "Optional: OIDC issuer URL (required together with API_OIDC_AUDIENCE).")
+$Config += "API_OIDC_AUDIENCE=" + (Prompt-Var "API_OIDC_AUDIENCE" "" "Optional: comma-separated audiences (required together with API_OIDC_ISSUER).")
 $Config += "API_OIDC_JWKS_URL=" + (Prompt-Var "API_OIDC_JWKS_URL" "" "Optional: JWKS URL (if not discoverable).")
 $Config += "API_OIDC_REQUIRED_SCOPES=" + (Prompt-Var "API_OIDC_REQUIRED_SCOPES" "" "Optional: comma-separated required scopes.")
 $Config += "API_OIDC_REQUIRED_ROLES=" + (Prompt-Var "API_OIDC_REQUIRED_ROLES" "" "Optional: comma-separated required roles.")
 
 # UI auth config served by API (optional)
-$Config += "UI_AUTH_MODE=" + (Prompt-Var "UI_AUTH_MODE" "none" "Optional: UI auth mode (none|api_key|oidc). Leave as none if ACA handles edge auth.")
 $Config += "UI_OIDC_CLIENT_ID=" + (Prompt-Var "UI_OIDC_CLIENT_ID" "" "Optional: UI OIDC client ID.")
 $Config += "UI_OIDC_AUTHORITY=" + (Prompt-Var "UI_OIDC_AUTHORITY" "" "Optional: UI OIDC authority (defaults to API_OIDC_ISSUER).")
 $Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OIDC scopes.")
@@ -253,11 +246,9 @@ $Config += "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_ARM
 $Config += "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB=" + (Prompt-Var "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB" "3" "Optional: how many executions to return per job.")
 
 # Optional: Azure Resource Health (runtime availability)
-$Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED" "false" "Optional: enable Azure Resource Health probes (true/false).")
 $Config += "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION" "" "Optional: Resource Health API version.")
 
 # Optional: Azure Monitor Metrics (runtime telemetry)
-$Config += "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_ENABLED" "false" "Optional: enable metrics probes (true/false).")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION" "" "Optional: Metrics API version.")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_TIMESPAN_MINUTES" "" "Optional: timespan minutes (e.g., 15).")
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_INTERVAL" "" "Optional: interval (e.g., PT1M).")
@@ -267,7 +258,6 @@ $Config += "SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS=" + (Prompt-Var "SYSTEM_HE
 $Config += "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON=" + (Prompt-Var "SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON" "" "Optional: JSON thresholds object.")
 
 # Optional: Azure Log Analytics (KQL aggregates + job execution log tails)
-$Config += "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED" "false" "Optional: enable Log Analytics probes (true/false).")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID" "" "Optional: Log Analytics workspace ID.")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS" "5" "Optional: Log Analytics timeout seconds.")
 $Config += "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES=" + (Prompt-Var "SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES" "15" "Optional: timespan minutes (e.g., 15).")
@@ -282,14 +272,8 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# Pipeline Controls"
 $Config += "# =========================================="
-$Config += "SILVER_LATEST_ONLY=" + (Prompt-Var "SILVER_LATEST_ONLY" "" "Optional: default latest-only flag for silver pipelines.")
-$Config += "SILVER_MARKET_LATEST_ONLY=" + (Prompt-Var "SILVER_MARKET_LATEST_ONLY" "" "Optional: override latest-only for market.")
-$Config += "SILVER_FINANCE_LATEST_ONLY=" + (Prompt-Var "SILVER_FINANCE_LATEST_ONLY" "" "Optional: override latest-only for finance.")
-$Config += "SILVER_EARNINGS_LATEST_ONLY=" + (Prompt-Var "SILVER_EARNINGS_LATEST_ONLY" "" "Optional: override latest-only for earnings.")
-$Config += "SILVER_PRICE_TARGET_LATEST_ONLY=" + (Prompt-Var "SILVER_PRICE_TARGET_LATEST_ONLY" "" "Optional: override latest-only for price targets.")
 $Config += "BACKFILL_START_DATE=" + (Prompt-Var "BACKFILL_START_DATE" "2016-01-01" "Global minimum date retained by reconciliation sweeps (YYYY-MM-DD).")
 $Config += "TRIGGER_NEXT_JOB_NAME=" + (Prompt-Var "TRIGGER_NEXT_JOB_NAME" "" "Optional: if set, trigger next job when current finishes.")
-$Config += "TRIGGER_NEXT_JOB_REQUIRED=" + (Prompt-Var "TRIGGER_NEXT_JOB_REQUIRED" "" "Optional: whether triggering the next job is required (true/false).")
 $Config += "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS=" + (Prompt-Var "TRIGGER_NEXT_JOB_RETRY_ATTEMPTS" "" "Optional: retries when triggering next job (default 3).")
 $Config += "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS=" + (Prompt-Var "TRIGGER_NEXT_JOB_RETRY_BASE_SECONDS" "" "Optional: base backoff seconds (default 1.0).")
 
@@ -305,7 +289,6 @@ $Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" 
 $Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget "UI dev only: Vite proxy target for /api (do not include /api).")
 $Config += "VITE_API_BASE_URL=" + (Prompt-Var "VITE_API_BASE_URL" "/api" "UI build-time fallback for the API base URL.")
 $Config += "VITE_BACKTEST_API_BASE_URL=" + (Prompt-Var "VITE_BACKTEST_API_BASE_URL" "/api" "UI build-time fallback for the backtest API base URL.")
-$Config += "VITE_AUTH_MODE=" + (Prompt-Var "VITE_AUTH_MODE" "none" "UI build-time auth fallback (none|api_key|oidc).")
 $Config += "VITE_ALLOW_BROWSER_API_KEY=" + (Prompt-Var "VITE_ALLOW_BROWSER_API_KEY" "false" "UI build-time fallback: permit browser API-key auth.")
 $Config += "VITE_BACKTEST_API_KEY=" + (Prompt-Var "VITE_BACKTEST_API_KEY" "" "UI build-time fallback backtest API key." -Secret)
 $Config += "VITE_OIDC_AUTHORITY=" + (Prompt-Var "VITE_OIDC_AUTHORITY" "" "UI build-time fallback OIDC authority.")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import csv
 import re
 from pathlib import Path
@@ -28,14 +29,12 @@ _ALLOWED_SOURCES = {
 }
 _WORKFLOW_VAR_PATTERN = re.compile(r"\bvars\.([A-Z][A-Z0-9_]+)\b")
 _WORKFLOW_SECRET_PATTERN = re.compile(r"\bsecrets\.([A-Z][A-Z0-9_]+)\b")
-_CODE_ENV_PATTERNS = (
-    re.compile(r'os\.environ\.get\(\s*["\']([A-Z][A-Z0-9_]+)["\']'),
-    re.compile(r'os\.getenv\(\s*["\']([A-Z][A-Z0-9_]+)["\']'),
-    re.compile(r'os\.environ\[\s*["\']([A-Z][A-Z0-9_]+)["\']\s*\]'),
+_JS_ENV_PATTERNS = (
     re.compile(r'process\.env\.([A-Z][A-Z0-9_]+)'),
     re.compile(r'import\.meta\.env\.([A-Z][A-Z0-9_]+)'),
 )
 _VITE_BUILTINS = {"DEV", "PROD", "SSR", "MODE", "BASE_URL"}
+_ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]+$")
 
 
 def _repo_root() -> Path:
@@ -104,9 +103,123 @@ def _code_env_refs() -> set[str]:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
-            for pattern in _CODE_ENV_PATTERNS:
+            if path.suffix == ".py":
+                refs.update(_python_env_refs(text))
+                continue
+            for pattern in _JS_ENV_PATTERNS:
                 refs.update(pattern.findall(text))
     return refs - _VITE_BUILTINS
+
+
+def _string_literal(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _is_os_environ(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "environ"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+    )
+
+
+def _direct_python_env_refs(node: ast.AST) -> set[str]:
+    refs: set[str] = set()
+
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call):
+            if (
+                isinstance(child.func, ast.Attribute)
+                and child.func.attr == "get"
+                and _is_os_environ(child.func.value)
+                and child.args
+            ):
+                env_name = _string_literal(child.args[0])
+                if env_name and _ENV_NAME_PATTERN.fullmatch(env_name):
+                    refs.add(env_name)
+            elif (
+                isinstance(child.func, ast.Attribute)
+                and child.func.attr == "getenv"
+                and isinstance(child.func.value, ast.Name)
+                and child.func.value.id == "os"
+                and child.args
+            ):
+                env_name = _string_literal(child.args[0])
+                if env_name and _ENV_NAME_PATTERN.fullmatch(env_name):
+                    refs.add(env_name)
+        elif isinstance(child, ast.Subscript) and _is_os_environ(child.value):
+            env_name = _string_literal(child.slice)
+            if env_name and _ENV_NAME_PATTERN.fullmatch(env_name):
+                refs.add(env_name)
+
+    return refs
+
+
+def _helper_call_env_refs(node: ast.AST, helper_names: set[str]) -> set[str]:
+    refs: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        helper_name = _call_name(child.func)
+        if helper_name not in helper_names or not child.args:
+            continue
+        env_name = _string_literal(child.args[0])
+        if env_name and _ENV_NAME_PATTERN.fullmatch(env_name):
+            refs.add(env_name)
+    return refs
+
+
+def _python_helper_names(tree: ast.Module) -> set[str]:
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    helper_names = {
+        name
+        for name, node in functions.items()
+        if _direct_python_env_refs(node)
+    }
+
+    changed = True
+    while changed:
+        changed = False
+        for name, node in functions.items():
+            if name in helper_names:
+                continue
+            called = {
+                _call_name(child.func)
+                for child in ast.walk(node)
+                if isinstance(child, ast.Call)
+            }
+            if any(called_name in helper_names for called_name in called):
+                helper_names.add(name)
+                changed = True
+
+    return helper_names
+
+
+def _python_env_refs(text: str) -> set[str]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+
+    helper_names = _python_helper_names(tree)
+    refs = _direct_python_env_refs(tree)
+    refs.update(_helper_call_env_refs(tree, helper_names))
+    return refs
 
 
 def test_env_contract_rows_are_unique_and_well_formed() -> None:

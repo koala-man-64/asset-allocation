@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from core import core as mdc
+from tasks.common import bronze_bucketing
 
 
 def _is_enabled() -> bool:
@@ -62,10 +63,16 @@ def blob_last_modified_utc(blob: Dict[str, Any]) -> Optional[datetime]:
     return _parse_iso(raw)
 
 
+def normalize_watermark_blob_name(blob_name: Any) -> str:
+    return bronze_bucketing.canonical_bucket_blob_name(str(blob_name or "").strip())
+
+
 def build_blob_signature(blob: Dict[str, Any]) -> Dict[str, Optional[str]]:
     return {
         "etag": blob.get("etag"),
         "last_modified": _iso(blob.get("last_modified")),
+        "name": str(blob.get("name", "")).strip() or None,
+        "size": str(blob.get("size")) if blob.get("size") is not None else None,
     }
 
 
@@ -82,6 +89,22 @@ def signature_matches(prior: Dict[str, Any], current: Dict[str, Optional[str]]) 
     prior_lm = prior.get("last_modified")
     if current_lm and prior_lm:
         return current_lm == prior_lm
+
+    current_name = current.get("name")
+    prior_name = prior.get("name")
+    if current_name and prior_name:
+        if current_name != prior_name:
+            return False
+        current_size = current.get("size")
+        prior_size = prior.get("size")
+        if current_size and prior_size:
+            return current_size == prior_size
+        return True
+
+    current_size = current.get("size")
+    prior_size = prior.get("size")
+    if current_size and prior_size:
+        return current_size == prior_size
 
     return False
 

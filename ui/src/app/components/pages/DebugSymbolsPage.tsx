@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { RefreshCw, Save, ShieldAlert } from 'lucide-react';
+import { RefreshCw, Save, ShieldAlert, Trash2 } from 'lucide-react';
 import { useDebugSymbolsQuery, queryKeys } from '@/hooks/useDataQueries';
 import { DataService } from '@/services/DataService';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Switch } from '@/app/components/ui/switch';
 import { Textarea } from '@/app/components/ui/textarea';
 import { Badge } from '@/app/components/ui/badge';
 import { formatTimeAgo } from '@/app/components/pages/system-status/SystemStatusHelpers';
@@ -45,29 +44,27 @@ export function DebugSymbolsPage() {
   const debugSymbolsQuery = useDebugSymbolsQuery();
   const queryClient = useQueryClient();
 
-  const [enabled, setEnabled] = useState(false);
   const [symbolsInput, setSymbolsInput] = useState('');
   const [hasLocalChanges, setHasLocalChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!debugSymbolsQuery.data || hasLocalChanges) return;
-    setEnabled(Boolean(debugSymbolsQuery.data.enabled));
     setSymbolsInput(String(debugSymbolsQuery.data.symbols || '').trim());
   }, [debugSymbolsQuery.data, hasLocalChanges]);
 
   const normalizedSymbols = useMemo(() => normalizeSymbols(symbolsInput), [symbolsInput]);
-  const isInvalidEnabled = enabled && normalizedSymbols.length === 0;
+  const isInvalid = normalizedSymbols.length === 0;
 
   const currentSymbols = String(debugSymbolsQuery.data?.symbols || '').trim();
-  const isDirty =
-    enabled !== Boolean(debugSymbolsQuery.data?.enabled) || symbolsInput.trim() !== currentSymbols;
+  const isConfigured = currentSymbols.length > 0;
+  const isDirty = symbolsInput.trim() !== currentSymbols;
 
   const updatedAgo = formatTimeAgo(debugSymbolsQuery.data?.updatedAt || null);
 
   const handleReset = () => {
     setHasLocalChanges(false);
-    setEnabled(Boolean(debugSymbolsQuery.data?.enabled));
     setSymbolsInput(currentSymbols);
   };
 
@@ -75,7 +72,6 @@ export function DebugSymbolsPage() {
     setIsSaving(true);
     try {
       await DataService.setDebugSymbols({
-        enabled,
         symbols: symbolsInput
       });
       toast.success('Debug symbols updated.');
@@ -86,6 +82,22 @@ export function DebugSymbolsPage() {
       toast.error(`Failed to update debug symbols: ${message}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await DataService.deleteDebugSymbols();
+      toast.success('Debug symbols removed.');
+      setHasLocalChanges(false);
+      setSymbolsInput('');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.debugSymbols() });
+    } catch (err) {
+      const message = formatSystemStatusText(err);
+      toast.error(`Failed to remove debug symbols: ${message}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -151,21 +163,13 @@ export function DebugSymbolsPage() {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
-              <div>
-                <div className="text-xs uppercase text-muted-foreground">Enabled</div>
-                <div className="text-sm">
-                  {enabled ? 'Debug filtering will run on job start.' : 'Debug filtering is off.'}
-                </div>
+            <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+              <div className="text-xs uppercase text-muted-foreground">Presence</div>
+              <div className="text-sm">
+                {isConfigured
+                  ? 'Stored symbols are active on job startup.'
+                  : 'No debug-symbol allowlist is currently stored.'}
               </div>
-              <Switch
-                checked={enabled}
-                onCheckedChange={(checked) => {
-                  setEnabled(Boolean(checked));
-                  setHasLocalChanges(true);
-                }}
-                aria-label="Toggle debug symbols"
-              />
             </div>
 
             <div className="space-y-2">
@@ -184,7 +188,7 @@ export function DebugSymbolsPage() {
             <div className="flex items-center gap-3">
               <Button
                 onClick={handleSave}
-                disabled={isSaving || !isDirty || isInvalidEnabled}
+                disabled={isSaving || !isDirty || isInvalid}
                 className="gap-2"
               >
                 {isSaving ? (
@@ -197,10 +201,19 @@ export function DebugSymbolsPage() {
               <Button variant="outline" onClick={handleReset} disabled={isSaving || !isDirty}>
                 Reset
               </Button>
+              <Button
+                variant="outline"
+                onClick={handleDelete}
+                disabled={isDeleting || !isConfigured}
+                className="gap-2"
+              >
+                {isDeleting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Remove
+              </Button>
             </div>
-            {isInvalidEnabled && (
+            {isInvalid && (
               <p className="text-xs text-destructive">
-                Add at least one symbol before enabling debug filtering.
+                Add at least one symbol before saving debug filtering.
               </p>
             )}
           </CardContent>
@@ -229,8 +242,8 @@ export function DebugSymbolsPage() {
               )}
             </div>
             <div className="rounded-lg border border-dashed border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
-              Jobs pull this list from Postgres runtime config on startup. Disabling debug mode
-              keeps the list stored but prevents filtering.
+              Jobs pull this list from Postgres runtime config on startup. Removing the row makes
+              debug filtering disappear entirely.
             </div>
           </CardContent>
         </Card>

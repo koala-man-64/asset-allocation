@@ -512,7 +512,6 @@ def test_silver_finance_select_initial_source_uses_unacked_manifest(monkeypatch)
             {"name": "finance-data/Balance Sheet/A_quarterly_balance-sheet.json"},
         ],
     }
-    monkeypatch.setattr(silver.run_manifests, "silver_manifest_consumption_enabled", lambda: True)
     monkeypatch.setattr(silver.run_manifests, "load_latest_bronze_finance_manifest", lambda: dict(manifest))
     monkeypatch.setattr(silver.run_manifests, "silver_finance_ack_exists", lambda _run_id: False)
 
@@ -532,7 +531,6 @@ def test_silver_finance_select_initial_source_falls_back_when_manifest_is_acked(
         "blobs": [{"name": "finance-data/buckets/A.parquet"}],
     }
     listed = [{"name": "finance-data/buckets/Z.parquet"}]
-    monkeypatch.setattr(silver.run_manifests, "silver_manifest_consumption_enabled", lambda: True)
     monkeypatch.setattr(silver.run_manifests, "load_latest_bronze_finance_manifest", lambda: dict(manifest))
     monkeypatch.setattr(silver.run_manifests, "silver_finance_ack_exists", lambda _run_id: True)
     monkeypatch.setattr(silver, "_list_alpha26_finance_bucket_candidates", lambda: (list(listed), 0))
@@ -786,14 +784,15 @@ def test_write_alpha26_finance_silver_buckets_partial_update_preserves_untouched
 
 
 def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_watermark(monkeypatch):
-    blob_name = "finance-data/buckets/M.parquet"
+    blob_name = "finance-data/runs/run-123/buckets/M.parquet"
     blob = {
         "name": blob_name,
         "etag": "etag-m",
         "last_modified": datetime(2026, 3, 4, 1, 0, tzinfo=timezone.utc),
     }
+    watermark_key = "finance-data/buckets/M.parquet"
     watermarks = {
-        blob_name: {
+        watermark_key: {
             "etag": "etag-m",
             "last_modified": "2026-03-04T01:00:00+00:00",
         }
@@ -851,5 +850,5 @@ def test_process_alpha26_bucket_blob_does_not_skip_when_signature_matches_waterm
     assert len(results) == 1
     assert results[0].status == "ok"
     assert captured_tickers == ["MSFT"]
-    assert blob_name in watermarks
-    assert watermarks[blob_name]["etag"] == "etag-m"
+    assert watermark_key in watermarks
+    assert watermarks[watermark_key]["etag"] == "etag-m"

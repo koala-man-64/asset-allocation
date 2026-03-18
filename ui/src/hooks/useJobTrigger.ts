@@ -5,11 +5,25 @@ import { ApiError, backtestApi } from '@/services/backtestApi';
 import { upsertRunningJobOverride } from '@/hooks/useSystemHealthJobOverrides';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
+type QueryKeyLike = readonly string[];
+
+function normalizeInvalidationKeys(
+  queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+): QueryKeyLike[] {
+  if (Array.isArray(queryKey[0])) {
+    return (queryKey as ReadonlyArray<QueryKeyLike>).filter((entry) => entry.length > 0);
+  }
+  return [(queryKey as QueryKeyLike).filter(Boolean)];
+}
+
 export function useJobTrigger() {
   const queryClient = useQueryClient();
   const [triggeringJob, setTriggeringJob] = useState<string | null>(null);
 
-  const triggerJob = async (jobName: string, queryKey: string[] = ['systemHealth']) => {
+  const triggerJob = async (
+    jobName: string,
+    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+  ) => {
     setTriggeringJob(jobName);
     try {
       const response = await backtestApi.triggerJob(jobName);
@@ -18,7 +32,9 @@ export function useJobTrigger() {
         response
       });
       toast.success(`Triggered ${jobName}`);
-      void queryClient.invalidateQueries({ queryKey });
+      await Promise.all(
+        normalizeInvalidationKeys(queryKey).map((key) => queryClient.invalidateQueries({ queryKey: key }))
+      );
     } catch (err: unknown) {
       const message =
         err instanceof ApiError

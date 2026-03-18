@@ -523,8 +523,6 @@ def _resolve_freshness_policy(
 
 
 def _marker_probe_config() -> MarkerProbeConfig:
-    enabled_raw = os.environ.get("SYSTEM_HEALTH_MARKERS_ENABLED", "true")
-
     container = (
         os.environ.get("SYSTEM_HEALTH_MARKERS_CONTAINER")
         or os.environ.get("AZURE_CONTAINER_COMMON")
@@ -533,7 +531,7 @@ def _marker_probe_config() -> MarkerProbeConfig:
     prefix = os.environ.get("SYSTEM_HEALTH_MARKERS_PREFIX", DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX).strip()
 
     return MarkerProbeConfig(
-        enabled=_is_truthy(enabled_raw),
+        enabled=bool(container),
         container=container,
         prefix=prefix or DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX,
     )
@@ -639,7 +637,7 @@ def _resolve_last_updated_with_marker_probes(
     marker_cfg: MarkerProbeConfig,
 ) -> DomainTimestampResolution:
     if not marker_cfg.enabled:
-        message = "Marker probes are disabled."
+        message = "Marker probes are not configured."
         logger.error(message)
         return DomainTimestampResolution(
             status="error",
@@ -1513,17 +1511,17 @@ def collect_system_health_snapshot(
 
     logger.info(
         "System health ARM probe config: subscription_set=%s resource_group_set=%s apps=%s jobs=%s "
-        "arm_api_version_set=%s arm_timeout_set=%s resource_health_enabled_set=%s monitor_metrics_enabled_set=%s "
-        "log_analytics_enabled_set=%s job_exec_limit_set=%s",
+        "arm_api_version_set=%s arm_timeout_set=%s resource_health_api_version_set=%s monitor_metrics_api_version_set=%s "
+        "log_analytics_workspace_set=%s job_exec_limit_set=%s",
         bool(subscription_id),
         bool(resource_group),
         len(app_names),
         len(job_names),
         _env_has_value("SYSTEM_HEALTH_ARM_API_VERSION"),
         _env_has_value("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS"),
-        _env_has_value("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED"),
-        _env_has_value("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED"),
-        _env_has_value("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED"),
+        _env_has_value("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION"),
+        _env_has_value("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION"),
+        _env_has_value("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"),
         _env_has_value("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB"),
     )
 
@@ -1534,14 +1532,17 @@ def collect_system_health_snapshot(
             timeout_seconds = _require_float(
                 "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0
             )
-            resource_health_enabled = _require_bool("SYSTEM_HEALTH_RESOURCE_HEALTH_ENABLED")
-            resource_health_api_version = (
-                _require_env("SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION")
-                if resource_health_enabled
-                else DEFAULT_RESOURCE_HEALTH_API_VERSION
+            resource_health_enabled = True
+            resource_health_api_version = _env_or_default(
+                "SYSTEM_HEALTH_RESOURCE_HEALTH_API_VERSION",
+                DEFAULT_RESOURCE_HEALTH_API_VERSION,
             )
 
-            monitor_metrics_enabled = _require_bool("SYSTEM_HEALTH_MONITOR_METRICS_ENABLED")
+            containerapp_metric_names = _split_csv(
+                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
+            )
+            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
+            monitor_metrics_enabled = bool(containerapp_metric_names or job_metric_names)
             monitor_metrics_api_version = (
                 _require_env("SYSTEM_HEALTH_MONITOR_METRICS_API_VERSION")
                 if monitor_metrics_enabled
@@ -1582,15 +1583,10 @@ def collect_system_health_snapshot(
                             "message": f"SYSTEM_HEALTH_MONITOR_METRICS_THRESHOLDS_JSON parse error: {exc}",
                             }
                         )
-            containerapp_metric_names = _split_csv(
-                os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_CONTAINERAPP_METRICS")
-            )
-            job_metric_names = _split_csv(os.environ.get("SYSTEM_HEALTH_MONITOR_METRICS_JOB_METRICS"))
-
-            log_analytics_enabled = _require_bool("SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED")
-            log_analytics_workspace_id = (
-                _require_env("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") if log_analytics_enabled else ""
-            )
+            log_analytics_workspace_id = str(
+                os.environ.get("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID") or ""
+            ).strip()
+            log_analytics_enabled = bool(log_analytics_workspace_id)
             log_analytics_timeout_seconds = (
                 _require_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0)
                 if log_analytics_enabled
@@ -1623,23 +1619,6 @@ def collect_system_health_snapshot(
                         "message": f"SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON parse error: {exc}",
                     }
                 )
-
-            if log_analytics_enabled and not log_analytics_workspace_id:
-                log_analytics_enabled = False
-                alerts.append(
-                    {
-                        "id": _alert_id(
-                            severity="warning",
-                            title="Log Analytics monitoring disabled",
-                            component="AzureLogAnalytics",
-                        ),
-                        "severity": "warning",
-                        "title": "Log Analytics monitoring disabled",
-                        "component": "AzureLogAnalytics",
-                        "timestamp": _iso(now),
-                        "message": "Log Analytics enabled but workspace ID is missing.",
-                    }
-                    )
 
             arm_cfg = ArmConfig(
                 subscription_id=subscription_id,
@@ -1852,11 +1831,11 @@ def collect_system_health_snapshot(
                 {
                     "id": _alert_id(
                         severity="warning",
-                        title="Azure monitoring disabled",
+                        title="Azure monitoring unavailable",
                         component="AzureControlPlane",
                     ),
                     "severity": "warning",
-                    "title": "Azure monitoring disabled",
+                    "title": "Azure monitoring unavailable",
                     "component": "AzureControlPlane",
                     "timestamp": checked_iso,
                     "message": f"Control-plane probe error: {exc}",
@@ -1864,7 +1843,7 @@ def collect_system_health_snapshot(
             )
     else:
         logger.warning(
-            "System health ARM probes disabled: subscription_set=%s resource_group_set=%s apps=%s jobs=%s",
+            "System health ARM probes not configured: subscription_set=%s resource_group_set=%s apps=%s jobs=%s",
             bool(subscription_id),
             bool(resource_group),
             len(app_names),

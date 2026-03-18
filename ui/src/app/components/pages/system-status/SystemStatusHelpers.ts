@@ -24,6 +24,16 @@ interface StatusConfig {
 
 export type NormalizedJobStatus = 'success' | 'warning' | 'failed' | 'running' | 'pending';
 
+const ACTIVE_JOB_RUNNING_STATE_TOKENS = [
+  'running',
+  'processing',
+  'inprogress',
+  'starting',
+  'queued',
+  'waiting',
+  'scheduling'
+] as const;
+
 const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
@@ -346,6 +356,31 @@ export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus =
     return 'running';
   }
   return 'pending';
+};
+
+export const hasActiveJobRunningState = (value?: string | null): boolean => {
+  const state = String(value || '')
+    .trim()
+    .toLowerCase();
+  return ACTIVE_JOB_RUNNING_STATE_TOKENS.some((token) => state.includes(token));
+};
+
+export const isSuspendedJobRunningState = (value?: string | null): boolean =>
+  String(value || '')
+    .trim()
+    .toLowerCase() === 'suspended';
+
+export const effectiveJobStatus = (
+  runStatus?: string | null,
+  runningState?: string | null
+): NormalizedJobStatus => {
+  if (hasActiveJobRunningState(runningState)) {
+    return 'running';
+  }
+  if (isSuspendedJobRunningState(runningState)) {
+    return 'pending';
+  }
+  return normalizeJobStatus(runStatus);
 };
 
 export const toJobStatusLabel = (status: string): string => {

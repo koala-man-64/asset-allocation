@@ -40,37 +40,12 @@ type TopicSubscriptionDetail = {
   topics?: unknown;
 };
 
-type RuntimeUiConfig = {
-  authMode?: unknown;
-};
-
 type RealtimeTicketResponse = {
   ticket?: unknown;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
-}
-
-function parseAuthMode(rawValue: unknown): 'none' | 'api_key' | 'oidc' {
-  const raw = String(rawValue ?? '')
-    .trim()
-    .toLowerCase();
-  if (raw === 'api_key') return 'api_key';
-  if (raw === 'oidc') return 'oidc';
-  return 'none';
-}
-
-function getRealtimeAuthMode(): 'none' | 'api_key' | 'oidc' {
-  const runtimeWindow = window as Window & {
-    __API_UI_CONFIG__?: RuntimeUiConfig;
-    __BACKTEST_UI_CONFIG__?: RuntimeUiConfig;
-  };
-  return parseAuthMode(
-    runtimeWindow.__API_UI_CONFIG__?.authMode ??
-      runtimeWindow.__BACKTEST_UI_CONFIG__?.authMode ??
-      import.meta.env.VITE_AUTH_MODE
-  );
 }
 
 export function useRealtime() {
@@ -167,10 +142,6 @@ export function useRealtime() {
     }
 
     async function fetchRealtimeTicket(): Promise<string | null> {
-      if (getRealtimeAuthMode() === 'none') {
-        return null;
-      }
-
       const headers = await appendAuthHeaders();
       const response = await fetch(`${httpBase}/realtime/ticket`, {
         method: 'POST',
@@ -204,11 +175,9 @@ export function useRealtime() {
       try {
         let wsHref = wsUrl.toString();
         const ticket = await fetchRealtimeTicket();
-        if (ticket) {
-          const authedUrl = new URL(wsHref);
-          authedUrl.searchParams.set('ticket', ticket);
-          wsHref = authedUrl.toString();
-        }
+        const authedUrl = new URL(wsHref);
+        authedUrl.searchParams.set('ticket', String(ticket));
+        wsHref = authedUrl.toString();
 
         const ws = new WebSocket(wsHref);
         wsRef.current = ws;
@@ -348,11 +317,19 @@ export function useRealtime() {
         topic === 'container-apps' ||
         eventType === 'SYSTEM_HEALTH_UPDATE' ||
         eventType === 'JOB_STATE_CHANGED' ||
-        eventType === 'CONTAINER_APP_STATE_CHANGED';
+        eventType === 'CONTAINER_APP_STATE_CHANGED' ||
+        eventType === 'DOMAIN_METADATA_SNAPSHOT_CHANGED';
 
       if (shouldRefreshSystem) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.systemStatusView() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth() });
         void queryClient.invalidateQueries({ queryKey: CONTAINER_APPS_QUERY_KEY });
+      }
+
+      if (topic === 'system-health' || eventType === 'DOMAIN_METADATA_SNAPSHOT_CHANGED') {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.domainMetadataSnapshot('all', 'all')
+        });
       }
 
       if (topic === 'runtime-config' || eventType === 'RUNTIME_CONFIG_CHANGED') {

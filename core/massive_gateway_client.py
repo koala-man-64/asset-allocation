@@ -188,7 +188,6 @@ class MassiveGatewayClient:
             )
             timeout_seconds = _MIN_API_GATEWAY_TIMEOUT_SECONDS
 
-        warmup_enabled = _env_bool("ASSET_ALLOCATION_API_WARMUP_ENABLED", _DEFAULT_API_WARMUP_ENABLED)
         warmup_max_attempts = max(1, _env_int("ASSET_ALLOCATION_API_WARMUP_ATTEMPTS", _DEFAULT_API_WARMUP_MAX_ATTEMPTS))
         warmup_base_delay_seconds = max(
             0.0,
@@ -202,7 +201,6 @@ class MassiveGatewayClient:
             0.1,
             _env_float("ASSET_ALLOCATION_API_WARMUP_PROBE_TIMEOUT_SECONDS", _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS),
         )
-        readiness_enabled = _env_bool("ASSET_ALLOCATION_API_READINESS_ENABLED", _DEFAULT_API_READINESS_ENABLED)
         readiness_max_attempts = max(
             1,
             _env_int("ASSET_ALLOCATION_API_READINESS_ATTEMPTS", _DEFAULT_API_READINESS_MAX_ATTEMPTS),
@@ -218,12 +216,12 @@ class MassiveGatewayClient:
                 api_key=api_key,
                 api_key_header=str(api_key_header),
                 timeout_seconds=float(timeout_seconds),
-                warmup_enabled=warmup_enabled,
+                warmup_enabled=True,
                 warmup_max_attempts=warmup_max_attempts,
                 warmup_base_delay_seconds=warmup_base_delay_seconds,
                 warmup_max_delay_seconds=warmup_max_delay_seconds,
                 warmup_probe_timeout_seconds=warmup_probe_timeout_seconds,
-                readiness_enabled=readiness_enabled,
+                readiness_enabled=True,
                 readiness_max_attempts=readiness_max_attempts,
                 readiness_sleep_seconds=readiness_sleep_seconds,
             )

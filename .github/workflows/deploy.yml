@@ -45,16 +45,11 @@ env:
   AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME || 'assetallocstorage001' }}
   BACKFILL_START_DATE: ${{ vars.BACKFILL_START_DATE || '2016-01-01' }}
   SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON: ' '
-  SYSTEM_HEALTH_MARKERS_ENABLED: 'true'
   SYSTEM_HEALTH_MARKERS_CONTAINER: common
   SYSTEM_HEALTH_MARKERS_PREFIX: system/health_markers
-  SYSTEM_HEALTH_MARKERS_DUAL_READ: 'false'
-  SYSTEM_HEALTH_MARKERS_DUAL_READ_TOLERANCE_SECONDS: '21600'
   API_IMAGE_NAME: asset-allocation-api
   UI_APP_NAME: asset-allocation-ui
   UI_IMAGE_NAME: asset-allocation-ui
-  # Controls deploy/app_api.yaml ingress.external (defaults to internal-only).
-  INGRESS_EXTERNAL: ${{ vars.API_INGRESS_EXTERNAL || 'false' }}
   BRONZE_MARKET_JOB: bronze-market-job
   BRONZE_FINANCE_JOB: bronze-finance-job
   BRONZE_PRICE_TARGET_JOB: bronze-price-target-job
@@ -101,16 +96,12 @@ env:
   # Massive tunables (defaults match .env.template / provider config)
   MASSIVE_BASE_URL: https://api.massive.com
   MASSIVE_TIMEOUT_SECONDS: '30'
-  MASSIVE_PREFER_OFFICIAL_SDK: 'true'
   MASSIVE_MAX_WORKERS: '10'
   MASSIVE_FINANCE_FRESH_DAYS: '28'
-  # Default to synced GitHub vars so API log streaming survives redeploys.
-  SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED || 'true' }}
   SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ vars.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID || '' }}
   SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: '5'
   SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: '15'
   SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ''
-  REALTIME_LOG_STREAM_ENABLED: ${{ vars.REALTIME_LOG_STREAM_ENABLED || 'true' }}
   REALTIME_LOG_STREAM_POLL_SECONDS: ${{ vars.REALTIME_LOG_STREAM_POLL_SECONDS || '5' }}
   REALTIME_LOG_STREAM_LOOKBACK_SECONDS: ${{ vars.REALTIME_LOG_STREAM_LOOKBACK_SECONDS || '30' }}
   REALTIME_LOG_STREAM_BATCH_SIZE: ${{ vars.REALTIME_LOG_STREAM_BATCH_SIZE || '200' }}
@@ -146,7 +137,6 @@ jobs:
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           SERVICE_ACCOUNT_NAME: ${{ env.SERVICE_ACCOUNT_NAME }}
           ASSET_ALLOCATION_API_BASE_URL: ${{ env.ASSET_ALLOCATION_API_BASE_URL }}
-          API_AUTH_MODE: ${{ vars.API_AUTH_MODE }}
           API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER }}
           API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE }}
           API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL }}
@@ -155,20 +145,16 @@ jobs:
           API_ROOT_PREFIX: ${{ vars.API_ROOT_PREFIX }}
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS }}
-          INGRESS_EXTERNAL: ${{ env.INGRESS_EXTERNAL }}
           LOG_LEVEL: ${{ env.LOG_LEVEL }}
-          UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID }}
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
           UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI }}
           API_KEY: ${{ secrets.API_KEY }}
-          SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_ENABLED }}
           SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID }}
           SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS }}
           SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES }}
           SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON }}
-          REALTIME_LOG_STREAM_ENABLED: ${{ env.REALTIME_LOG_STREAM_ENABLED }}
           REALTIME_LOG_STREAM_POLL_SECONDS: ${{ env.REALTIME_LOG_STREAM_POLL_SECONDS }}
           REALTIME_LOG_STREAM_LOOKBACK_SECONDS: ${{ env.REALTIME_LOG_STREAM_LOOKBACK_SECONDS }}
           REALTIME_LOG_STREAM_BATCH_SIZE: ${{ env.REALTIME_LOG_STREAM_BATCH_SIZE }}
@@ -368,6 +354,7 @@ jobs:
               - "alpaca/**"
               - "monitoring/**"
               - "deploy/app_api.yaml"
+              - "deploy/app_api_public.yaml"
               - "deploy/job_backtests.yaml"
               - "deploy/job_gold_regime_data.yaml"
               - ".github/workflows/deploy.yml"
@@ -665,7 +652,6 @@ jobs:
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          API_AUTH_MODE: ${{ vars.API_AUTH_MODE || 'none' }}
           API_OIDC_ISSUER: ${{ vars.API_OIDC_ISSUER || ' ' }}
           API_OIDC_AUDIENCE: ${{ vars.API_OIDC_AUDIENCE || ' ' }}
           API_OIDC_JWKS_URL: ${{ vars.API_OIDC_JWKS_URL || ' ' }}
@@ -675,7 +661,6 @@ jobs:
           API_CSP: ${{ vars.API_CSP }}
           API_CORS_ALLOW_ORIGINS: ${{ vars.API_CORS_ALLOW_ORIGINS || ' ' }}
           LOG_LEVEL: ${{ env.LOG_LEVEL }}
-          UI_AUTH_MODE: ${{ vars.UI_AUTH_MODE || 'none' }}
           UI_OIDC_CLIENT_ID: ${{ vars.UI_OIDC_CLIENT_ID || ' ' }}
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY || ' ' }}
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES || ' ' }}
@@ -731,7 +716,7 @@ jobs:
             fi
           }
 
-          echo "Deploying unified app from YAML..."
+          echo "Deploying unified app from internal ingress YAML profile..."
           tmp="deploy/app_api.tmp.yaml"
           envsubst < deploy/app_api.yaml > "$tmp"
 

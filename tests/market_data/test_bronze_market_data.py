@@ -853,7 +853,8 @@ def test_main_async_debug_mode_preserves_seeded_frames_during_bucket_rewrite():
             collected_lock=collected_lock,
         )
 
-    def _fake_write(frames):
+    def _fake_write(frames, *, run_id):
+        assert run_id
         captured_frames.update({key: value.copy() for key, value in frames.items()})
         return len(frames), "system/bronze-index/market/latest.parquet"
 

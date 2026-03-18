@@ -6,6 +6,16 @@ import { clearJobOverride } from '@/hooks/useSystemHealthJobOverrides';
 import { formatSystemStatusText } from '@/utils/formatSystemStatusText';
 
 type JobControlAction = 'suspend' | 'resume' | 'stop';
+type QueryKeyLike = readonly string[];
+
+function normalizeInvalidationKeys(
+  queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+): QueryKeyLike[] {
+  if (Array.isArray(queryKey[0])) {
+    return (queryKey as ReadonlyArray<QueryKeyLike>).filter((entry) => entry.length > 0);
+  }
+  return [(queryKey as QueryKeyLike).filter(Boolean)];
+}
 
 export function useJobSuspend() {
   const queryClient = useQueryClient();
@@ -17,7 +27,7 @@ export function useJobSuspend() {
   const setJobSuspended = async (
     jobName: string,
     suspended: boolean,
-    queryKey: string[] = ['systemHealth']
+    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
   ) => {
     const action: JobControlAction = suspended ? 'stop' : 'resume';
     setJobControl({ jobName, action });
@@ -31,7 +41,9 @@ export function useJobSuspend() {
         clearJobOverride(queryClient, jobName);
         toast.success(`Resumed ${jobName}`);
       }
-      void queryClient.invalidateQueries({ queryKey });
+      await Promise.all(
+        normalizeInvalidationKeys(queryKey).map((key) => queryClient.invalidateQueries({ queryKey: key }))
+      );
     } catch (err: unknown) {
       const message =
         err instanceof ApiError
@@ -43,13 +55,18 @@ export function useJobSuspend() {
     }
   };
 
-  const stopJob = async (jobName: string, queryKey: string[] = ['systemHealth']) => {
+  const stopJob = async (
+    jobName: string,
+    queryKey: QueryKeyLike | ReadonlyArray<QueryKeyLike> = ['systemHealth']
+  ) => {
     setJobControl({ jobName, action: 'stop' });
     try {
       await backtestApi.stopJob(jobName);
       clearJobOverride(queryClient, jobName);
       toast.success(`Stopped ${jobName}`);
-      void queryClient.invalidateQueries({ queryKey });
+      await Promise.all(
+        normalizeInvalidationKeys(queryKey).map((key) => queryClient.invalidateQueries({ queryKey: key }))
+      );
     } catch (err: unknown) {
       const message =
         err instanceof ApiError

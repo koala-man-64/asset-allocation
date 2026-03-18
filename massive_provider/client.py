@@ -34,12 +34,6 @@ _MAX_SNAPSHOT_TICKERS_PER_REQUEST = 250
 _DEFAULT_SNAPSHOT_LIMIT = 250
 
 
-try:  # Optional dependency
-    from massive import RESTClient as _SDKRestClient  # type: ignore
-except Exception:  # pragma: no cover
-    _SDKRestClient = None
-
-
 @dataclass(frozen=True)
 class MassiveHTTPResponse:
     """Normalized Massive REST response payload.
@@ -84,28 +78,10 @@ class MassiveClient:
             trust_env=False,
         )
 
-        self._sdk = None
-        if bool(config.prefer_official_sdk) and _SDKRestClient is not None:
-            try:
-                # The SDK supports pagination control in the constructor.
-                self._sdk = _SDKRestClient(
-                    api_key=config.api_key,
-                    base_url=str(config.base_url).rstrip("/"),
-                    pagination=True,
-                )
-            except Exception:
-                self._sdk = None
-
     def close(self) -> None:
         if self._owns_http:
             try:
                 self._http.close()
-            except Exception:
-                pass
-
-        if self._sdk is not None:
-            try:
-                self._sdk.close()
             except Exception:
                 pass
 
@@ -229,32 +205,6 @@ class MassiveClient:
         if not sym:
             raise ValueError("ticker is required")
 
-        if self._sdk is not None:
-            out: list[dict[str, Any]] = []
-            sdk_base_kwargs = {
-                "ticker": sym,
-                "multiplier": int(multiplier),
-                "timespan": str(timespan),
-                "from_": str(from_),
-                "to": str(to),
-                "limit": int(limit),
-            }
-            try:
-                iterator = self._sdk.list_aggs(
-                    adjusted=bool(adjusted),
-                    sort=str(sort),
-                    **sdk_base_kwargs,
-                )
-            except TypeError:
-                # Backward compatibility with SDK versions that don't support
-                # `adjusted` and/or `sort` kwargs on list_aggs.
-                iterator = self._sdk.list_aggs(**sdk_base_kwargs)
-
-            for bar in iterator:
-                out.append(to_jsonable(bar))
-            return out
-
-        # Direct REST fallback
         path = _ENDPOINT_AGGS_RANGE_TEMPLATE.format(
             ticker=sym,
             multiplier=int(multiplier),

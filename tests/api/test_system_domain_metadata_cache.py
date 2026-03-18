@@ -72,7 +72,6 @@ def test_write_and_read_cached_domain_metadata_snapshot_round_trip(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_read_cached_domain_metadata_snapshot",
@@ -100,7 +99,6 @@ async def test_domain_metadata_cache_only_returns_cached_snapshot(monkeypatch: p
 async def test_domain_metadata_refresh_collects_live_metadata_and_persists_snapshots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     captured: dict[str, object] = {}
 
@@ -167,8 +165,107 @@ async def test_domain_metadata_refresh_collects_live_metadata_and_persists_snaps
 
 
 @pytest.mark.asyncio
+async def test_system_status_view_returns_system_health_and_metadata_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-03-17T12:00:00+00:00")
+    monkeypatch.setattr(
+        system,
+        "_resolve_system_health_payload",
+        lambda request, refresh: (
+            {
+                "overall": "healthy",
+                "dataLayers": [],
+                "recentJobs": [],
+                "alerts": [],
+                "resources": [],
+            },
+            False,
+            False,
+        ),
+    )
+    monkeypatch.setattr(
+        system,
+        "_build_domain_metadata_snapshot_payload",
+        lambda **kwargs: {
+            "version": 1,
+            "updatedAt": "2026-03-17T11:59:00+00:00",
+            "entries": {
+                "bronze/market": {
+                    **_metadata_payload(layer="bronze", domain="market"),
+                    "cacheSource": "snapshot",
+                }
+            },
+            "warnings": [],
+        },
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.get("/api/system/status-view")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == 1
+    assert payload["generatedAt"] == "2026-03-17T12:00:00+00:00"
+    assert payload["systemHealth"]["overall"] == "healthy"
+    assert sorted(payload["metadataSnapshot"]["entries"].keys()) == ["bronze/market"]
+    assert payload["sources"] == {
+        "systemHealth": "live-refresh",
+        "metadataSnapshot": "persisted-snapshot",
+    }
+    assert response.headers.get("X-System-Health-Cache") == "miss"
+    assert response.headers.get("X-Domain-Metadata-Source") == "persisted-snapshot"
+
+
+@pytest.mark.asyncio
+async def test_system_status_view_refresh_bypasses_system_health_cache_and_domain_doc_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    health_calls: list[bool] = []
+    metadata_refresh_flags: list[bool] = []
+
+    def _collect_system_health(*, include_resource_ids: bool = False) -> dict[str, object]:
+        health_calls.append(include_resource_ids)
+        return {
+            "overall": "healthy",
+            "dataLayers": [],
+            "recentJobs": [],
+            "alerts": [],
+            "resources": [],
+        }
+
+    def _load_snapshot(force_refresh: bool = False) -> dict[str, object]:
+        metadata_refresh_flags.append(force_refresh)
+        return {
+            "version": 1,
+            "updatedAt": "2026-03-17T12:00:00+00:00",
+            "entries": {},
+        }
+
+    monkeypatch.setattr(system, "collect_system_health_snapshot", _collect_system_health)
+    monkeypatch.setattr(system, "_load_domain_metadata_document", _load_snapshot)
+    monkeypatch.setattr(
+        system,
+        "collect_domain_metadata",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("live metadata collection is not expected")),
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        first = await client.get("/api/system/status-view")
+        second = await client.get("/api/system/status-view")
+        refreshed = await client.get("/api/system/status-view?refresh=true")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert refreshed.status_code == 200
+    assert len(health_calls) == 2
+    assert metadata_refresh_flags == [False, False, True]
+
+
+@pytest.mark.asyncio
 async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(system, "_read_cached_domain_metadata_snapshot", lambda layer, domain, force_refresh=False: None)
 
     app = create_app()
@@ -189,7 +286,6 @@ async def test_domain_metadata_cache_only_miss_returns_placeholder(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
@@ -234,7 +330,6 @@ async def test_domain_metadata_snapshot_returns_filtered_entries(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
@@ -255,7 +350,6 @@ async def test_domain_metadata_snapshot_never_live_fills_missing_entries(monkeyp
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_rejects_invalid_layer_filter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
 
     app = create_app()
     async with get_test_client(app) as client:
@@ -267,7 +361,6 @@ async def test_domain_metadata_snapshot_rejects_invalid_layer_filter(monkeypatch
 
 @pytest.mark.asyncio
 async def test_domain_metadata_snapshot_returns_304_when_etag_matches(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(
         system,
         "_load_domain_metadata_document",
@@ -302,7 +395,6 @@ async def test_domain_metadata_snapshot_returns_304_when_etag_matches(monkeypatc
 
 @pytest.mark.asyncio
 async def test_persisted_ui_domain_metadata_cache_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
@@ -341,11 +433,104 @@ async def test_persisted_ui_domain_metadata_cache_round_trip(monkeypatch: pytest
     assert read_response.headers.get("X-Domain-Metadata-UI-Cache") == "hit"
 
 
+def test_refresh_domain_metadata_snapshot_emits_realtime_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[tuple[str, list[dict[str, str]]]] = []
+
+    monkeypatch.setattr(
+        system,
+        "collect_domain_metadata",
+        lambda **kwargs: _metadata_payload(layer="gold", domain="finance"),
+    )
+    monkeypatch.setattr(system, "_domain_metadata_cache_path", lambda: "metadata/domain-metadata.json")
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(
+        system.domain_metadata_snapshots,
+        "write_domain_metadata_snapshot_documents",
+        lambda **kwargs: {
+            **_metadata_payload(layer="gold", domain="finance"),
+            "cachedAt": "2026-03-17T12:05:00+00:00",
+            "cacheSource": "snapshot",
+        },
+    )
+    monkeypatch.setattr(system, "_invalidate_domain_metadata_document_cache", lambda: None)
+    monkeypatch.setattr(
+        system,
+        "_emit_domain_metadata_snapshot_changed",
+        lambda reason, targets: captured.append((reason, targets)),
+    )
+
+    payload = system._refresh_domain_metadata_snapshot("gold", "finance")
+
+    assert payload["cacheSource"] == "live-refresh"
+    assert captured == [("refresh", [{"layer": "gold", "domain": "finance"}])]
+
+
+@pytest.mark.asyncio
+async def test_put_domain_metadata_snapshot_cache_emits_realtime_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted: list[tuple[str, list[dict[str, str]]]] = []
+
+    monkeypatch.setattr(system, "_domain_metadata_ui_cache_path", lambda: "metadata/ui-cache/domain.json")
+    monkeypatch.setattr(system, "_utc_timestamp", lambda: "2026-03-17T14:00:00+00:00")
+    monkeypatch.setattr(system.mdc, "save_common_json_content", lambda data, path: None)
+    monkeypatch.setattr(
+        system,
+        "_emit_domain_metadata_snapshot_changed",
+        lambda reason, targets: emitted.append((reason, targets)),
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        response = await client.put(
+            "/api/system/domain-metadata/snapshot/cache",
+            json={
+                "version": 1,
+                "updatedAt": None,
+                "entries": {
+                    "bronze/market": {
+                        **_metadata_payload(layer="bronze", domain="market"),
+                        "cacheSource": "snapshot",
+                    }
+                },
+                "warnings": [],
+            },
+        )
+
+    assert response.status_code == 200
+    assert emitted == [("ui-cache-write", [{"layer": "bronze", "domain": "market"}])]
+
+
+def test_mark_purged_domain_metadata_snapshots_emits_realtime_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marked: list[tuple[str, str, str | None]] = []
+    emitted: list[tuple[str, list[dict[str, str]]]] = []
+
+    monkeypatch.setattr(
+        system.domain_metadata_snapshots,
+        "mark_domain_metadata_snapshot_purged",
+        lambda layer, domain, container=None: marked.append((layer, domain, container)),
+    )
+    monkeypatch.setattr(system, "_invalidate_domain_metadata_document_cache", lambda: None)
+    monkeypatch.setattr(
+        system,
+        "_emit_domain_metadata_snapshot_changed",
+        lambda reason, targets: emitted.append((reason, targets)),
+    )
+
+    system._mark_purged_domain_metadata_snapshots(
+        [{"layer": "gold", "domain": "market", "container": "gold-container"}]
+    )
+
+    assert marked == [("gold", "market", "gold-container")]
+    assert emitted == [("purge", [{"layer": "gold", "domain": "market", "container": "gold-container"}])]
+
+
 @pytest.mark.asyncio
 async def test_persisted_ui_domain_metadata_cache_miss_returns_empty_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("API_AUTH_MODE", "none")
     monkeypatch.setattr(system.mdc, "get_common_json_content", lambda path: None)
 
     app = create_app()

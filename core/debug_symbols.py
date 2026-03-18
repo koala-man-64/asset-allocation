@@ -9,6 +9,7 @@ from typing import Optional
 from core.config import parse_debug_symbols
 from core.postgres import PostgresError
 from core.runtime_config import (
+    delete_runtime_config,
     default_scopes_by_precedence,
     get_effective_runtime_config,
     list_runtime_config,
@@ -20,13 +21,12 @@ logger = logging.getLogger(__name__)
 _DEBUG_SYMBOLS_SCOPE = "global"
 _DEBUG_SYMBOLS_KEY = "DEBUG_SYMBOLS"
 _DEBUG_SYMBOLS_DESCRIPTION = (
-    "Comma-separated allowlist of symbols applied when debug filtering is enabled."
+    "Comma-separated allowlist of symbols applied when debug filtering is configured."
 )
 
 
 @dataclass(frozen=True)
 class DebugSymbolsState:
-    enabled: bool
     symbols_raw: str
     symbols: list[str]
     updated_at: Optional[datetime]
@@ -44,27 +44,19 @@ def _resolve_dsn(dsn: Optional[str]) -> Optional[str]:
     return value or None
 
 
-def read_debug_symbols_state(dsn: Optional[str] = None) -> DebugSymbolsState:
+def read_debug_symbols_state(dsn: Optional[str] = None) -> Optional[DebugSymbolsState]:
     resolved = _resolve_dsn(dsn)
     if not resolved:
         raise PostgresError("POSTGRES_DSN is not configured.")
 
     rows = list_runtime_config(resolved, scopes=[_DEBUG_SYMBOLS_SCOPE], keys=[_DEBUG_SYMBOLS_KEY])
     if not rows:
-        return DebugSymbolsState(
-            enabled=False,
-            symbols_raw="",
-            symbols=[],
-            updated_at=None,
-            updated_by=None,
-        )
+        return None
 
     row = rows[0]
-    enabled = bool(row.enabled)
     symbols_raw = str(row.value or "")
     symbols = parse_debug_symbols(symbols_raw)
     return DebugSymbolsState(
-        enabled=enabled,
         symbols_raw=symbols_raw,
         symbols=symbols,
         updated_at=row.updated_at,
@@ -72,10 +64,9 @@ def read_debug_symbols_state(dsn: Optional[str] = None) -> DebugSymbolsState:
     )
 
 
-def update_debug_symbols_state(
+def replace_debug_symbols_state(
     *,
     dsn: Optional[str],
-    enabled: bool,
     symbols: object,
     actor: Optional[str] = None,
 ) -> DebugSymbolsState:
@@ -84,17 +75,28 @@ def update_debug_symbols_state(
         raise PostgresError("POSTGRES_DSN is not configured.")
 
     normalized = _normalize_symbols_text(symbols)
+    if not normalized:
+        raise ValueError("DEBUG_SYMBOLS cannot be empty.")
     upsert_runtime_config(
         dsn=resolved,
         scope=_DEBUG_SYMBOLS_SCOPE,
         key=_DEBUG_SYMBOLS_KEY,
-        enabled=bool(enabled),
         value=normalized,
         description=_DEBUG_SYMBOLS_DESCRIPTION,
         actor=actor,
     )
 
-    return read_debug_symbols_state(resolved)
+    state = read_debug_symbols_state(resolved)
+    if state is None:
+        raise RuntimeError("Failed to persist DEBUG_SYMBOLS runtime config.")
+    return state
+
+
+def delete_debug_symbols_state(*, dsn: Optional[str]) -> bool:
+    resolved = _resolve_dsn(dsn)
+    if not resolved:
+        raise PostgresError("POSTGRES_DSN is not configured.")
+    return delete_runtime_config(dsn=resolved, scope=_DEBUG_SYMBOLS_SCOPE, key=_DEBUG_SYMBOLS_KEY)
 
 
 def refresh_debug_symbols_from_db(dsn: Optional[str] = None) -> list[str]:

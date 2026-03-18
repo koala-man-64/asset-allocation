@@ -594,7 +594,6 @@ export interface PurgeResponse {
 }
 
 export interface DebugSymbolsResponse {
-  enabled: boolean;
   symbols: string;
   updatedAt?: string | null;
   updatedBy?: string | null;
@@ -613,7 +612,6 @@ export interface RuntimeConfigCatalogResponse {
 export interface RuntimeConfigItem {
   scope: string;
   key: string;
-  enabled: boolean;
   value: string;
   description?: string | null;
   updatedAt?: string | null;
@@ -786,6 +784,17 @@ export interface DomainMetadataSnapshotResponse {
   warnings?: string[];
 }
 
+export interface SystemStatusViewResponse {
+  version: number;
+  generatedAt: string;
+  systemHealth: SystemHealth;
+  metadataSnapshot: DomainMetadataSnapshotResponse;
+  sources: {
+    systemHealth: 'cache' | 'live-refresh';
+    metadataSnapshot: 'persisted-snapshot';
+  };
+}
+
 export const apiService = {
   // --- Data Endpoints ---
 
@@ -835,6 +844,14 @@ export const apiService = {
     return request<DomainMetadataSnapshotResponse>('/system/domain-metadata/snapshot', {
       params
     });
+  },
+
+  getSystemStatusView(
+    params: {
+      refresh?: boolean;
+    } = {}
+  ): Promise<SystemStatusViewResponse> {
+    return request<SystemStatusViewResponse>('/system/status-view', { params });
   },
 
   getPersistedDomainMetadataSnapshotCache(): Promise<DomainMetadataSnapshotResponse> {
@@ -1171,10 +1188,16 @@ export const apiService = {
     return request<DebugSymbolsResponse>('/system/debug-symbols');
   },
 
-  setDebugSymbols(payload: { enabled: boolean; symbols?: string }): Promise<DebugSymbolsResponse> {
+  setDebugSymbols(payload: { symbols: string }): Promise<DebugSymbolsResponse> {
     return request<DebugSymbolsResponse>('/system/debug-symbols', {
-      method: 'POST',
+      method: 'PUT',
       body: JSON.stringify(payload)
+    });
+  },
+
+  deleteDebugSymbols(): Promise<{ deleted: boolean }> {
+    return request<{ deleted: boolean }>('/system/debug-symbols', {
+      method: 'DELETE'
     });
   },
 
@@ -1191,7 +1214,6 @@ export const apiService = {
   setRuntimeConfig(payload: {
     key: string;
     scope?: string;
-    enabled: boolean;
     value: string;
     description?: string;
   }): Promise<RuntimeConfigItem> {

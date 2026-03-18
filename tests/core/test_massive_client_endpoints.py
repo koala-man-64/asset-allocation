@@ -14,7 +14,6 @@ def _build_client(handler, *, float_endpoint: str = "/stocks/vX/float") -> Massi
         api_key="test-key",
         base_url="https://api.massive.com",
         timeout_seconds=10.0,
-        prefer_official_sdk=False,
         float_endpoint=float_endpoint,
     )
     return MassiveClient(cfg, http_client=http_client)
@@ -129,100 +128,6 @@ def test_massive_client_financial_statements_follow_next_url_pagination() -> Non
     assert "sort=period_end.asc" in seen[0]
     assert "limit=100" in seen[0]
     assert seen[1].endswith("cursor=next")
-
-
-def test_list_ohlcv_passes_adjusted_and_sort_to_sdk_when_supported(monkeypatch) -> None:
-    import massive_provider.client as client_module
-
-    class _FakeSDK:
-        def __init__(self, *args, **kwargs) -> None:
-            self.calls: list[dict[str, object]] = []
-
-        def list_aggs(self, **kwargs):
-            self.calls.append(dict(kwargs))
-            return []
-
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(client_module, "_SDKRestClient", _FakeSDK)
-
-    cfg = MassiveConfig(
-        api_key="test-key",
-        base_url="https://api.massive.com",
-        timeout_seconds=10.0,
-        prefer_official_sdk=True,
-    )
-    client = MassiveClient(cfg)
-    try:
-        client.list_ohlcv(
-            ticker="AAPL",
-            multiplier=1,
-            timespan="day",
-            from_="2026-02-01",
-            to="2026-02-09",
-            adjusted=False,
-            sort="desc",
-            limit=100,
-            pagination=False,
-        )
-        assert client._sdk is not None
-        assert client._sdk.calls[0]["adjusted"] is False
-        assert client._sdk.calls[0]["sort"] == "desc"
-    finally:
-        client.close()
-
-
-def test_list_ohlcv_falls_back_for_older_sdk_without_adjusted_sort(monkeypatch) -> None:
-    import massive_provider.client as client_module
-
-    class _OlderSDK:
-        def __init__(self, *args, **kwargs) -> None:
-            self.calls: list[dict[str, object]] = []
-
-        def list_aggs(self, ticker, multiplier, timespan, from_, to, limit):
-            self.calls.append(
-                {
-                    "ticker": ticker,
-                    "multiplier": multiplier,
-                    "timespan": timespan,
-                    "from_": from_,
-                    "to": to,
-                    "limit": limit,
-                }
-            )
-            return []
-
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(client_module, "_SDKRestClient", _OlderSDK)
-
-    cfg = MassiveConfig(
-        api_key="test-key",
-        base_url="https://api.massive.com",
-        timeout_seconds=10.0,
-        prefer_official_sdk=True,
-    )
-    client = MassiveClient(cfg)
-    try:
-        out = client.list_ohlcv(
-            ticker="AAPL",
-            multiplier=1,
-            timespan="day",
-            from_="2026-02-01",
-            to="2026-02-09",
-            adjusted=False,
-            sort="desc",
-            limit=100,
-            pagination=False,
-        )
-        assert out == []
-        assert client._sdk is not None
-        assert client._sdk.calls[0]["ticker"] == "AAPL"
-    finally:
-        client.close()
-
 
 def test_fundamentals_pagination_aggregates_all_pages() -> None:
     seen: list[tuple[str, str]] = []

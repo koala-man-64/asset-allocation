@@ -47,13 +47,9 @@ def _is_test_environment() -> bool:
 
 def _background_workers_enabled() -> bool:
     """
-    Global gate for non-essential background workers.
-    Defaults off in tests to keep API lifespan deterministic.
+    Background workers run outside tests and are skipped in test harnesses.
     """
-    raw = os.environ.get("BACKGROUND_WORKERS_ENABLED")
-    if raw is None:
-        return not _is_test_environment()
-    return _is_truthy(raw)
+    return not _is_test_environment()
 
 
 async def _shutdown_background_task(
@@ -170,10 +166,17 @@ def create_app() -> FastAPI:
         app.state.massive_gateway = MassiveGateway()
         app.state.log_stream_manager = log_stream_manager
         app.state.websocket_ticket_store = WebSocketTicketStore(ttl_seconds=60)
+        logger.info(
+            "Resolved service capabilities: auth=%s auth_required=%s browser_oidc=%s postgres=%s",
+            settings.auth_summary,
+            settings.auth_required,
+            settings.browser_oidc_enabled,
+            bool(settings.postgres_dsn),
+        )
 
         workers_enabled = _background_workers_enabled()
         logger.info(
-            "Background worker gate resolved: enabled=%s test_env=%s",
+            "Background worker policy resolved: active=%s test_env=%s",
             workers_enabled,
             _is_test_environment(),
         )
@@ -197,7 +200,7 @@ def create_app() -> FastAPI:
                             raise_on_error=True,
                         )
 
-                        # If a key is no longer overridden (deleted/disabled), revert to its baseline value.
+                        # If a key is no longer overridden, revert to its baseline value.
                         for key in DEFAULT_ENV_OVERRIDE_KEYS:
                             if key in applied:
                                 continue
@@ -449,7 +452,6 @@ def create_app() -> FastAPI:
         configured_api_base_url = settings.ui_oidc_config.get("apiBaseUrl") or default_api_base
 
         cfg = {
-            "authMode": settings.ui_auth_mode,
             "apiBaseUrl": configured_api_base_url,
             # Backwards-compatible alias used by the UI runtime config loader.
             "backtestApiBaseUrl": configured_api_base_url,
@@ -458,10 +460,15 @@ def create_app() -> FastAPI:
             "oidcScopes": settings.ui_oidc_config.get("scope") or settings.ui_oidc_config.get("scopes"),
             "oidcRedirectUri": settings.ui_oidc_config.get("redirectUri") or "/oauth2-callback",
             "oidcAudience": settings.oidc_audience,
+            "oidcEnabled": settings.browser_oidc_enabled,
+            "apiKeyAuthConfigured": settings.api_key_auth_enabled,
+            "authRequired": settings.auth_required,
         }
         logger.info(
-            "Serving /config.js: authMode=%s apiBaseUrl=%s",
-            cfg.get("authMode"),
+            "Serving /config.js: oidcEnabled=%s apiKeyAuthConfigured=%s authRequired=%s apiBaseUrl=%s",
+            cfg.get("oidcEnabled"),
+            cfg.get("apiKeyAuthConfigured"),
+            cfg.get("authRequired"),
             cfg.get("apiBaseUrl"),
         )
         content = "\n".join(

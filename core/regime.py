@@ -37,7 +37,6 @@ class TargetGrossExposureByRegime(BaseModel):
 class RegimePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
     modelName: str = Field(default=DEFAULT_REGIME_MODEL_NAME, min_length=1, max_length=128)
     targetGrossExposureByRegime: TargetGrossExposureByRegime = Field(
         default_factory=TargetGrossExposureByRegime

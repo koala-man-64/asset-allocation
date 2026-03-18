@@ -8,11 +8,11 @@ If GitHub Security Advisories are not available for this repo, report the issue 
 
 ## Authentication and Authorization
 
-- `API_AUTH_MODE` supports `none`, `api_key`, `oidc`, and `api_key_or_oidc`.
-- API key mode uses `API_KEY` and `API_KEY_HEADER`.
-- OIDC mode validates issuer and audience and can require scopes and roles. The service discovers JWKS from the issuer unless `API_OIDC_JWKS_URL` is set explicitly.
+- Deployed runtimes must configure `API_KEY`, `API_OIDC_ISSUER` plus `API_OIDC_AUDIENCE`, or both.
+- API key auth uses `API_KEY` and the fixed `X-API-Key` header.
+- OIDC auth validates issuer and audience and can require scopes and roles. The service discovers JWKS from the issuer unless `API_OIDC_JWKS_URL` is set explicitly.
 - The UI receives its runtime auth and API base URL settings from `/config.js`.
-- `.env.template` defaults local development to `API_AUTH_MODE=none`; do not treat that default as appropriate for an internet-exposed deployment.
+- Local development can fall back to anonymous access only when no auth providers are configured and the runtime is local. Deployed environments do not allow anonymous auth.
 
 ## Secrets and Identities
 
