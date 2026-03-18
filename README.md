@@ -93,8 +93,8 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 - `scripts/provision_azure_interactive.ps1` is the recommended interactive entrypoint for Azure setup. It walks preflight validation, shared resource provisioning, optional Postgres provisioning, optional cost guardrails, and post-provision validation in one session.
 - `.github/workflows/deploy.yml` builds and deploys the repo to Azure.
 - `scripts/provision_azure.ps1` and `scripts/provision_azure_postgres.ps1` remain the underlying targeted provisioners used by the interactive wrapper.
-- `deploy/app_api.yaml` is the internal-ingress unified API and UI Container App manifest used by the default deploy workflow.
-- `deploy/app_api_public.yaml` is the explicit public-ingress variant for intentional public deployments.
+- `deploy/app_api_public.yaml` is the public-ingress unified API and UI Container App manifest used by the default deploy workflow.
+- `deploy/app_api.yaml` is the internal-ingress variant for private-only deployments.
 - Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
 
 ### Authentication

@@ -221,6 +221,12 @@ def test_deploy_workflow_creates_missing_api_app_from_yaml() -> None:
     deploy_workflow = repo_root / ".github" / "workflows" / "deploy.yml"
     text = deploy_workflow.read_text(encoding="utf-8")
 
+    assert "Deploying unified app from public ingress YAML profile..." in text, (
+        "deploy workflow must render the public unified Container App manifest"
+    )
+    assert 'envsubst < deploy/app_api_public.yaml > "$tmp"' in text, (
+        "deploy workflow must deploy the public unified Container App manifest"
+    )
     assert "Creating Container App from rendered YAML..." in text, (
         "deploy workflow must create the unified Container App when it is missing"
     )

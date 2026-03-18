@@ -716,9 +716,9 @@ jobs:
             fi
           }
 
-          echo "Deploying unified app from internal ingress YAML profile..."
-          tmp="deploy/app_api.tmp.yaml"
-          envsubst < deploy/app_api.yaml > "$tmp"
+          echo "Deploying unified app from public ingress YAML profile..."
+          tmp="deploy/app_api_public.tmp.yaml"
+          envsubst < deploy/app_api_public.yaml > "$tmp"
 
           # MASSIVE_API_KEY is optional. If absent, remove Massive secret wiring so
           # Container Apps does not reject an empty secret value.
