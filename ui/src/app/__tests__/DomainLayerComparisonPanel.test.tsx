@@ -436,9 +436,11 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         refresh: true
       });
     });
-    await waitFor(() => {
-      expect(screen.getAllByText('0 symbols').length).toBeGreaterThan(0);
-    });
+    expect(
+      await screen.findAllByText('0 symbols', undefined, {
+        timeout: 3000
+      })
+    ).not.toHaveLength(0);
   });
 
   it('omits empty medallion layer columns', async () => {
