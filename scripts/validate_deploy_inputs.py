@@ -92,10 +92,7 @@ def validate_api_base_url() -> None:
     parsed = urlparse(require_value("ASSET_ALLOCATION_API_BASE_URL"))
     host = (parsed.hostname or "").strip().lower()
     if parsed.scheme not in {"http", "https"} or not host:
-        fail(
-            "ASSET_ALLOCATION_API_BASE_URL must be an http(s) URL "
-            "(e.g., http://asset-allocation-api)"
-        )
+        fail("ASSET_ALLOCATION_API_BASE_URL must be an http(s) URL (e.g., http://asset-allocation-api)")
     if host in {"localhost", "127.0.0.1", "::1"}:
         fail(
             "ASSET_ALLOCATION_API_BASE_URL must not point to localhost in production. "
@@ -149,8 +146,6 @@ def validate_auth_configuration() -> None:
         fail("API_OIDC_ISSUER is required for the production deploy workflow.")
     if not api_oidc_audience:
         fail("API_OIDC_AUDIENCE is required for the production deploy workflow.")
-
-    api_oidc_enabled = True
 
     ui_oidc_authority = optional_value("UI_OIDC_AUTHORITY")
     ui_oidc_client_id = optional_value("UI_OIDC_CLIENT_ID")
