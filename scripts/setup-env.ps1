@@ -118,6 +118,7 @@ $Config += "# =========================================="
 $Config += "AZURE_CLIENT_ID=" + (Prompt-Var "AZURE_CLIENT_ID" "" "GitHub Actions OIDC client/app ID (required for deploy).")
 $Config += "AZURE_TENANT_ID=" + (Prompt-Var "AZURE_TENANT_ID" "" "Azure tenant ID (required for deploy).")
 $Config += "AZURE_SUBSCRIPTION_ID=" + (Prompt-Var "AZURE_SUBSCRIPTION_ID" "" "Azure subscription ID (required for deploy).")
+$Config += "ENTRA_OPERATOR_USER_OBJECT_ID=" + (Prompt-Var "ENTRA_OPERATOR_USER_OBJECT_ID" "" "Provisioning only: Entra user object ID to assign the AssetAllocation.Access app role.")
 $Config += "AZURE_CLIENT_SECRET=" + (Prompt-Var "AZURE_CLIENT_SECRET" "" "Optional: Service Principal client secret (not required for GitHub OIDC)." -Secret)
 
 # -------------------------------------------------------------------------
@@ -175,7 +176,8 @@ $Config += "# ETL -> API Gateway (Alpha Vantage via API)"
 $Config += "# =========================================="
 $Config += "ASSET_ALLOCATION_API_BASE_URL=" + (Prompt-Var "ASSET_ALLOCATION_API_BASE_URL" $DefaultAssetAllocationApiBaseUrl "Base URL for the Asset Allocation API (jobs call /api/providers/alpha-vantage/*).")
 $Config += "API_CONTAINER_APP_NAME=" + (Prompt-Var "API_CONTAINER_APP_NAME" "asset-allocation-api" "Azure Container App resource name for API startup wake checks.")
-$Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "API key for calling the API gateway (required when the deployed API uses API_KEY auth)." -Secret)
+$Config += "ASSET_ALLOCATION_API_KEY=" + (Prompt-Var "ASSET_ALLOCATION_API_KEY" "" "Local/private compatibility fallback only. Production bronze jobs should use ASSET_ALLOCATION_API_SCOPE." -Secret)
+$Config += "ASSET_ALLOCATION_API_SCOPE=" + (Prompt-Var "ASSET_ALLOCATION_API_SCOPE" "" "Managed-identity scope for ETL -> API calls (for example api://<api-app-client-id>/.default). Required for production bronze jobs.")
 $Config += "ASSET_ALLOCATION_API_TIMEOUT_SECONDS=" + (Prompt-Var "ASSET_ALLOCATION_API_TIMEOUT_SECONDS" "120" "HTTP timeout for ETL -> API requests (seconds).")
 $Config += "JOB_STARTUP_API_CONTAINER_APPS=" + (Prompt-Var "JOB_STARTUP_API_CONTAINER_APPS" $DefaultJobStartupApiContainerApps "Optional: comma-separated container apps to start; defaults to API_CONTAINER_APP_NAME/base-url host.")
 $Config += "JOB_STARTUP_API_HEALTH_PATH=" + (Prompt-Var "JOB_STARTUP_API_HEALTH_PATH" "/healthz" "Optional: health endpoint path used by startup preflight.")
@@ -201,7 +203,7 @@ $Config += ""
 $Config += "# =========================================="
 $Config += "# API Service"
 $Config += "# =========================================="
-$Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "API key (required for deployed runtime unless API OIDC is configured)." -Secret)
+$Config += "API_KEY=" + (Prompt-Var "API_KEY" "" "Local/private compatibility fallback for non-browser callers. Public/browser production should use OIDC." -Secret)
 $Config += "API_ROOT_PREFIX=" + (Prompt-Var "API_ROOT_PREFIX" "" "Optional: mount API under /{API_ROOT_PREFIX}/api/* (e.g. asset-allocation).")
 $Config += "API_PORT=" + (Prompt-Var "API_PORT" "9000" "Local API port (used by core/config.py).")
 $Config += "API_CSP=" + (Prompt-Var "API_CSP" "" "Optional: Content-Security-Policy header value.")
@@ -211,14 +213,14 @@ $Config += "API_CORS_ALLOW_ORIGINS=" + (Prompt-Var "API_CORS_ALLOW_ORIGINS" "" "
 $Config += "API_OIDC_ISSUER=" + (Prompt-Var "API_OIDC_ISSUER" "" "Optional: OIDC issuer URL (required together with API_OIDC_AUDIENCE).")
 $Config += "API_OIDC_AUDIENCE=" + (Prompt-Var "API_OIDC_AUDIENCE" "" "Optional: comma-separated audiences (required together with API_OIDC_ISSUER).")
 $Config += "API_OIDC_JWKS_URL=" + (Prompt-Var "API_OIDC_JWKS_URL" "" "Optional: JWKS URL (if not discoverable).")
-$Config += "API_OIDC_REQUIRED_SCOPES=" + (Prompt-Var "API_OIDC_REQUIRED_SCOPES" "" "Optional: comma-separated required scopes.")
-$Config += "API_OIDC_REQUIRED_ROLES=" + (Prompt-Var "API_OIDC_REQUIRED_ROLES" "" "Optional: comma-separated required roles.")
+$Config += "API_OIDC_REQUIRED_SCOPES=" + (Prompt-Var "API_OIDC_REQUIRED_SCOPES" "" "Optional: comma-separated required scopes. Leave blank for role-based production auth.")
+$Config += "API_OIDC_REQUIRED_ROLES=" + (Prompt-Var "API_OIDC_REQUIRED_ROLES" "" "Optional: comma-separated required roles (for example AssetAllocation.Access).")
 
-# UI auth config served by API (optional)
+# UI auth config served by API (optional locally, required for browser OIDC)
 $Config += "UI_OIDC_CLIENT_ID=" + (Prompt-Var "UI_OIDC_CLIENT_ID" "" "Optional: UI OIDC client ID.")
 $Config += "UI_OIDC_AUTHORITY=" + (Prompt-Var "UI_OIDC_AUTHORITY" "" "Optional: UI OIDC authority (defaults to API_OIDC_ISSUER).")
-$Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OIDC scopes.")
-$Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Optional: UI redirect URI.")
+$Config += "UI_OIDC_SCOPES=" + (Prompt-Var "UI_OIDC_SCOPES" "" "Optional: UI OIDC scopes (for example api://<api-app-client-id>/user_impersonation openid profile offline_access).")
+$Config += "UI_OIDC_REDIRECT_URI=" + (Prompt-Var "UI_OIDC_REDIRECT_URI" "" "Required absolute callback URI when browser OIDC is enabled.")
 $Config += "UI_DIST_DIR=" + (Prompt-Var "UI_DIST_DIR" "" "Optional: local path to UI dist for serving static UI.")
 
 # -------------------------------------------------------------------------
@@ -289,8 +291,6 @@ $Config += "VITE_PROXY_CONFIG_JS=" + (Prompt-Var "VITE_PROXY_CONFIG_JS" "false" 
 $Config += "VITE_API_PROXY_TARGET=" + (Prompt-Var "VITE_API_PROXY_TARGET" $DefaultViteApiProxyTarget "UI dev only: Vite proxy target for /api (do not include /api).")
 $Config += "VITE_API_BASE_URL=" + (Prompt-Var "VITE_API_BASE_URL" "/api" "UI build-time fallback for the API base URL.")
 $Config += "VITE_BACKTEST_API_BASE_URL=" + (Prompt-Var "VITE_BACKTEST_API_BASE_URL" "/api" "UI build-time fallback for the backtest API base URL.")
-$Config += "VITE_ALLOW_BROWSER_API_KEY=" + (Prompt-Var "VITE_ALLOW_BROWSER_API_KEY" "false" "UI build-time fallback: permit browser API-key auth.")
-$Config += "VITE_BACKTEST_API_KEY=" + (Prompt-Var "VITE_BACKTEST_API_KEY" "" "UI build-time fallback backtest API key." -Secret)
 $Config += "VITE_OIDC_AUTHORITY=" + (Prompt-Var "VITE_OIDC_AUTHORITY" "" "UI build-time fallback OIDC authority.")
 $Config += "VITE_OIDC_CLIENT_ID=" + (Prompt-Var "VITE_OIDC_CLIENT_ID" "" "UI build-time fallback OIDC client ID.")
 $Config += "VITE_OIDC_SCOPES=" + (Prompt-Var "VITE_OIDC_SCOPES" "" "UI build-time fallback OIDC scopes.")

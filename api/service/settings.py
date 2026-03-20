@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import List, Literal, Optional
+from urllib.parse import urlparse
 
 AuthMode = Literal["anonymous", "api_key", "oidc"]
 _FIXED_API_KEY_HEADER = "X-API-Key"
@@ -27,6 +28,16 @@ def _get_optional_str(name: str) -> Optional[str]:
 
 def _is_local_runtime() -> bool:
     return not any((os.environ.get(key) or "").strip() for key in _LOCAL_RUNTIME_MARKER_ENV_VARS)
+
+
+def _validate_ui_redirect_uri(value: str) -> str:
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").strip().lower()
+    if parsed.scheme not in {"http", "https"} or not host:
+        raise ValueError("UI_OIDC_REDIRECT_URI must be an absolute http(s) URL.")
+    if parsed.scheme != "https" and host not in {"localhost", "127.0.0.1"}:
+        raise ValueError("UI_OIDC_REDIRECT_URI must use https unless targeting localhost.")
+    return value
 
 
 @dataclass(frozen=True)
@@ -98,6 +109,10 @@ class ServiceSettings:
         browser_oidc_enabled = bool(ui_authority and ui_client_id)
         if browser_oidc_enabled and not oidc_auth_enabled:
             raise ValueError("Browser OIDC requires API OIDC auth to be configured.")
+        if browser_oidc_enabled and not ui_redirect_uri:
+            raise ValueError("UI_OIDC_REDIRECT_URI is required when browser OIDC is configured.")
+        if ui_redirect_uri:
+            ui_redirect_uri = _validate_ui_redirect_uri(ui_redirect_uri)
 
         anonymous_local_auth_enabled = False
         if not api_key_auth_enabled and not oidc_auth_enabled:

@@ -38,6 +38,8 @@ async def test_config_js_emits_fixed_api_base_url(monkeypatch: pytest.MonkeyPatc
 
     assert cfg_backtest["apiBaseUrl"] == "/api"
     assert cfg_backtest["backtestApiBaseUrl"] == "/api"
+    assert cfg_backtest["oidcRedirectUri"] is None
+    assert "apiKeyAuthConfigured" not in cfg_backtest
 
 
 @pytest.mark.asyncio
@@ -53,4 +55,25 @@ async def test_config_js_ignores_ui_api_base_url_override(monkeypatch: pytest.Mo
     cfg = _parse_window_assignment(resp.text, "__BACKTEST_UI_CONFIG__")
     assert cfg["apiBaseUrl"] == "/api"
     assert cfg["backtestApiBaseUrl"] == "/api"
+
+
+@pytest.mark.asyncio
+async def test_config_js_preserves_explicit_oidc_redirect_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_OIDC_ISSUER", "https://issuer.example.com")
+    monkeypatch.setenv("API_OIDC_AUDIENCE", "asset-allocation-api")
+    monkeypatch.setenv("UI_OIDC_CLIENT_ID", "spa-client-id")
+    monkeypatch.setenv("UI_OIDC_AUTHORITY", "https://login.microsoftonline.com/tenant-id")
+    monkeypatch.setenv("UI_OIDC_SCOPES", "api://asset-allocation-api/user_impersonation")
+    monkeypatch.setenv(
+        "UI_OIDC_REDIRECT_URI",
+        "https://asset-allocation.example.com/auth/callback",
+    )
+
+    app = create_app()
+    async with get_test_client(app) as client:
+        resp = await client.get("/config.js")
+
+    assert resp.status_code == 200
+    cfg = _parse_window_assignment(resp.text, "__BACKTEST_UI_CONFIG__")
+    assert cfg["oidcRedirectUri"] == "https://asset-allocation.example.com/auth/callback"
 

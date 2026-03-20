@@ -18,8 +18,6 @@ properties:
     - server: ${ACR_LOGIN_SERVER}
       identity: "${ACR_PULL_IDENTITY_RESOURCE_ID}"
     secrets:
-    - name: api-key
-      value: "${API_KEY}"
     - name: azure-storage-connection-string
       value: "${AZURE_STORAGE_CONNECTION_STRING}"
     - name: alpha-vantage-api-key
@@ -93,10 +91,6 @@ properties:
         value: "${AZURE_FOLDER_TARGETS}"
       - name: AZURE_CONTAINER_COMMON
         value: "${AZURE_CONTAINER_COMMON}"
-      - name: API_KEY
-        secretRef: api-key
-      - name: API_KEY_HEADER
-        value: "X-API-Key"
       - name: ALPHA_VANTAGE_API_KEY
         secretRef: alpha-vantage-api-key
       - name: ALPHA_VANTAGE_RATE_LIMIT_PER_MIN

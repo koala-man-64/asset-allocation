@@ -9,7 +9,6 @@ interface Window {
     oidcScopes?: string[] | string;
     oidcRedirectUri?: string;
     oidcEnabled?: boolean;
-    apiKeyAuthConfigured?: boolean;
     authRequired?: boolean;
   };
   __API_UI_CONFIG__?: {
@@ -19,7 +18,6 @@ interface Window {
     oidcScopes?: string[] | string;
     oidcRedirectUri?: string;
     oidcEnabled?: boolean;
-    apiKeyAuthConfigured?: boolean;
     authRequired?: boolean;
   };
 }

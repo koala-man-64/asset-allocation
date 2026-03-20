@@ -133,8 +133,8 @@ def _validate_environment() -> None:
         raise ValueError("Environment variable 'AZURE_CONTAINER_BRONZE' is strictly required.")
     if not os.environ.get("ASSET_ALLOCATION_API_BASE_URL"):
         raise ValueError("Environment variable 'ASSET_ALLOCATION_API_BASE_URL' is strictly required.")
-    if not (os.environ.get("ASSET_ALLOCATION_API_KEY") or os.environ.get("API_KEY")):
-        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_KEY' (or API_KEY) is strictly required.")
+    if not os.environ.get("ASSET_ALLOCATION_API_SCOPE"):
+        raise ValueError("Environment variable 'ASSET_ALLOCATION_API_SCOPE' is strictly required.")
 
 
 def _utc_today() -> datetime.date:

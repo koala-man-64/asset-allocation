@@ -90,18 +90,22 @@ The mounted FastAPI routers are `data`, `system`, `system/postgres`, `strategies
 
 ## Deployment
 
-- `scripts/provision_azure_interactive.ps1` is the recommended interactive entrypoint for Azure setup. It walks preflight validation, shared resource provisioning, optional Postgres provisioning, optional cost guardrails, and post-provision validation in one session.
+- `scripts/provision_azure_interactive.ps1` is the recommended interactive entrypoint for Azure setup. It now walks preflight validation, shared resource provisioning, Entra OIDC application provisioning, optional Postgres provisioning, optional GitHub env sync, optional cost guardrails, and post-provision validation in one session.
 - `.github/workflows/deploy.yml` builds and deploys the repo to Azure.
 - `scripts/provision_azure.ps1` and `scripts/provision_azure_postgres.ps1` remain the underlying targeted provisioners used by the interactive wrapper.
+- `scripts/provision_entra_oidc.ps1` is the focused Entra/Microsoft Graph provisioner that creates or reconciles the API and SPA app registrations, service principals, delegated permissions, and app-role assignments, then writes the resulting OIDC values back into `.env.web` or `.env`.
 - `deploy/app_api_public.yaml` is the public-ingress unified API and UI Container App manifest used by the default deploy workflow.
 - `deploy/app_api.yaml` is the internal-ingress variant for private-only deployments.
 - Scheduled Azure Container App Jobs under `deploy/job_*.yaml` run Bronze, Silver, and Gold workloads for the supported data domains.
 
 ### Authentication
 
-- Deployed runtimes must configure `API_KEY`, `API_OIDC_*`, or both. Checked-in deploy manifests no longer support unauthenticated mode strings.
-- UI-managed OIDC is enabled only when both `UI_OIDC_AUTHORITY` and `UI_OIDC_CLIENT_ID` are configured alongside API OIDC.
-- Shared browser-facing API keys are convenience controls, not strong public-web security boundaries.
+- Public browser access should use Microsoft Entra OIDC, not a shared browser API key.
+- Production deploys are OIDC-only: configure `API_OIDC_*`, `UI_OIDC_*`, and `ASSET_ALLOCATION_API_SCOPE`.
+- Keep `API_KEY` only as a local/private compatibility fallback for non-browser callers while any internal callers are still being migrated.
+- UI-managed OIDC requires `UI_OIDC_AUTHORITY`, `UI_OIDC_CLIENT_ID`, and an absolute `UI_OIDC_REDIRECT_URI` alongside API OIDC.
+- Production auth should prefer role-based enforcement via `API_OIDC_REQUIRED_ROLES`; leave `API_OIDC_REQUIRED_SCOPES` empty unless every caller is delegated-user only.
+- Bronze jobs should authenticate to the API with the shared user-assigned managed identity via `ASSET_ALLOCATION_API_SCOPE`, not `X-API-Key`.
 
 ## Evidence
 

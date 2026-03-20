@@ -25,7 +25,13 @@ def _deploy_validation_env(**overrides: str) -> dict[str, str]:
         "POSTGRES_DSN": "postgresql://user:pass@db.example.com:5432/asset_allocation",
         "SERVICE_ACCOUNT_NAME": "asset-allocation-sa",
         "ASSET_ALLOCATION_API_BASE_URL": "https://asset-allocation.example.com",
-        "API_KEY": "secret",
+        "API_OIDC_ISSUER": "https://issuer.example.com",
+        "API_OIDC_AUDIENCE": "asset-allocation-api",
+        "UI_OIDC_CLIENT_ID": "client-id",
+        "UI_OIDC_AUTHORITY": "https://login.microsoftonline.com/tenant-id",
+        "UI_OIDC_SCOPES": "api://asset-allocation-api/user_impersonation openid profile offline_access",
+        "UI_OIDC_REDIRECT_URI": "https://asset-allocation.example.com/auth/callback",
+        "ASSET_ALLOCATION_API_SCOPE": "api://asset-allocation-api/.default",
         "LOG_LEVEL": "INFO",
         "SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID": "",
     }
@@ -327,6 +333,15 @@ def test_setup_env_seeds_job_defaults_for_github_sync() -> None:
     assert 'Prompt-Var "REGIME_ACA_JOB_NAME" "gold-regime-job"' in text, (
         "setup-env must default REGIME_ACA_JOB_NAME for GitHub sync"
     )
+    assert 'Prompt-Var "ENTRA_OPERATOR_USER_OBJECT_ID"' in text, (
+        "setup-env must prompt for the operator Entra user object ID"
+    )
+    assert 'Prompt-Var "VITE_ALLOW_BROWSER_API_KEY"' not in text, (
+        "setup-env must not prompt for browser API key fallbacks"
+    )
+    assert 'Prompt-Var "VITE_BACKTEST_API_KEY"' not in text, (
+        "setup-env must not prompt for bundled browser API keys"
+    )
     assert "API_INGRESS_EXTERNAL" not in text, (
         "setup-env must not expose ingress as an env toggle"
     )
@@ -354,6 +369,26 @@ def test_env_contract_tracks_log_analytics_workspace_bootstrap_key_as_deploy_var
     assert rows["SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID"]["github_storage"] == "var"
 
 
+def test_env_contract_tracks_api_scope_for_managed_identity_callers() -> None:
+    repo_root = _repo_root()
+    contract = repo_root / "docs" / "ops" / "env-contract.csv"
+    with contract.open(encoding="utf-8", newline="") as handle:
+        rows = {row["name"]: row for row in csv.DictReader(handle)}
+
+    assert rows["ASSET_ALLOCATION_API_SCOPE"]["class"] == "deploy_var"
+    assert rows["ASSET_ALLOCATION_API_SCOPE"]["github_storage"] == "var"
+
+
+def test_env_contract_tracks_entra_operator_user_as_provisioning_only() -> None:
+    repo_root = _repo_root()
+    contract = repo_root / "docs" / "ops" / "env-contract.csv"
+    with contract.open(encoding="utf-8", newline="") as handle:
+        rows = {row["name"]: row for row in csv.DictReader(handle)}
+
+    assert rows["ENTRA_OPERATOR_USER_OBJECT_ID"]["class"] == "deploy_var"
+    assert rows["ENTRA_OPERATOR_USER_OBJECT_ID"]["github_storage"] == "none"
+
+
 def test_env_template_includes_regime_job_defaults() -> None:
     repo_root = _repo_root()
     env_template = repo_root / ".env.template"
@@ -366,20 +401,32 @@ def test_env_template_includes_regime_job_defaults() -> None:
     assert "REGIME_ACA_JOB_NAME=gold-regime-job" in text, (
         ".env.template must define REGIME_ACA_JOB_NAME"
     )
+    assert "ASSET_ALLOCATION_API_SCOPE=" in text, (
+        ".env.template must define ASSET_ALLOCATION_API_SCOPE for managed-identity callers"
+    )
+    assert "ENTRA_OPERATOR_USER_OBJECT_ID=" in text, (
+        ".env.template must define ENTRA_OPERATOR_USER_OBJECT_ID for provisioning"
+    )
+    assert "VITE_ALLOW_BROWSER_API_KEY" not in text, (
+        ".env.template must not define browser API-key fallbacks"
+    )
+    assert "VITE_BACKTEST_API_KEY" not in text, (
+        ".env.template must not define bundled browser API keys"
+    )
     assert "API_INGRESS_EXTERNAL" not in text, (
         ".env.template must not expose ingress as an env toggle"
     )
 
 
-def test_deploy_validation_accepts_api_key_auth_defaults() -> None:
+def test_deploy_validation_accepts_oidc_only_defaults() -> None:
     result = _run_deploy_validation()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_deploy_validation_requires_auth_configuration() -> None:
-    result = _run_deploy_validation(API_KEY="")
+def test_deploy_validation_requires_api_oidc_configuration() -> None:
+    result = _run_deploy_validation(API_OIDC_ISSUER="", API_OIDC_AUDIENCE="")
     assert result.returncode != 0
-    assert "Deploy validation requires API_KEY and/or API OIDC configuration." in (result.stdout + result.stderr)
+    assert "Production deploy requires API OIDC configuration." in (result.stdout + result.stderr)
 
 
 def test_deploy_validation_rejects_invalid_log_stream_batch_size() -> None:
@@ -398,26 +445,55 @@ def test_deploy_validation_requires_complete_ui_oidc_configuration() -> None:
         API_OIDC_ISSUER="https://issuer.example.com",
         API_OIDC_AUDIENCE="asset-allocation",
         UI_OIDC_CLIENT_ID="client-id",
+        UI_OIDC_AUTHORITY="",
+        UI_OIDC_SCOPES="",
+        UI_OIDC_REDIRECT_URI="",
     )
     assert result.returncode != 0
     assert "UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together." in (result.stdout + result.stderr)
 
     missing_api_oidc = _run_deploy_validation(
-        API_KEY="",
+        API_OIDC_ISSUER="",
+        API_OIDC_AUDIENCE="",
         UI_OIDC_CLIENT_ID="client-id",
         UI_OIDC_AUTHORITY="https://issuer.example.com",
         UI_OIDC_SCOPES="api://asset-allocation/user_impersonation",
         UI_OIDC_REDIRECT_URI="https://asset-allocation.example.com/oauth2-callback",
     )
     assert missing_api_oidc.returncode != 0
-    assert "UI OIDC configuration requires API OIDC auth to be configured." in (
+    assert "Production deploy requires API OIDC configuration." in (
         missing_api_oidc.stdout + missing_api_oidc.stderr
+    )
+
+    missing_redirect_uri = _run_deploy_validation(
+        API_OIDC_ISSUER="https://issuer.example.com",
+        API_OIDC_AUDIENCE="asset-allocation",
+        UI_OIDC_CLIENT_ID="client-id",
+        UI_OIDC_AUTHORITY="https://issuer.example.com",
+        UI_OIDC_SCOPES="api://asset-allocation/user_impersonation",
+        UI_OIDC_REDIRECT_URI="",
+    )
+    assert missing_redirect_uri.returncode != 0
+    assert "UI_OIDC_REDIRECT_URI is required when browser OIDC is configured." in (
+        missing_redirect_uri.stdout + missing_redirect_uri.stderr
+    )
+
+    invalid_redirect_uri = _run_deploy_validation(
+        API_OIDC_ISSUER="https://issuer.example.com",
+        API_OIDC_AUDIENCE="asset-allocation",
+        UI_OIDC_CLIENT_ID="client-id",
+        UI_OIDC_AUTHORITY="https://issuer.example.com",
+        UI_OIDC_SCOPES="api://asset-allocation/user_impersonation",
+        UI_OIDC_REDIRECT_URI="http://asset-allocation.example.com/auth/callback",
+    )
+    assert invalid_redirect_uri.returncode != 0
+    assert "UI_OIDC_REDIRECT_URI must be an absolute https:// URL." in (
+        invalid_redirect_uri.stdout + invalid_redirect_uri.stderr
     )
 
 
 def test_deploy_validation_accepts_full_oidc_configuration() -> None:
     result = _run_deploy_validation(
-        API_KEY="",
         API_OIDC_ISSUER="https://issuer.example.com",
         API_OIDC_AUDIENCE="asset-allocation",
         UI_OIDC_CLIENT_ID="client-id",
@@ -426,6 +502,36 @@ def test_deploy_validation_accepts_full_oidc_configuration() -> None:
         UI_OIDC_REDIRECT_URI="https://asset-allocation.example.com/oauth2-callback",
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_deploy_validation_requires_api_scope_for_bronze_jobs() -> None:
+    result = _run_deploy_validation(ASSET_ALLOCATION_API_SCOPE="")
+    assert result.returncode != 0
+    assert "ASSET_ALLOCATION_API_SCOPE is required for bronze job managed-identity callers." in (
+        result.stdout + result.stderr
+    )
+
+
+def test_public_deploy_surfaces_no_longer_reference_shared_api_key_auth() -> None:
+    repo_root = _repo_root()
+    workflow_text = (repo_root / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    public_manifest = (repo_root / "deploy" / "app_api_public.yaml").read_text(encoding="utf-8")
+    internal_manifest = (repo_root / "deploy" / "app_api.yaml").read_text(encoding="utf-8")
+    bronze_market = (repo_root / "deploy" / "job_bronze_market_data.yaml").read_text(encoding="utf-8")
+    bronze_finance = (repo_root / "deploy" / "job_bronze_finance_data.yaml").read_text(encoding="utf-8")
+    bronze_earnings = (repo_root / "deploy" / "job_bronze_earnings_data.yaml").read_text(encoding="utf-8")
+
+    assert "secrets.API_KEY" not in workflow_text
+    assert "ASSET_ALLOCATION_API_KEY_HEADER" not in workflow_text
+    assert "API_KEY: ${{ secrets.API_KEY }}" not in workflow_text
+    assert "secretRef: api-key" not in public_manifest
+    assert "secretRef: api-key" not in internal_manifest
+    assert "ASSET_ALLOCATION_API_KEY" not in bronze_market
+    assert "ASSET_ALLOCATION_API_KEY" not in bronze_finance
+    assert "ASSET_ALLOCATION_API_KEY" not in bronze_earnings
+    assert "name: api-key" not in bronze_market
+    assert "name: api-key" not in bronze_finance
+    assert "name: api-key" not in bronze_earnings
 
 
 def test_reset_postgres_script_uses_psql_reset_and_repo_migrations() -> None:

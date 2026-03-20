@@ -54,6 +54,14 @@ def _extract_bearer_token(header_value: str) -> str:
     return token
 
 
+def _claim_text(claims: Dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = claims.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "-"
+
+
 class AuthManager:
     def __init__(self, settings: ServiceSettings):
         self._settings = settings
@@ -183,7 +191,13 @@ class AuthManager:
             if authorization and _is_bearer_auth(authorization):
                 token = _extract_bearer_token(authorization)
                 ctx = self._verify_bearer_token(token)
-                logger.info("Auth success via oidc: subject=%s", ctx.subject or "-")
+                logger.info(
+                    "Auth success via oidc: subject=%s oid=%s tid=%s azp=%s",
+                    ctx.subject or "-",
+                    _claim_text(ctx.claims, "oid"),
+                    _claim_text(ctx.claims, "tid"),
+                    _claim_text(ctx.claims, "azp", "appid"),
+                )
                 return ctx
 
         if self._settings.anonymous_local_auth_enabled:

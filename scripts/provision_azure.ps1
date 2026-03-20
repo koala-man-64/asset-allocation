@@ -19,6 +19,7 @@ param(
   [switch]$GrantJobStartToAcaResources,
 
   [switch]$ProvisionPostgres,
+  [switch]$SkipPostgresPrompt,
   [string]$PostgresServerName = "pg-asset-allocation",
   [string]$PostgresDatabaseName = "asset_allocation",
   [string]$PostgresAdminUser = "assetallocadmin",
@@ -46,7 +47,7 @@ param(
 
   [string]$LogAnalyticsWorkspaceName = "asset-allocation-law",
   [ValidateRange(4, 730)]
-  [int]$LogAnalyticsRetentionInDays = 7,
+  [int]$LogAnalyticsRetentionInDays = 30,
   [string]$ContainerAppsEnvironmentName = "asset-allocation-env",
   [switch]$CorrectApiStorageAuthMode,
   [ValidateSet("ManagedIdentity", "ConnectionString")]
@@ -116,7 +117,7 @@ function Get-YesNo {
 $grantAcrPullPrompted = $false
 $grantJobStartPrompted = $false
 
-if (-not $PSBoundParameters.ContainsKey("ProvisionPostgres") -and $PromptForResources -and (-not $NonInteractive)) {
+if (-not $PSBoundParameters.ContainsKey("ProvisionPostgres") -and (-not $SkipPostgresPrompt) -and $PromptForResources -and (-not $NonInteractive)) {
   $ProvisionPostgres = Get-YesNo "Provision Postgres Flexible Server?" $false
 }
 
@@ -166,6 +167,51 @@ function Get-EnvValueFirst {
     }
   }
   return $null
+}
+
+function Resolve-LogAnalyticsRetentionTarget {
+  param(
+    [Parameter(Mandatory = $true)][string]$ResourceGroupName,
+    [Parameter(Mandatory = $true)][string]$WorkspaceName,
+    [Parameter(Mandatory = $true)][int]$RequestedRetentionInDays
+  )
+
+  $workspace = $null
+  try {
+    $rawWorkspace = az monitor log-analytics workspace show `
+      --resource-group $ResourceGroupName `
+      --workspace-name $WorkspaceName `
+      --only-show-errors -o json 2>$null
+    if (-not [string]::IsNullOrWhiteSpace($rawWorkspace)) {
+      $workspace = $rawWorkspace | ConvertFrom-Json
+    }
+  }
+  catch {
+    $workspace = $null
+  }
+
+  $skuName = ""
+  $currentRetentionInDays = $null
+  if ($null -ne $workspace) {
+    if ($workspace.sku -and $workspace.sku.name) {
+      $skuName = [string]$workspace.sku.name
+    }
+    if ($workspace.PSObject.Properties.Name -contains "retentionInDays") {
+      $currentRetentionInDays = [int]$workspace.retentionInDays
+    }
+  }
+
+  $effectiveRetentionInDays = $RequestedRetentionInDays
+  if ($skuName -eq "PerGB2018" -and $effectiveRetentionInDays -lt 30) {
+    Write-Warning "Log Analytics workspace '$WorkspaceName' uses SKU '$skuName', so retention cannot be set below 30 days. Requested=$RequestedRetentionInDays; using 30."
+    $effectiveRetentionInDays = 30
+  }
+
+  return [pscustomobject]@{
+    WorkspaceSkuName          = $skuName
+    CurrentRetentionInDays    = $currentRetentionInDays
+    EffectiveRetentionInDays  = $effectiveRetentionInDays
+  }
 }
 
 function Get-EnvBool {
@@ -749,10 +795,20 @@ if ($doLogAnalytics) {
     --workspace-name $LogAnalyticsWorkspaceName `
     --location $Location `
     --only-show-errors 1>$null
+
+  $logAnalyticsRetention = Resolve-LogAnalyticsRetentionTarget `
+    -ResourceGroupName $ResourceGroup `
+    -WorkspaceName $LogAnalyticsWorkspaceName `
+    -RequestedRetentionInDays $LogAnalyticsRetentionInDays
+  Write-Host ("Configuring Log Analytics retention: requested={0} effective={1} current={2} sku={3}" -f `
+      $LogAnalyticsRetentionInDays, `
+      $logAnalyticsRetention.EffectiveRetentionInDays, `
+      $(if ($null -ne $logAnalyticsRetention.CurrentRetentionInDays) { $logAnalyticsRetention.CurrentRetentionInDays } else { "<unknown>" }), `
+      $(if (-not [string]::IsNullOrWhiteSpace($logAnalyticsRetention.WorkspaceSkuName)) { $logAnalyticsRetention.WorkspaceSkuName } else { "<unknown>" })) -ForegroundColor Cyan
   az monitor log-analytics workspace update `
     --resource-group $ResourceGroup `
     --workspace-name $LogAnalyticsWorkspaceName `
-    --retention-time $LogAnalyticsRetentionInDays `
+    --retention-time $logAnalyticsRetention.EffectiveRetentionInDays `
     --only-show-errors 1>$null
 }
 

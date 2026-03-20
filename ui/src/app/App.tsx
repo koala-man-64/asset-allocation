@@ -7,6 +7,7 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { useUIStore } from '@/stores/useUIStore';
 
 import { LeftNavigation } from '@/app/components/layout/LeftNavigation';
+import { OidcAccessGate, OidcCallbackPage } from '@/app/components/auth/OidcAccessGate';
 
 // Lazy load pages for performance optimization (Code Splitting)
 // Using .then(m => ({ default: m.ComponentName })) pattern for named exports
@@ -183,7 +184,17 @@ export default function App() {
   return (
     <AuthProvider>
       <QueryProvider>
-        <AppContent />
+        <Routes>
+          <Route path="/auth/callback" element={<OidcCallbackPage />} />
+          <Route
+            path="*"
+            element={
+              <OidcAccessGate>
+                <AppContent />
+              </OidcAccessGate>
+            }
+          />
+        </Routes>
       </QueryProvider>
     </AuthProvider>
   );

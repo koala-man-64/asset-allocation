@@ -60,12 +60,42 @@ def test_gateway_build_headers_includes_caller_context(case: dict[str, Any], mon
             base_url="http://asset-allocation-api",
             api_key="test",
             api_key_header="X-API-Key",
+            api_scope=None,
             timeout_seconds=10.0,
         )
     )
 
     headers = client._build_headers()
     assert headers["X-API-Key"] == "test"
+    assert headers["X-Caller-Job"] == "bronze-market-job"
+    assert headers["X-Caller-Execution"] == "bronze-market-job-abc123"
+
+
+@pytest.mark.parametrize("case", GATEWAY_CASES, ids=[c["id"] for c in GATEWAY_CASES])
+def test_gateway_build_headers_prefers_bearer_token_when_scope_is_configured(
+    case: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_cls = case["client_cls"]
+    config_cls = case["config_cls"]
+
+    monkeypatch.setenv("CONTAINER_APP_JOB_NAME", "bronze-market-job")
+    monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "bronze-market-job-abc123")
+
+    client = client_cls(
+        config_cls(
+            base_url="http://asset-allocation-api",
+            api_key="test",
+            api_key_header="X-API-Key",
+            api_scope="api://asset-allocation/.default",
+            timeout_seconds=10.0,
+        ),
+        access_token_provider=lambda: "oidc-token",
+    )
+
+    headers = client._build_headers()
+    assert headers["Authorization"] == "Bearer oidc-token"
+    assert "X-API-Key" not in headers
     assert headers["X-Caller-Job"] == "bronze-market-job"
     assert headers["X-Caller-Execution"] == "bronze-market-job-abc123"
 
@@ -80,6 +110,20 @@ def test_gateway_from_env_enforces_timeout_floor(case: dict[str, Any], monkeypat
     client = client_cls.from_env()
     try:
         assert client.config.timeout_seconds >= case["timeout_floor"]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("case", GATEWAY_CASES, ids=[c["id"] for c in GATEWAY_CASES])
+def test_gateway_from_env_reads_api_scope(case: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    client_cls = case["client_cls"]
+
+    monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "http://asset-allocation-api")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_SCOPE", "api://asset-allocation/.default")
+
+    client = client_cls.from_env()
+    try:
+        assert client.config.api_scope == "api://asset-allocation/.default"
     finally:
         client.close()
 
@@ -104,6 +148,7 @@ def test_gateway_public_warmup_reports_failure(case: dict[str, Any], monkeypatch
             base_url="http://asset-allocation-api",
             api_key=None,
             api_key_header="X-API-Key",
+            api_scope=None,
             timeout_seconds=case["timeout_floor"],
             warmup_enabled=True,
             warmup_max_attempts=2,
@@ -149,6 +194,7 @@ def test_gateway_request_fails_fast_when_readiness_never_recovers(
             base_url="http://asset-allocation-api",
             api_key=None,
             api_key_header="X-API-Key",
+            api_scope=None,
             timeout_seconds=case["timeout_floor"],
             warmup_enabled=True,
             warmup_max_attempts=1,

@@ -38,6 +38,7 @@ export function SystemStatusPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const systemStatusView = data;
   const systemHealth = systemStatusView?.systemHealth;
+  const errorMessage = error instanceof Error ? error.message : 'No telemetry available';
 
   const displayDataLayers = useMemo(() => {
     return (systemHealth?.dataLayers || []).map((layer) => ({
@@ -227,7 +228,7 @@ export function SystemStatusPage() {
     return (
       <div className="p-6 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive font-mono">
         <h3 className="text-lg font-bold mb-2 uppercase">System Link Failure</h3>
-        <p>{error ? (error as Error).message : 'No telemetry available'}</p>
+        <p>{errorMessage}</p>
       </div>
     );
   }

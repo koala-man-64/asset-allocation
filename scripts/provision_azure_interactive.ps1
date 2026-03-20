@@ -143,6 +143,37 @@ function Resolve-PowerShellExe {
   return $null
 }
 
+function New-ProvisionLogDirectory {
+  $root = if (-not [string]::IsNullOrWhiteSpace($env:ASSET_ALLOCATION_PROVISION_LOG_ROOT)) {
+    $env:ASSET_ALLOCATION_PROVISION_LOG_ROOT
+  }
+  else {
+    Join-Path ([System.IO.Path]::GetTempPath()) "asset-allocation-provisioning"
+  }
+
+  if (-not (Test-Path $root)) {
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+  }
+
+  $sessionDir = Join-Path $root (Get-Date -Format "yyyyMMdd-HHmmss")
+  New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+  return $sessionDir
+}
+
+function ConvertTo-SafeFileName {
+  param([Parameter(Mandatory = $true)][string]$Value)
+
+  $safe = $Value
+  foreach ($invalid in [System.IO.Path]::GetInvalidFileNameChars()) {
+    $safe = $safe.Replace([string]$invalid, "-")
+  }
+  $safe = ($safe -replace "\s+", "-").Trim("-")
+  if ([string]::IsNullOrWhiteSpace($safe)) {
+    return "step"
+  }
+  return $safe
+}
+
 function Add-StringArgument {
   param(
     [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Arguments,
@@ -193,22 +224,38 @@ function Invoke-ChildScript {
     [string[]]$Arguments = @()
   )
 
+  $logPath = Join-Path $script:SessionLogDir ("{0}.log" -f (ConvertTo-SafeFileName -Value $StepName))
+
   Write-Host ""
   Write-Host "==> $StepName" -ForegroundColor Cyan
   Write-Host "    $(Split-Path -Leaf $ScriptPath)" -ForegroundColor DarkGray
+  Write-Host "    Log: $logPath" -ForegroundColor DarkGray
 
   # Run child scripts in a separate PowerShell process so validation scripts that call
   # `exit` do not terminate the orchestrator.
-  & $script:PowerShellExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments
-  $exitCode = $LASTEXITCODE
+  Set-Content -Path $logPath -Value @() -Encoding utf8
+  $exitCode = 0
+  try {
+    & $script:PowerShellExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments 2>&1 | Tee-Object -FilePath $logPath -Append
+    $exitCode = $LASTEXITCODE
+  }
+  catch {
+    ($_ | Out-String) | Tee-Object -FilePath $logPath -Append | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      $exitCode = $LASTEXITCODE
+    }
+    else {
+      $exitCode = 1
+    }
+  }
 
   if ($exitCode -eq 0) {
-    Add-StepResult -Step $StepName -Status "Succeeded"
+    Add-StepResult -Step $StepName -Status "Succeeded" -Notes "Log: $logPath"
     return $true
   }
 
-  Add-StepResult -Step $StepName -Status "Failed" -Notes "Exit code $exitCode"
-  Write-Warning "$StepName failed with exit code $exitCode."
+  Add-StepResult -Step $StepName -Status "Failed" -Notes "Exit code $exitCode; Log: $logPath"
+  Write-Warning "$StepName failed with exit code $exitCode. See log: $logPath"
 
   if (Get-YesNo "Continue to the next step?" $false) {
     return $false
@@ -238,6 +285,7 @@ if (-not $script:PowerShellExe) {
   throw "Could not find a PowerShell executable. Install pwsh or powershell and retry."
 }
 
+$script:SessionLogDir = New-ProvisionLogDirectory
 $script:StepResults = [System.Collections.Generic.List[object]]::new()
 
 Write-Host "Azure Provisioning Orchestrator" -ForegroundColor Green
@@ -246,6 +294,7 @@ Write-Host "Subscription: $(if ($subscriptionId) { $subscriptionId } else { '<fr
 Write-Host "Resource group: $(if ($resourceGroup) { $resourceGroup } else { '<from child script defaults>' })"
 Write-Host "Location: $(if ($location) { $location } else { '<from child script defaults>' })"
 Write-Host "Emit secrets: $([bool]$EmitSecrets)"
+Write-Host "Session logs: $script:SessionLogDir"
 Write-Host ""
 Write-Host "This orchestrator wraps the existing Azure scripts and asks before each major step." -ForegroundColor DarkGray
 Write-Host "The shared resource step still prompts for individual resources inside scripts/provision_azure.ps1." -ForegroundColor DarkGray
@@ -283,7 +332,7 @@ if (Get-YesNo "Run shared Azure resource provisioning (resource group, storage, 
     $sharedArgs.Add($arg)
   }
   Add-SwitchArgument -Arguments $sharedArgs -Name "EmitSecrets" -Enabled ([bool]$EmitSecrets)
-  $sharedArgs.Add('-ProvisionPostgres:$false')
+  Add-SwitchArgument -Arguments $sharedArgs -Name "SkipPostgresPrompt" -Enabled $true
 
   Invoke-ChildScript `
     -StepName "Shared Azure resource provisioning" `
@@ -292,6 +341,21 @@ if (Get-YesNo "Run shared Azure resource provisioning (resource group, storage, 
 }
 else {
   Add-StepResult -Step "Shared Azure resource provisioning" -Status "Skipped"
+}
+
+if (Get-YesNo "Provision or reconcile Entra OIDC applications and update the env file?" $true) {
+  $entraArgs = [System.Collections.Generic.List[string]]::new()
+  foreach ($arg in $commonArgs) {
+    $entraArgs.Add($arg)
+  }
+
+  Invoke-ChildScript `
+    -StepName "Entra OIDC provisioning" `
+    -ScriptPath (Join-Path $PSScriptRoot "provision_entra_oidc.ps1") `
+    -Arguments $entraArgs.ToArray() | Out-Null
+}
+else {
+  Add-StepResult -Step "Entra OIDC provisioning" -Status "Skipped"
 }
 
 if (Get-YesNo "Run dedicated Postgres provisioning?" $false) {
@@ -374,6 +438,20 @@ if (Get-YesNo "Preview and optionally deploy Azure cost guardrails?" $false) {
 else {
   Add-StepResult -Step "Cost guardrails preview" -Status "Skipped"
   Add-StepResult -Step "Cost guardrails deployment" -Status "Skipped"
+}
+
+if ($envLabel -ieq ".env.web") {
+  if (Get-YesNo "Sync .env.web values to GitHub vars/secrets now?" $false) {
+    Invoke-ChildScript `
+      -StepName "GitHub vars/secrets sync" `
+      -ScriptPath (Join-Path $PSScriptRoot "sync-all-to-github.ps1") | Out-Null
+  }
+  else {
+    Add-StepResult -Step "GitHub vars/secrets sync" -Status "Skipped"
+  }
+}
+else {
+  Add-StepResult -Step "GitHub vars/secrets sync" -Status "Skipped" -Notes "Interactive sync only runs when the active env file is .env.web."
 }
 
 if (Get-YesNo "Run ACR pull validation after provisioning?" $true) {

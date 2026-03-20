@@ -113,7 +113,6 @@ export function AppHeader() {
                 <DropdownMenuItem onClick={auth.signOut}>Sign out</DropdownMenuItem>
               )}
               <DropdownMenuItem>Settings</DropdownMenuItem>
-              <DropdownMenuItem>API Keys</DropdownMenuItem>
               <DropdownMenuItem>Defaults</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

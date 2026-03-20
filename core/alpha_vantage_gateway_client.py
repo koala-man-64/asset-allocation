@@ -6,9 +6,11 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
+
+from core.api_gateway_auth import build_access_token_provider
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 600.0
@@ -104,6 +106,7 @@ class AlphaVantageGatewayClientConfig:
     base_url: str
     api_key: Optional[str]
     api_key_header: str
+    api_scope: Optional[str]
     timeout_seconds: float
     warmup_enabled: bool = _DEFAULT_API_WARMUP_ENABLED
     warmup_max_attempts: int = _DEFAULT_API_WARMUP_MAX_ATTEMPTS
@@ -130,10 +133,12 @@ class AlphaVantageGatewayClient:
         config: AlphaVantageGatewayClientConfig,
         *,
         http_client: Optional[httpx.Client] = None,
+        access_token_provider: Optional[Callable[[], str]] = None,
     ) -> None:
         self.config = config
         self._owns_client = http_client is None
         self._http = http_client or httpx.Client(timeout=httpx.Timeout(config.timeout_seconds), trust_env=False)
+        self._access_token_provider = access_token_provider
         self._warmup_lock = threading.Lock()
         self._warmup_attempted = False
         self._warmup_succeeded = not config.warmup_enabled
@@ -150,6 +155,7 @@ class AlphaVantageGatewayClient:
         api_key = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_KEY")) or _strip_or_none(
             os.environ.get("API_KEY")
         )
+        api_scope = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_SCOPE"))
         api_key_header = _FIXED_API_KEY_HEADER
 
         timeout_seconds = _env_float(
@@ -203,6 +209,7 @@ class AlphaVantageGatewayClient:
                 base_url=str(base_url).rstrip("/"),
                 api_key=api_key,
                 api_key_header=str(api_key_header),
+                api_scope=api_scope,
                 timeout_seconds=float(timeout_seconds),
                 warmup_enabled=True,
                 warmup_max_attempts=warmup_max_attempts,
@@ -230,7 +237,16 @@ class AlphaVantageGatewayClient:
 
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.config.api_key:
+        if self._access_token_provider is None and self.config.api_scope:
+            self._access_token_provider = build_access_token_provider(self.config.api_scope)
+        if self._access_token_provider is not None:
+            try:
+                headers["Authorization"] = f"Bearer {self._access_token_provider()}"
+            except Exception as exc:
+                raise AlphaVantageGatewayAuthError(
+                    "Failed to acquire bearer token for the Asset Allocation API gateway."
+                ) from exc
+        elif self.config.api_key:
             headers[str(self.config.api_key_header)] = str(self.config.api_key)
         caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
         caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))

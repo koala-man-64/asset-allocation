@@ -4,6 +4,9 @@ import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/ms
 
 import { setAccessTokenProvider } from '@/services/authTransport';
 
+const POST_LOGIN_PATH_STORAGE_KEY = 'asset-allocation.post-login-path';
+const DEFAULT_POST_LOGIN_PATH = '/system-status';
+
 type RuntimeConfig = {
   oidcClientId?: string;
   oidcAuthority?: string;
@@ -29,10 +32,53 @@ function parseScopes(raw: unknown): string[] {
 
 export interface AuthContextType {
   enabled: boolean;
+  ready: boolean;
   authenticated: boolean;
   userLabel: string | null;
-  signIn: () => void;
+  error: string | null;
+  signIn: (returnPath?: string) => void;
   signOut: () => void;
+}
+
+function isCallbackPath(pathname: string): boolean {
+  return pathname === '/auth/callback';
+}
+
+function resolveReturnPath(fallback?: string): string {
+  const trimmed = String(fallback ?? '').trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  if (typeof window === 'undefined') {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (!currentPath || isCallbackPath(window.location.pathname)) {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  return currentPath;
+}
+
+function storePostLoginRedirectPath(path: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(POST_LOGIN_PATH_STORAGE_KEY, resolveReturnPath(path));
+  } catch {
+    // Ignore sessionStorage failures and fall back to the default route after login.
+  }
+}
+
+export function consumePostLoginRedirectPath(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
+  try {
+    const stored = String(window.sessionStorage.getItem(POST_LOGIN_PATH_STORAGE_KEY) ?? '').trim();
+    window.sessionStorage.removeItem(POST_LOGIN_PATH_STORAGE_KEY);
+    return stored || DEFAULT_POST_LOGIN_PATH;
+  } catch {
+    return DEFAULT_POST_LOGIN_PATH;
+  }
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -46,10 +92,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     runtime.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY ?? ''
   ).trim();
   const oidcScopesRaw = runtime.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES;
-  const oidcRedirectUri = String(runtime.oidcRedirectUri ?? window.location.origin).trim();
+  const oidcRedirectUri = String(runtime.oidcRedirectUri ?? '').trim();
   const oidcScopes = useMemo(() => parseScopes(oidcScopesRaw), [oidcScopesRaw]);
 
-  const enabled = Boolean(oidcClientId && oidcAuthority);
+  const enabled = Boolean(oidcClientId && oidcAuthority && oidcRedirectUri);
 
   const msal = useMemo(() => {
     if (!enabled) return null;
@@ -58,7 +104,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clientId: oidcClientId,
         authority: oidcAuthority,
         redirectUri: oidcRedirectUri,
-        postLogoutRedirectUri: oidcRedirectUri
+        postLogoutRedirectUri: oidcRedirectUri,
+        navigateToLoginRequestUrl: false
       },
       cache: {
         cacheLocation: 'sessionStorage'
@@ -67,14 +114,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [enabled, oidcAuthority, oidcClientId, oidcRedirectUri]);
 
   const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!msal) {
       setAccount(null);
+      setError(null);
+      setReady(true);
       return;
     }
 
     let cancelled = false;
+    setReady(false);
+    setError(null);
 
     msal
       .handleRedirectPromise()
@@ -84,11 +137,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (chosen) {
           msal.setActiveAccount(chosen);
         }
-        if (!cancelled) setAccount(chosen);
+        if (!cancelled) {
+          setAccount(chosen);
+          setReady(true);
+        }
       })
       .catch((err) => {
         console.error('OIDC redirect handling failed', err);
-        if (!cancelled) setAccount(null);
+        if (!cancelled) {
+          setAccount(null);
+          setError('OIDC redirect handling failed.');
+          setReady(true);
+        }
       });
 
     return () => {
@@ -124,8 +184,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [msal, account, oidcScopes]);
 
-  const signIn = () => {
+  const signIn = (returnPath?: string) => {
     if (!msal) return;
+    storePostLoginRedirectPath(resolveReturnPath(returnPath));
     void msal.loginRedirect({ scopes: oidcScopes });
   };
 
@@ -140,8 +201,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         enabled,
+        ready,
         authenticated: Boolean(account),
         userLabel,
+        error,
         signIn,
         signOut
       }}

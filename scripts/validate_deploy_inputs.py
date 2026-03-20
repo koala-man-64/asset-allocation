@@ -128,8 +128,6 @@ def validate_log_analytics() -> None:
 
 
 def validate_auth_configuration() -> None:
-    api_key = optional_value("API_KEY")
-
     api_oidc_issuer = optional_value("API_OIDC_ISSUER")
     api_oidc_audience = optional_value("API_OIDC_AUDIENCE")
     api_oidc_jwks_url = optional_value("API_OIDC_JWKS_URL")
@@ -145,12 +143,14 @@ def validate_auth_configuration() -> None:
         )
     )
 
-    if api_oidc_inputs_present and not api_oidc_issuer:
-        fail("API_OIDC_ISSUER is required when API OIDC auth is configured.")
-    if api_oidc_inputs_present and not api_oidc_audience:
-        fail("API_OIDC_AUDIENCE is required when API OIDC auth is configured.")
+    if not api_oidc_inputs_present:
+        fail("Production deploy requires API OIDC configuration.")
+    if not api_oidc_issuer:
+        fail("API_OIDC_ISSUER is required for the production deploy workflow.")
+    if not api_oidc_audience:
+        fail("API_OIDC_AUDIENCE is required for the production deploy workflow.")
 
-    api_oidc_enabled = bool(api_oidc_issuer and api_oidc_audience)
+    api_oidc_enabled = True
 
     ui_oidc_authority = optional_value("UI_OIDC_AUTHORITY")
     ui_oidc_client_id = optional_value("UI_OIDC_CLIENT_ID")
@@ -165,13 +165,22 @@ def validate_auth_configuration() -> None:
         )
     )
 
-    if ui_oidc_inputs_present and not (ui_oidc_authority and ui_oidc_client_id):
+    if not ui_oidc_inputs_present:
+        fail("Production deploy requires UI OIDC configuration.")
+    if not (ui_oidc_authority and ui_oidc_client_id):
         fail("UI_OIDC_AUTHORITY and UI_OIDC_CLIENT_ID are required together.")
-    if ui_oidc_inputs_present and not api_oidc_enabled:
-        fail("UI OIDC configuration requires API OIDC auth to be configured.")
+    if not ui_oidc_scopes:
+        fail("UI_OIDC_SCOPES is required for the production deploy workflow.")
 
-    if not api_key and not api_oidc_enabled:
-        fail("Deploy validation requires API_KEY and/or API OIDC configuration.")
+    redirect = optional_value("UI_OIDC_REDIRECT_URI")
+    if not redirect:
+        fail("UI_OIDC_REDIRECT_URI is required when browser OIDC is configured.")
+    parsed = urlparse(redirect)
+    if parsed.scheme != "https" or not (parsed.hostname or "").strip():
+        fail("UI_OIDC_REDIRECT_URI must be an absolute https:// URL.")
+
+    if not optional_value("ASSET_ALLOCATION_API_SCOPE"):
+        fail("ASSET_ALLOCATION_API_SCOPE is required for bronze job managed-identity callers.")
 
 
 def main() -> int:

@@ -42,6 +42,7 @@ env:
   API_CONTAINER_APP_NAME: asset-allocation-api
   JOB_STARTUP_API_CONTAINER_APPS: asset-allocation-api
   ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
+  ASSET_ALLOCATION_API_SCOPE: ${{ vars.ASSET_ALLOCATION_API_SCOPE || ' ' }}
   AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME || 'assetallocstorage001' }}
   BACKFILL_START_DATE: ${{ vars.BACKFILL_START_DATE || '2016-01-01' }}
   SYSTEM_HEALTH_FRESHNESS_OVERRIDES_JSON: ' '
@@ -80,7 +81,6 @@ env:
   DEBUG_SYMBOLS: ' '
   LOG_LEVEL: INFO
   UI_API_BASE_URL: /api
-  ASSET_ALLOCATION_API_KEY_HEADER: X-API-Key
   RESOURCE_TAG_OWNER: rudy-prokes
   RESOURCE_TAG_COST_CENTER: aaa-ats
   RESOURCE_TAG_WORKLOAD: asset-allocation
@@ -150,7 +150,7 @@ jobs:
           UI_OIDC_AUTHORITY: ${{ vars.UI_OIDC_AUTHORITY }}
           UI_OIDC_SCOPES: ${{ vars.UI_OIDC_SCOPES }}
           UI_OIDC_REDIRECT_URI: ${{ vars.UI_OIDC_REDIRECT_URI }}
-          API_KEY: ${{ secrets.API_KEY }}
+          ASSET_ALLOCATION_API_SCOPE: ${{ env.ASSET_ALLOCATION_API_SCOPE }}
           SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID }}
           SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS }}
           SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES: ${{ env.SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES }}
@@ -646,7 +646,6 @@ jobs:
       - name: Deploy Unified App (API + UI Sidecar)
         if: env.FORCE_REDEPLOY == 'true' || steps.app_changes.outputs.api_app == 'true' || steps.app_changes.outputs.ui_app == 'true' || steps.api_app_check.outputs.app_exists == 'false'
         env:
-          API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
@@ -844,7 +843,6 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
@@ -951,7 +949,6 @@ jobs:
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
@@ -1163,7 +1160,6 @@ jobs:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
           ASSET_ALLOCATION_API_BASE_URL: ${{ vars.ASSET_ALLOCATION_API_BASE_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
           AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ACR_PULL_IDENTITY_RESOURCE_ID: ${{ env.ACR_PULL_IDENTITY_RESOURCE_ID }}

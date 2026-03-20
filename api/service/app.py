@@ -458,16 +458,14 @@ def create_app() -> FastAPI:
             "oidcAuthority": settings.ui_oidc_config.get("authority"),
             "oidcClientId": settings.ui_oidc_config.get("clientId"),
             "oidcScopes": settings.ui_oidc_config.get("scope") or settings.ui_oidc_config.get("scopes"),
-            "oidcRedirectUri": settings.ui_oidc_config.get("redirectUri") or "/oauth2-callback",
+            "oidcRedirectUri": settings.ui_oidc_config.get("redirectUri"),
             "oidcAudience": settings.oidc_audience,
             "oidcEnabled": settings.browser_oidc_enabled,
-            "apiKeyAuthConfigured": settings.api_key_auth_enabled,
             "authRequired": settings.auth_required,
         }
         logger.info(
-            "Serving /config.js: oidcEnabled=%s apiKeyAuthConfigured=%s authRequired=%s apiBaseUrl=%s",
+            "Serving /config.js: oidcEnabled=%s authRequired=%s apiBaseUrl=%s",
             cfg.get("oidcEnabled"),
-            cfg.get("apiKeyAuthConfigured"),
             cfg.get("authRequired"),
             cfg.get("apiBaseUrl"),
         )
