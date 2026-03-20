@@ -410,16 +410,11 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
   it('refreshes merged header coverage action with live metadata and updates zero counts', async () => {
     const user = userEvent.setup();
     const onRefresh = vi.fn().mockResolvedValue(undefined);
-    vi.mocked(DataService.getDomainMetadata).mockResolvedValue({
-      layer: 'bronze',
-      domain: 'market',
-      container: 'bronze',
-      type: 'delta',
-      computedAt: NOW,
-      metadataSource: 'artifact',
-      symbolCount: 0,
-      warnings: []
+    let resolveMetadata: ((value: DomainMetadata) => void) | null = null;
+    const metadataPromise = new Promise<DomainMetadata>((resolve) => {
+      resolveMetadata = resolve;
     });
+    vi.mocked(DataService.getDomainMetadata).mockReturnValue(metadataPromise);
 
     renderPanel({ onRefresh });
 
@@ -436,11 +431,26 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
         refresh: true
       });
     });
-    expect(
-      await screen.findAllByText('0 symbols', undefined, {
-        timeout: 3000
-      })
-    ).not.toHaveLength(0);
+
+    expect(await screen.findByTestId('domain-refresh-indicator-market')).toBeInTheDocument();
+
+    if (resolveMetadata) {
+      resolveMetadata({
+        layer: 'bronze',
+        domain: 'market',
+        container: 'bronze',
+        type: 'delta',
+        computedAt: NOW,
+        metadataSource: 'artifact',
+        symbolCount: 0,
+        warnings: []
+      });
+    }
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('domain-refresh-indicator-market')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('0 symbols')).toBeInTheDocument();
   });
 
   it('omits empty medallion layer columns', async () => {
