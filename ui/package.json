@@ -112,7 +112,7 @@
   "pnpm": {
     "overrides": {
       "vite": "7.3.1",
-      "flatted": "3.4.0",
+      "flatted": "3.4.2",
       "minimatch@^3.0.0": "3.1.4",
       "minimatch@^9.0.0": "9.0.7",
       "rollup@^4.0.0": "4.59.0",
