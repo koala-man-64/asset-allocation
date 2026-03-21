@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from core import core as mdc
+from core.datetime_utils import parse_utc_datetime, utc_isoformat
 
 
 _MANIFEST_VERSION = 1
@@ -34,30 +35,11 @@ def silver_manifest_consumption_enabled() -> bool:
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt.isoformat()
+    return utc_isoformat(dt)
 
 
 def _parse_iso(raw: Any) -> Optional[datetime]:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except Exception:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parse_utc_datetime(raw)
 
 
 def _run_id(prefix: str) -> str:

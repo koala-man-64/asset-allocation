@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from math import sqrt
-from typing import Any
+from typing import Any, NoReturn
 
 import pandas as pd
 
@@ -12,6 +12,7 @@ from core.postgres import connect, copy_rows
 from core.regime import build_regime_outputs, compute_curve_state, compute_trend_state
 from core.regime_repository import RegimeRepository
 from tasks.common import domain_artifacts
+from tasks.common.postgres_gold_sync import load_domain_sync_state
 from tasks.common.job_trigger import ensure_api_awake_from_env
 from tasks.common.system_health_markers import write_system_health_marker
 from tasks.common.watermarks import save_last_success, save_watermarks
@@ -124,15 +125,68 @@ def _summarize_market_series_coverage(frame: pd.DataFrame) -> str:
     return ", ".join(summary)
 
 
-def _validate_required_market_series(frame: pd.DataFrame) -> pd.DataFrame:
+def _fail_fast(message: str) -> NoReturn:
+    mdc.write_error(message)
+    raise ValueError(message)
+
+
+def _summarize_market_sync_state(dsn: str | None) -> str:
+    if not dsn:
+        return "market_sync_state=unknown"
+
+    try:
+        sync_state = load_domain_sync_state(dsn, domain="market")
+    except Exception as exc:
+        return f"market_sync_state=unavailable error={type(exc).__name__}: {exc}"
+
+    if not sync_state:
+        return "market_sync_state=empty"
+
+    success_buckets = 0
+    failed_buckets = 0
+    total_rows = 0
+    latest_synced_at: datetime | None = None
+
+    for state in sync_state.values():
+        status = str(state.get("status") or "").strip().lower()
+        if status == "success":
+            success_buckets += 1
+        else:
+            failed_buckets += 1
+
+        try:
+            total_rows += int(state.get("row_count") or 0)
+        except (TypeError, ValueError):
+            pass
+
+        synced_at = state.get("synced_at")
+        if isinstance(synced_at, datetime):
+            normalized = (
+                synced_at.replace(tzinfo=timezone.utc)
+                if synced_at.tzinfo is None
+                else synced_at.astimezone(timezone.utc)
+            )
+            if latest_synced_at is None or normalized > latest_synced_at:
+                latest_synced_at = normalized
+
+    latest_synced_at_iso = latest_synced_at.isoformat() if latest_synced_at is not None else "n/a"
+    return (
+        f"market_sync_state=buckets={len(sync_state)} success_buckets={success_buckets} "
+        f"failed_buckets={failed_buckets} total_rows={total_rows} "
+        f"latest_synced_at={latest_synced_at_iso}"
+    )
+
+
+def _validate_required_market_series(frame: pd.DataFrame, *, dsn: str | None = None) -> pd.DataFrame:
     present_symbols = {str(value).strip().upper() for value in frame["symbol"].dropna().tolist()}
     missing = [symbol for symbol in _REQUIRED_MARKET_SYMBOLS if symbol not in present_symbols]
     if missing:
         coverage = _summarize_market_series_coverage(frame)
-        raise ValueError(
-            "gold.market_data is missing required regime symbols "
-            f"{missing}. coverage={coverage}. "
-            "Check upstream bronze/silver/gold market jobs and market-data blacklist state."
+        sync_summary = _summarize_market_sync_state(dsn)
+        _fail_fast(
+            "Gold regime fast-fail: gold.market_data is missing required regime symbols "
+            f"{missing}. coverage={coverage}. {sync_summary}. "
+            "Upstream dependency gold-market-job has not populated the required Postgres-serving inputs."
         )
     return frame
 
@@ -149,10 +203,10 @@ def _assert_complete_regime_inputs(inputs: pd.DataFrame, *, market_series: pd.Da
             inputs_range = f"{parsed_dates.min().date().isoformat()}..{parsed_dates.max().date().isoformat()}"
 
     coverage = _summarize_market_series_coverage(market_series)
-    raise ValueError(
-        "gold regime inputs contain no complete SPY/^VIX/^VIX3M rows. "
+    _fail_fast(
+        "Gold regime fast-fail: gold regime inputs contain no complete SPY/^VIX/^VIX3M rows. "
         f"inputs_range={inputs_range}. coverage={coverage}. "
-        "Check upstream market jobs for missing or non-overlapping index history."
+        "Upstream dependency gold-market-job has not produced overlapping index history in Postgres."
     )
 
 
@@ -166,7 +220,7 @@ def _load_market_series(dsn: str) -> pd.DataFrame:
     with connect(dsn) as conn:
         frame = pd.read_sql_query(sql, conn)
     normalized = _normalize_market_series(frame)
-    return _validate_required_market_series(normalized)
+    return _validate_required_market_series(normalized, dsn=dsn)
 
 
 def _build_inputs_daily(market_series: pd.DataFrame, *, computed_at: datetime) -> pd.DataFrame:
@@ -330,12 +384,11 @@ def main() -> int:
         raise ValueError("AZURE_CONTAINER_GOLD is required for gold regime job.")
 
     computed_at = datetime.now(timezone.utc)
+    market_series = _load_market_series(dsn)
     repo = RegimeRepository(dsn)
     active_revisions = repo.list_active_regime_model_revisions()
     if not active_revisions:
         raise ValueError("No active regime model revisions found.")
-
-    market_series = _load_market_series(dsn)
     inputs = _build_inputs_daily(market_series, computed_at=computed_at)
     _assert_complete_regime_inputs(inputs, market_series=market_series)
 

@@ -3,6 +3,65 @@ from datetime import datetime, timezone
 from tasks.common import watermarks
 
 
+def test_build_blob_signature_normalizes_datetime_last_modified():
+    blob = {
+        "etag": "etag-1",
+        "last_modified": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
+
+    assert watermarks.build_blob_signature(blob) == {
+        "etag": "etag-1",
+        "last_modified": "2026-01-01T00:00:00+00:00",
+    }
+
+
+def test_build_blob_signature_normalizes_iso_string_last_modified():
+    blob = {
+        "etag": "etag-1",
+        "last_modified": "2026-01-01T00:00:00Z",
+    }
+
+    assert watermarks.build_blob_signature(blob) == {
+        "etag": "etag-1",
+        "last_modified": "2026-01-01T00:00:00+00:00",
+    }
+
+
+def test_build_blob_signature_handles_missing_last_modified():
+    blob = {"etag": "etag-1", "last_modified": None}
+
+    assert watermarks.build_blob_signature(blob) == {
+        "etag": "etag-1",
+        "last_modified": None,
+    }
+
+
+def test_blob_last_modified_utc_parses_iso_string():
+    parsed = watermarks.blob_last_modified_utc({"last_modified": "2026-01-01T00:00:00Z"})
+
+    assert parsed == datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+
+def test_check_blob_unchanged_accepts_string_last_modified():
+    blob = {
+        "name": "market-data/AAPL.csv",
+        "etag": "etag-1",
+        "last_modified": "2026-01-01T00:00:00+00:00",
+    }
+    prior = {
+        "etag": "etag-1",
+        "last_modified": "2026-01-01T00:00:00+00:00",
+    }
+
+    unchanged, signature = watermarks.check_blob_unchanged(blob, prior)
+
+    assert unchanged is True
+    assert signature == {
+        "etag": "etag-1",
+        "last_modified": "2026-01-01T00:00:00+00:00",
+    }
+
+
 def test_signature_matches_prefers_etag_when_present():
     prior = {"etag": "etag-1", "last_modified": "2026-01-01T00:00:00+00:00"}
     current = {"etag": "etag-2", "last_modified": "2026-01-01T00:00:00+00:00"}

@@ -12,19 +12,16 @@ from typing import Any
 import pandas as pd
 
 from core import core as mdc
+from core.datetime_utils import utc_isoformat
 
 logger = logging.getLogger(__name__)
 
 _REMOTE_ROOT = "backtests"
 
 
-def _utc_iso(value: datetime | None = None) -> str:
-    current = value or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    else:
-        current = current.astimezone(timezone.utc)
-    return current.isoformat()
+def _utc_iso(value: Any | None = None) -> str | None:
+    current = datetime.now(timezone.utc) if value is None else value
+    return utc_isoformat(current)
 
 
 def _common_storage_available() -> bool:
@@ -162,4 +159,3 @@ def write_manifest(run_id: str) -> str:
         "artifacts": list_artifacts(run_id),
     }
     return write_json_artifact(run_id, "manifest.json", payload)
-

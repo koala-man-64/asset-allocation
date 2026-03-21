@@ -51,6 +51,31 @@ def test_silver_processing(unique_ticker):
         assert df_saved.iloc[0]["close"] == 102
 
 
+def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch):
+    blob_name = "market-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": "2026-03-04T01:00:00Z",
+    }
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(silver.mdc, "write_line", lambda *_args, **_kwargs: None)
+
+    status = silver.process_alpha26_bucket_blob(
+        blob,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert status == "ok"
+    assert watermarks[blob_name]["etag"] == "etag-a"
+    assert watermarks[blob_name]["last_modified"] == "2026-03-04T01:00:00+00:00"
+
+
 def test_silver_processing_accepts_alpha_vantage_timestamp(unique_ticker):
     symbol = unique_ticker
     blob_name = f"market-data/{symbol}.csv"

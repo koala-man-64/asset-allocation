@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from core import core as mdc
+from core.datetime_utils import parse_utc_datetime, utc_isoformat
 
 
 def _is_enabled() -> bool:
@@ -29,43 +30,21 @@ def _run_checkpoint_path(key: str) -> str:
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
-    if not dt:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc).isoformat()
-    return dt.astimezone(timezone.utc).isoformat()
+    return utc_isoformat(dt)
 
 
 def _parse_iso(raw: Any) -> Optional[datetime]:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except Exception:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parse_utc_datetime(raw)
 
 
 def blob_last_modified_utc(blob: Dict[str, Any]) -> Optional[datetime]:
-    raw = blob.get("last_modified")
-    if isinstance(raw, datetime):
-        if raw.tzinfo is None:
-            return raw.replace(tzinfo=timezone.utc)
-        return raw.astimezone(timezone.utc)
-    return _parse_iso(raw)
+    return parse_utc_datetime(blob.get("last_modified"))
 
 
 def build_blob_signature(blob: Dict[str, Any]) -> Dict[str, Optional[str]]:
     return {
         "etag": blob.get("etag"),
-        "last_modified": _iso(blob.get("last_modified")),
+        "last_modified": _iso(blob_last_modified_utc(blob)),
     }
 
 

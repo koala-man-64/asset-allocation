@@ -33,6 +33,31 @@ def test_process_blob_skips_unchanged_without_loading_source_or_history(monkeypa
     assert status == "skipped_unchanged"
     assert calls == {"read_raw_bytes": 0, "load_delta": 0, "get_delta_schema_columns": 0}
 
+
+def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch):
+    blob_name = "price-target-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": "2026-03-04T01:00:00Z",
+    }
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: pd.DataFrame())
+
+    status = silver.process_alpha26_bucket_blob(
+        blob,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert status == "ok"
+    assert watermarks[blob_name]["etag"] == "etag-a"
+    assert watermarks[blob_name]["last_modified"] == "2026-03-04T01:00:00+00:00"
+
+
 def test_process_blob_applies_backfill_start_cutoff(monkeypatch):
     blob_name = "price-target-data/AAPL.parquet"
     blob = {"name": blob_name}

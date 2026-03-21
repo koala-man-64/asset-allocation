@@ -227,6 +227,33 @@ def test_process_alpha26_bucket_blob_processes_valuation_rows_into_valuation_buc
     assert blob_name in watermarks
 
 
+def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch) -> None:
+    blob_name = "finance-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": "2026-03-04T01:00:00Z",
+    }
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: pd.DataFrame())
+
+    results = silver.process_alpha26_bucket_blob(
+        blob,
+        desired_end=pd.Timestamp("2026-03-04"),
+        backfill_start=None,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "skipped"
+    assert watermarks[blob_name]["etag"] == "etag-a"
+    assert watermarks[blob_name]["last_modified"] == "2026-03-04T01:00:00+00:00"
+
+
 def test_silver_finance_main_parallel_aggregates_failures_and_updates_watermarks(monkeypatch):
     blobs = [
         {

@@ -37,6 +37,30 @@ def test_process_file_success():
         assert "TEST" in df_saved["symbol"].values
 
 
+def test_process_alpha26_bucket_blob_accepts_string_last_modified(monkeypatch):
+    blob_name = "earnings-data/buckets/A.parquet"
+    blob = {
+        "name": blob_name,
+        "etag": "etag-a",
+        "last_modified": "2026-03-04T01:00:00Z",
+    }
+    watermarks: dict[str, dict[str, str]] = {}
+
+    monkeypatch.setattr(silver.mdc, "read_raw_bytes", lambda *_args, **_kwargs: b"ignored")
+    monkeypatch.setattr(silver.pd, "read_parquet", lambda *_args, **_kwargs: pd.DataFrame())
+
+    status = silver.process_alpha26_bucket_blob(
+        blob,
+        watermarks=watermarks,
+        persist=False,
+        alpha26_bucket_frames={},
+    )
+
+    assert status == "ok"
+    assert watermarks[blob_name]["etag"] == "etag-a"
+    assert watermarks[blob_name]["last_modified"] == "2026-03-04T01:00:00+00:00"
+
+
 def test_process_file_bad_json():
     blob_name = "earnings-data/BAD.json"
     with patch("core.core.read_raw_bytes", return_value=b"bad json"):

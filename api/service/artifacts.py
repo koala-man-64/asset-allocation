@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from core.blob_storage import BlobStorageClient
+from core.datetime_utils import utc_isoformat
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ def list_remote_artifacts(*, container: str, prefix: str) -> List[ArtifactInfo]:
             ArtifactInfo(
                 name=rel,
                 size_bytes=int(blob.get("size") or 0),
-                last_modified=blob.get("last_modified").isoformat() if blob.get("last_modified") else None,
+                last_modified=utc_isoformat(blob.get("last_modified")),
             )
         )
     infos.sort(key=lambda item: item.last_modified or "", reverse=True)

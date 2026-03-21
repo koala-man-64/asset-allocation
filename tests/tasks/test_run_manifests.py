@@ -38,6 +38,40 @@ def test_create_bronze_finance_manifest_writes_manifest_and_latest(monkeypatch):
     assert saved[latest_path]["runId"] == run_id
 
 
+def test_create_bronze_finance_manifest_normalizes_string_last_modified(monkeypatch):
+    saved: dict[str, dict] = {}
+
+    monkeypatch.setattr(run_manifests.mdc, "common_storage_client", object())
+    monkeypatch.setattr(
+        run_manifests.mdc,
+        "save_common_json_content",
+        lambda payload, path: saved.setdefault(path, payload),
+    )
+
+    out = run_manifests.create_bronze_finance_manifest(
+        producer_job_name="bronze-finance-job",
+        listed_blobs=[
+            {
+                "name": "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
+                "etag": "etag-a",
+                "last_modified": "2026-02-26T16:00:00Z",
+                "size": 42,
+            }
+        ],
+    )
+
+    assert out is not None
+    manifest_path = str(out["manifestPath"])
+    assert saved[manifest_path]["blobs"] == [
+        {
+            "name": "finance-data/Valuation/AAPL_quarterly_valuation_measures.json",
+            "etag": "etag-a",
+            "last_modified": "2026-02-26T16:00:00+00:00",
+            "size": 42,
+        }
+    ]
+
+
 def test_load_latest_bronze_finance_manifest_resolves_pointer(monkeypatch):
     monkeypatch.setattr(run_manifests.mdc, "common_storage_client", object())
 
