@@ -3,6 +3,7 @@ import type { AccountInfo, AuthenticationResult } from '@azure/msal-browser';
 import { InteractionRequiredAuthError, PublicClientApplication } from '@azure/msal-browser';
 
 import { config } from '@/config';
+import { config } from '@/config';
 import { setAccessTokenProvider } from '@/services/authTransport';
 
 const POST_LOGIN_PATH_STORAGE_KEY = 'asset-allocation.post-login-path';
@@ -83,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clientId: oidcClientId,
         authority: oidcAuthority,
         redirectUri: oidcRedirectUri,
+        postLogoutRedirectUri: oidcRedirectUri
         postLogoutRedirectUri: oidcRedirectUri
       },
       cache: {

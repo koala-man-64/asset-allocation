@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '@/hooks/useDataQueries';
 import {

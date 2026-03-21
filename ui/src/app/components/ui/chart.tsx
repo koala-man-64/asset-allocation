@@ -170,25 +170,20 @@ function ChartTooltipContent({
     >
       {!nestLabel ? tooltipLabel : null}
       <div className="grid gap-1.5">
-        {payload.map((item: TooltipPayloadEntry<ChartTooltipValue, ChartTooltipName>, index: number) => {
-          const key = `${nameKey || item.name || item.dataKey || 'value'}`;
-          const itemConfig = getPayloadConfigFromPayload(config, item, key);
-          const payloadFill =
-            typeof item.payload === 'object' && item.payload !== null
-              ? (item.payload as { fill?: string }).fill
-              : undefined;
-          const indicatorColor = color || payloadFill || item.color;
+        {payload.map((item, index) => {
+          const itemConfig = getPayloadConfigFromPayload(config, item, `${nameKey || item.name || item.dataKey || 'value'}`);
+          const indicatorColor = color || item.payload.fill || item.color;
 
           return (
             <div
-              key={String(item.dataKey ?? item.name ?? index)}
+              key={item.dataKey}
               className={cn(
                 '[&>svg]:text-muted-foreground flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5',
                 indicator === 'dot' && 'items-center'
               )}
             >
               {formatter && item?.value !== undefined && item.name ? (
-                formatter(item.value, item.name, item, index, payload)
+                formatter(item.value, item.name, item, index, item.payload)
               ) : (
                 <>
                   {itemConfig?.icon ? (
@@ -227,11 +222,9 @@ function ChartTooltipContent({
                         {itemConfig?.label || item.name}
                       </span>
                     </div>
-                    {item.value !== undefined && item.value !== null && (
+                    {item.value && (
                       <span className="text-foreground font-mono font-medium tabular-nums">
-                        {Array.isArray(item.value)
-                          ? item.value.join(', ')
-                          : item.value.toLocaleString()}
+                        {item.value.toLocaleString()}
                       </span>
                     )}
                   </div>
