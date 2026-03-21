@@ -28,6 +28,8 @@ from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION
 logger = logging.getLogger("asset_allocation.monitoring.system_health")
 DEFAULT_ARM_API_VERSION = ArmConfig(subscription_id="", resource_group="").api_version
 DEFAULT_SYSTEM_HEALTH_MARKERS_PREFIX = "system/health_markers"
+DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS = 5.0
+DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB = 3
 
 
 def _utc_now() -> datetime:
@@ -87,6 +89,44 @@ def _require_float(name: str, *, min_value: float = 0.1, max_value: float = 120.
     raw = _require_env(name)
     try:
         value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid float for {name}={raw!r}") from exc
+    if value < min_value or value > max_value:
+        raise ValueError(f"{name} must be in [{min_value}, {max_value}] (got {value}).")
+    return value
+
+
+def _env_int_or_default(
+    name: str,
+    default: int,
+    *,
+    min_value: int = 1,
+    max_value: int = 365 * 24 * 3600,
+) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid int for {name}={raw!r}") from exc
+    if value < min_value or value > max_value:
+        raise ValueError(f"{name} must be in [{min_value}, {max_value}] (got {value}).")
+    return value
+
+
+def _env_float_or_default(
+    name: str,
+    default: float,
+    *,
+    min_value: float = 0.1,
+    max_value: float = 120.0,
+) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
     except ValueError as exc:
         raise ValueError(f"Invalid float for {name}={raw!r}") from exc
     if value < min_value or value > max_value:
@@ -819,7 +859,10 @@ def _load_job_schedule_metadata(
         return {}
 
     api_version = _env_or_default("SYSTEM_HEALTH_ARM_API_VERSION", DEFAULT_ARM_API_VERSION)
-    timeout_raw = _env_or_default("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "5")
+    timeout_raw = _env_or_default(
+        "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS",
+        str(DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS),
+    )
     try:
         timeout_seconds = float(timeout_raw)
     except Exception:
@@ -1662,8 +1705,11 @@ def collect_system_health_snapshot(
     if arm_enabled:
         try:
             api_version = _env_or_default("SYSTEM_HEALTH_ARM_API_VERSION", DEFAULT_ARM_API_VERSION)
-            timeout_seconds = _require_float(
-                "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", min_value=0.5, max_value=30.0
+            timeout_seconds = _env_float_or_default(
+                "SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS",
+                DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS,
+                min_value=0.5,
+                max_value=30.0,
             )
             resource_health_enabled = True
             resource_health_api_version = _env_or_default(
@@ -1855,8 +1901,11 @@ def collect_system_health_snapshot(
 
                     if job_names:
                         logger.info("Collecting Azure job health: count=%s", len(job_names))
-                        max_executions_per_job = _require_int(
-                            "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", min_value=1, max_value=25
+                        max_executions_per_job = _env_int_or_default(
+                            "SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB",
+                            DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB,
+                            min_value=1,
+                            max_value=25,
                         )
                         job_resources, runs = collect_jobs_and_executions(
                             arm,

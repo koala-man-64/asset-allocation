@@ -114,6 +114,8 @@ def validate_log_level() -> None:
 
 def validate_log_analytics() -> None:
     workspace_id = optional_value("SYSTEM_HEALTH_LOG_ANALYTICS_WORKSPACE_ID")
+    parse_float("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", default=5.0, min_value=0.5, max_value=30.0)
+    parse_int("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", default=3, min_value=1, max_value=25)
     parse_float("SYSTEM_HEALTH_LOG_ANALYTICS_TIMEOUT_SECONDS", default=5.0, min_value=0.1, max_value=300.0)
     parse_int("SYSTEM_HEALTH_LOG_ANALYTICS_TIMESPAN_MINUTES", default=15, min_value=1, max_value=1440)
     parse_json_array("SYSTEM_HEALTH_LOG_ANALYTICS_QUERIES_JSON")

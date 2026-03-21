@@ -540,6 +540,101 @@ def test_system_health_healthy_when_latest_job_execution_succeeds(monkeypatch: p
     assert not any(alert["title"] == "Job execution failed" for alert in payload["alerts"])
 
 
+def test_system_health_defaults_blank_arm_timeout_and_job_execution_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_RESOURCE_GROUP", "rg")
+    monkeypatch.delenv("SYSTEM_HEALTH_ARM_CONTAINERAPPS", raising=False)
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_JOBS", "myjob")
+    monkeypatch.setenv("SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS", "")
+    monkeypatch.setenv("SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB", "")
+
+    monkeypatch.setattr(system_health, "_default_layer_specs", lambda: [])
+
+    now = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    captured_cfg: Dict[str, Any] = {}
+    job_url = "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob"
+    responses: Dict[str, Dict[str, Any]] = {
+        job_url: {
+            "id": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/myjob",
+            "systemData": {"lastModifiedAt": "2024-01-05T00:00:10Z"},
+            "properties": {"provisioningState": "Succeeded"},
+        },
+        f"{job_url}/executions": {
+            "value": [
+                {
+                    "name": "myjob-exec-1",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-05T00:00:00Z",
+                        "endTime": "2024-01-05T00:00:05Z",
+                    },
+                },
+                {
+                    "name": "myjob-exec-2",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-04T00:00:00Z",
+                        "endTime": "2024-01-04T00:00:05Z",
+                    },
+                },
+                {
+                    "name": "myjob-exec-3",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-03T00:00:00Z",
+                        "endTime": "2024-01-03T00:00:05Z",
+                    },
+                },
+                {
+                    "name": "myjob-exec-4",
+                    "properties": {
+                        "status": "Succeeded",
+                        "startTime": "2024-01-02T00:00:00Z",
+                        "endTime": "2024-01-02T00:00:05Z",
+                    },
+                },
+            ]
+        },
+    }
+
+    class FakeAzureArmClient:
+        def __init__(self, cfg: Any) -> None:
+            captured_cfg["timeout_seconds"] = cfg.timeout_seconds
+            self._cfg = cfg
+
+        def __enter__(self) -> "FakeAzureArmClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+            return None
+
+        def resource_url(self, *, provider: str, resource_type: str, name: str) -> str:
+            sub = self._cfg.subscription_id
+            rg = self._cfg.resource_group
+            return (
+                f"https://management.azure.com/subscriptions/{sub}"
+                f"/resourceGroups/{rg}"
+                f"/providers/{provider}/{resource_type}/{name}"
+            )
+
+        def get_json(self, url: str, *, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            return responses[url]
+
+    monkeypatch.setattr(system_health, "AzureArmClient", FakeAzureArmClient)
+
+    payload = system_health.collect_system_health_snapshot(now=now, include_resource_ids=False)
+    assert captured_cfg["timeout_seconds"] == pytest.approx(
+        system_health.DEFAULT_SYSTEM_HEALTH_ARM_TIMEOUT_SECONDS
+    )
+    assert payload["overall"] == "healthy"
+    assert len(payload["recentJobs"]) == system_health.DEFAULT_SYSTEM_HEALTH_JOB_EXECUTIONS_PER_JOB
+    assert payload["recentJobs"][0]["status"] == "success"
+    assert not any(alert["title"] == "Azure monitoring unavailable" for alert in payload["alerts"])
+
+
 def test_system_health_critical_on_job_failure_reason_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_HEALTH_RUN_IN_TEST", "true")
     monkeypatch.setenv("SYSTEM_HEALTH_ARM_SUBSCRIPTION_ID", "sub")
