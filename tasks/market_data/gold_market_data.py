@@ -112,8 +112,8 @@ def _snake_case_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     names = [_to_snake_case(col) for col in out.columns]
 
-    seen: Dict[str, int] = {}
-    unique: List[str] = []
+    seen: dict[str, int] = {}
+    unique: list[str] = []
     for name in names:
         count = seen.get(name, 0) + 1
         seen[name] = count
@@ -831,6 +831,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from core import core as mdc
     from tasks.common.job_entrypoint import run_logged_job
     from tasks.common.job_trigger import ensure_api_awake_from_env
     from tasks.common.system_health_markers import write_system_health_marker
