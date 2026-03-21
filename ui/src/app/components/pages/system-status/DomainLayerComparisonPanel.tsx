@@ -70,6 +70,7 @@ import {
   hasActiveJobRunningState,
   normalizeAzureJobName,
   normalizeAzurePortalUrl,
+  resolveManagedJobName,
   isSuspendedJobRunningState,
   toJobStatusLabel
 } from './SystemStatusHelpers';
@@ -141,18 +142,6 @@ function getPurgeDeletedCount(result: unknown): number {
   }
   const totalDeleted = (result as { totalDeleted?: unknown }).totalDeleted;
   return typeof totalDeleted === 'number' && Number.isFinite(totalDeleted) ? totalDeleted : 0;
-}
-
-function extractAzureJobName(jobUrl?: string | null): string | null {
-  const normalized = normalizeAzurePortalUrl(jobUrl);
-  if (!normalized) return null;
-  const match = normalized.match(/\/jobs\/([^/?#]+)/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
 }
 
 function toLayerKey(value: string): LayerKey | null {
@@ -568,8 +557,12 @@ export function DomainLayerComparisonPanel({
       const layer = layersByKey.get(layerColumn.key);
 
       for (const domain of layer?.domains || []) {
-        const configuredJobName =
-          String(domain.jobName || '').trim() || extractAzureJobName(domain.jobUrl) || '';
+        const configuredJobName = resolveManagedJobName({
+          jobName: domain.jobName,
+          jobUrl: domain.jobUrl,
+          layerName: layer?.name,
+          domainName: domain?.name
+        });
         const normalizedJobName = normalizeAzureJobName(configuredJobName);
         if (normalizedJobName) {
           jobNames.add(normalizedJobName);
@@ -610,10 +603,12 @@ export function DomainLayerComparisonPanel({
             .trim()
             .toLowerCase() || 'pending';
 
-        const jobName =
-          String(domainConfig?.jobName || '').trim() ||
-          extractAzureJobName(domainConfig?.jobUrl) ||
-          '';
+        const jobName = resolveManagedJobName({
+          jobName: domainConfig?.jobName,
+          jobUrl: domainConfig?.jobUrl,
+          layerName: layerColumn.label,
+          domainName: row.key
+        });
         const jobKey = normalizeAzureJobName(jobName);
         const run = jobKey ? jobIndex.get(jobKey) : null;
         const runningState = jobKey ? jobStates?.[jobKey] : undefined;
@@ -1536,10 +1531,12 @@ export function DomainLayerComparisonPanel({
                         ? domainConfigByLayer.get(layerColumn.key)?.get(row.key)
                         : undefined;
                       const baseFolderUrl = normalizeAzurePortalUrl(domainConfig?.portalUrl) || '';
-                      const jobName =
-                        String(domainConfig?.jobName || '').trim() ||
-                        extractAzureJobName(domainConfig?.jobUrl) ||
-                        '';
+                      const jobName = resolveManagedJobName({
+                        jobName: domainConfig?.jobName,
+                        jobUrl: domainConfig?.jobUrl,
+                        layerName: layerColumn.label,
+                        domainName: row.key
+                      });
                       const jobKey = normalizeAzureJobName(jobName);
                       const run = jobKey ? jobIndex.get(jobKey) : null;
                       const durationSummary = jobKey ? jobDurationSummaryIndex.get(jobKey) : null;

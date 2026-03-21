@@ -6,6 +6,7 @@ import {
   normalizeJobStatus,
   normalizeAzureJobName,
   normalizeAzurePortalUrl,
+  resolveManagedJobName,
   toJobStatusLabel
 } from './SystemStatusHelpers';
 import { StatusTypos } from './StatusTokens';
@@ -36,18 +37,6 @@ const runStartEpoch = (raw?: string | null): number => {
   const value = raw ? Date.parse(raw) : NaN;
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 };
-
-function extractAzureJobName(jobUrl?: string | null): string | null {
-  const normalized = normalizeAzurePortalUrl(jobUrl);
-  if (!normalized) return null;
-  const match = normalized.match(/\/jobs\/([^/?#]+)/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
 
 interface StatusOverviewProps {
   overall: string;
@@ -179,9 +168,15 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
       let pending = 0;
 
       for (const domain of layer.domains || []) {
-        if (!domain?.jobName) continue;
+        const jobName = resolveManagedJobName({
+          jobName: domain?.jobName,
+          jobUrl: domain?.jobUrl,
+          layerName: layer.name,
+          domainName: domain?.name
+        });
+        if (!jobName) continue;
         total += 1;
-        const key = normalizeAzureJobName(domain.jobName);
+        const key = normalizeAzureJobName(jobName);
         const job = key ? jobIndex.get(key) : undefined;
         if (!job) {
           pending += 1;
@@ -473,10 +468,12 @@ export function StatusOverview({ overall, dataLayers, recentJobs }: StatusOvervi
                           <TableCell className={`${matrixCell} text-left`}>
                             {domain ? (
                               (() => {
-                                const jobName =
-                                  String(domain.jobName || '').trim() ||
-                                  extractAzureJobName(domain.jobUrl) ||
-                                  '';
+                                const jobName = resolveManagedJobName({
+                                  jobName: domain.jobName,
+                                  jobUrl: domain.jobUrl,
+                                  layerName: layer.name,
+                                  domainName: domain.name
+                                });
                                 const jobKey = normalizeAzureJobName(jobName);
                                 const run = jobKey ? jobIndex.get(jobKey) : null;
                                 const updatedAgo = domain.lastUpdated

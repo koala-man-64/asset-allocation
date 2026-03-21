@@ -32,7 +32,8 @@ import {
   getStatusBadge,
   getStatusIcon,
   normalizeAzureJobName,
-  normalizeAzurePortalUrl
+  normalizeAzurePortalUrl,
+  resolveManagedJobName
 } from './SystemStatusHelpers';
 import { getDomainOrderIndex } from './domainOrdering';
 import { getLogStreamFeedback } from './logStreamFeedback';
@@ -227,7 +228,12 @@ export function ScheduledJobMonitor({
       for (const domain of layer.domains || []) {
         const domainName = String(domain.name || '').trim();
         if (!domainName) continue;
-        const jobName = String(domain.jobName || '').trim();
+        const jobName = resolveManagedJobName({
+          jobName: domain.jobName,
+          jobUrl: domain.jobUrl,
+          layerName: layer.name,
+          domainName
+        });
         if (!jobName) continue;
 
         const jobKey = normalizeAzureJobName(jobName);

@@ -26,7 +26,11 @@ const JobLogStreamPanel = lazy(() =>
   import('./system-status/JobLogStreamPanel').then((m) => ({ default: m.JobLogStreamPanel }))
 );
 
-import { buildLatestJobRunIndex, normalizeAzureJobName } from './system-status/SystemStatusHelpers';
+import {
+  buildLatestJobRunIndex,
+  normalizeAzureJobName,
+  resolveManagedJobName
+} from './system-status/SystemStatusHelpers';
 import { effectiveJobStatus, formatTimeAgo } from './system-status/SystemStatusHelpers';
 import { normalizeDomainKey } from './system-status/SystemPurgeControls';
 
@@ -99,8 +103,12 @@ export function SystemStatusPage() {
 
     for (const layer of displayDataLayers || []) {
       for (const domain of layer.domains || []) {
-        const rawJobName =
-          String(domain.jobName || '').trim() || normalizeAzureJobName(domain.jobUrl) || '';
+        const rawJobName = resolveManagedJobName({
+          jobName: domain.jobName,
+          jobUrl: domain.jobUrl,
+          layerName: layer.name,
+          domainName: domain.name
+        });
         if (!rawJobName) continue;
         const key = normalizeAzureJobName(rawJobName) || rawJobName.toLowerCase();
         if (items.has(key)) continue;

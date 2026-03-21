@@ -6,7 +6,7 @@ import { backtestApi } from '@/services/backtestApi';
 import { DataLayer } from '@/types/strategy';
 import {
   normalizeAzureJobName,
-  normalizeAzurePortalUrl
+  resolveManagedJobName
 } from '@/app/components/pages/system-status/SystemStatusHelpers';
 
 type LayerAction = 'stop' | 'resume' | 'trigger';
@@ -25,21 +25,12 @@ export function useLayerJobControl() {
   const getJobNames = (layer: DataLayer): string[] => {
     const jobNames = new Set<string>();
     for (const domain of layer.domains || []) {
-      let jobName = String(domain.jobName || '').trim();
-
-      if (!jobName && domain.jobUrl) {
-        const normalized = normalizeAzurePortalUrl(domain.jobUrl);
-        if (normalized) {
-          const match = normalized.match(/\/jobs\/([^/?#]+)/);
-          if (match) {
-            try {
-              jobName = decodeURIComponent(match[1]);
-            } catch {
-              jobName = match[1];
-            }
-          }
-        }
-      }
+      const jobName = resolveManagedJobName({
+        jobName: domain.jobName,
+        jobUrl: domain.jobUrl,
+        layerName: layer.name,
+        domainName: domain.name
+      });
 
       if (jobName) {
         const normalizedKey = normalizeAzureJobName(jobName);

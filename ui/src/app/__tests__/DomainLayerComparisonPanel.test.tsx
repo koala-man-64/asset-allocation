@@ -517,4 +517,49 @@ describe('DomainLayerComparisonPanel refresh menu', () => {
       ['systemHealth']
     ]);
   });
+
+  it('derives the managed gold regime job name when the payload omits it', async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      dataLayers: [
+        {
+          name: 'Gold',
+          description: 'Feature store',
+          status: 'healthy',
+          lastUpdated: NOW,
+          refreshFrequency: 'Daily at 9:00 PM UTC',
+          domains: [
+            {
+              name: 'regime',
+              type: 'delta',
+              path: 'regime/',
+              lastUpdated: NOW,
+              status: 'healthy',
+              frequency: 'Daily at 9:00 PM UTC',
+              cron: '0 21 * * *'
+            }
+          ]
+        }
+      ],
+      recentJobs: []
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Expand regime details' }));
+
+    const runButton = await screen.findByRole('button', { name: 'Run' });
+    await waitFor(() => {
+      expect(runButton).toBeEnabled();
+    });
+    expect(screen.getAllByText('NO RUN').length).toBeGreaterThan(0);
+
+    await user.click(runButton);
+
+    await waitFor(() => {
+      expect(triggerJobMock).toHaveBeenCalledWith('gold-regime-job', [
+        ['systemStatusView'],
+        ['systemHealth']
+      ]);
+    });
+  });
 });

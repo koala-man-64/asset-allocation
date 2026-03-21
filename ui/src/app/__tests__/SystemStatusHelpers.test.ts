@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   effectiveJobStatus,
   hasActiveJobRunningState,
+  normalizeJobStatus,
   isSuspendedJobRunningState
 } from '@/app/components/pages/system-status/SystemStatusHelpers';
 
@@ -18,5 +19,11 @@ describe('SystemStatusHelpers', () => {
   it('shares running-state detection across helpers', () => {
     expect(hasActiveJobRunningState('queued')).toBe(true);
     expect(isSuspendedJobRunningState('Suspended')).toBe(true);
+  });
+
+  it('normalizes spaced and hyphenated Azure status variants', () => {
+    expect(hasActiveJobRunningState('In Progress')).toBe(true);
+    expect(normalizeJobStatus('Succeeded With Warnings')).toBe('warning');
+    expect(effectiveJobStatus('In-Progress', null)).toBe('running');
   });
 });

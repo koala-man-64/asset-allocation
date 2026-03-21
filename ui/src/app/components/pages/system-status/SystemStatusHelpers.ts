@@ -39,6 +39,12 @@ const runStartEpoch = (raw?: string | null): number => {
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 };
 
+const normalizeJobStateToken = (value?: string | null): string =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
 /**
  * Returns a configuration object (color, icon) for a given status.
  * Uses "Industrial Utility" tokens.
@@ -277,6 +283,31 @@ export const normalizeAzurePortalUrl = (value?: string | null) => {
   return `https://portal.azure.com/#resource${resourceId}`;
 };
 
+const normalizeManagedJobSegment = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+export const extractAzureJobName = (value?: string | null) => {
+  const normalized = normalizeAzurePortalUrl(value);
+  if (!normalized) {
+    return '';
+  }
+
+  const match = normalized.match(/\/jobs\/([^/?#]+)/);
+  if (!match) {
+    return '';
+  }
+
+  try {
+    return decodeURIComponent(match[1]).trim();
+  } catch {
+    return String(match[1] || '').trim();
+  }
+};
+
 export const normalizeAzureJobName = (value?: string | null) => {
   if (!value) {
     return '';
@@ -299,6 +330,39 @@ export const normalizeAzureJobName = (value?: string | null) => {
   return trimmed.toLowerCase().replace(/_/g, '-');
 };
 
+export const deriveManagedJobName = (layerName?: string | null, domainName?: string | null) => {
+  const normalizedLayer = normalizeManagedJobSegment(layerName);
+  const normalizedDomain = normalizeManagedJobSegment(domainName);
+  if (!normalizedLayer || !normalizedDomain || normalizedLayer === 'platinum') {
+    return '';
+  }
+  return `${normalizedLayer}-${normalizedDomain}-job`;
+};
+
+export const resolveManagedJobName = ({
+  jobName,
+  jobUrl,
+  layerName,
+  domainName
+}: {
+  jobName?: string | null;
+  jobUrl?: string | null;
+  layerName?: string | null;
+  domainName?: string | null;
+}) => {
+  const explicitJobName = String(jobName || '').trim();
+  if (explicitJobName) {
+    return explicitJobName;
+  }
+
+  const extractedJobName = extractAzureJobName(jobUrl);
+  if (extractedJobName) {
+    return extractedJobName;
+  }
+
+  return deriveManagedJobName(layerName, domainName);
+};
+
 export const buildLatestJobRunIndex = (recentJobs: JobRun[] = []): Map<string, JobRun> => {
   const index = new Map<string, JobRun>();
 
@@ -316,9 +380,7 @@ export const buildLatestJobRunIndex = (recentJobs: JobRun[] = []): Map<string, J
 };
 
 export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus => {
-  const status = String(value || '')
-    .trim()
-    .toLowerCase();
+  const status = normalizeJobStateToken(value);
 
   if (
     status === 'success' ||
@@ -359,16 +421,12 @@ export const normalizeJobStatus = (value?: string | null): NormalizedJobStatus =
 };
 
 export const hasActiveJobRunningState = (value?: string | null): boolean => {
-  const state = String(value || '')
-    .trim()
-    .toLowerCase();
+  const state = normalizeJobStateToken(value);
   return ACTIVE_JOB_RUNNING_STATE_TOKENS.some((token) => state.includes(token));
 };
 
 export const isSuspendedJobRunningState = (value?: string | null): boolean =>
-  String(value || '')
-    .trim()
-    .toLowerCase() === 'suspended';
+  normalizeJobStateToken(value) === 'suspended';
 
 export const effectiveJobStatus = (
   runStatus?: string | null,

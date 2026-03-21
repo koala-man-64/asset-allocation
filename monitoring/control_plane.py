@@ -10,6 +10,10 @@ from monitoring.resource_health import DEFAULT_RESOURCE_HEALTH_API_VERSION, get_
 
 logger = logging.getLogger("asset_allocation.monitoring.control_plane")
 
+_ACTIVE_EXECUTION_STATUS_TOKENS = frozenset(
+    {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}
+)
+
 
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
@@ -30,8 +34,16 @@ def _duration_seconds(start: Optional[datetime], end: Optional[datetime]) -> Opt
     return seconds if seconds >= 0 else None
 
 
+def _normalize_job_status_token(raw: str) -> str:
+    return "".join(ch for ch in (raw or "").strip().lower() if ch.isalnum())
+
+
+def _is_active_execution_status(raw: str) -> bool:
+    return _normalize_job_status_token(raw) in _ACTIVE_EXECUTION_STATUS_TOKENS
+
+
 def _map_job_execution_status(raw: str, *, end_time: Optional[str] = None) -> str:
-    status = (raw or "").strip().lower()
+    status = _normalize_job_status_token(raw)
     has_end_time = bool((end_time or "").strip())
     if status in {"succeeded", "success", "completed", "complete"}:
         return "success"
@@ -39,11 +51,11 @@ def _map_job_execution_status(raw: str, *, end_time: Optional[str] = None) -> st
         return "warning"
     if status in {"failed", "error", "failure", "terminated", "terminatedwitherror"}:
         return "failed"
-    if has_end_time and status in {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}:
+    if has_end_time and status in _ACTIVE_EXECUTION_STATUS_TOKENS:
         # Azure job executions can surface a terminal endTime while leaving status as Running in the ARM response.
         # Treat the execution as completed so dashboards do not report a finished job as still active.
         return "success"
-    if status in {"running", "processing", "inprogress", "starting", "queued", "waiting", "scheduling"}:
+    if status in _ACTIVE_EXECUTION_STATUS_TOKENS:
         return "running"
     if status in {"stopped", "canceled", "cancelled", "canceling", "cancellationrequested"}:
         return "failed"
@@ -195,6 +207,7 @@ def collect_jobs_and_executions(
 ) -> Tuple[List[ResourceHealthItem], List[Dict[str, Any]]]:
     resources: List[ResourceHealthItem] = []
     runs: List[Dict[str, Any]] = []
+    last_checked_dt = _parse_dt(last_checked_iso) or datetime.now(timezone.utc)
 
     for name in job_names:
         job_url = arm.resource_url(provider="Microsoft.App", resource_type="jobs", name=name)
@@ -254,7 +267,11 @@ def collect_jobs_and_executions(
             def _execution_start_ts(execution: Dict[str, Any]) -> float:
                 props = execution.get("properties") if isinstance(execution.get("properties"), dict) else {}
                 start_dt = _parse_dt(str(props.get("startTime") or ""))
-                return float(start_dt.timestamp()) if start_dt else 0.0
+                if start_dt:
+                    return float(start_dt.timestamp())
+                if _is_active_execution_status(str(props.get("status") or "")):
+                    return float(last_checked_dt.timestamp())
+                return 0.0
 
             # Ensure we sample the most recent executions for each job regardless of API ordering.
             executions.sort(key=_execution_start_ts, reverse=True)
