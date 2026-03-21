@@ -13,13 +13,6 @@ const mockConfig = vi.hoisted(() => ({
   authRequired: true
 }));
 
-const mockUseRealtime = vi.hoisted(() => vi.fn());
-const mockConfig = vi.hoisted(() => ({
-  apiBaseUrl: '/api',
-  oidcEnabled: true,
-  authRequired: true
-}));
-
 const mockAuth = vi.hoisted(() => ({
   enabled: true,
   ready: true,
@@ -34,7 +27,6 @@ const consumePostLoginRedirectPath = vi.hoisted(() => vi.fn(() => '/system-statu
 
 vi.mock('@/hooks/useRealtime', () => ({
   useRealtime: mockUseRealtime
-  useRealtime: mockUseRealtime
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -44,7 +36,6 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('@/config', () => ({
-  config: mockConfig
   config: mockConfig
 }));
 
@@ -63,15 +54,11 @@ describe('App OIDC access flow', () => {
     mockConfig.apiBaseUrl = '/api';
     mockConfig.oidcEnabled = true;
     mockConfig.authRequired = true;
-    mockConfig.apiBaseUrl = '/api';
-    mockConfig.oidcEnabled = true;
-    mockConfig.authRequired = true;
     mockAuth.enabled = true;
     mockAuth.ready = true;
     mockAuth.authenticated = false;
     mockAuth.userLabel = null;
     mockAuth.error = null;
-    mockUseRealtime.mockReset();
     mockUseRealtime.mockReset();
     mockAuth.signIn.mockReset();
     mockAuth.signOut.mockReset();

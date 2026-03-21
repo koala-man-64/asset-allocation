@@ -103,14 +103,8 @@ export function OidcAccessGate({ children }: { children: ReactNode }) {
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [retryNonce, setRetryNonce] = useState(0);
   const browserOidcMisconfigured = config.authRequired && (!config.oidcEnabled || !auth.enabled);
-  const browserOidcMisconfigured = config.authRequired && (!config.oidcEnabled || !auth.enabled);
 
   useEffect(() => {
-    if (browserOidcMisconfigured) {
-      setAccessState('idle');
-      setErrorMessage('');
-      return;
-    }
     if (browserOidcMisconfigured) {
       setAccessState('idle');
       setErrorMessage('');
@@ -160,10 +154,7 @@ export function OidcAccessGate({ children }: { children: ReactNode }) {
 
   if (browserOidcMisconfigured) {
     return (
-      <AuthPanel
-        title="Deployment auth misconfigured"
-        body={DEPLOYMENT_AUTH_MISCONFIGURED_BODY}
-      />
+      <AuthPanel title="Deployment auth misconfigured" body={DEPLOYMENT_AUTH_MISCONFIGURED_BODY} />
     );
   }
 

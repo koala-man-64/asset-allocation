@@ -8,16 +8,8 @@ type RuntimeUiConfig = {
   oidcClientId?: string;
   oidcScopes?: string[] | string;
   oidcRedirectUri?: string;
-  oidcAuthority?: string;
-  oidcClientId?: string;
-  oidcScopes?: string[] | string;
-  oidcRedirectUri?: string;
 };
 
-declare global {
-  interface Window {
-    __API_UI_CONFIG__?: RuntimeUiConfig;
-  }
 declare global {
   interface Window {
     __API_UI_CONFIG__?: RuntimeUiConfig;
@@ -72,44 +64,15 @@ function resolveScopes(raw: unknown): string[] {
 }
 
 const runtimeConfig = typeof window === 'undefined' ? {} : window.__API_UI_CONFIG__ || {};
-function resolveString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value !== 'string') {
-      continue;
-    }
-    const normalized = value.trim();
-    if (normalized) {
-      return normalized;
-    }
-  }
-  return '';
-}
 
-function resolveScopes(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw
-      .map(String)
-      .map((scope) => scope.trim())
-      .filter(Boolean);
-  }
-
-  if (typeof raw !== 'string') {
-    return [];
-  }
-
-  const normalized = raw.replace(/,/g, ' ').trim();
-  return normalized ? normalized.split(/\s+/).filter(Boolean) : [];
-}
-
-const runtimeConfig = typeof window === 'undefined' ? {} : window.__API_UI_CONFIG__ || {};
-
-const apiBaseUrl = normalizeApiBaseUrl(
-  runtimeConfig.apiBaseUrl || import.meta.env.VITE_API_BASE_URL,
 const apiBaseUrl = normalizeApiBaseUrl(
   runtimeConfig.apiBaseUrl || import.meta.env.VITE_API_BASE_URL,
   '/api'
 );
-const oidcAuthority = resolveString(runtimeConfig.oidcAuthority, import.meta.env.VITE_OIDC_AUTHORITY);
+const oidcAuthority = resolveString(
+  runtimeConfig.oidcAuthority,
+  import.meta.env.VITE_OIDC_AUTHORITY
+);
 const oidcClientId = resolveString(runtimeConfig.oidcClientId, import.meta.env.VITE_OIDC_CLIENT_ID);
 const oidcRedirectUri = resolveString(runtimeConfig.oidcRedirectUri);
 const oidcScopes = resolveScopes(runtimeConfig.oidcScopes ?? import.meta.env.VITE_OIDC_SCOPES);
@@ -140,13 +103,6 @@ if (typeof window !== 'undefined') {
 }
 
 export const config = {
-  apiBaseUrl,
-  oidcEnabled,
-  authRequired,
-  oidcAuthority,
-  oidcClientId,
-  oidcScopes,
-  oidcRedirectUri
   apiBaseUrl,
   oidcEnabled,
   authRequired,

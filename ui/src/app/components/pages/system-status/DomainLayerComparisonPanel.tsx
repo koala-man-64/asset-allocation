@@ -63,7 +63,6 @@ import {
   buildLatestJobRunIndex,
   effectiveJobStatus,
   formatDuration,
-  formatDuration,
   formatSchedule,
   formatTimeAgo,
   getStatusConfig,
@@ -144,14 +143,6 @@ function getPurgeDeletedCount(result: unknown): number {
   return typeof totalDeleted === 'number' && Number.isFinite(totalDeleted) ? totalDeleted : 0;
 }
 
-function getPurgeDeletedCount(result: unknown): number {
-  if (typeof result !== 'object' || result === null) {
-    return 0;
-  }
-  const totalDeleted = (result as { totalDeleted?: unknown }).totalDeleted;
-  return typeof totalDeleted === 'number' && Number.isFinite(totalDeleted) ? totalDeleted : 0;
-}
-
 function extractAzureJobName(jobUrl?: string | null): string | null {
   const normalized = normalizeAzurePortalUrl(jobUrl);
   if (!normalized) return null;
@@ -185,11 +176,6 @@ function makeCellKey(layerKey: LayerKey, domainKey: string): string {
 function makeSnapshotKey(layerKey: LayerKey, domainKey: string): string {
   return `${layerKey}/${domainKey}`;
 }
-
-type JobDurationSummary = {
-  averageDurationSeconds: number;
-  sampleCount: number;
-};
 
 type JobDurationSummary = {
   averageDurationSeconds: number;
@@ -241,7 +227,7 @@ function buildJobDurationSummaryIndex(recentJobs: JobRun[] = []): Map<string, Jo
     }
     summary.set(jobKey, {
       averageDurationSeconds: current.totalSeconds / current.sampleCount,
-      sampleCount: current.sampleCount,
+      sampleCount: current.sampleCount
     });
   }
 
@@ -436,9 +422,6 @@ export function DomainLayerComparisonPanel({
 
   const jobIndex = useMemo(() => {
     return buildLatestJobRunIndex(recentJobs);
-  }, [recentJobs]);
-  const jobDurationSummaryIndex = useMemo(() => {
-    return buildJobDurationSummaryIndex(recentJobs);
   }, [recentJobs]);
   const jobDurationSummaryIndex = useMemo(() => {
     return buildJobDurationSummaryIndex(recentJobs);
@@ -658,7 +641,6 @@ export function DomainLayerComparisonPanel({
     }
 
     return byLayer;
-  }, [domainConfigByLayer, domainsByLayer, filteredDomainRows, jobIndex, jobStates, layerColumns]);
   }, [domainConfigByLayer, domainsByLayer, filteredDomainRows, jobIndex, jobStates, layerColumns]);
 
   const handleCellRefresh = useCallback(
@@ -915,7 +897,6 @@ export function DomainLayerComparisonPanel({
         throw new Error('Purge returned no completion result.');
       }
       toast.success(`Purged ${getPurgeDeletedCount(result)} blob(s).`);
-      toast.success(`Purged ${getPurgeDeletedCount(result)} blob(s).`);
       await refreshStatus();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -926,7 +907,6 @@ export function DomainLayerComparisonPanel({
       setActivePurgeTarget(null);
       setPurgeTarget(null);
     }
-  }, [purgeTarget, refreshStatus, waitForPurgeResult]);
   }, [purgeTarget, refreshStatus, waitForPurgeResult]);
 
   const confirmDomainListReset = useCallback(async () => {
@@ -954,7 +934,6 @@ export function DomainLayerComparisonPanel({
       setResettingCellKey(null);
       setListResetTarget(null);
     }
-  }, [clearDomainMetadataCache, handleCellRefresh, listResetTarget, refreshStatus]);
   }, [clearDomainMetadataCache, handleCellRefresh, listResetTarget, refreshStatus]);
 
   const confirmDomainCheckpointReset = useCallback(async () => {
@@ -989,7 +968,6 @@ export function DomainLayerComparisonPanel({
       setResettingCheckpointCellKey(null);
       setCheckpointResetTarget(null);
     }
-  }, [checkpointResetTarget, clearDomainMetadataCache, handleCellRefresh, refreshStatus]);
   }, [checkpointResetTarget, clearDomainMetadataCache, handleCellRefresh, refreshStatus]);
 
   const refreshAllPanelCounts = useCallback(async () => {
@@ -1158,8 +1136,6 @@ export function DomainLayerComparisonPanel({
     isResettingAllLists,
     isResettingCheckpoints,
     isResettingLists,
-    queryPairs,
-    refreshStatus
     queryPairs,
     refreshStatus
   ]);
@@ -1567,22 +1543,12 @@ export function DomainLayerComparisonPanel({
                       const jobKey = normalizeAzureJobName(jobName);
                       const run = jobKey ? jobIndex.get(jobKey) : null;
                       const durationSummary = jobKey ? jobDurationSummaryIndex.get(jobKey) : null;
-                      const durationSummary = jobKey ? jobDurationSummaryIndex.get(jobKey) : null;
                       const managedJob = jobKey ? managedJobIndex.get(jobKey) : null;
                       const lastStartDisplay = (() => {
                         if (!jobName) return 'N/A';
                         if (!run?.startTime) return 'NO RUN';
                         return formatTimeAgo(run.startTime);
                       })();
-                      const averageRuntimeSummary = durationSummary
-                        ? `avg runtime ${formatDuration(durationSummary.averageDurationSeconds)}`
-                        : null;
-                      const averageRuntimeDetail = durationSummary
-                        ? `${formatDuration(durationSummary.averageDurationSeconds)} (${durationSummary.sampleCount} run${durationSummary.sampleCount === 1 ? '' : 's'})`
-                        : 'N/A';
-                      const averageRuntimeTitle = durationSummary
-                        ? `Average from ${durationSummary.sampleCount} recent execution${durationSummary.sampleCount === 1 ? '' : 's'}`
-                        : undefined;
                       const averageRuntimeSummary = durationSummary
                         ? `avg runtime ${formatDuration(durationSummary.averageDurationSeconds)}`
                         : null;
@@ -1727,9 +1693,6 @@ export function DomainLayerComparisonPanel({
                         jobLabel,
                         jobStatusCode,
                         lastStartDisplay,
-                        averageRuntimeSummary,
-                        averageRuntimeDetail,
-                        averageRuntimeTitle,
                         averageRuntimeSummary,
                         averageRuntimeDetail,
                         averageRuntimeTitle,
@@ -1915,14 +1878,6 @@ export function DomainLayerComparisonPanel({
                                         {model.averageRuntimeSummary}
                                       </div>
                                     ) : null}
-                                    {model.averageRuntimeSummary ? (
-                                      <div
-                                        className={`${StatusTypos.MONO} mt-0.5 text-[10px] text-mcm-walnut/65`}
-                                        title={model.averageRuntimeTitle}
-                                      >
-                                        {model.averageRuntimeSummary}
-                                      </div>
-                                    ) : null}
                                   </div>
                                   <div className="flex items-center gap-2 self-start">
                                     {model.isCellRefreshing ? (
@@ -2017,13 +1972,6 @@ export function DomainLayerComparisonPanel({
                                         title={model.run?.startTime || undefined}
                                       >
                                         {model.lastStartDisplay}
-                                      </dd>
-                                      <dt className="text-mcm-walnut/70">avg runtime:</dt>
-                                      <dd
-                                        className="min-w-0 truncate text-right text-mcm-walnut/90"
-                                        title={model.averageRuntimeTitle}
-                                      >
-                                        {model.averageRuntimeDetail}
                                       </dd>
                                       <dt className="text-mcm-walnut/70">avg runtime:</dt>
                                       <dd
